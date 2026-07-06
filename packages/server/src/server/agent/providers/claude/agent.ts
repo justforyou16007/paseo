@@ -2347,9 +2347,9 @@ class ClaudeAgentSession implements AgentSession {
     this.turnState = "idle";
     this.sidechainTracker.clear();
     this.input?.end();
-    this.query?.close?.();
     await this.awaitWithTimeout(this.query?.interrupt?.(), "close query interrupt");
     await this.awaitWithTimeout(this.query?.return?.(), "close query return");
+    this.query?.close?.();
     this.query = null;
     this.input = null;
     // Terminate the entire process tree (claude + MCP children) to prevent

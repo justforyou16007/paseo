@@ -50,7 +50,8 @@ describe("OpenCode terminal agent hooks", () => {
     expect(source).toContain('idle: "session.status.idle"');
     expect(source).toContain('event?.type === "permission.asked"');
     expect(source).toContain('event?.type === "permission.replied"');
-    expect(source).toContain('Bun.spawn(["paseo", "hooks", "opencode", event]');
+    expect(source).toContain('process.env.PASEO_HOOK_CLI || "paseo"');
+    expect(source).toContain('Bun.spawn([paseo, "hooks", "opencode", event]');
     expect(source).toContain("PASEO_TERMINAL_ID");
   });
 

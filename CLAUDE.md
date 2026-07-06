@@ -15,6 +15,10 @@ This is an npm workspace monorepo:
 - `packages/desktop` — Electron desktop wrapper
 - `packages/website` — Marketing site (paseo.sh)
 
+Non-workspace projects in `packages/`:
+
+- `packages/Auto-claude-code-research-in-sleep` — ARIS: ML research automation harness with 80+ composable skills and cross-model adversarial review
+
 ## Docs
 
 `docs/` is the source of truth for system-level and process-level knowledge. **"The docs", "check the docs", or "check the X docs" always mean this directory — not the web.** Look here before fetching anything online; the docs capture gotchas and conventions you cannot derive from the code or external sources.
@@ -156,3 +160,8 @@ The app runs on iOS, Android, web (browser), and web (Electron desktop). Code is
 ## Debugging
 
 Find the complete daemon logs and traces in the $PASEO_HOME/daemon.log
+
+## Agent Validation
+
+When you need to verify your own work output, you must use Codex/GLM-5.2 with `full-access` mode for end-to-end functional validation. It is strictly forbidden to validate your own work output by yourself.
+When your test objectives involve frontend content, you are required to use Playwright MCP for frontend operation validation.

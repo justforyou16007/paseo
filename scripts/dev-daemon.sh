@@ -22,6 +22,10 @@ echo "  Models:  ${PASEO_LOCAL_MODELS_DIR}"
 echo "  Listen:  ${PASEO_LISTEN}"
 echo "══════════════════════════════════════════════════════"
 
+# Point agent hooks (SessionEnd, etc.) at the dev workspace CLI instead of
+# whichever installation require.resolve happens to pick up.
+export PASEO_HOOK_CLI="$SCRIPT_DIR/../packages/cli/bin/paseo"
+
 export PASEO_CORS_ORIGINS="${PASEO_CORS_ORIGINS:-*}"
 export PASEO_NODE_INSPECT="${PASEO_NODE_INSPECT:---inspect=0}"
 
@@ -29,4 +33,4 @@ if [ "${PASEO_SKIP_DEV_SERVER_BUILD:-0}" = "1" ]; then
   exec npm run dev:server:watch
 fi
 
-exec sh -c 'npm run build:server-deps && npm run dev:server:watch'
+exec sh -c 'npm run build:server-deps && npm run build --workspace=@getpaseo/cli && npm run dev:server:watch'
