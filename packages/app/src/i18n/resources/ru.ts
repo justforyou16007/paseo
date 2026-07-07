@@ -464,6 +464,7 @@ export const ru: TranslationResources = {
         browser: "Браузер",
         agent: "Agent",
         workspace: "Workspace",
+        aris: "ARIS",
       },
       switcher: {
         trigger: "Переключить вкладки ({{count}}открыт)",
@@ -556,6 +557,7 @@ export const ru: TranslationResources = {
         copyPath: "Копировать путь к рабочей области",
         copyBranchName: "Скопировать название ветки",
         showSetup: "Показать настройки",
+        aris: "ARIS runs",
       },
       toasts: {
         workspacePathUnavailable: "Путь Workspace пока недоступен.",

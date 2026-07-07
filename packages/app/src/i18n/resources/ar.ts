@@ -460,6 +460,7 @@ export const ar: TranslationResources = {
         browser: "المتصفح",
         agent: "Agent",
         workspace: "Workspace",
+        aris: "ARIS",
       },
       switcher: {
         trigger: "تبديل علامات التبويب (فتح{{count}})",
@@ -551,6 +552,7 @@ export const ar: TranslationResources = {
         copyPath: "نسخ مسار مساحة العمل",
         copyBranchName: "انسخ اسم الفرع",
         showSetup: "إظهار الإعداد",
+        aris: "ARIS runs",
       },
       toasts: {
         workspacePathUnavailable: "مسار Workspace غير متاح بعد",

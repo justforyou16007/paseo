@@ -460,6 +460,7 @@ export const en = {
         browser: "Browser",
         agent: "Agent",
         workspace: "Workspace",
+        aris: "ARIS",
       },
       switcher: {
         trigger: "Switch tabs ({{count}} open)",
@@ -550,6 +551,7 @@ export const en = {
         copyPath: "Copy workspace path",
         copyBranchName: "Copy branch name",
         showSetup: "Show setup",
+        aris: "ARIS runs",
       },
       toasts: {
         workspacePathUnavailable: "Workspace path is not available yet",

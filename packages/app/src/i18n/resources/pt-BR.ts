@@ -464,6 +464,7 @@ export const ptBR: TranslationResources = {
         browser: "Navegador",
         agent: "Agente",
         workspace: "Workspace",
+        aris: "ARIS",
       },
       switcher: {
         trigger: "Alternar abas ({{count}} abertas)",
@@ -555,6 +556,7 @@ export const ptBR: TranslationResources = {
         copyPath: "Copiar caminho do workspace",
         copyBranchName: "Copiar nome da branch",
         showSetup: "Mostrar configuração",
+        aris: "ARIS runs",
       },
       toasts: {
         workspacePathUnavailable: "O caminho do workspace ainda não está disponível",

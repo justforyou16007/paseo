@@ -464,6 +464,7 @@ export const ja: TranslationResources = {
         browser: "ブラウザ",
         agent: "エージェント",
         workspace: "ワークスペース",
+        aris: "ARIS",
       },
       switcher: {
         trigger: "タブを切り替え（{{count}}件開いています）",
@@ -555,6 +556,7 @@ export const ja: TranslationResources = {
         copyPath: "ワークスペースパスをコピー",
         copyBranchName: "ブランチ名をコピー",
         showSetup: "セットアップを表示",
+        aris: "ARIS runs",
       },
       toasts: {
         workspacePathUnavailable: "ワークスペースパスはまだ利用できません",
