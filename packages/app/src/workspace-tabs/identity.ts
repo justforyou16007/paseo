@@ -37,10 +37,20 @@ export function normalizeWorkspaceTabTarget(
     return workspaceId ? { kind: "setup", workspaceId } : null;
   }
   if (value.kind === "aris") {
-    const runId = trimNonEmpty(value.runId);
-    return runId ? { kind: "aris", runId } : { kind: "aris" };
+    return normalizeArisTabTarget(value);
   }
   return null;
+}
+
+function normalizeArisTabTarget(
+  value: Extract<WorkspaceTabTarget, { kind: "aris" }>,
+): Extract<WorkspaceTabTarget, { kind: "aris" }> {
+  const runId =
+    typeof value.runId === "string" && value.runId.trim().length > 0
+      ? value.runId.trim()
+      : undefined;
+  const view = value.view === "graph" || value.view === "review" ? value.view : "cockpit";
+  return { kind: "aris", runId, view };
 }
 
 export function normalizeWorkspaceDraftTabSetup(
@@ -93,7 +103,7 @@ export function workspaceTabTargetsEqual(
     return left.workspaceId === right.workspaceId;
   }
   if (left.kind === "aris" && right.kind === "aris") {
-    return left.runId === right.runId;
+    return left.runId === right.runId && left.view === right.view;
   }
   return false;
 }
@@ -148,7 +158,8 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
     return `setup_${target.workspaceId}`;
   }
   if (target.kind === "aris") {
-    return target.runId ? `aris_${target.runId}` : "aris_overview";
+    const view = target.view ?? "cockpit";
+    return target.runId ? `aris_${view}_${target.runId}` : `aris_${view}`;
   }
   return `file_${target.path}`;
 }

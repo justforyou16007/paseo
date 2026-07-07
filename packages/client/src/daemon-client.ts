@@ -58,6 +58,8 @@ import type {
   OpenProjectResponseMessage,
   ArchiveWorkspaceResponseMessage,
   WorkspaceSetupStatusResponseMessage,
+  ArisReviewReadResponse,
+  ArisEventsReadResponse,
   ListCommandsResponse,
   ListProviderFeaturesResponseMessage,
   ListProviderModelsResponseMessage,
@@ -227,6 +229,10 @@ export type DaemonEvent =
       type: "providers_snapshot_update";
       payload: Extract<SessionOutboundMessage, { type: "providers_snapshot_update" }>["payload"];
     }
+  | {
+      type: "aris.review.update";
+      payload: Extract<SessionOutboundMessage, { type: "aris.review.update" }>["payload"];
+    }
   | { type: "error"; message: string };
 
 export type DaemonEventHandler = (event: DaemonEvent) => void;
@@ -362,6 +368,8 @@ type ListProviderModesPayload = ListProviderModesResponseMessage["payload"];
 type ListAvailableProvidersPayload = ListAvailableProvidersResponse["payload"];
 type GetProvidersSnapshotPayload = GetProvidersSnapshotResponseMessage["payload"];
 type RefreshProvidersSnapshotPayload = RefreshProvidersSnapshotResponseMessage["payload"];
+type ArisReviewReadPayload = ArisReviewReadResponse["payload"];
+type ArisEventsReadPayload = ArisEventsReadResponse["payload"];
 type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
 type ProviderUsageListPayload = ProviderUsageListResponseMessage["payload"];
 type DaemonStatusPayload = DaemonGetStatusResponse["payload"];
@@ -3872,6 +3880,40 @@ export class DaemonClient {
     });
   }
 
+  async readArisReview(options: {
+    cwd: string;
+    runId?: string;
+    requestId?: string;
+  }): Promise<ArisReviewReadPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "aris.review.read",
+        cwd: options.cwd,
+        runId: options.runId,
+      },
+      responseType: "aris.review.read.response",
+    });
+  }
+
+  async readArisEvents(options: {
+    cwd: string;
+    limit?: number;
+    runId?: string;
+    requestId?: string;
+  }): Promise<ArisEventsReadPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "aris.events.read",
+        cwd: options.cwd,
+        limit: options.limit,
+        runId: options.runId,
+      },
+      responseType: "aris.events.read.response",
+    });
+  }
+
   async getDaemonStatus(options?: DaemonStatusOptions): Promise<DaemonStatusPayload> {
     return this.sendCorrelatedSessionRequest({
       requestId: options?.requestId,
@@ -5230,6 +5272,11 @@ export class DaemonClient {
       case "providers_snapshot_update":
         return {
           type: "providers_snapshot_update",
+          payload: msg.payload,
+        };
+      case "aris.review.update":
+        return {
+          type: "aris.review.update",
           payload: msg.payload,
         };
       default:

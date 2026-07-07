@@ -1,138 +1,109 @@
-import { useCallback, useState } from "react";
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
-import invariant from "tiny-invariant";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { Lightbulb } from "lucide-react-native";
-import { usePaneContext } from "@/panels/pane-context";
+/* eslint-disable jsx-no-new-object-as-prop -- ARIS panel uses inline styles for rapid prototyping */
+import { ActivityIndicator, Text, View } from "react-native";
+import { Network, FlaskConical, Microscope } from "lucide-react-native";
 import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
-import { isNative } from "@/constants/platform";
-import IdeasView from "@/aris/views/IdeasView";
-import ExperimentsView from "@/aris/views/ExperimentsView";
+import { usePaneContext } from "@/panels/pane-context";
+import { isWeb } from "@/constants/platform";
+import { useArisReviewQuery } from "@/aris/use-aris-review-query";
+import { useArisEventsQuery } from "@/aris/use-aris-events-query";
+import { ArisCockpitView } from "@/aris/ArisCockpitView.web";
 
-function useArisPanelDescriptor(): PanelDescriptor {
+function useArisPanelDescriptor(target: {
+  kind: "aris";
+  runId?: string;
+  view?: "cockpit" | "graph" | "review";
+}): PanelDescriptor {
+  let viewLabel: string;
+  if (target.view === "graph") {
+    viewLabel = "Graph";
+  } else if (target.view === "review") {
+    viewLabel = "Review";
+  } else {
+    viewLabel = "Cockpit";
+  }
+
+  let icon: typeof Network;
+  if (target.view === "graph") {
+    icon = Network;
+  } else if (target.view === "review") {
+    icon = Microscope;
+  } else {
+    icon = FlaskConical;
+  }
+
   return {
-    label: "ARIS",
-    subtitle: "Research insights",
+    label: `ARIS ${viewLabel}`,
+    subtitle: target.runId ? `Run ${target.runId}` : "AutoResearch",
     titleState: "ready",
-    icon: Lightbulb,
+    icon,
     statusBucket: null,
   };
 }
 
-type ArisTab = "ideas" | "experiments";
-
 function ArisPanel() {
-  const { target } = usePaneContext();
-  invariant(target.kind === "aris", "ArisPanel requires aris target");
-  const [activeTab, setActiveTab] = useState<ArisTab>("ideas");
-  const showIdeas = useCallback(() => setActiveTab("ideas"), []);
-  const showExperiments = useCallback(() => setActiveTab("experiments"), []);
+  const { serverId, workspaceId, target } = usePaneContext();
+  if (target.kind !== "aris") {
+    return null;
+  }
 
-  if (isNative) {
+  if (!isWeb) {
     return (
-      <View style={styles.nativePlaceholder}>
-        <ThemedActivityIndicator size="large" uniProps={mutedColorMapping} />
-        <Text style={styles.nativeText}>ARIS visualization is only available on web.</Text>
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <Text style={{ textAlign: "center", color: "#64748b" }}>
+          ARIS visualization is only available on web.
+        </Text>
+      </View>
+    );
+  }
+
+  return <ArisPanelContent serverId={serverId} workspaceId={workspaceId} target={target} />;
+}
+
+function ArisPanelContent({
+  serverId,
+  workspaceId,
+  target,
+}: {
+  serverId: string;
+  workspaceId: string;
+  target: { kind: "aris"; runId?: string; view?: "cockpit" | "graph" | "review" };
+}) {
+  const reviewQuery = useArisReviewQuery({
+    serverId,
+    workspaceId,
+    runId: target.runId,
+  });
+  const eventsQuery = useArisEventsQuery({
+    serverId,
+    workspaceId,
+    runId: target.runId,
+  });
+
+  if (reviewQuery.isLoading || eventsQuery.isLoading) {
+    return (
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+        <ActivityIndicator />
+      </View>
+    );
+  }
+
+  const error = reviewQuery.error ?? eventsQuery.error;
+  if (error) {
+    return (
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <Text style={{ textAlign: "center", color: "#ef4444" }}>{error}</Text>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <View style={styles.tabBar}>
-        <TabButton active={activeTab === "ideas"} label="Ideas" onPress={showIdeas} />
-        <TabButton
-          active={activeTab === "experiments"}
-          label="Experiments"
-          onPress={showExperiments}
-        />
-      </View>
-
-      <View style={styles.content}>
-        {activeTab === "ideas" ? <IdeasView /> : <ExperimentsView />}
-      </View>
-    </View>
+    <ArisCockpitView
+      review={reviewQuery.data ?? null}
+      events={eventsQuery.data ?? null}
+      activeView={target.view ?? "cockpit"}
+    />
   );
 }
-
-function TabButton({
-  active,
-  label,
-  onPress,
-}: {
-  active: boolean;
-  label: string;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable onPress={onPress} style={getTabButtonStyle(active)}>
-      <Text style={active ? styles.tabLabelActive : styles.tabLabel}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function getTabButtonStyle(active: boolean) {
-  return ({ pressed }: { pressed: boolean }) => [
-    styles.tabButton,
-    active && styles.tabButtonActive,
-    pressed && styles.tabButtonPressed,
-  ];
-}
-
-const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
-
-const mutedColorMapping = (theme: { colors: { foregroundMuted: string } }) => ({
-  color: theme.colors.foregroundMuted,
-});
-
-const styles = StyleSheet.create((theme) => ({
-  container: {
-    flex: 1,
-    minHeight: 0,
-    backgroundColor: theme.colors.surface0,
-  },
-  tabBar: {
-    flexDirection: "row",
-    borderBottomWidth: theme.borderWidth[1],
-    borderBottomColor: theme.colors.border,
-    paddingHorizontal: theme.spacing[4],
-    gap: theme.spacing[2],
-  },
-  tabButton: {
-    paddingVertical: theme.spacing[3],
-    paddingHorizontal: theme.spacing[2],
-    borderBottomWidth: 2,
-    borderBottomColor: "transparent",
-  },
-  tabButtonActive: {
-    borderBottomColor: theme.colors.foreground,
-  },
-  tabButtonPressed: {
-    opacity: 0.7,
-  },
-  tabLabel: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.foregroundMuted,
-  },
-  tabLabelActive: {
-    color: theme.colors.foreground,
-    fontWeight: "600",
-  },
-  content: {
-    flex: 1,
-    minHeight: 0,
-  },
-  nativePlaceholder: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: theme.spacing[3],
-  },
-  nativeText: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.foregroundMuted,
-  },
-}));
 
 export const arisPanelRegistration: PanelRegistration<"aris"> = {
   kind: "aris",

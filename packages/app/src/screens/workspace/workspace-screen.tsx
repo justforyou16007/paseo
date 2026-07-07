@@ -348,6 +348,9 @@ function getFallbackTabOptionLabel(
   if (tab.target.kind === "file") {
     return tab.target.path.split("/").findLast(Boolean) ?? tab.target.path;
   }
+  if (tab.target.kind === "aris") {
+    return `ARIS ${tab.target.view ?? "cockpit"}`;
+  }
   return labels.agent;
 }
 
@@ -359,7 +362,6 @@ function getFallbackTabOptionDescription(
     agent: string;
     terminal: string;
     browser: string;
-    aris: string;
   },
 ): string {
   if (tab.target.kind === "draft") {
@@ -378,7 +380,7 @@ function getFallbackTabOptionDescription(
     return labels.browser;
   }
   if (tab.target.kind === "aris") {
-    return labels.aris;
+    return `ARIS ${tab.target.view ?? "cockpit"}`;
   }
   return tab.target.path;
 }
@@ -961,7 +963,6 @@ interface WorkspaceHeaderMenuProps {
   onCopyWorkspacePath: () => void;
   onCopyBranchName: () => void;
   onOpenSetupTab: () => void;
-  onOpenArisTab: () => void;
 }
 interface HeaderMenuProfileItemProps {
   profile: { id: string; name: string; command: string; args?: string[]; icon?: string };
@@ -1043,7 +1044,6 @@ function WorkspaceHeaderMenu({
   onCopyWorkspacePath,
   onCopyBranchName,
   onOpenSetupTab,
-  onOpenArisTab,
 }: WorkspaceHeaderMenuProps) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -1128,9 +1128,6 @@ function WorkspaceHeaderMenu({
             </DropdownMenuItem>
           </>
         ) : null}
-        <DropdownMenuItem testID="workspace-header-open-aris" onSelect={onOpenArisTab}>
-          {t("workspace.header.actions.aris")}
-        </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuLabel>{t("workspace.tabs.actions.terminalProfilesMenu")}</DropdownMenuLabel>
         <DropdownMenuItem
@@ -1191,7 +1188,6 @@ interface WorkspaceHeaderTitleBarProps {
   onCopyWorkspacePath: () => void;
   onCopyBranchName: () => void;
   onOpenSetupTab: () => void;
-  onOpenArisTab: () => void;
   onScriptTerminalStarted: (terminalId: string) => void;
   onViewScriptTerminal: (terminalId: string) => void;
   onOpenUrlInBrowserTab: (url: string) => void;
@@ -1227,7 +1223,6 @@ function WorkspaceHeaderTitleBar({
   onCopyWorkspacePath,
   onCopyBranchName,
   onOpenSetupTab,
-  onOpenArisTab,
   onScriptTerminalStarted,
   onViewScriptTerminal,
   onOpenUrlInBrowserTab,
@@ -1276,7 +1271,6 @@ function WorkspaceHeaderTitleBar({
           onCopyWorkspacePath={onCopyWorkspacePath}
           onCopyBranchName={onCopyBranchName}
           onOpenSetupTab={onOpenSetupTab}
-          onOpenArisTab={onOpenArisTab}
         />
         {isMobile && workspaceScripts.length > 0 ? (
           <WorkspaceScriptsButton
@@ -2406,7 +2400,6 @@ function WorkspaceScreenContent({
       terminal: t("workspace.tabs.fallback.terminal"),
       browser: t("workspace.tabs.fallback.browser"),
       agent: t("workspace.tabs.fallback.agent"),
-      aris: t("workspace.tabs.fallback.aris"),
     }),
     [t],
   );
@@ -2462,7 +2455,7 @@ function WorkspaceScreenContent({
       if (input?.paneId) {
         focusWorkspacePane(persistenceKey, input.paneId);
       }
-      openWorkspaceTabFocused(persistenceKey, { kind: "aris" });
+      openWorkspaceTabFocused(persistenceKey, { kind: "aris", view: "cockpit" });
     },
     [focusWorkspacePane, openWorkspaceTabFocused, persistenceKey],
   );
@@ -2756,17 +2749,6 @@ function WorkspaceScreenContent({
     }
     openWorkspaceTabFocused(persistenceKey, target);
   }, [normalizedWorkspaceId, openWorkspaceTabFocused, persistenceKey]);
-
-  const handleOpenArisTab = useCallback(() => {
-    if (!persistenceKey) {
-      return;
-    }
-    const target = normalizeWorkspaceTabTarget({ kind: "aris" });
-    if (!target) {
-      return;
-    }
-    openWorkspaceTabFocused(persistenceKey, target);
-  }, [openWorkspaceTabFocused, persistenceKey]);
 
   const handleBulkCloseTabs = useCallback(
     async (input: { tabsToClose: WorkspaceTabDescriptor[]; title: string; logLabel: string }) => {
@@ -3581,7 +3563,6 @@ function WorkspaceScreenContent({
                 onCopyWorkspacePath={handleCopyWorkspacePath}
                 onCopyBranchName={handleCopyBranchName}
                 onOpenSetupTab={handleOpenSetupTab}
-                onOpenArisTab={handleOpenArisTab}
                 onScriptTerminalStarted={handleScriptTerminalStarted}
                 onViewScriptTerminal={handleViewScriptTerminal}
                 onOpenUrlInBrowserTab={handleOpenUrlInBrowserTab}

@@ -23,7 +23,7 @@ export type WorkspaceTabTarget =
   | { kind: "browser"; browserId: string }
   | WorkspaceFileTabTarget
   | { kind: "setup"; workspaceId: string }
-  | { kind: "aris"; runId?: string };
+  | { kind: "aris"; runId?: string; view?: "cockpit" | "graph" | "review" };
 
 export interface WorkspaceTab {
   tabId: string;
@@ -527,12 +527,20 @@ function coerceWorkspaceTabTarget(raw: Record<string, unknown>): WorkspaceTabTar
     return normalizeWorkspaceTabTarget({ kind: "setup", workspaceId: raw.workspaceId });
   }
   if (kind === "aris") {
-    return normalizeWorkspaceTabTarget({
-      kind: "aris",
-      runId: typeof raw.runId === "string" ? raw.runId : undefined,
-    });
+    return coerceArisTabTarget(raw);
   }
   return null;
+}
+
+function coerceArisTabTarget(raw: Record<string, unknown>): WorkspaceTabTarget | null {
+  return normalizeWorkspaceTabTarget({
+    kind: "aris",
+    runId: typeof raw.runId === "string" ? raw.runId : undefined,
+    view:
+      raw.view === "cockpit" || raw.view === "graph" || raw.view === "review"
+        ? raw.view
+        : undefined,
+  });
 }
 
 function migrateSingleTab(rawTab: unknown, now: number): WorkspaceTab | null {

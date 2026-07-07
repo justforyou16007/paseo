@@ -5,9 +5,11 @@ import type pino from "pino";
 import { load as yamlLoad } from "js-yaml";
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
 import type {
+  ArisEventsReadRequest,
   ArisExperimentsReadRequest,
   ArisIterationsReadRequest,
   ArisIterationsReadResponse,
+  ArisReviewReadRequest,
   ArisRunReadRequest,
   ArisRunReadResponse,
   ArisRunsListRequest,
@@ -16,6 +18,8 @@ import type {
   SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
 import type { ArisDataService } from "../../aris/aris-data-service.js";
+import { readArisEvents, readArisReviewState } from "./aris-readers.js";
+import { ArisReviewWatcher } from "./aris-watcher.js";
 import { resolveScopedPath } from "../../file-explorer/service.js";
 
 export interface ArisSessionHost {
@@ -96,16 +100,17 @@ const READ_FILE_OPEN_FLAGS =
   process.platform === "win32" ? constants.O_RDONLY : constants.O_RDONLY | constants.O_NOFOLLOW;
 
 /**
- * ARIS session handler — serves run state, iterations, wiki, and experiments
- * from a workspace's `.aris/` and `research-wiki/` directories.
+ * ARIS session handler — serves run state, iterations, wiki, experiments,
+ * review state, and live events from a workspace's ARIS directories.
  *
- * Merges Wave 1 (run/iteration RPCs via ArisDataService) and Wave 2/3
- * (wiki/experiment RPCs via direct file reads) into a single class.
+ * Combines Wave 1/2 (run/iteration/wiki/experiment RPCs) with Wave 3
+ * (review/events RPCs and file-based readers/watchers).
  */
 export class ArisSession {
   private readonly host: ArisSessionHost;
   private readonly arisDataService: ArisDataService;
   private readonly logger: pino.Logger;
+  private readonly watchers = new Map<string, ArisReviewWatcher>();
 
   constructor(options: ArisSessionOptions) {
     this.host = options.host;
@@ -178,7 +183,7 @@ export class ArisSession {
     }
   }
 
-  // ── Wave 2/3: wiki/experiment RPCs (direct file reads) ──
+  // ── Wave 2: wiki/experiment RPCs (direct file reads) ──
 
   async handleWikiReadRequest(msg: ArisWikiReadRequest): Promise<void> {
     const { cwd: workspaceCwd, requestId } = msg;
@@ -231,6 +236,92 @@ export class ArisSession {
       this.logger.error({ err: error, cwd, requestId }, "Failed to read ARIS experiments");
       this.emitExperimentsError(requestId, getErrorMessage(error));
     }
+  }
+
+  // ── Wave 3: review/events RPCs (aris-readers / watcher) ──
+
+  async handleReviewReadRequest(msg: ArisReviewReadRequest): Promise<void> {
+    const { cwd, requestId, runId } = msg;
+    this.logger.debug({ cwd, requestId, runId }, "Handling aris.review.read request");
+
+    try {
+      const result = await readArisReviewState({ cwd, runId });
+      await this.ensureWatcher(cwd, runId);
+      this.host.emit({
+        type: "aris.review.read.response",
+        payload: {
+          requestId,
+          cwd,
+          ok: true,
+          reviewState: result.reviewState,
+          autoReviewMarkdown: result.autoReviewMarkdown,
+          paperImprovement: result.paperImprovement,
+          audits: result.audits,
+          pendingReview: result.pendingReview,
+          traces: result.traces,
+          knowledgeGraph: result.knowledgeGraph,
+          error: null,
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn({ err: error, cwd, requestId }, "Failed to read ARIS review state");
+      this.host.emit({
+        type: "aris.review.read.response",
+        payload: {
+          requestId,
+          cwd,
+          ok: false,
+          reviewState: null,
+          autoReviewMarkdown: null,
+          paperImprovement: null,
+          audits: [],
+          pendingReview: null,
+          traces: [],
+          knowledgeGraph: null,
+          error: message,
+        },
+      });
+    }
+  }
+
+  async handleEventsReadRequest(msg: ArisEventsReadRequest): Promise<void> {
+    const { cwd, requestId, limit, runId } = msg;
+    this.logger.debug({ cwd, requestId, limit, runId }, "Handling aris.events.read request");
+
+    try {
+      const events = await readArisEvents({ cwd, limit, runId });
+      this.host.emit({
+        type: "aris.events.read.response",
+        payload: {
+          requestId,
+          cwd,
+          ok: true,
+          events,
+          error: null,
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn({ err: error, cwd, requestId }, "Failed to read ARIS events");
+      this.host.emit({
+        type: "aris.events.read.response",
+        payload: {
+          requestId,
+          cwd,
+          ok: false,
+          events: [],
+          error: message,
+        },
+      });
+    }
+  }
+
+  stop(): void {
+    for (const watcher of this.watchers.values()) {
+      watcher.stop();
+    }
+    this.watchers.clear();
   }
 
   // ── Error helpers ──
@@ -534,6 +625,35 @@ export class ArisSession {
       status: toClaimStatus(frontmatter.status),
       confidence: toNumberOrNull(frontmatter.confidence),
     };
+  }
+
+  private async ensureWatcher(cwd: string, runId: string | undefined): Promise<void> {
+    const key = runId ? `${cwd}:${runId}` : cwd;
+    if (this.watchers.has(key)) {
+      return;
+    }
+
+    const watcher = new ArisReviewWatcher({
+      cwd,
+      runId,
+      onUpdate: (update) => {
+        this.host.emit({
+          type: "aris.review.update",
+          payload: {
+            cwd: update.cwd,
+            runId: update.runId,
+            reviewState: update.reviewState ?? {
+              version: "unknown",
+              stage: "pending",
+              rounds: [],
+            },
+          },
+        });
+      },
+      logger: this.logger,
+    });
+    await watcher.start();
+    this.watchers.set(key, watcher);
   }
 }
 

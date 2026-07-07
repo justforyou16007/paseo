@@ -1665,6 +1665,10 @@ export class Session {
         return this.arisSession.handleWikiReadRequest(msg);
       case "aris.experiments.read":
         return this.arisSession.handleExperimentsReadRequest(msg);
+      case "aris.review.read":
+        return this.arisSession.handleReviewReadRequest(msg);
+      case "aris.events.read":
+        return this.arisSession.handleEventsReadRequest(msg);
       default:
         return undefined;
     }
@@ -5574,5 +5578,7 @@ export class Session {
     this.checkoutSession.cleanup();
 
     this.workspaceGitObserver.dispose();
+
+    this.arisSession.stop();
   }
 }

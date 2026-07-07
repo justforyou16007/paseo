@@ -27,7 +27,6 @@ import {
   RotateCw,
   Rows2,
   Globe,
-  Lightbulb,
   Plus,
   SquarePen,
   SquareTerminal,
@@ -99,7 +98,6 @@ const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
 const ThemedX = withUnistyles(X);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedRotateCw = withUnistyles(RotateCw);
-const ThemedLightbulb = withUnistyles(Lightbulb);
 const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine);
 const ThemedArrowRightToLine = withUnistyles(ArrowRightToLine);
 const ThemedCopyX = withUnistyles(CopyX);
@@ -117,12 +115,10 @@ const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMut
 const AGENT_ICON = <ThemedSquarePen size={14} uniProps={mutedColorMapping} />;
 const TERMINAL_ICON = <ThemedSquareTerminal size={14} uniProps={mutedColorMapping} />;
 const BROWSER_ICON = <ThemedGlobe size={14} uniProps={mutedColorMapping} />;
-const ARIS_ICON = <ThemedLightbulb size={14} uniProps={mutedColorMapping} />;
 
 const DRAFT_TARGET: PinnedTabTarget = { kind: "draft" };
 const TERMINAL_TARGET: PinnedTabTarget = { kind: "terminal" };
 const BROWSER_TARGET: PinnedTabTarget = { kind: "browser" };
-const ARIS_TARGET: PinnedTabTarget = { kind: "aris" };
 
 function newTabActionButtonStyle({ hovered, pressed }: PressableStateCallbackType) {
   return [styles.newTabActionButton, (hovered || pressed) && styles.newTabActionButtonHovered];
@@ -216,7 +212,7 @@ interface WorkspaceTabRowExtrasProps {
   onCreateAgentTab: () => void;
   onCreateTerminal: () => void;
   onCreateBrowser: () => void;
-  onCreateAris: () => void;
+  onCreateArisTab: () => void;
   onCreateTerminalWithProfile: (profile: TerminalProfileInput) => void;
   onEditProfiles: () => void;
   normalizedServerId: string;
@@ -228,7 +224,7 @@ function WorkspaceTabRowExtras({
   onCreateAgentTab,
   onCreateTerminal,
   onCreateBrowser,
-  onCreateAris,
+  onCreateArisTab,
   onCreateTerminalWithProfile,
   onEditProfiles,
   normalizedServerId,
@@ -247,14 +243,14 @@ function WorkspaceTabRowExtras({
       createDraft: onCreateAgentTab,
       createTerminal: onCreateTerminal,
       createBrowser: onCreateBrowser,
-      createAris: onCreateAris,
+      createAris: onCreateArisTab,
       createTerminalWithProfile: onCreateTerminalWithProfile,
     }),
     [
       onCreateAgentTab,
+      onCreateArisTab,
       onCreateBrowser,
       onCreateTerminal,
-      onCreateAris,
       onCreateTerminalWithProfile,
     ],
   );
@@ -311,13 +307,6 @@ function WorkspaceTabRowExtras({
               onSelect={onCreateBrowser}
             />
           ) : null}
-          <PinnableMenuItem
-            testID="workspace-new-tab-menu-aris"
-            target={ARIS_TARGET}
-            label="ARIS"
-            leading={ARIS_ICON}
-            onSelect={onCreateAris}
-          />
           <DropdownMenuSeparator />
           <DropdownMenuLabel>{t("workspace.tabs.actions.terminalProfilesMenu")}</DropdownMenuLabel>
           {profiles.map((profile) => (
@@ -478,7 +467,7 @@ function getFallbackTabLabel(
     return tab.target.path.split("/").findLast(Boolean) ?? tab.target.path;
   }
   if (tab.target.kind === "aris") {
-    return "ARIS";
+    return `ARIS ${tab.target.view ?? "cockpit"}`;
   }
   return labels.agent;
 }
@@ -903,7 +892,7 @@ export function WorkspaceDesktopTabsRow({
     onCreateBrowserTab({ paneId });
   }, [onCreateBrowserTab, paneId]);
 
-  const handleCreateAris = useCallback(() => {
+  const handleCreateArisTab = useCallback(() => {
     onCreateArisTab({ paneId });
   }, [onCreateArisTab, paneId]);
 
@@ -1027,7 +1016,7 @@ export function WorkspaceDesktopTabsRow({
           onCreateAgentTab={handleCreateAgentTab}
           onCreateTerminal={handleCreateTerminal}
           onCreateBrowser={handleCreateBrowser}
-          onCreateAris={handleCreateAris}
+          onCreateArisTab={handleCreateArisTab}
           onCreateTerminalWithProfile={handleCreateTerminalWithProfile}
           onEditProfiles={handleEditProfiles}
           normalizedServerId={normalizedServerId}
