@@ -2,6 +2,7 @@ export type PinnedTabTarget =
   | { kind: "draft" }
   | { kind: "terminal" }
   | { kind: "browser" }
+  | { kind: "aris" }
   | { kind: "profile"; profileId: string };
 
 export function pinnedTargetKey(target: PinnedTabTarget): string {

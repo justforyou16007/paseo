@@ -22,7 +22,8 @@ export type WorkspaceTabTarget =
   | { kind: "terminal"; terminalId: string }
   | { kind: "browser"; browserId: string }
   | WorkspaceFileTabTarget
-  | { kind: "setup"; workspaceId: string };
+  | { kind: "setup"; workspaceId: string }
+  | { kind: "aris"; runId?: string };
 
 export interface WorkspaceTab {
   tabId: string;
@@ -524,6 +525,12 @@ function coerceWorkspaceTabTarget(raw: Record<string, unknown>): WorkspaceTabTar
   }
   if (kind === "setup" && typeof raw.workspaceId === "string") {
     return normalizeWorkspaceTabTarget({ kind: "setup", workspaceId: raw.workspaceId });
+  }
+  if (kind === "aris") {
+    return normalizeWorkspaceTabTarget({
+      kind: "aris",
+      runId: typeof raw.runId === "string" ? raw.runId : undefined,
+    });
   }
   return null;
 }

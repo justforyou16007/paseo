@@ -376,6 +376,9 @@ function getFallbackTabOptionDescription(
   if (tab.target.kind === "browser") {
     return labels.browser;
   }
+  if (tab.target.kind === "aris") {
+    return "ARIS";
+  }
   return tab.target.path;
 }
 
@@ -2441,6 +2444,19 @@ function WorkspaceScreenContent({
     [focusWorkspacePane, openWorkspaceTabFocused, persistenceKey],
   );
 
+  const handleCreateArisTab = useCallback(
+    (input?: { paneId?: string }) => {
+      if (!persistenceKey) {
+        return;
+      }
+      if (input?.paneId) {
+        focusWorkspacePane(persistenceKey, input.paneId);
+      }
+      openWorkspaceTabFocused(persistenceKey, { kind: "aris" });
+    },
+    [focusWorkspacePane, openWorkspaceTabFocused, persistenceKey],
+  );
+
   const handleOpenUrlInBrowserTab = useCallback(
     (url: string) => {
       if (!persistenceKey || !getIsElectron()) {
@@ -3457,6 +3473,7 @@ function WorkspaceScreenContent({
         onCreateDraftTab={handleCreateDraftTab}
         onCreateTerminalTab={handleCreateTerminal}
         onCreateBrowserTab={handleCreateBrowserTab}
+        onCreateArisTab={handleCreateArisTab}
         showCreateBrowserTab={showCreateBrowserTab}
         buildPaneContentModel={buildDesktopPaneContentModel}
         onFocusPane={handleFocusPane}
@@ -3492,6 +3509,7 @@ function WorkspaceScreenContent({
     handleCreateDraftTab,
     handleCreateTerminal,
     handleCreateBrowserTab,
+    handleCreateArisTab,
     showCreateBrowserTab,
     buildDesktopPaneContentModel,
     handleFocusPane,
@@ -3595,6 +3613,7 @@ function WorkspaceScreenContent({
           onCreateDraftTab={handleCreateDraftTab}
           onCreateTerminalTab={handleCreateTerminal}
           onCreateBrowserTab={handleCreateBrowserTab}
+          onCreateArisTab={handleCreateArisTab}
           showCreateBrowserTab={showCreateBrowserTab}
           disableCreateTerminal={createTerminalMutation.isPending}
           isWaitingOnTerminalReadiness={pendingTerminalCreateInput !== null}

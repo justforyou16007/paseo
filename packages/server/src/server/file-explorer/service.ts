@@ -69,12 +69,12 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
   ".svg": "image/svg+xml",
 };
 
-interface ScopedPathParams {
+export interface ScopedPathParams {
   root: string;
   relativePath?: string;
 }
 
-interface ScopedPath {
+export interface ScopedPath {
   requestedPath: string;
   resolvedPath: string;
 }
@@ -272,7 +272,7 @@ export async function getDownloadableFileInfo({ root, relativePath }: ReadFilePa
   }
 }
 
-async function resolveScopedPath({
+export async function resolveScopedPath({
   root,
   relativePath = ".",
 }: ScopedPathParams): Promise<ScopedPath> {
