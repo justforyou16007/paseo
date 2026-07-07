@@ -253,6 +253,43 @@ describe("buildWorkspaceTabMenuEntries", () => {
     expect(onCopyFilePath).toHaveBeenCalledWith("/some/path.ts");
   });
 
+  it("builds menu for aris tabs with only close actions", () => {
+    const arisTab: WorkspaceTabDescriptor = {
+      key: "aris_cockpit",
+      tabId: "aris_cockpit",
+      kind: "aris",
+      target: { kind: "aris", view: "cockpit" },
+    };
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab: arisTab,
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context-aris_cockpit",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    const labels = entries.filter((entry) => entry.kind === "item").map((entry) => entry.label);
+    expect(labels).toEqual([
+      "Close to the left",
+      "Close to the right",
+      "Close other tabs",
+      "Close",
+    ]);
+    expect(labels).not.toContain("Copy resume command");
+    expect(labels).not.toContain("Copy file path");
+    expect(labels).not.toContain("Rename");
+    expect(labels).not.toContain("Reload agent");
+  });
+
   it("uses the same rename entry shape for agent and terminal tabs", () => {
     const terminalTab: WorkspaceTabDescriptor = {
       key: "terminal_abc",

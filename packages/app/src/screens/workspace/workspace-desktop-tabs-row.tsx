@@ -456,6 +456,9 @@ function getFallbackTabLabel(
   if (tab.target.kind === "file") {
     return tab.target.path.split("/").findLast(Boolean) ?? tab.target.path;
   }
+  if (tab.target.kind === "aris") {
+    return `ARIS ${tab.target.view ?? "cockpit"}`;
+  }
   return labels.agent;
 }
 

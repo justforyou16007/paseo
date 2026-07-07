@@ -150,6 +150,7 @@ import { WorkspaceFilesSession } from "./session/files/workspace-files-session.j
 import { AgentConfigSession } from "./session/agent-config/agent-config-session.js";
 import { ProjectConfigSession } from "./session/project-config/project-config-session.js";
 import { DaemonSession, type DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
+import { ArisSession } from "./session/aris/aris-session.js";
 import type { DaemonWebSocketRuntimeDiagnosticSnapshot } from "./session/daemon/diagnostics.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { PushTokenStore } from "./push/token-store.js";
@@ -583,6 +584,7 @@ export class Session {
   private readonly agentConfigSession: AgentConfigSession;
   private readonly projectConfigSession: ProjectConfigSession;
   private readonly daemonSession: DaemonSession;
+  private readonly arisSession: ArisSession;
   private readonly workspaceScripts: WorkspaceScriptsService;
   private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
 
@@ -789,6 +791,12 @@ export class Session {
       listAgents: () => this.agentManager.listAgents(),
       listProjects: () => this.projectRegistry.list(),
       listWorkspaces: () => this.workspaceRegistry.list(),
+      logger: this.sessionLogger,
+    });
+    this.arisSession = new ArisSession({
+      host: {
+        emit: (msg) => this.emit(msg),
+      },
       logger: this.sessionLogger,
     });
     this.daemonConfigStore = daemonConfigStore;
@@ -1366,6 +1374,7 @@ export class Session {
       this.dispatchProviderMessage(msg) ??
       this.dispatchTerminalMessage(msg) ??
       this.dispatchChatScheduleLoopMessage(msg) ??
+      this.dispatchArisMessage(msg) ??
       this.dispatchMiscMessage(msg);
     if (promise) await promise;
   }
@@ -1713,6 +1722,17 @@ export class Session {
         return this.chatScheduleLoopSession.handleScheduleRunOnceRequest(msg);
       case "schedule/update":
         return this.chatScheduleLoopSession.handleScheduleUpdateRequest(msg);
+      default:
+        return undefined;
+    }
+  }
+
+  private dispatchArisMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "aris.review.read":
+        return this.arisSession.handleReviewReadRequest(msg);
+      case "aris.events.read":
+        return this.arisSession.handleEventsReadRequest(msg);
       default:
         return undefined;
     }
@@ -5537,5 +5557,7 @@ export class Session {
     this.checkoutSession.cleanup();
 
     this.workspaceGitObserver.dispose();
+
+    this.arisSession.stop();
   }
 }

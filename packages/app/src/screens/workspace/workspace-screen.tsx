@@ -348,6 +348,9 @@ function getFallbackTabOptionLabel(
   if (tab.target.kind === "file") {
     return tab.target.path.split("/").findLast(Boolean) ?? tab.target.path;
   }
+  if (tab.target.kind === "aris") {
+    return `ARIS ${tab.target.view ?? "cockpit"}`;
+  }
   return labels.agent;
 }
 
@@ -375,6 +378,9 @@ function getFallbackTabOptionDescription(
   }
   if (tab.target.kind === "browser") {
     return labels.browser;
+  }
+  if (tab.target.kind === "aris") {
+    return `ARIS ${tab.target.view ?? "cockpit"}`;
   }
   return tab.target.path;
 }

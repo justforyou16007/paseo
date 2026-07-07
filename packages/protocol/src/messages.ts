@@ -2039,6 +2039,21 @@ export const CaptureTerminalRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const ArisReviewReadRequestSchema = z.object({
+  type: z.literal("aris.review.read"),
+  cwd: z.string(),
+  requestId: z.string(),
+  runId: z.string().optional(),
+});
+
+export const ArisEventsReadRequestSchema = z.object({
+  type: z.literal("aris.events.read"),
+  cwd: z.string(),
+  requestId: z.string(),
+  limit: z.number().int().positive().max(1000).optional(),
+  runId: z.string().optional(),
+});
+
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   BrowserAutomationExecuteResponseSchema,
   VoiceAudioChunkMessageSchema,
@@ -2171,9 +2186,113 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   LoopInspectRequestSchema,
   LoopLogsRequestSchema,
   LoopStopRequestSchema,
+  ArisReviewReadRequestSchema,
+  ArisEventsReadRequestSchema,
 ]);
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
+
+// ============================================================================
+// ARIS (AutoResearch Visualization SDK) payload schemas
+// ============================================================================
+
+export const ArisReviewRoundSchema = z.object({
+  round: z.number().int().nonnegative(),
+  status: z.enum(["pending", "active", "completed", "rejected"]),
+  startedAt: z.string().optional(),
+  completedAt: z.string().optional(),
+  verdict: z.string().optional(),
+});
+
+export const ArisReviewStateSchema = z
+  .object({
+    version: z.string().optional(),
+    currentRound: z.number().int().nonnegative().optional(),
+    stage: z.enum(["pending", "in_review", "revising", "accepted", "rejected"]).optional(),
+    rounds: z.array(ArisReviewRoundSchema).optional(),
+    overallVerdict: z.string().optional(),
+    updatedAt: z.string().optional(),
+  })
+  .passthrough();
+
+export const ArisAuditVerdictSchema = z.object({
+  section: z.string(),
+  verdict: z.enum(["pass", "fail", "warning", "na"]),
+  score: z.number().optional(),
+  summary: z.string().optional(),
+  findings: z.array(z.string()).optional(),
+});
+
+export const ArisAuditFileSchema = z
+  .object({
+    fileName: z.string(),
+    section: z.string().optional(),
+    verdicts: z.array(ArisAuditVerdictSchema).optional(),
+    raw: z.record(z.string(), z.unknown()).optional(),
+  })
+  .passthrough();
+
+export const ArisPendingReviewItemSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  status: z.enum(["pending", "in_progress", "done"]).optional(),
+  priority: z.enum(["low", "medium", "high"]).optional(),
+});
+
+export const ArisPendingReviewSchema = z
+  .object({
+    items: z.array(ArisPendingReviewItemSchema).optional(),
+  })
+  .passthrough();
+
+export const ArisPaperImprovementSectionSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  status: z.enum(["not_started", "in_progress", "completed", "blocked"]).optional(),
+  score: z.number().optional(),
+});
+
+export const ArisPaperImprovementStateSchema = z
+  .object({
+    version: z.string().optional(),
+    sections: z.array(ArisPaperImprovementSectionSchema).optional(),
+  })
+  .passthrough();
+
+export const ArisTraceMetadataSchema = z.object({
+  skill: z.string(),
+  date: z.string(),
+  runId: z.string(),
+  status: z.enum(["running", "completed", "failed", "pending"]).optional(),
+});
+
+export const ArisEventSchema = z
+  .object({
+    timestamp: z.string(),
+    type: z.string(),
+    runId: z.string().optional(),
+    skill: z.string().optional(),
+    payload: z.record(z.string(), z.unknown()).optional(),
+  })
+  .passthrough();
+
+export const ArisKnowledgeGraphNodeSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  group: z.string().optional(),
+});
+
+export const ArisKnowledgeGraphEdgeSchema = z.object({
+  source: z.string(),
+  target: z.string(),
+  relation: z.string().optional(),
+  weight: z.number().optional(),
+});
+
+export const ArisKnowledgeGraphSchema = z.object({
+  nodes: z.array(ArisKnowledgeGraphNodeSchema).optional(),
+  edges: z.array(ArisKnowledgeGraphEdgeSchema).optional(),
+});
 
 // ============================================================================
 // Session Outbound Messages (Session emits these)
@@ -2365,6 +2484,8 @@ export const ServerInfoStatusPayloadSchema = z
         daemonSelfUpdate: z.boolean().optional(),
         // COMPAT(agentForkContext): added in v0.1.102, remove gate after 2026-12-28.
         agentForkContext: z.boolean().optional(),
+        // COMPAT(aris): added in v0.1.104, remove gate after 2027-01-07.
+        aris: z.boolean().optional(),
       })
       .optional(),
   })
@@ -4166,6 +4287,43 @@ export const DaemonUpdateProgressMessageSchema = z.object({
 
 export type DaemonUpdateProgressMessage = z.infer<typeof DaemonUpdateProgressMessageSchema>;
 
+export const ArisReviewReadResponseSchema = z.object({
+  type: z.literal("aris.review.read.response"),
+  payload: z.object({
+    requestId: z.string(),
+    cwd: z.string(),
+    ok: z.boolean(),
+    reviewState: ArisReviewStateSchema.nullable(),
+    autoReviewMarkdown: z.string().nullable(),
+    paperImprovement: ArisPaperImprovementStateSchema.nullable(),
+    audits: z.array(ArisAuditFileSchema),
+    pendingReview: ArisPendingReviewSchema.nullable(),
+    traces: z.array(ArisTraceMetadataSchema),
+    knowledgeGraph: ArisKnowledgeGraphSchema.nullable().optional(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const ArisEventsReadResponseSchema = z.object({
+  type: z.literal("aris.events.read.response"),
+  payload: z.object({
+    requestId: z.string(),
+    cwd: z.string(),
+    ok: z.boolean(),
+    events: z.array(ArisEventSchema),
+    error: z.string().nullable(),
+  }),
+});
+
+export const ArisReviewUpdateSchema = z.object({
+  type: z.literal("aris.review.update"),
+  payload: z.object({
+    cwd: z.string(),
+    runId: z.string().optional(),
+    reviewState: ArisReviewStateSchema,
+  }),
+});
+
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   BrowserAutomationExecuteRequestSchema,
   ActivityLogMessageSchema,
@@ -4305,6 +4463,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   LoopStopResponseSchema,
   DaemonUpdateProgressMessageSchema,
   DaemonUpdateResponseSchema,
+  ArisReviewReadResponseSchema,
+  ArisEventsReadResponseSchema,
+  ArisReviewUpdateSchema,
 ]);
 
 export type SessionOutboundMessage = z.infer<typeof SessionOutboundMessageSchema>;
@@ -4442,6 +4603,24 @@ export type LoopListResponse = z.infer<typeof LoopListResponseSchema>;
 export type LoopInspectResponse = z.infer<typeof LoopInspectResponseSchema>;
 export type LoopLogsResponse = z.infer<typeof LoopLogsResponseSchema>;
 export type LoopStopResponse = z.infer<typeof LoopStopResponseSchema>;
+
+// ARIS type exports
+export type ArisReviewState = z.infer<typeof ArisReviewStateSchema>;
+export type ArisReviewRound = z.infer<typeof ArisReviewRoundSchema>;
+export type ArisAuditFile = z.infer<typeof ArisAuditFileSchema>;
+export type ArisAuditVerdict = z.infer<typeof ArisAuditVerdictSchema>;
+export type ArisPendingReview = z.infer<typeof ArisPendingReviewSchema>;
+export type ArisPaperImprovementState = z.infer<typeof ArisPaperImprovementStateSchema>;
+export type ArisTraceMetadata = z.infer<typeof ArisTraceMetadataSchema>;
+export type ArisEvent = z.infer<typeof ArisEventSchema>;
+export type ArisKnowledgeGraphNode = z.infer<typeof ArisKnowledgeGraphNodeSchema>;
+export type ArisKnowledgeGraphEdge = z.infer<typeof ArisKnowledgeGraphEdgeSchema>;
+export type ArisKnowledgeGraph = z.infer<typeof ArisKnowledgeGraphSchema>;
+export type ArisReviewReadRequest = z.infer<typeof ArisReviewReadRequestSchema>;
+export type ArisEventsReadRequest = z.infer<typeof ArisEventsReadRequestSchema>;
+export type ArisReviewReadResponse = z.infer<typeof ArisReviewReadResponseSchema>;
+export type ArisEventsReadResponse = z.infer<typeof ArisEventsReadResponseSchema>;
+export type ArisReviewUpdate = z.infer<typeof ArisReviewUpdateSchema>;
 
 // Type exports for payload types
 export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;

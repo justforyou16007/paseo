@@ -272,7 +272,7 @@ export async function getDownloadableFileInfo({ root, relativePath }: ReadFilePa
   }
 }
 
-async function resolveScopedPath({
+export async function resolveScopedPath({
   root,
   relativePath = ".",
 }: ScopedPathParams): Promise<ScopedPath> {
