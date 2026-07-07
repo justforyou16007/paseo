@@ -149,6 +149,8 @@ import { ProviderCatalogSession } from "./session/provider/provider-catalog-sess
 import { WorkspaceFilesSession } from "./session/files/workspace-files-session.js";
 import { AgentConfigSession } from "./session/agent-config/agent-config-session.js";
 import { ProjectConfigSession } from "./session/project-config/project-config-session.js";
+import { ArisSession } from "./aris/aris-session.js";
+import { createArisDataService } from "./aris/aris-data-service.js";
 import { DaemonSession, type DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
 import type { DaemonWebSocketRuntimeDiagnosticSnapshot } from "./session/daemon/diagnostics.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
@@ -582,6 +584,7 @@ export class Session {
   private readonly workspaceFilesSession: WorkspaceFilesSession;
   private readonly agentConfigSession: AgentConfigSession;
   private readonly projectConfigSession: ProjectConfigSession;
+  private readonly arisSession: ArisSession;
   private readonly daemonSession: DaemonSession;
   private readonly workspaceScripts: WorkspaceScriptsService;
   private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
@@ -772,6 +775,16 @@ export class Session {
         emit: (msg) => this.emit(msg),
       },
       projectRegistry: this.projectRegistry,
+      logger: this.sessionLogger,
+    });
+    this.arisSession = new ArisSession({
+      host: {
+        emit: (msg) => this.emit(msg),
+      },
+      arisDataService: createArisDataService({
+        workspaceRegistry: this.workspaceRegistry,
+        logger: this.sessionLogger,
+      }),
       logger: this.sessionLogger,
     });
     this.daemonSession = new DaemonSession({
@@ -1363,6 +1376,7 @@ export class Session {
       this.dispatchAgentConfigMessage(msg) ??
       this.dispatchCheckoutMessage(msg) ??
       this.dispatchWorkspaceAndProjectMessage(msg) ??
+      this.dispatchArisMessage(msg) ??
       this.dispatchProviderMessage(msg) ??
       this.dispatchTerminalMessage(msg) ??
       this.dispatchChatScheduleLoopMessage(msg) ??
@@ -1633,6 +1647,19 @@ export class Session {
       case "file.upload.request":
         this.workspaceFilesSession.handleFileUploadRequest(msg);
         return undefined;
+      default:
+        return undefined;
+    }
+  }
+
+  private dispatchArisMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "aris.runs.list.request":
+        return this.arisSession.handleRunsListRequest(msg);
+      case "aris.run.read.request":
+        return this.arisSession.handleRunReadRequest(msg);
+      case "aris.iterations.read.request":
+        return this.arisSession.handleIterationsReadRequest(msg);
       default:
         return undefined;
     }

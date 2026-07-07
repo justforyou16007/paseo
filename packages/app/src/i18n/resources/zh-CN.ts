@@ -460,6 +460,7 @@ export const zhCN: TranslationResources = {
         browser: "浏览器",
         agent: "Agent",
         workspace: "Workspace",
+        aris: "ARIS",
       },
       switcher: {
         trigger: "切换标签（已打开 {{count}} 个）",
@@ -549,6 +550,7 @@ export const zhCN: TranslationResources = {
         copyPath: "复制 workspace 路径",
         copyBranchName: "复制分支名称",
         showSetup: "显示 setup",
+        aris: "ARIS runs",
       },
       toasts: {
         workspacePathUnavailable: "Workspace 路径尚不可用",

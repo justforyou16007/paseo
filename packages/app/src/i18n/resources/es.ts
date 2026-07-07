@@ -464,6 +464,7 @@ export const es: TranslationResources = {
         browser: "Navegador",
         agent: "Agent",
         workspace: "Workspace",
+        aris: "ARIS",
       },
       switcher: {
         trigger: "Cambiar pestañas ({{count}}abierto)",
@@ -556,6 +557,7 @@ export const es: TranslationResources = {
         copyPath: "Copiar ruta del espacio de trabajo",
         copyBranchName: "Copiar nombre de sucursal",
         showSetup: "Mostrar configuración",
+        aris: "ARIS runs",
       },
       toasts: {
         workspacePathUnavailable: "La rutaWorkspaceaún no está disponible",

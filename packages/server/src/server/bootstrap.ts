@@ -163,6 +163,8 @@ import {
 } from "./auth.js";
 import { createWebUiMiddleware } from "./web-ui.js";
 import { WorkspaceAutoName } from "./workspace-auto-name.js";
+import { createArisDataService, type ArisDataService } from "./aris/aris-data-service.js";
+import { createArisLiveRouteHandler } from "./aris/aris-live-route.js";
 import { createGitMutationService } from "./session/git-mutation/git-mutation-service.js";
 import { workspaceIdsOnCheckout } from "./workspace-directory.js";
 import { resolveFirstAgentPromptTitle } from "./agent/create-agent-title.js";
@@ -521,6 +523,7 @@ export async function createPaseoDaemon(
   app.set("trust proxy", resolveExpressTrustProxySetting(config));
   let boundListenTarget: ListenTarget | null = null;
   let workspaceRegistry: FileBackedWorkspaceRegistry | null = null;
+  let arisDataService: ArisDataService | null = null;
   const terminalManager = createConfiguredTerminalManager({
     getTerminalActivityUrl: () => createTerminalActivityUrl(boundListenTarget),
   });
@@ -621,6 +624,18 @@ export async function createPaseoDaemon(
   // static app files load without the daemon password while API/WebSocket calls
   // remain protected.
   mountWebUi(app, config, logger);
+
+  // ARIS live SSE endpoint — token-gated inline, deliberately skips daemon auth.
+  // arisDataService is assigned later (alongside workspaceRegistry) so we pass
+  // a factory; by the time a request arrives it's always set.
+  app.get(
+    "/api/aris/workspaces/:workspaceId/live",
+    createArisLiveRouteHandler({
+      arisDataService: () => arisDataService!,
+      logger,
+      password: config.auth?.password,
+    }),
+  );
 
   app.use(
     createRequireBearerMiddleware(config.auth, (context) => {
@@ -725,6 +740,11 @@ export async function createPaseoDaemon(
     path.join(config.paseoHome, "projects", "workspaces.json"),
     logger,
   );
+  const arisDataServiceValue = createArisDataService({
+    workspaceRegistry,
+    logger,
+  });
+  arisDataService = arisDataServiceValue;
   const chatService = new FileBackedChatService({
     paseoHome: config.paseoHome,
     logger,

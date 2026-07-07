@@ -464,6 +464,7 @@ export const fr: TranslationResources = {
         browser: "Navigateur",
         agent: "Agent",
         workspace: "Workspace",
+        aris: "ARIS",
       },
       switcher: {
         trigger: "Changer d'onglet ({{count}}ouvert)",
@@ -556,6 +557,7 @@ export const fr: TranslationResources = {
         copyPath: "Copier le chemin de l'espace de travail",
         copyBranchName: "Copier le nom de la branche",
         showSetup: "Afficher la configuration",
+        aris: "ARIS runs",
       },
       toasts: {
         workspacePathUnavailable: "Le cheminWorkspacen'est pas encore disponible",

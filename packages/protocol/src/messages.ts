@@ -1936,6 +1936,92 @@ export const RegisterPushTokenMessageSchema = z.object({
 });
 
 // ============================================================================
+// ARIS (AutoResearch Visualization) Messages
+// ============================================================================
+
+export const ArisRunPhaseSchema = z.object({
+  phaseId: z.string(),
+  name: z.string(),
+  status: z.enum(["pending", "running", "completed", "failed"]),
+  iterationCount: z.number().int().nonnegative(),
+  bestScore: z.number().nullable().optional(),
+});
+
+export const ArisRunStateSchema = z.object({
+  runId: z.string(),
+  status: z.enum(["pending", "running", "paused", "completed", "failed"]),
+  goal: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  phases: z.array(ArisRunPhaseSchema),
+});
+
+export const ArisIterationSchema = z.object({
+  iterationId: z.string(),
+  runId: z.string(),
+  phaseId: z.string(),
+  index: z.number().int().nonnegative(),
+  score: z.number().nullable().optional(),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+  createdAt: z.string(),
+});
+
+export const ArisRunsListRequestSchema = z.object({
+  type: z.literal("aris.runs.list.request"),
+  requestId: z.string(),
+  workspaceId: z.string(),
+});
+
+export const ArisRunsListResponseSchema = z.object({
+  type: z.literal("aris.runs.list.response"),
+  payload: z.object({
+    requestId: z.string(),
+    runs: z.array(ArisRunStateSchema),
+  }),
+});
+
+export const ArisRunReadRequestSchema = z.object({
+  type: z.literal("aris.run.read.request"),
+  requestId: z.string(),
+  workspaceId: z.string(),
+  runId: z.string(),
+});
+
+export const ArisRunReadResponseSchema = z.object({
+  type: z.literal("aris.run.read.response"),
+  payload: z.object({
+    requestId: z.string(),
+    run: ArisRunStateSchema.nullable(),
+  }),
+});
+
+export const ArisIterationsReadRequestSchema = z.object({
+  type: z.literal("aris.iterations.read.request"),
+  requestId: z.string(),
+  workspaceId: z.string(),
+  runId: z.string(),
+  phaseId: z.string().nullable().optional(),
+  limit: z.number().int().positive().max(1000).optional(),
+  cursor: z.string().optional(),
+});
+
+export const ArisIterationsReadResponseSchema = z.object({
+  type: z.literal("aris.iterations.read.response"),
+  payload: z.object({
+    requestId: z.string(),
+    iterations: z.array(ArisIterationSchema),
+    nextCursor: z.string().nullable(),
+  }),
+});
+
+export const ArisLiveDeltaSchema = z.object({
+  workspaceId: z.string(),
+  runId: z.string().optional(),
+  type: z.enum(["run_updated", "iteration_added", "phase_completed"]),
+  payload: z.unknown(),
+});
+
+// ============================================================================
 // Terminal Messages
 // ============================================================================
 
@@ -2171,6 +2257,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   LoopInspectRequestSchema,
   LoopLogsRequestSchema,
   LoopStopRequestSchema,
+  ArisRunsListRequestSchema,
+  ArisRunReadRequestSchema,
+  ArisIterationsReadRequestSchema,
 ]);
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
@@ -4303,6 +4392,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   LoopInspectResponseSchema,
   LoopLogsResponseSchema,
   LoopStopResponseSchema,
+  ArisRunsListResponseSchema,
+  ArisRunReadResponseSchema,
+  ArisIterationsReadResponseSchema,
   DaemonUpdateProgressMessageSchema,
   DaemonUpdateResponseSchema,
 ]);
@@ -4646,6 +4738,18 @@ export type KillTerminalResponse = z.infer<typeof KillTerminalResponseSchema>;
 export type CaptureTerminalRequest = z.infer<typeof CaptureTerminalRequestSchema>;
 export type CaptureTerminalResponse = z.infer<typeof CaptureTerminalResponseSchema>;
 export type TerminalStreamExit = z.infer<typeof TerminalStreamExitSchema>;
+
+// ARIS message types
+export type ArisRunPhase = z.infer<typeof ArisRunPhaseSchema>;
+export type ArisRunState = z.infer<typeof ArisRunStateSchema>;
+export type ArisIteration = z.infer<typeof ArisIterationSchema>;
+export type ArisLiveDelta = z.infer<typeof ArisLiveDeltaSchema>;
+export type ArisRunsListRequest = z.infer<typeof ArisRunsListRequestSchema>;
+export type ArisRunsListResponse = z.infer<typeof ArisRunsListResponseSchema>;
+export type ArisRunReadRequest = z.infer<typeof ArisRunReadRequestSchema>;
+export type ArisRunReadResponse = z.infer<typeof ArisRunReadResponseSchema>;
+export type ArisIterationsReadRequest = z.infer<typeof ArisIterationsReadRequestSchema>;
+export type ArisIterationsReadResponse = z.infer<typeof ArisIterationsReadResponseSchema>;
 
 // ============================================================================
 // WebSocket Level Messages (wraps session messages)

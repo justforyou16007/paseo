@@ -85,6 +85,9 @@ import type {
   PaseoConfigRaw,
   PaseoConfigRevision,
   WorkspaceCreateRequest,
+  ArisRunsListResponse,
+  ArisRunReadResponse,
+  ArisIterationsReadResponse,
 } from "@getpaseo/protocol/messages";
 import type {
   AgentPermissionRequest,
@@ -1936,6 +1939,61 @@ export class DaemonClient {
         }
         return msg.payload;
       },
+    });
+  }
+
+  async listArisRuns(
+    workspaceId: string,
+    requestId?: string,
+  ): Promise<ArisRunsListResponse["payload"]> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    return this.sendCorrelatedSessionRequest({
+      requestId: resolvedRequestId,
+      message: {
+        type: "aris.runs.list.request",
+        requestId: resolvedRequestId,
+        workspaceId,
+      },
+      responseType: "aris.runs.list.response",
+    });
+  }
+
+  async readArisRun(
+    workspaceId: string,
+    runId: string,
+    requestId?: string,
+  ): Promise<ArisRunReadResponse["payload"]> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    return this.sendCorrelatedSessionRequest({
+      requestId: resolvedRequestId,
+      message: {
+        type: "aris.run.read.request",
+        requestId: resolvedRequestId,
+        workspaceId,
+        runId,
+      },
+      responseType: "aris.run.read.response",
+    });
+  }
+
+  async readArisIterations(
+    workspaceId: string,
+    runId: string,
+    options?: { phaseId?: string; limit?: number; cursor?: string; requestId?: string },
+  ): Promise<ArisIterationsReadResponse["payload"]> {
+    const resolvedRequestId = this.createRequestId(options?.requestId);
+    return this.sendCorrelatedSessionRequest({
+      requestId: resolvedRequestId,
+      message: {
+        type: "aris.iterations.read.request",
+        requestId: resolvedRequestId,
+        workspaceId,
+        runId,
+        ...(options?.phaseId ? { phaseId: options.phaseId } : {}),
+        ...(options?.limit ? { limit: options.limit } : {}),
+        ...(options?.cursor ? { cursor: options.cursor } : {}),
+      },
+      responseType: "aris.iterations.read.response",
     });
   }
 
