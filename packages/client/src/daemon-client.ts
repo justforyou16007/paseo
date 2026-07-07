@@ -88,6 +88,8 @@ import type {
   ArisRunsListResponse,
   ArisRunReadResponse,
   ArisIterationsReadResponse,
+  ArisWikiReadResponse,
+  ArisExperimentsReadResponse,
 } from "@getpaseo/protocol/messages";
 import type {
   AgentPermissionRequest,
@@ -373,6 +375,8 @@ type WriteProjectConfigPayload = Extract<
   SessionOutboundMessage,
   { type: "write_project_config_response" }
 >["payload"];
+type ArisWikiReadPayload = ArisWikiReadResponse["payload"];
+type ArisExperimentsReadPayload = ArisExperimentsReadResponse["payload"];
 type ListCommandsPayload = ListCommandsResponse["payload"];
 type ListCommandsDraftConfig = Pick<
   AgentSessionConfig,
@@ -3940,6 +3944,33 @@ export class DaemonClient {
         expectedRevision: input.expectedRevision,
       },
       responseType: "write_project_config_response",
+    });
+  }
+
+  async readArisWiki(cwd: string, requestId?: string): Promise<ArisWikiReadPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "aris.wiki.read",
+        cwd,
+      },
+      responseType: "aris.wiki.read.response",
+    });
+  }
+
+  async readArisExperiments(
+    cwd: string,
+    experimentId?: string,
+    requestId?: string,
+  ): Promise<ArisExperimentsReadPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "aris.experiments.read",
+        cwd,
+        ...(experimentId ? { experimentId } : {}),
+      },
+      responseType: "aris.experiments.read.response",
     });
   }
 

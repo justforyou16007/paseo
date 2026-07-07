@@ -8,7 +8,7 @@ const PROFILES: readonly TerminalProfile[] = [
 ];
 
 interface RecordedLaunch {
-  action: "draft" | "terminal" | "browser" | "profile";
+  action: "draft" | "terminal" | "browser" | "aris" | "profile";
   profile?: TerminalProfileInput;
 }
 
@@ -18,6 +18,7 @@ function recordingHandlers() {
     createDraft: () => launches.push({ action: "draft" }),
     createTerminal: () => launches.push({ action: "terminal" }),
     createBrowser: () => launches.push({ action: "browser" }),
+    createAris: () => launches.push({ action: "aris" }),
     createTerminalWithProfile: (profile) => launches.push({ action: "profile", profile }),
   };
   return { launches, handlers };
@@ -40,6 +41,12 @@ describe("runPinnedTabTarget", () => {
     const { launches, handlers } = recordingHandlers();
     runPinnedTabTarget({ kind: "browser" }, PROFILES, handlers);
     expect(launches).toEqual([{ action: "browser" }]);
+  });
+
+  it("launches ARIS for the aris target", () => {
+    const { launches, handlers } = recordingHandlers();
+    runPinnedTabTarget({ kind: "aris" }, PROFILES, handlers);
+    expect(launches).toEqual([{ action: "aris" }]);
   });
 
   it("launches the resolved profile command for a known profile target", () => {

@@ -69,12 +69,12 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
   ".svg": "image/svg+xml",
 };
 
-interface ScopedPathParams {
+export interface ScopedPathParams {
   root: string;
   relativePath?: string;
 }
 
-interface ScopedPath {
+export interface ScopedPath {
   requestedPath: string;
   resolvedPath: string;
 }

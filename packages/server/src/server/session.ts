@@ -150,7 +150,7 @@ import { ProviderCatalogSession } from "./session/provider/provider-catalog-sess
 import { WorkspaceFilesSession } from "./session/files/workspace-files-session.js";
 import { AgentConfigSession } from "./session/agent-config/agent-config-session.js";
 import { ProjectConfigSession } from "./session/project-config/project-config-session.js";
-import { ArisSession } from "./aris/aris-session.js";
+import { ArisSession } from "./session/aris/aris-session.js";
 import { createArisDataService } from "./aris/aris-data-service.js";
 import { DaemonSession, type DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
 import type { DaemonWebSocketRuntimeDiagnosticSnapshot } from "./session/daemon/diagnostics.js";
@@ -1661,6 +1661,10 @@ export class Session {
         return this.arisSession.handleRunReadRequest(msg);
       case "aris.iterations.read.request":
         return this.arisSession.handleIterationsReadRequest(msg);
+      case "aris.wiki.read":
+        return this.arisSession.handleWikiReadRequest(msg);
+      case "aris.experiments.read":
+        return this.arisSession.handleExperimentsReadRequest(msg);
       default:
         return undefined;
     }

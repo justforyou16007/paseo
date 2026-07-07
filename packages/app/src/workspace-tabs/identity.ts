@@ -37,7 +37,8 @@ export function normalizeWorkspaceTabTarget(
     return workspaceId ? { kind: "setup", workspaceId } : null;
   }
   if (value.kind === "aris") {
-    return { kind: "aris" };
+    const runId = trimNonEmpty(value.runId);
+    return runId ? { kind: "aris", runId } : { kind: "aris" };
   }
   return null;
 }
@@ -92,7 +93,7 @@ export function workspaceTabTargetsEqual(
     return left.workspaceId === right.workspaceId;
   }
   if (left.kind === "aris" && right.kind === "aris") {
-    return true;
+    return left.runId === right.runId;
   }
   return false;
 }
@@ -147,7 +148,7 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
     return `setup_${target.workspaceId}`;
   }
   if (target.kind === "aris") {
-    return "aris";
+    return target.runId ? `aris_${target.runId}` : "aris_overview";
   }
   return `file_${target.path}`;
 }

@@ -101,6 +101,7 @@ interface SplitContainerProps {
   onCreateDraftTab: (input: { paneId?: string }) => void;
   onCreateTerminalTab: (input: { paneId?: string; profile?: TerminalProfileInput }) => void;
   onCreateBrowserTab: (input: { paneId?: string }) => void;
+  onCreateArisTab: (input: { paneId?: string }) => void;
   showCreateBrowserTab?: boolean;
   buildPaneContentModel: (input: {
     paneId: string;
@@ -382,6 +383,7 @@ export function SplitContainer({
   onCreateDraftTab,
   onCreateTerminalTab,
   onCreateBrowserTab,
+  onCreateArisTab,
   showCreateBrowserTab,
   buildPaneContentModel,
   onFocusPane,
@@ -599,6 +601,7 @@ export function SplitContainer({
           onCreateDraftTab={onCreateDraftTab}
           onCreateTerminalTab={onCreateTerminalTab}
           onCreateBrowserTab={onCreateBrowserTab}
+          onCreateArisTab={onCreateArisTab}
           showCreateBrowserTab={showCreateBrowserTab}
           buildPaneContentModel={buildPaneContentModel}
           onFocusPane={onFocusPane}
@@ -742,6 +745,7 @@ function SplitNodeView({
   onCreateDraftTab,
   onCreateTerminalTab,
   onCreateBrowserTab,
+  onCreateArisTab,
   showCreateBrowserTab,
   buildPaneContentModel,
   onFocusPane,
@@ -795,6 +799,7 @@ function SplitNodeView({
         onCreateDraftTab={onCreateDraftTab}
         onCreateTerminalTab={onCreateTerminalTab}
         onCreateBrowserTab={onCreateBrowserTab}
+        onCreateArisTab={onCreateArisTab}
         showCreateBrowserTab={showCreateBrowserTab}
         buildPaneContentModel={buildPaneContentModel}
         onFocusPane={onFocusPane}
@@ -841,6 +846,7 @@ function SplitNodeView({
               onCreateDraftTab={onCreateDraftTab}
               onCreateTerminalTab={onCreateTerminalTab}
               onCreateBrowserTab={onCreateBrowserTab}
+              onCreateArisTab={onCreateArisTab}
               showCreateBrowserTab={showCreateBrowserTab}
               buildPaneContentModel={buildPaneContentModel}
               onFocusPane={onFocusPane}
@@ -893,6 +899,7 @@ function SplitPaneView({
   onCreateDraftTab,
   onCreateTerminalTab,
   onCreateBrowserTab,
+  onCreateArisTab,
   showCreateBrowserTab,
   buildPaneContentModel,
   onFocusPane,
@@ -1035,6 +1042,7 @@ function SplitPaneView({
             onCreateDraftTab={onCreateDraftTab}
             onCreateTerminalTab={onCreateTerminalTab}
             onCreateBrowserTab={onCreateBrowserTab}
+            onCreateArisTab={onCreateArisTab}
             showCreateBrowserTab={showCreateBrowserTab}
             onReorderTabs={handleReorderTabs}
             onSplitRight={handleSplitRight}

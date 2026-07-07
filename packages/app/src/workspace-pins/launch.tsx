@@ -91,6 +91,15 @@ export function usePinnedLaunchers({ serverId, onLaunch }: UsePinnedLaunchersInp
         });
         continue;
       }
+      if (target.kind === "aris") {
+        resolved.push({
+          key: pinnedTargetKey(target),
+          label: "ARIS",
+          icon: <ThemedSquarePen size={14} uniProps={mutedColorMapping} />,
+          onPress: () => onLaunch(target),
+        });
+        continue;
+      }
       const profile = profiles.find((entry) => entry.id === target.profileId);
       if (!profile) {
         continue;

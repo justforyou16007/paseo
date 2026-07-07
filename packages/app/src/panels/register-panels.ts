@@ -15,6 +15,7 @@ export function ensurePanelsRegistered(): void {
   }
   registerPanel(draftPanelRegistration);
   registerPanel(agentPanelRegistration);
+  registerPanel(arisPanelRegistration);
   registerPanel(setupPanelRegistration);
   registerPanel(terminalPanelRegistration);
   registerPanel(browserPanelRegistration);

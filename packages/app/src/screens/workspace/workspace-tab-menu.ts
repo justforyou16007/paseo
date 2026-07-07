@@ -139,7 +139,7 @@ function getCloseButtonTestId(tab: WorkspaceTabDescriptor): string {
     return `workspace-setup-close-${encodeWorkspaceIdForPathSegment(tab.target.workspaceId)}`;
   }
   if (tab.target.kind === "aris") {
-    return "workspace-aris-close";
+    return `workspace-aris-close-${tab.target.runId ?? "overview"}`;
   }
   return `workspace-file-close-${encodeFilePathForPathSegment(tab.target.path)}`;
 }

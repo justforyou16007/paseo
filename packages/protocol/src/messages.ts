@@ -2125,7 +2125,74 @@ export const CaptureTerminalRequestSchema = z.object({
   requestId: z.string(),
 });
 
+// ============================================================================
+// ARIS (AutoResearch Visualization SDK) RPCs
+// ============================================================================
+
+export const ArisPaperSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  content: z.string(),
+  authors: z.array(z.string()).default([]),
+  year: z.number().nullable().optional(),
+  url: z.string().nullable().optional(),
+  tags: z.array(z.string()).default([]),
+});
+
+export const ArisIdeaSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  content: z.string(),
+  status: z.enum(["seed", "growing", "validated", "rejected"]),
+  createdAt: z.string().nullable().optional(),
+  relatedIdeaIds: z.array(z.string()).default([]),
+  paperIds: z.array(z.string()).default([]),
+});
+
+export const ArisExperimentSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  content: z.string(),
+  ideaId: z.string().nullable().optional(),
+  status: z.enum(["planned", "running", "completed", "failed"]),
+  startedAt: z.string().nullable().optional(),
+  completedAt: z.string().nullable().optional(),
+  config: z.record(z.string(), z.unknown()).nullable().optional(),
+});
+
+export const ArisClaimSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  content: z.string(),
+  experimentId: z.string().nullable().optional(),
+  ideaId: z.string().nullable().optional(),
+  status: z.enum(["proposed", "confirmed", "rejected"]),
+  confidence: z.number().nullable().optional(),
+});
+
+export const ArisEdgeSchema = z.object({
+  source: z.string(),
+  target: z.string(),
+  relation: z.string(),
+  strength: z.number().nullable().optional(),
+});
+
+export const ArisWikiReadRequestSchema = z.object({
+  type: z.literal("aris.wiki.read"),
+  requestId: z.string(),
+  cwd: z.string(),
+});
+
+export const ArisExperimentsReadRequestSchema = z.object({
+  type: z.literal("aris.experiments.read"),
+  requestId: z.string(),
+  cwd: z.string(),
+  experimentId: z.string().optional(),
+});
+
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
+  ArisWikiReadRequestSchema,
+  ArisExperimentsReadRequestSchema,
   BrowserAutomationExecuteResponseSchema,
   VoiceAudioChunkMessageSchema,
   AbortRequestMessageSchema,
@@ -4255,7 +4322,59 @@ export const DaemonUpdateProgressMessageSchema = z.object({
 
 export type DaemonUpdateProgressMessage = z.infer<typeof DaemonUpdateProgressMessageSchema>;
 
+export const ArisWikiReadResponseSchema = z.object({
+  type: z.literal("aris.wiki.read.response"),
+  payload: z.discriminatedUnion("ok", [
+    z.object({
+      requestId: z.string(),
+      ok: z.literal(true),
+      papers: z.array(ArisPaperSchema).default([]),
+      ideas: z.array(ArisIdeaSchema).default([]),
+      experiments: z.array(ArisExperimentSchema).default([]),
+      claims: z.array(ArisClaimSchema).default([]),
+      edges: z.array(ArisEdgeSchema).default([]),
+      findings: z.string().nullable().default(null),
+    }),
+    z.object({
+      requestId: z.string(),
+      ok: z.literal(false),
+      error: z.string(),
+    }),
+  ]),
+});
+
+export const ArisMetricSeriesSchema = z.object({
+  timestamps: z.array(z.number()).default([]),
+  series: z.record(z.string(), z.array(z.number())).default({}),
+});
+
+export const ArisExperimentRunSchema = z.object({
+  id: z.string(),
+  metadata: ArisExperimentSchema,
+  env: z.record(z.string(), z.unknown()).nullable().optional(),
+  logs: z.string().nullable().optional(),
+  metrics: ArisMetricSeriesSchema.nullable().optional(),
+});
+
+export const ArisExperimentsReadResponseSchema = z.object({
+  type: z.literal("aris.experiments.read.response"),
+  payload: z.discriminatedUnion("ok", [
+    z.object({
+      requestId: z.string(),
+      ok: z.literal(true),
+      experiments: z.array(ArisExperimentRunSchema).default([]),
+    }),
+    z.object({
+      requestId: z.string(),
+      ok: z.literal(false),
+      error: z.string(),
+    }),
+  ]),
+});
+
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
+  ArisWikiReadResponseSchema,
+  ArisExperimentsReadResponseSchema,
   BrowserAutomationExecuteRequestSchema,
   ActivityLogMessageSchema,
   AssistantChunkMessageSchema,
@@ -4750,6 +4869,17 @@ export type ArisRunReadRequest = z.infer<typeof ArisRunReadRequestSchema>;
 export type ArisRunReadResponse = z.infer<typeof ArisRunReadResponseSchema>;
 export type ArisIterationsReadRequest = z.infer<typeof ArisIterationsReadRequestSchema>;
 export type ArisIterationsReadResponse = z.infer<typeof ArisIterationsReadResponseSchema>;
+export type ArisPaper = z.infer<typeof ArisPaperSchema>;
+export type ArisIdea = z.infer<typeof ArisIdeaSchema>;
+export type ArisExperiment = z.infer<typeof ArisExperimentSchema>;
+export type ArisClaim = z.infer<typeof ArisClaimSchema>;
+export type ArisEdge = z.infer<typeof ArisEdgeSchema>;
+export type ArisMetricSeries = z.infer<typeof ArisMetricSeriesSchema>;
+export type ArisExperimentRun = z.infer<typeof ArisExperimentRunSchema>;
+export type ArisWikiReadRequest = z.infer<typeof ArisWikiReadRequestSchema>;
+export type ArisWikiReadResponse = z.infer<typeof ArisWikiReadResponseSchema>;
+export type ArisExperimentsReadRequest = z.infer<typeof ArisExperimentsReadRequestSchema>;
+export type ArisExperimentsReadResponse = z.infer<typeof ArisExperimentsReadResponseSchema>;
 
 // ============================================================================
 // WebSocket Level Messages (wraps session messages)

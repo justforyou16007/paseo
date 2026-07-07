@@ -6,6 +6,7 @@ export interface TabTargetHandlers {
   createDraft: () => void;
   createTerminal: () => void;
   createBrowser: () => void;
+  createAris: () => void;
   createTerminalWithProfile: (profile: TerminalProfileInput) => void;
 }
 
@@ -24,6 +25,10 @@ export function runPinnedTabTarget(
   }
   if (target.kind === "browser") {
     handlers.createBrowser();
+    return;
+  }
+  if (target.kind === "aris") {
+    handlers.createAris();
     return;
   }
   const profile = profiles.find((entry) => entry.id === target.profileId);
