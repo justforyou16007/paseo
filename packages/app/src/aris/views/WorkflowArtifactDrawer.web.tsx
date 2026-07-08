@@ -88,8 +88,8 @@ function WebIframe({ src, srcDoc, title }: { src?: string; srcDoc?: string; titl
     iframe.style.minHeight = "380px";
     iframe.title = title ?? "";
     if (srcDoc !== undefined) {
-      // Sandbox without allow-scripts: research HTML renders but cannot execute.
-      iframe.setAttribute("sandbox", "allow-same-origin");
+      // Full sandbox lockdown (sandbox=""): research HTML renders but cannot run scripts or access the parent origin.
+      iframe.setAttribute("sandbox", "");
       iframe.srcdoc = srcDoc;
     } else if (src !== undefined) {
       iframe.src = src;
