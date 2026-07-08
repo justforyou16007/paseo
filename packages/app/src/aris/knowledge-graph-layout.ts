@@ -27,23 +27,42 @@ export interface KnowledgeGraphEdgeInput {
   weight?: number;
 }
 
-export function buildLayeredKnowledgeGraphLayout(input: {
+export interface KnowledgeGraphNodeInput {
+  id: string;
+  label: string;
+  group?: string;
+}
+
+export interface KnowledgeGraphLayoutInput {
   edges: KnowledgeGraphEdgeInput[];
   width: number;
   height: number;
-}): KnowledgeGraphLayout {
-  const { edges, width, height } = input;
+  /**
+   * Explicit node definitions. When provided, every listed node is placed even
+   * if it has no incident edge, and the supplied label/group win over ids
+   * derived from edge endpoints. Omit to derive nodes purely from edges.
+   */
+  nodes?: KnowledgeGraphNodeInput[];
+}
+
+export function buildLayeredKnowledgeGraphLayout(
+  input: KnowledgeGraphLayoutInput,
+): KnowledgeGraphLayout {
+  const { edges, width, height, nodes: explicitNodes } = input;
+
+  const labelById = new Map<string, string>();
+  const groupById = new Map<string, string>();
   const nodeIds = new Set<string>();
+  for (const node of explicitNodes ?? []) {
+    nodeIds.add(node.id);
+    labelById.set(node.id, node.label);
+    if (node.group) {
+      groupById.set(node.id, node.group);
+    }
+  }
   for (const edge of edges) {
     nodeIds.add(edge.source);
     nodeIds.add(edge.target);
-  }
-
-  const inDegree = new Map<string, number>();
-  const outDegree = new Map<string, number>();
-  for (const edge of edges) {
-    outDegree.set(edge.source, (outDegree.get(edge.source) ?? 0) + 1);
-    inDegree.set(edge.target, (inDegree.get(edge.target) ?? 0) + 1);
   }
 
   const layers = groupNodesIntoLayers(Array.from(nodeIds), edges);
@@ -59,7 +78,8 @@ export function buildLayeredKnowledgeGraphLayout(input: {
       const y = layerIndex * layerHeight + 40;
       nodes.push({
         id,
-        label: id,
+        label: labelById.get(id) ?? id,
+        group: groupById.get(id),
         x: Math.min(Math.max(x, 40), width - 40),
         y: Math.min(Math.max(y, 40), height - 40),
       });
