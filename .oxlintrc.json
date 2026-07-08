@@ -3,7 +3,7 @@
   "options": {
     "typeAware": false
   },
-  "ignorePatterns": [".dev/**"],
+  "ignorePatterns": [".dev/**", "packages/Auto-claude-code-research-in-sleep"],
   "plugins": ["react", "react-perf", "unicorn", "typescript", "oxc", "import", "promise"],
   "categories": {
     "correctness": "error",

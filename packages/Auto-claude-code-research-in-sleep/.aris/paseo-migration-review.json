@@ -216,45 +216,31 @@
       {
         "severity": "major",
         "file": "skills/kill-argument/SKILL.md",
-        "lines": [
-          57,
-          166,
-          415,
-          432
-        ],
+        "lines": [57, 166, 415, 432],
         "desc": "4 reviewer-call prose spots still reference mcp__codex__codex instead of paseo codex sub-agent. Line 57 (CONTEXT_POLICY constant prose), line 166 (adversary probe step), line 415 (Key Rule), line 432 (save_trace.sh trigger). Per plan category #3, leaf skills 'change ONLY the reviewer-call prose' \u2014 these ARE reviewer-call prose and should be migrated. Line 369 (error table) is correctly unchanged (detector-adjacent)."
       },
       {
         "severity": "minor",
         "file": "skills/paper-claim-audit/SKILL.md",
-        "lines": [
-          272,
-          339
-        ],
+        "lines": [272, 339],
         "desc": "2 stale reviewer-call prose spots: line 272 (save_trace.sh trigger: 'After each mcp__codex__codex or mcp__codex__codex-reply reviewer call'), line 339 ('Every invocation uses a fresh mcp__codex__codex thread'). Same category #3 migration scope."
       },
       {
         "severity": "minor",
         "file": "skills/experiment-audit/SKILL.md",
-        "lines": [
-          304
-        ],
+        "lines": [304],
         "desc": "1 stale save_trace.sh trigger prose: 'After each reviewer call (mcp__codex__codex, mcp__codex__codex-reply...)'."
       },
       {
         "severity": "minor",
         "file": "skills/research-review/SKILL.md",
-        "lines": [
-          190
-        ],
+        "lines": [190],
         "desc": "1 stale save_trace.sh trigger prose with same pattern."
       },
       {
         "severity": "minor",
         "file": "skills/kill-argument/SKILL.md",
-        "lines": [
-          5
-        ],
+        "lines": [5],
         "desc": "allowed-tools line has trailing comment '# mcp__codex__codex retained only as documented fallback' causing grep false-positive. Functionally harmless but inconsistent with other 15 skills where the same comment is absent from the allowed-tools line."
       }
     ]
