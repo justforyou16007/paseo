@@ -92,6 +92,7 @@ import type {
   ArisIterationsReadResponse,
   ArisWikiReadResponse,
   ArisExperimentsReadResponse,
+  ArisWorkflowStatusReadResponse,
 } from "@getpaseo/protocol/messages";
 import type {
   AgentPermissionRequest,
@@ -232,6 +233,10 @@ export type DaemonEvent =
   | {
       type: "aris.review.update";
       payload: Extract<SessionOutboundMessage, { type: "aris.review.update" }>["payload"];
+    }
+  | {
+      type: "aris.workflow.update";
+      payload: Extract<SessionOutboundMessage, { type: "aris.workflow.update" }>["payload"];
     }
   | { type: "error"; message: string };
 
@@ -385,6 +390,7 @@ type WriteProjectConfigPayload = Extract<
 >["payload"];
 type ArisWikiReadPayload = ArisWikiReadResponse["payload"];
 type ArisExperimentsReadPayload = ArisExperimentsReadResponse["payload"];
+type ArisWorkflowStatusReadPayload = ArisWorkflowStatusReadResponse["payload"];
 type ListCommandsPayload = ListCommandsResponse["payload"];
 type ListCommandsDraftConfig = Pick<
   AgentSessionConfig,
@@ -2006,6 +2012,22 @@ export class DaemonClient {
         ...(options?.cursor ? { cursor: options.cursor } : {}),
       },
       responseType: "aris.iterations.read.response",
+    });
+  }
+
+  async readArisWorkflowStatus(
+    workspaceId: string,
+    requestId?: string,
+  ): Promise<ArisWorkflowStatusReadPayload> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    return this.sendCorrelatedSessionRequest({
+      requestId: resolvedRequestId,
+      message: {
+        type: "aris.workflow.status.read",
+        requestId: resolvedRequestId,
+        workspaceId,
+      },
+      responseType: "aris.workflow.status.read.response",
     });
   }
 
@@ -5277,6 +5299,11 @@ export class DaemonClient {
       case "aris.review.update":
         return {
           type: "aris.review.update",
+          payload: msg.payload,
+        };
+      case "aris.workflow.update":
+        return {
+          type: "aris.workflow.update",
           payload: msg.payload,
         };
       default:

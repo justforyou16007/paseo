@@ -2054,6 +2054,14 @@ export const ArisEventsReadRequestSchema = z.object({
   runId: z.string().optional(),
 });
 
+export const ArisWorkflowStatusReadRequestSchema = z
+  .object({
+    type: z.literal("aris.workflow.status.read"),
+    requestId: z.string(),
+    workspaceId: z.string(),
+  })
+  .passthrough();
+
 export const ArisRunPhaseSchema = z.object({
   phaseId: z.string(),
   name: z.string(),
@@ -2288,6 +2296,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ArisExperimentsReadRequestSchema,
   ArisReviewReadRequestSchema,
   ArisEventsReadRequestSchema,
+  ArisWorkflowStatusReadRequestSchema,
 ]);
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
@@ -2453,6 +2462,53 @@ export const ArisKnowledgeGraphEdgeSchema = z.object({
 export const ArisKnowledgeGraphSchema = z.object({
   nodes: z.array(ArisKnowledgeGraphNodeSchema).optional(),
   edges: z.array(ArisKnowledgeGraphEdgeSchema).optional(),
+});
+
+export const ArisWorkflowArtifactKindSchema = z.enum([
+  "markdown",
+  "pdf",
+  "latex",
+  "json",
+  "jsonl",
+  "yaml",
+  "log",
+  "html",
+  "pptx",
+  "directory",
+]);
+
+export const ArisWorkflowStageIdSchema = z.enum(["W1", "W1.5", "W2", "W3", "W4", "W5", "W6"]);
+
+export const ArisWorkflowStageStatusSchema = z.enum([
+  "pending",
+  "running",
+  "done",
+  "accepted",
+  "skipped",
+  "failed",
+]);
+
+export const ArisWorkflowArtifactSchema = z.object({
+  path: z.string(),
+  kind: ArisWorkflowArtifactKindSchema,
+  exists: z.boolean(),
+  sizeBytes: z.number().int().nonnegative().nullable().optional(),
+  updatedAt: z.string().nullable().optional(),
+  purpose: z.string().default(""),
+});
+
+export const ArisWorkflowStageSchema = z.object({
+  id: ArisWorkflowStageIdSchema,
+  name: z.string().default(""),
+  status: ArisWorkflowStageStatusSchema,
+  crossModelAcquittal: z.boolean().default(false),
+  artifacts: z.array(ArisWorkflowArtifactSchema).default([]),
+  derivedFrom: z.enum(["run_state", "directory", "claude_md"]).default("directory"),
+});
+
+export const ArisWorkflowStatusSchema = z.object({
+  activeW: ArisWorkflowStageIdSchema.nullable().default(null),
+  stages: z.array(ArisWorkflowStageSchema).default([]),
 });
 
 // ============================================================================
@@ -4522,6 +4578,28 @@ export const ArisReviewUpdateSchema = z.object({
   }),
 });
 
+export const ArisWorkflowStatusReadResponseSchema = z
+  .object({
+    type: z.literal("aris.workflow.status.read.response"),
+    payload: z.object({
+      requestId: z.string(),
+      ok: z.boolean(),
+      status: ArisWorkflowStatusSchema.nullable(),
+      error: z.string().nullable(),
+    }),
+  })
+  .passthrough();
+
+export const ArisWorkflowUpdateSchema = z
+  .object({
+    type: z.literal("aris.workflow.update"),
+    payload: z.object({
+      workspaceId: z.string(),
+      status: ArisWorkflowStatusSchema,
+    }),
+  })
+  .passthrough();
+
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   BrowserAutomationExecuteRequestSchema,
   ActivityLogMessageSchema,
@@ -4669,6 +4747,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ArisReviewReadResponseSchema,
   ArisEventsReadResponseSchema,
   ArisReviewUpdateSchema,
+  ArisWorkflowStatusReadResponseSchema,
+  ArisWorkflowUpdateSchema,
 ]);
 
 export type SessionOutboundMessage = z.infer<typeof SessionOutboundMessageSchema>;
@@ -4845,6 +4925,15 @@ export type ArisEventsReadRequest = z.infer<typeof ArisEventsReadRequestSchema>;
 export type ArisReviewReadResponse = z.infer<typeof ArisReviewReadResponseSchema>;
 export type ArisEventsReadResponse = z.infer<typeof ArisEventsReadResponseSchema>;
 export type ArisReviewUpdate = z.infer<typeof ArisReviewUpdateSchema>;
+export type ArisWorkflowArtifactKind = z.infer<typeof ArisWorkflowArtifactKindSchema>;
+export type ArisWorkflowStageId = z.infer<typeof ArisWorkflowStageIdSchema>;
+export type ArisWorkflowStageStatus = z.infer<typeof ArisWorkflowStageStatusSchema>;
+export type ArisWorkflowArtifact = z.infer<typeof ArisWorkflowArtifactSchema>;
+export type ArisWorkflowStage = z.infer<typeof ArisWorkflowStageSchema>;
+export type ArisWorkflowStatus = z.infer<typeof ArisWorkflowStatusSchema>;
+export type ArisWorkflowStatusReadRequest = z.infer<typeof ArisWorkflowStatusReadRequestSchema>;
+export type ArisWorkflowStatusReadResponse = z.infer<typeof ArisWorkflowStatusReadResponseSchema>;
+export type ArisWorkflowUpdate = z.infer<typeof ArisWorkflowUpdateSchema>;
 
 // Type exports for payload types
 export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;

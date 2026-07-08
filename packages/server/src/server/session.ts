@@ -1669,6 +1669,8 @@ export class Session {
         return this.arisSession.handleReviewReadRequest(msg);
       case "aris.events.read":
         return this.arisSession.handleEventsReadRequest(msg);
+      case "aris.workflow.status.read":
+        return this.arisSession.handleWorkflowStatusReadRequest(msg);
       default:
         return undefined;
     }

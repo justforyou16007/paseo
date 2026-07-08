@@ -15,6 +15,8 @@ import type {
   ArisRunsListRequest,
   ArisRunsListResponse,
   ArisWikiReadRequest,
+  ArisWorkflowStatusReadRequest,
+  ArisWorkflowStatusReadResponse,
   SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
 import type { ArisDataService } from "../../aris/aris-data-service.js";
@@ -314,6 +316,41 @@ export class ArisSession {
           error: message,
         },
       });
+    }
+  }
+
+  // ── Workflow status (W1–W6) RPC ──
+
+  async handleWorkflowStatusReadRequest(msg: ArisWorkflowStatusReadRequest): Promise<void> {
+    const { requestId, workspaceId } = msg;
+    this.logger.debug({ requestId, workspaceId }, "Handling aris.workflow.status.read request");
+
+    try {
+      const status = await this.arisDataService.readWorkflowStatus(workspaceId);
+      this.host.emit({
+        type: "aris.workflow.status.read.response",
+        payload: {
+          requestId,
+          ok: true,
+          status,
+          error: null,
+        },
+      } satisfies ArisWorkflowStatusReadResponse);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        { err: error, requestId, workspaceId },
+        "Failed to read ARIS workflow status",
+      );
+      this.host.emit({
+        type: "aris.workflow.status.read.response",
+        payload: {
+          requestId,
+          ok: false,
+          status: null,
+          error: message,
+        },
+      } satisfies ArisWorkflowStatusReadResponse);
     }
   }
 
