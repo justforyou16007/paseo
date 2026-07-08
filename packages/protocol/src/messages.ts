@@ -4600,6 +4600,17 @@ export const ArisWorkflowUpdateSchema = z
   })
   .passthrough();
 
+export const ArisIterationLogUpdateSchema = z
+  .object({
+    type: z.literal("aris.iteration_log.update"),
+    payload: z.object({
+      workspaceId: z.string(),
+      runId: z.string().optional(),
+      lines: z.array(z.string()).default([]),
+    }),
+  })
+  .passthrough();
+
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   BrowserAutomationExecuteRequestSchema,
   ActivityLogMessageSchema,
@@ -4749,6 +4760,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ArisReviewUpdateSchema,
   ArisWorkflowStatusReadResponseSchema,
   ArisWorkflowUpdateSchema,
+  ArisIterationLogUpdateSchema,
 ]);
 
 export type SessionOutboundMessage = z.infer<typeof SessionOutboundMessageSchema>;
@@ -4934,6 +4946,7 @@ export type ArisWorkflowStatus = z.infer<typeof ArisWorkflowStatusSchema>;
 export type ArisWorkflowStatusReadRequest = z.infer<typeof ArisWorkflowStatusReadRequestSchema>;
 export type ArisWorkflowStatusReadResponse = z.infer<typeof ArisWorkflowStatusReadResponseSchema>;
 export type ArisWorkflowUpdate = z.infer<typeof ArisWorkflowUpdateSchema>;
+export type ArisIterationLogUpdate = z.infer<typeof ArisIterationLogUpdateSchema>;
 
 // Type exports for payload types
 export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;

@@ -786,6 +786,7 @@ export class Session {
         workspaceRegistry: this.workspaceRegistry,
         logger: this.sessionLogger,
       }),
+      workspaceRegistry: this.workspaceRegistry,
       logger: this.sessionLogger,
     });
     this.daemonSession = new DaemonSession({

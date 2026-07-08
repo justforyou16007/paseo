@@ -20,8 +20,9 @@ import type {
   SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
 import type { ArisDataService } from "../../aris/aris-data-service.js";
+import type { WorkspaceRegistry } from "../../workspace-registry.js";
 import { readArisEvents, readArisReviewState } from "./aris-readers.js";
-import { ArisReviewWatcher } from "./aris-watcher.js";
+import { ArisStateWatcher, type ArisStateUpdate } from "./aris-watcher.js";
 import { resolveScopedPath } from "../../file-explorer/service.js";
 
 export interface ArisSessionHost {
@@ -31,6 +32,7 @@ export interface ArisSessionHost {
 export interface ArisSessionOptions {
   host: ArisSessionHost;
   arisDataService: ArisDataService;
+  workspaceRegistry: WorkspaceRegistry;
   logger: pino.Logger;
 }
 
@@ -111,12 +113,14 @@ const READ_FILE_OPEN_FLAGS =
 export class ArisSession {
   private readonly host: ArisSessionHost;
   private readonly arisDataService: ArisDataService;
+  private readonly workspaceRegistry: WorkspaceRegistry;
   private readonly logger: pino.Logger;
-  private readonly watchers = new Map<string, ArisReviewWatcher>();
+  private readonly watchers = new Map<string, ArisStateWatcher>();
 
   constructor(options: ArisSessionOptions) {
     this.host = options.host;
     this.arisDataService = options.arisDataService;
+    this.workspaceRegistry = options.workspaceRegistry;
     this.logger = options.logger.child({ module: "aris-session" });
   }
 
@@ -670,10 +674,21 @@ export class ArisSession {
       return;
     }
 
-    const watcher = new ArisReviewWatcher({
+    const watcher = new ArisStateWatcher({
       cwd,
       runId,
       onUpdate: (update) => {
+        void this.handleWatcherUpdate(update);
+      },
+      logger: this.logger,
+    });
+    await watcher.start();
+    this.watchers.set(key, watcher);
+  }
+
+  private async handleWatcherUpdate(update: ArisStateUpdate): Promise<void> {
+    switch (update.kind) {
+      case "review":
         this.host.emit({
           type: "aris.review.update",
           payload: {
@@ -686,11 +701,63 @@ export class ArisSession {
             },
           },
         });
-      },
-      logger: this.logger,
+        return;
+      case "run_state":
+      case "paper":
+      case "wiki":
+        await this.emitWorkflowUpdate(update.cwd);
+        return;
+      case "iteration_added":
+        await this.emitIterationLogUpdate(update.cwd, update.runId, update.lines);
+        return;
+    }
+  }
+
+  private async emitWorkflowUpdate(cwd: string): Promise<void> {
+    const workspaceId = await this.resolveWorkspaceId(cwd);
+    if (workspaceId === null) {
+      this.logger.debug({ cwd }, "No workspace found for aris.workflow.update push");
+      return;
+    }
+    try {
+      const status = await this.arisDataService.readWorkflowStatus(workspaceId);
+      this.host.emit({
+        type: "aris.workflow.update",
+        payload: { workspaceId, status },
+      });
+    } catch (error) {
+      this.logger.warn({ err: error, cwd, workspaceId }, "Failed to emit aris.workflow.update");
+    }
+  }
+
+  private async emitIterationLogUpdate(
+    cwd: string,
+    runId: string | undefined,
+    lines: string[],
+  ): Promise<void> {
+    const workspaceId = await this.resolveWorkspaceId(cwd);
+    if (workspaceId === null) {
+      this.logger.debug({ cwd }, "No workspace found for aris.iteration_log.update push");
+      return;
+    }
+    this.host.emit({
+      type: "aris.iteration_log.update",
+      payload: { workspaceId, runId, lines },
     });
-    await watcher.start();
-    this.watchers.set(key, watcher);
+  }
+
+  private async resolveWorkspaceId(cwd: string): Promise<string | null> {
+    try {
+      const workspaces = await this.workspaceRegistry.list();
+      const target = path.resolve(cwd);
+      const match = workspaces.find(
+        (workspace) => workspace.archivedAt === null && path.resolve(workspace.cwd) === target,
+      );
+      return match?.workspaceId ?? null;
+    } catch (error) {
+      this.logger.warn({ err: error, cwd }, "Failed to resolve workspaceId from cwd");
+      return null;
+    }
   }
 }
 

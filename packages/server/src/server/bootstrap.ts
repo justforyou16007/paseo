@@ -632,6 +632,7 @@ export async function createPaseoDaemon(
     "/api/aris/workspaces/:workspaceId/live",
     createArisLiveRouteHandler({
       arisDataService: () => arisDataService!,
+      workspaceRegistry: () => workspaceRegistry!,
       logger,
       password: config.auth?.password,
     }),

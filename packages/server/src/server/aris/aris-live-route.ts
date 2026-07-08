@@ -2,9 +2,12 @@ import type express from "express";
 import type { Logger } from "pino";
 import { extractHttpBearerToken, isBearerTokenValidSync } from "../auth.js";
 import type { ArisDataService } from "./aris-data-service.js";
+import { ArisStateWatcher } from "../session/aris/aris-watcher.js";
+import type { WorkspaceRegistry } from "../workspace-registry.js";
 
 export interface ArisLiveRouteOptions {
   arisDataService: () => ArisDataService;
+  workspaceRegistry: () => WorkspaceRegistry;
   logger: Logger;
   password?: string;
 }
@@ -58,6 +61,7 @@ export function createArisLiveRouteHandler(options: ArisLiveRouteOptions): expre
 
   return (req: express.Request, res: express.Response): void => {
     const arisDataService = options.arisDataService();
+    const workspaceRegistry = options.workspaceRegistry();
     const workspaceId = req.params.workspaceId;
     const runId = typeof req.query.runId === "string" ? req.query.runId : undefined;
     const lastEventId =
@@ -99,6 +103,7 @@ export function createArisLiveRouteHandler(options: ArisLiveRouteOptions): expre
         );
 
         const controller = new AbortController();
+        let stateWatcher: ArisStateWatcher | null = null;
 
         const handleRunChange = (): void => {
           emitLatestDeltas(arisDataService, res, logger, workspaceId, runId).catch((error) => {
@@ -106,6 +111,19 @@ export function createArisLiveRouteHandler(options: ArisLiveRouteOptions): expre
           });
         };
 
+        const handleIterationAdded = (lines: string[]): void => {
+          const delta: ArisLiveDelta = {
+            workspaceId,
+            runId,
+            type: "iteration_added",
+            payload: { lines },
+          };
+          res.write(formatSseEvent("aris.delta", delta, `${Date.now()}-iter`));
+        };
+
+        // Existing run/iteration file watcher - keeps the original SSE semantics
+        // (emits run_updated deltas) and covers the "watch all runs" case
+        // (runId === undefined) that the per-run state watcher cannot.
         const cleanupPromise = arisDataService.watchRun(
           workspaceId,
           runId,
@@ -113,8 +131,42 @@ export function createArisLiveRouteHandler(options: ArisLiveRouteOptions): expre
           controller.signal,
         );
 
+        // New event sources: the multi-file ArisStateWatcher surfaces changes to
+        // paper/main.pdf, research-wiki/index.md and the run-state file as
+        // run_updated deltas, and newly appended iteration-log lines as
+        // iteration_added deltas. Review-state changes are pushed over the
+        // WebSocket session (aris.review.update), not the SSE stream.
+        try {
+          const workspace = await workspaceRegistry.get(workspaceId);
+          if (workspace && workspace.archivedAt === null) {
+            stateWatcher = new ArisStateWatcher({
+              cwd: workspace.cwd,
+              runId,
+              onUpdate: (update) => {
+                switch (update.kind) {
+                  case "review":
+                    return;
+                  case "run_state":
+                  case "paper":
+                  case "wiki":
+                    handleRunChange();
+                    return;
+                  case "iteration_added":
+                    handleIterationAdded(update.lines);
+                    return;
+                }
+              },
+              logger,
+            });
+            await stateWatcher.start();
+          }
+        } catch (error) {
+          logger.debug({ err: error, workspaceId }, "Failed to start ARIS state watcher for SSE");
+        }
+
         const performCleanup = (): void => {
           controller.abort();
+          stateWatcher?.stop();
           cleanupPromise
             .then((cleanup) => cleanup())
             .catch((error) => {
