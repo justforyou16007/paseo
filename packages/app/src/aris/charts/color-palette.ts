@@ -82,3 +82,23 @@ export function getArisEdgeStrokeWidth(experimentStatus: string | undefined): nu
       return 1.5; // default
   }
 }
+
+/**
+ * Workflow stage (W1-W6) status colors. The hue maps "maturity" the same way
+ * the idea/experiment palettes do: pending and skipped recede as muted gray,
+ * running is active blue, done is green, accepted is gold (cross-model
+ * acquitted), failed is red. Reuses the existing categorical hues - no new
+ * colors are introduced.
+ */
+export const ARIS_WORKFLOW_STAGE_COLORS: Record<string, string> = {
+  pending: "#94a3b8", // slate-400 - not started
+  running: "#3b82f6", // blue-500 - in flight
+  done: "#22c55e", // green-500 - completed
+  accepted: "#f59e0b", // amber-500 - cross-model acquitted
+  skipped: "#94a3b8", // slate-400 - bypassed
+  failed: "#ef4444", // red-500 - error
+};
+
+export function getArisWorkflowStageColor(status: string): string {
+  return ARIS_WORKFLOW_STAGE_COLORS[status] ?? ARIS_NEUTRAL_NODE_COLOR;
+}
