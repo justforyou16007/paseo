@@ -490,6 +490,7 @@ export const ar: TranslationResources = {
         preparingTerminal: "إعداد علامة التبويب المحطة الطرفية",
         preparingTerminalTooltip: "جارٍ تحضير المحطة...",
         newBrowser: "متصفح جديد",
+        newAris: "AutoResearch جديد",
         splitRight: "تقسيم الجزء الأيمن",
         splitDown: "تقسيم الجزء لأسفل",
         terminalProfilesMenu: "Terminal profiles",

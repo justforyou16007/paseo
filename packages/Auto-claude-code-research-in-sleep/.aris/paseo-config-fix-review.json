@@ -1,0 +1,77 @@
+{
+  "verdict": "PASS",
+  "script_checks": [
+    {
+      "name": "parses_all_12_vars",
+      "status": "PASS",
+      "evidence": "Default JSON contains all 12 keys; full-override JSON shows all 12 custom values correctly parsed. Verified: orchestrator_provider, executor_provider, executor_mode, executor_thinking, reviewer_provider, reviewer_mode, reviewer_thinking, notify_on_finish, fanout_subagents, subagent_workspace, heartbeat_cron, heartbeat_max_runs."
+    },
+    {
+      "name": "json_schema_valid",
+      "status": "PASS",
+      "evidence": "Default: {\"executor_thinking\":null,\"heartbeat_max_runs\":null,\"notify_on_finish\":true,\"fanout_subagents\":true}. Full override: {\"executor_thinking\":\"xhigh\",\"heartbeat_max_runs\":100,\"notify_on_finish\":false,\"fanout_subagents\":false}. Booleans are unquoted, nulls are bare, strings are quoted. Valid JSON."
+    },
+    {
+      "name": "emit_config_requires_only_run_id_root",
+      "status": "PASS",
+      "evidence": "--emit-config without --run-id exits 1; --emit-config without --root exits 1. Default prompt mode without --phase exits 1; without --skill exits 1. The guard is 'if [ \"$emit_config\" -eq 0 ]; then require --phase/--skill; fi' \u2014 emit-config path bypasses those checks correctly."
+    },
+    {
+      "name": "default_prompt_embeds_new_fields",
+      "status": "PASS",
+      "evidence": "grep output: 'workspace:{kind:\"worktree\"}' from subagent_workspace=worktree; 'Executor backend: claude/opus-4-7 (paseo claude sub-agent; mode bypassPermissions' from executor_provider+executor_mode; 'Reviewer provider/mode/thinking are fixed by the run's paseo-config.json \u2014 do not override.' All embedded."
+    },
+    {
+      "name": "edge_cases_handled",
+      "status": "PASS",
+      "evidence": "(1) Absent CLAUDE.md: exits 0, emits defaults JSON. (2) CLAUDE.md present, no ## ARIS Paseo block: exits 0, emits defaults JSON. (3) Trailing comment (# override for this run): executor_mode parsed as 'bypassPermissions' correctly. (4) Inside ```yaml fence: orchestrator_provider='claude/opus-4-8', executor_provider='claude/opus-4-7' parsed correctly \u2014 grep-based read_var matches plain key:value lines regardless of fence context."
+    },
+    {
+      "name": "exit_codes_correct",
+      "status": "PASS",
+      "evidence": "missing run-id exit=1, missing run-id emit-config exit=1, missing skill exit=1. All error paths exit non-zero. Success paths exit 0."
+    }
+  ],
+  "orchestrator_checks": [
+    {
+      "name": "emits_config_once",
+      "status": "PASS",
+      "evidence": "SKILL.md line 89-91: 'Resolve the W-agent prompt renderer + emit the run config ONCE ... CONFIG=$(bash \"$RENDER\" --emit-config ...)'. Step 2 says 'Read this JSON once and hold it for the whole run'."
+    },
+    {
+      "name": "dispatch_reads_all_fields_from_CFG",
+      "status": "PASS",
+      "evidence": "Lines 235-243: workspace:{kind:<CFG.subagent_workspace>}, provider:<CFG.executor_provider>, settings:{modeId:<CFG.executor_mode>, thinkingOptionId:<CFG.executor_thinking>}, notifyOnFinish:<CFG.notify_on_finish>. Lines 255-256: reviewer provider/mode/thinking from same CFG. All 5 create_agent fields covered."
+    },
+    {
+      "name": "no_leftover_literal_refs",
+      "status": "PASS",
+      "evidence": "grep for $executor_provider|$reviewer_provider|$executor_mode|$reviewer_mode|$executor_thinking|$reviewer_thinking|$subagent_workspace|$notify_on_finish|$fanout_subagents|$orchestrator_provider in SKILL.md returned exit 1 (no matches). All refs are CFG.* now."
+    },
+    {
+      "name": "null_thinking_handled",
+      "status": "PASS",
+      "evidence": "Line 241: '(omit thinkingOptionId when CFG.executor_thinking is null \u2014 model default)'. Line 257: '(omit thinkingOptionId when null)' for reviewer. Script emits bare 'null' for empty executor_thinking in JSON."
+    },
+    {
+      "name": "reviewer_uses_same_CFG",
+      "status": "PASS",
+      "evidence": "Lines 252-256: 'Reviewer sub-agents (spawned by the W-agents, not the orchestrator) read the SAME $CFG for reviewer_provider / reviewer_mode / reviewer_thinking \u2014 the executor prompt embeds these and points at paseo-reviewer-dispatch.md'. Prompt output confirms: 'Reviewer provider/mode/thinking are fixed by the run's paseo-config.json'."
+    },
+    {
+      "name": "no_regression_constants_gates_fence",
+      "status": "PASS",
+      "evidence": "All 11 constants intact (lines 47-57): AUTO_PROCEED, ARXIV_DOWNLOAD, HUMAN_CHECKPOINT, REVIEWER_DIFFICULTY, CODE_REVIEW, BASE_REPO, COMPACT, AUTO_WRITE, VENUE, RENDER_HTML, RESUMABLE. Acceptance-authority table intact (lines 146-152): all 5 phases. The fence restated (line 165): forbids recreating W2/W3, send_agent_prompt to running verdict agent, calling accept/quality verdicts from heartbeat. Resumable runs section intact (line 116). verify_paper_audits.sh referenced (lines 466-468)."
+    }
+  ],
+  "issues_found": [],
+  "summary": "Fix is correct, complete, and regression-free. All 12 paseo variables now parsed and emitted as JSON; orchestrator dispatch reads every create_agent field from $CFG (not prose). Edge cases (absent CLAUDE.md, absent block, trailing comments, yaml fence) all handled. No leftover $var literals. 11 constants, acceptance table, fence, and resume model all intact. 1 minor issue: heartbeat_cron quote preservation.",
+  "second_pass": {
+    "heartbeat_cron_bug_fixed": true,
+    "evidence": "heartbeat_cron with double quotes parsed as */13 * * * * (no double-encoding). executor_mode with double quotes -> bypassPermissions. reviewer_provider with single quotes -> codex/deepseek-v4-pro. Unquoted cron still works. Defaults produce all 12 vars.",
+    "over_stripping": false,
+    "over_stripping_evidence": "claude/opus-4-8, claude/sonnet-4-6, codex/gpt-5.5 all preserved with internal slashes intact. */13 * * * * preserved with asterisks and slashes.",
+    "new_regression": false,
+    "fix_lines": "sed -E ... s/^\"(.*)\"$/\\1/; s/^'(.*)'$/\\1/ -- strips one surrounding pair of matching quotes only."
+  }
+}

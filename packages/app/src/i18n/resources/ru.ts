@@ -494,6 +494,7 @@ export const ru: TranslationResources = {
         preparingTerminal: "Подготовка вкладки терминала",
         preparingTerminalTooltip: "Подготовка терминала...",
         newBrowser: "Новый браузер",
+        newAris: "Новый AutoResearch",
         splitRight: "Разделить панель справа",
         splitDown: "Разделить панель вниз",
         terminalProfilesMenu: "Terminal profiles",

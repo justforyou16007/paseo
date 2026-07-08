@@ -1,5 +1,5 @@
 import { constants, promises as fs } from "fs";
-import { resolveScopedPath, type ReadFileParams } from "@server/server/file-explorer/service.js";
+import { resolveScopedPath, type ReadFileParams } from "../../file-explorer/service.js";
 import type {
   ArisAuditFile,
   ArisEvent,

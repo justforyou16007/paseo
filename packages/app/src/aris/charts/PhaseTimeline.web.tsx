@@ -1,7 +1,5 @@
 import React, { useMemo } from "react";
-import { View, Text } from "react-native";
-import Svg, { Rect, Circle, Line, G } from "react-native-svg";
-import { StyleSheet } from "react-native-unistyles";
+import Svg, { Circle, Line, G } from "react-native-svg";
 import type { ArisPipelinePhase } from "../aris-types";
 
 export interface PhaseTimelineProps {
@@ -25,8 +23,8 @@ function PhaseTimelineSvg({ phases, width, currentPhaseId }: PhaseTimelineProps)
     const padding = 40;
     const spacing = (width - padding * 2) / Math.max(phases.length - 1, 1);
     return {
-      nodes: phases.map((p, i) => ({
-        x: padding + i * spacing,
+      nodes: phases.map((p, idx) => ({
+        x: padding + idx * spacing,
         phase: p,
         isCurrent: p.phaseId === currentPhaseId,
       })),
@@ -45,8 +43,8 @@ function PhaseTimelineSvg({ phases, width, currentPhaseId }: PhaseTimelineProps)
         stroke="#374151"
         strokeWidth={2}
       />
-      {layout.nodes.map((node, i) => (
-        <G key={i}>
+      {layout.nodes.map((node) => (
+        <G key={node.phase.phaseId}>
           <Circle
             cx={node.x}
             cy={svgHeight / 2}

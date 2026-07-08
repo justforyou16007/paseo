@@ -1,6 +1,6 @@
 import { watchFile, unwatchFile } from "node:fs";
 import type pino from "pino";
-import { resolveScopedPath } from "@server/server/file-explorer/service.js";
+import { resolveScopedPath } from "../../file-explorer/service.js";
 import { readArisReviewState } from "./aris-readers.js";
 import type { ArisReviewState } from "@getpaseo/protocol/messages";
 

@@ -27,7 +27,7 @@ export function LineChart({
   pointRadius = 3,
 }: LineChartProps) {
   const color = strokeColor;
-  const padding = { top: 8, right: 8, bottom: 8, left: 8 };
+  const padding = useMemo(() => ({ top: 8, right: 8, bottom: 8, left: 8 }), []);
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
 
@@ -46,7 +46,7 @@ export function LineChart({
       py: padding.top + chartHeight - ((p.y - minY) / yRange) * chartHeight,
       label: p.label,
     }));
-  }, [data, chartWidth, chartHeight]);
+  }, [data, chartWidth, chartHeight, padding]);
 
   if (points.length < 2) {
     return null;
@@ -65,7 +65,9 @@ export function LineChart({
         strokeLinecap="round"
       />
       {showPoints &&
-        points.map((p, i) => <Circle key={i} cx={p.px} cy={p.py} r={pointRadius} fill={color} />)}
+        points.map((p) => (
+          <Circle key={`${p.px}-${p.py}`} cx={p.px} cy={p.py} r={pointRadius} fill={color} />
+        ))}
     </Svg>
   );
 }

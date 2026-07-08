@@ -44,16 +44,26 @@ const STATUS_COLORS: Record<string, string> = {
   failed: "#ef4444",
 } as const;
 
+function phaseDotStyle(status: string) {
+  const color = STATUS_COLORS[status] ?? "#6b7280";
+  return [styles.phaseDot, { backgroundColor: color }];
+}
+
 export function PipelineView({ run, currentPhaseId, width }: PipelineViewProps) {
   const phases = useMemo(() => buildPipelinePhases(run), [run]);
+
+  const statusBg = useMemo(() => STATUS_COLORS[run.status] ?? "#6b7280", [run.status]);
+
+  const statusBadgeStyle = useMemo(
+    () => [styles.statusBadge, { backgroundColor: statusBg }],
+    [statusBg],
+  );
 
   return (
     <ScrollView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>{run.goal || `Run ${run.runId.slice(0, 8)}`}</Text>
-        <View
-          style={[styles.statusBadge, { backgroundColor: STATUS_COLORS[run.status] ?? "#6b7280" }]}
-        >
+        <View style={statusBadgeStyle}>
           <Text style={styles.statusText}>{statusLabel(run.status)}</Text>
         </View>
       </View>
@@ -61,26 +71,28 @@ export function PipelineView({ run, currentPhaseId, width }: PipelineViewProps) 
       <PhaseTimeline phases={phases} width={width} currentPhaseId={currentPhaseId} />
 
       <View style={styles.phaseList}>
-        {phases.map((phase) => (
-          <View
-            key={phase.phaseId}
-            style={[styles.phaseCard, phase.phaseId === currentPhaseId && styles.phaseCardActive]}
-          >
-            <View style={styles.phaseHeader}>
-              <View style={[styles.phaseDot, { backgroundColor: STATUS_COLORS[phase.status] }]} />
-              <Text style={styles.phaseName}>{phase.name}</Text>
-              <Text style={styles.phaseStatus}>{statusLabel(phase.status)}</Text>
+        {phases.map((phase) => {
+          return (
+            <View
+              key={phase.phaseId}
+              style={phase.phaseId === currentPhaseId ? styles.phaseCardActive : styles.phaseCard}
+            >
+              <View style={styles.phaseHeader}>
+                <View style={phaseDotStyle(phase.status)} />
+                <Text style={styles.phaseName}>{phase.name}</Text>
+                <Text style={styles.phaseStatus}>{statusLabel(phase.status)}</Text>
+              </View>
+              <View style={styles.phaseMeta}>
+                <Text style={styles.phaseMetaText}>
+                  {phase.iterationCount} iteration{phase.iterationCount !== 1 ? "s" : ""}
+                </Text>
+                {phase.bestScore != null && (
+                  <Text style={styles.phaseMetaText}>Best score: {phase.bestScore}</Text>
+                )}
+              </View>
             </View>
-            <View style={styles.phaseMeta}>
-              <Text style={styles.phaseMetaText}>
-                {phase.iterationCount} iteration{phase.iterationCount !== 1 ? "s" : ""}
-              </Text>
-              {phase.bestScore != null && (
-                <Text style={styles.phaseMetaText}>Best score: {phase.bestScore}</Text>
-              )}
-            </View>
-          </View>
-        ))}
+          );
+        })}
       </View>
     </ScrollView>
   );

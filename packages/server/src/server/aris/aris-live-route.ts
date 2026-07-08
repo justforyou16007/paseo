@@ -29,6 +29,26 @@ function formatSseEvent(event: string, data: unknown, id?: string): string {
   return output;
 }
 
+async function emitLatestDeltas(
+  arisDataService: ArisDataService,
+  res: express.Response,
+  _logger: Logger,
+  workspaceId: string,
+  runId: string | undefined,
+): Promise<void> {
+  const latestRuns = await arisDataService.listRuns(workspaceId);
+  const filteredRuns = runId ? latestRuns.filter((run) => run.runId === runId) : latestRuns;
+  for (const run of filteredRuns) {
+    const delta: ArisLiveDelta = {
+      workspaceId,
+      runId: run.runId,
+      type: "run_updated",
+      payload: run,
+    };
+    res.write(formatSseEvent("aris.delta", delta, `${Date.now()}-${run.runId}`));
+  }
+}
+
 function buildInitialSnapshotId(): string {
   return `${Date.now()}-0`;
 }
@@ -79,54 +99,31 @@ export function createArisLiveRouteHandler(options: ArisLiveRouteOptions): expre
         );
 
         const controller = new AbortController();
+
+        const handleRunChange = (): void => {
+          emitLatestDeltas(arisDataService, res, logger, workspaceId, runId).catch((error) => {
+            logger.debug({ err: error, workspaceId, runId }, "Failed to emit ARIS live delta");
+          });
+        };
+
         const cleanupPromise = arisDataService.watchRun(
           workspaceId,
           runId,
-          () => {
-            void (async () => {
-              try {
-                const latestRuns = await arisDataService.listRuns(workspaceId);
-                const filteredRuns = runId
-                  ? latestRuns.filter((run) => run.runId === runId)
-                  : latestRuns;
-                for (const run of filteredRuns) {
-                  const delta: ArisLiveDelta = {
-                    workspaceId,
-                    runId: run.runId,
-                    type: "run_updated",
-                    payload: run,
-                  };
-                  res.write(formatSseEvent("aris.delta", delta, `${Date.now()}-${run.runId}`));
-                }
-              } catch (error) {
-                logger.debug({ err: error, workspaceId, runId }, "Failed to emit ARIS live delta");
-              }
-            })();
-          },
+          handleRunChange,
           controller.signal,
         );
 
-        req.on("close", () => {
+        const performCleanup = (): void => {
           controller.abort();
           cleanupPromise
             .then((cleanup) => cleanup())
             .catch((error) => {
               logger.debug({ err: error, workspaceId, runId }, "ARIS live cleanup failed");
             });
-        });
+        };
 
-        res.on("error", (error) => {
-          logger.debug({ err: error, workspaceId, runId }, "ARIS live response error");
-          controller.abort();
-          cleanupPromise
-            .then((cleanup) => cleanup())
-            .catch((cleanupError) => {
-              logger.debug(
-                { err: cleanupError, workspaceId, runId },
-                "ARIS live cleanup after response error failed",
-              );
-            });
-        });
+        req.on("close", performCleanup);
+        res.on("error", () => performCleanup());
       } catch (error) {
         logger.debug({ err: error, workspaceId, runId }, "Failed to set up ARIS live stream");
         if (!res.headersSent) {

@@ -490,6 +490,7 @@ export const en = {
         preparingTerminal: "Preparing terminal tab",
         preparingTerminalTooltip: "Preparing terminal...",
         newBrowser: "New browser",
+        newAris: "New AutoResearch",
         splitRight: "Split pane right",
         splitDown: "Split pane down",
         terminalProfilesMenu: "Terminal profiles",

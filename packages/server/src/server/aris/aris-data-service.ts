@@ -12,22 +12,47 @@ const ArisRunPhaseFileSchema = z
   .object({
     phaseId: z.string().default(""),
     name: z.string().default(""),
-    status: z.enum(["pending", "running", "completed", "failed"]).default("pending"),
+    status: z
+      .enum(["pending", "running", "completed", "failed", "done", "accepted", "skipped"])
+      .default("pending"),
     iterationCount: z.number().int().nonnegative().default(0),
     bestScore: z.number().nullable().optional(),
   })
-  .passthrough();
+  .passthrough()
+  .transform(
+    (raw): ArisRunPhase => ({
+      phaseId: raw.phaseId || (raw as Record<string, unknown>).phase?.toString() || "",
+      name: raw.name || (raw as Record<string, unknown>).phase?.toString() || "",
+      status: normalizePhaseStatus(raw.status),
+      iterationCount: raw.iterationCount,
+      bestScore: raw.bestScore ?? null,
+    }),
+  );
 
 const ArisRunStateFileSchema = z
   .object({
-    runId: z.string(),
-    status: z.enum(["pending", "running", "paused", "completed", "failed"]).default("pending"),
+    runId: z.string().optional(),
+    status: z
+      .enum(["pending", "running", "paused", "completed", "failed", "done", "accepted"])
+      .default("pending"),
     goal: z.string().default(""),
     createdAt: z.string().default(""),
     updatedAt: z.string().default(""),
     phases: z.array(ArisRunPhaseFileSchema).default([]),
   })
-  .passthrough();
+  .passthrough()
+  .transform((raw) => {
+    const r = raw as Record<string, unknown>;
+    return {
+      runId: raw.runId ?? (typeof r.run_id === "string" ? r.run_id : ""),
+      status: normalizeRunStatus(raw.status),
+      goal: raw.goal,
+      createdAt: raw.createdAt || (typeof r.created === "string" ? r.created : ""),
+      updatedAt: raw.updatedAt || (typeof r.updated === "string" ? r.updated : ""),
+      phases: raw.phases,
+    };
+  })
+  .refine((v) => v.runId.length > 0, { message: "runId or run_id is required" });
 
 const ArisIterationFileSchema = z
   .object({
@@ -39,7 +64,19 @@ const ArisIterationFileSchema = z
     metadata: z.record(z.string(), z.unknown()).default({}),
     createdAt: z.string().default(""),
   })
-  .passthrough();
+  .passthrough()
+  .transform((raw) => {
+    const r = raw as Record<string, unknown>;
+    return {
+      iterationId: raw.iterationId || (typeof r.id === "string" ? r.id : ""),
+      runId: raw.runId || (typeof r.run_id === "string" ? r.run_id : ""),
+      phaseId: raw.phaseId || (typeof r.phase === "string" ? r.phase : ""),
+      index: raw.index,
+      score: raw.score ?? null,
+      metadata: raw.metadata,
+      createdAt: raw.createdAt || (typeof r.timestamp === "string" ? r.timestamp : ""),
+    };
+  });
 
 export interface ArisRunPhase {
   phaseId: string;
@@ -104,6 +141,36 @@ class ArisWorkspaceNotFoundError extends Error {
 
 function normalizeRunId(runId: string): string {
   return path.basename(runId);
+}
+
+type NormalizedRunStatus = "pending" | "running" | "paused" | "completed" | "failed";
+
+function normalizeRunStatus(status: unknown): NormalizedRunStatus {
+  if (status === "done" || status === "accepted" || status === "skipped") {
+    return "completed";
+  }
+  if (status === "pending" || status === "running" || status === "paused") {
+    return status;
+  }
+  if (status === "failed") {
+    return "failed";
+  }
+  return "pending";
+}
+
+type NormalizedPhaseStatus = "pending" | "running" | "completed" | "failed";
+
+function normalizePhaseStatus(status: unknown): NormalizedPhaseStatus {
+  if (status === "done" || status === "accepted" || status === "skipped") {
+    return "completed";
+  }
+  if (status === "pending" || status === "running") {
+    return status;
+  }
+  if (status === "failed") {
+    return "failed";
+  }
+  return "pending";
 }
 
 function sanitizeRelativePath(...segments: string[]): string {
@@ -223,8 +290,8 @@ function indexFromCursor(cursor: string): number {
   return Number.isNaN(parsed) || parsed < 0 ? 0 : parsed;
 }
 
-export function createArisDataService(options: ArisDataServiceOptions): ArisDataService {
-  const { workspaceRegistry, logger } = options;
+export function createArisDataService(opts: ArisDataServiceOptions): ArisDataService {
+  const { workspaceRegistry, logger } = opts;
 
   async function getRunFilePath(workspaceId: string, runId: string): Promise<string> {
     const runIdNormalized = normalizeRunId(runId);
@@ -263,7 +330,7 @@ export function createArisDataService(options: ArisDataServiceOptions): ArisData
             runId,
             run.phases,
           );
-          return { ...run, phases };
+          return Object.assign({}, run, { phases });
         }),
       );
       return runs.filter((run): run is ArisRun => run !== null);

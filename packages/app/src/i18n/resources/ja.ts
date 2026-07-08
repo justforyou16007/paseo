@@ -495,6 +495,7 @@ export const ja: TranslationResources = {
         preparingTerminal: "ターミナルタブを準備中",
         preparingTerminalTooltip: "ターミナルを準備中...",
         newBrowser: "新しいブラウザ",
+        newAris: "新規 AutoResearch",
         splitRight: "右にペインを分割",
         splitDown: "下にペインを分割",
         terminalProfilesMenu: "ターミナルプロファイル",

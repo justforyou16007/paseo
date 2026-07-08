@@ -17,7 +17,7 @@ This is an npm workspace monorepo:
 
 Non-workspace projects in `packages/`:
 
-- `packages/Auto-claude-code-research-in-sleep` — ARIS: ML research automation harness with 80+ composable skills and cross-model adversarial review
+- `packages/Auto-claude-code-research-in-sleep` — ARIS: ML research automation harness with 80+ composable skills and cross-model adversarial review (auto research)
 
 ## Docs
 

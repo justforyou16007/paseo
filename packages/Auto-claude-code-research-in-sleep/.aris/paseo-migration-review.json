@@ -1,0 +1,355 @@
+{
+  "verdict": "WARN",
+  "plan_completion": {
+    "create_5": "done",
+    "modify_8": "partial",
+    "variables_12": "done",
+    "notes": "All 5 CREATE files exist with all required subsections. All 12 CLAUDE.md variables present. helpers/ + third_parties/ untouched. Modify categories mostly done; 5 leaf skills have stale mcp__codex__codex prose in reviewer-call contexts (kill-argument worst: 5 stale refs; paper-claim-audit: 2; experiment-audit: 1; research-review: 1 trace; see second_pass.issues_found)."
+  },
+  "feature_checks": [
+    {
+      "id": "1",
+      "name": "orchestrator_thin_11constants",
+      "status": "PASS",
+      "evidence": "skills/research-pipeline/SKILL.md: 488 lines. 11 constants (AUTO_PROCEED, ARXIV_DOWNLOAD, HUMAN_CHECKPOINT, REVIEWER_DIFFICULTY, CODE_REVIEW, BASE_REPO, COMPACT, AUTO_WRITE, VENUE, RENDER_HTML, RESUMABLE). Declares 'the orchestrator itself does no research work \u2014 it renders each W-agent's initialPrompt, dispatches it, reads the receipt on notifyOnFinish, runs the gate, and calls run_state.py accept'."
+    },
+    {
+      "id": "2",
+      "name": "renderer_runs",
+      "status": "PASS",
+      "evidence": "Valid: exit 0, full agent prompt with run context + paseo rules + receipt. Invalid (missing --skill): exit=1, 'ERR: --skill is required' + usage."
+    },
+    {
+      "id": "3",
+      "name": "allowed_tools_16_files",
+      "status": "PASS",
+      "evidence": "15/16: 'paseo+ Skill+ codex-absent-ok' (8 mcp__paseo__* present, Skill kept, mcp__codex__codex absent from active tool list). kill-argument: 'codex-in-tools' is grep false-positive from trailing comment '# mcp__codex__codex retained only as documented fallback' \u2014 not in active tool list. All 16 correct."
+    },
+    {
+      "id": "4",
+      "name": "paseo_note_16_files",
+      "status": "PASS",
+      "evidence": "All 16 have note:1 ('Paseo substrate' banner). reviewer-cite counts (paseo-reviewer-dispatch.md refs): idea-discovery:5, experiment-bridge:2, auto-review-loop:6, paper-writing:8, rebuttal:6, resubmit-pipeline:3, paper-talk:1, proof-checker:8, paper-claim-audit:2, citation-audit:3, kill-argument:3, experiment-audit:4, result-to-claim:2, novelty-check:2, research-review:4, idea-creator:5."
+    },
+    {
+      "id": "5",
+      "name": "reviewer_prose_fresh_vs_cont",
+      "status": "PARTIAL",
+      "evidence": "auto-review-loop: PASS \u2014 Round 1 fresh paseo codex sub-agent, Round 2+ send_agent_prompt continuation. kill-argument: PARTIAL \u2014 Paseo substrate banner + dispatch blocks correct (lines 89,187 use paseo codex sub-agent), but 5 stale mcp__codex__codex prose spots remain. See second_pass for detailed classification."
+    },
+    {
+      "id": "6",
+      "name": "fence_preserved",
+      "status": "PASS",
+      "evidence": "REVIEWER_BIAS_GUARD present in 9+ files (paseo-reviewer-dispatch.md, research-pipeline/SKILL.md:157, reviewer-routing.md:27, paper-writing:9, citation-audit:52, resubmit-pipeline:230/443, kill-argument:57, PASEO_MIGRATION.md:72/114/231, AGENT_GUIDE.md:194). Auto-review-loop references paseo-reviewer-dispatch.md which carries the guard."
+    },
+    {
+      "id": "7",
+      "name": "helpers_untouched",
+      "status": "PASS",
+      "evidence": "git diff --name-only HEAD -- tools/ returned EMPTY. No modifications to any file under tools/."
+    },
+    {
+      "id": "8",
+      "name": "third_parties_untouched",
+      "status": "PASS",
+      "evidence": "git diff --name-only HEAD -- third_parties/ returned EMPTY. No modifications."
+    },
+    {
+      "id": "9",
+      "name": "constants_gates_schemas_intact",
+      "status": "PASS",
+      "evidence": "MAX_ROUNDS=4, POSITIVE_THRESHOLD (score>=6/10 AND verdict\u2208{ready,almost}) preserved in auto-review-loop/SKILL.md:28-29. 5-layer audit chain + verify_paper_audits.sh gate unchanged per AGENT_GUIDE.md + research-pipeline/SKILL.md. State-schema field names unchanged (REVIEW_STATE.json threadId, PAPER_IMPROVEMENT_STATE.json threadId, run_state.py --verdict-id, audit JSON thread_id/trace_path, save_trace.sh --thread-id) \u2014 only values change from codex-MCP thread-id to paseo codex agent-id, per PASEO_MIGRATION.md \u00a7State-schema adaptations and paseo-reviewer-dispatch.md \u00a7Persisting the handle."
+    },
+    {
+      "id": "10",
+      "name": "inventory_consistent",
+      "status": "PASS",
+      "evidence": "python3 tools/check_skills_inventory.py: 'ARIS skill inventory is consistent.' exit 0."
+    },
+    {
+      "id": "11",
+      "name": "fanout_citations_Agent_grants",
+      "status": "PASS",
+      "evidence": "paseo-subagent-dispatch.md (17362B) has all required subsections: spawn shape, two continuity modes, parallel fan-out discipline, Child lifecycle (\u7528\u5b8c\u5373 archive), Cross-provider gotcha, Auto-skip-if-unconfigured, Resume, Anti-patterns, Cross-references. AGENT_GUIDE.md:193-194 has paseo row."
+    },
+    {
+      "id": "12",
+      "name": "crossrefs_resolve",
+      "status": "PASS",
+      "evidence": "All 5 new files exist. render_w_agent_prompt.sh references both dispatch docs. All skills reference paseo-reviewer-dispatch.md (cite counts 1-8). PASEO_MIGRATION.md (298 lines) maps every transition. CLAUDE_MD_PASEO_SECTION.md (66 lines) cross-refs both dispatch docs + PASEO_MIGRATION.md."
+    },
+    {
+      "id": "13",
+      "name": "graceful_degradation_documented",
+      "status": "PASS",
+      "evidence": "Every skill's Paseo substrate banner: 'When paseo MCP is unavailable, fall back to in-process Skill + mcp__codex__codex.' CLAUDE_MD_PASEO_SECTION.md: 'if absent, pipeline falls back to in-process Skill-tool + mcp__codex__codex path.' fanout_subagents=false toggle. paseo-subagent-dispatch.md \u00a7Auto-skip-if-unconfigured + paseo-reviewer-dispatch.md \u00a7Auto-skip-if-unconfigured."
+    }
+  ],
+  "second_pass": {
+    "verdict": "WARN",
+    "spec_source": "/home/liu/.claude/plans/hazy-crunching-bee.md",
+    "create_5_subsection_audit": {
+      "paseo-subagent-dispatch.md": {
+        "subsections_found": 12,
+        "required_present": [
+          "Child lifecycle (\u7528\u5b8c\u5373 archive / \u7528\u5373\u7559)",
+          "Cross-provider gotcha (recap)",
+          "Auto-skip-if-unconfigured (graceful degradation)",
+          "The executor sub-agent spawn shape",
+          "The two continuity modes",
+          "Parallel fan-out discipline",
+          "Resume: re-attach or recreate",
+          "Anti-patterns to refuse in review"
+        ],
+        "status": "PASS"
+      },
+      "paseo-reviewer-dispatch.md": {
+        "subsections_found": 16,
+        "required_present": [
+          "The fresh-vs-continuation rule (the heart of this doc)",
+          "Why fresh exists: REVIEWER_BIAS_GUARD",
+          "Why continuation exists: reviewer memory + Debate",
+          "The lifecycle rule (\u7528\u5b8c\u5373 archive)",
+          "The verdict-file handoff contract",
+          "The trace contract (save_trace.sh \u2014 helper UNCHANGED)",
+          "Persisting the handle (state-schema adaptation, helpers UNCHANGED)",
+          "Auto-skip-if-unconfigured (graceful degradation)",
+          "Anti-patterns to refuse in review"
+        ],
+        "status": "PASS"
+      },
+      "render_w_agent_prompt.sh": {
+        "status": "PASS",
+        "evidence": "Executable, produces valid prompts with run context + paseo operating rules + receipt format. Graceful error on missing --skill."
+      },
+      "PASEO_MIGRATION.md": {
+        "subsections_found": 14,
+        "comparison_table": "Option A vs Option B (why unified-paseo) at line 196 \u2014 7-row comparison table (executor dispatch, cross-model reviewer, substrates, continuity handles, liveness model, reviewer-as-agent, verdict/audit/gate). Option B chosen with user quote.",
+        "state_schema_adaptations": "\u00a7State-schema adaptations (line 104): 6-row table covering REVIEW_STATE.json threadId, PAPER_IMPROVEMENT_STATE.json threadId, run_state.py accept --verdict-id, audit JSON thread_id/trace_path, save_trace.sh --thread-id, save_trace.sh trace request.json tool field. All correct.",
+        "status": "PASS"
+      },
+      "CLAUDE_MD_PASEO_SECTION.md": {
+        "variables_found": 12,
+        "variables_list": [
+          "orchestrator_provider",
+          "executor_provider",
+          "executor_mode",
+          "executor_thinking",
+          "reviewer_provider",
+          "reviewer_mode",
+          "reviewer_thinking",
+          "notify_on_finish",
+          "fanout_subagents",
+          "heartbeat_cron",
+          "heartbeat_max_runs",
+          "subagent_workspace"
+        ],
+        "status": "PASS"
+      }
+    },
+    "modify_category_5_reviewer_routing": {
+      "nightmare_mapping_present": true,
+      "evidence": "reviewer-routing.md:34-37: 'The codex exec CLI (nightmare mode under REVIEWER_DIFFICULTY=nightmare) maps to a paseo codex agent in full-access mode \u2014 autonomous repo read, same sandbox semantics, one-shot.' Also line 21-22: 'full-access (default \u2014 autonomous repo read, network on, the codex exec analog)'.",
+      "status": "PASS"
+    },
+    "state_schema_all_5_adaptations": {
+      "PASEO_MIGRATION.md_table": "6 rows, all 5 required fields covered + bonus save_trace.sh request.json tool field",
+      "paseo_reviewer_dispatch_table": "5 rows, all fields covered with same semantics",
+      "helpers_unchanged": true,
+      "status": "PASS"
+    },
+    "kill_argument_stale_prose_classification": {
+      "plan_category": "Category #3 \u2014 leaf verdict/audit SKILL.md: 'change ONLY the reviewer-call prose. Their detector logic (regex/hash/JSON schema), verdict writing, save_trace.sh calls \u2014 UNCHANGED.' Category #2 constants-unchanged rule applies to workflow skills only, not leaf skills.",
+      "line_57_CONTEXT_POLICY": {
+        "content": "Each thread is a fresh mcp__codex__codex call. Never use mcp__codex__codex-reply.",
+        "classification": "REVIEWER-CALL PROSE \u2014 should be updated. The constant VALUE ('fresh') stays; the mechanism description ('mcp__codex__codex call') is reviewer-call prose per category #3.",
+        "judgment": "SHOULD MIGRATE"
+      },
+      "line_166_adversary_probe": {
+        "content": "Each probe is a fresh mcp__codex__codex call",
+        "classification": "REVIEWER-CALL PROSE \u2014 workflow step description.",
+        "judgment": "SHOULD MIGRATE"
+      },
+      "line_369_error_table": {
+        "content": "mcp__codex__codex call failed",
+        "classification": "DETECTOR-ADJACENT \u2014 error code table. Plan says detector logic unchanged.",
+        "judgment": "CORRECTLY UNCHANGED (not stale)"
+      },
+      "line_415_key_rule": {
+        "content": "Both Attack and Adjudication use mcp__codex__codex, never codex-reply",
+        "classification": "REVIEWER-CALL PROSE \u2014 'Key Rules' section describing reviewer invocation mechanism.",
+        "judgment": "SHOULD MIGRATE"
+      },
+      "line_432_save_trace_trigger": {
+        "content": "After each mcp__codex__codex reviewer call, save the trace... Use save_trace.sh",
+        "classification": "BORDERLINE \u2014 the save_trace.sh CALL is unchanged per plan; the trigger description 'After each mcp__codex__codex reviewer call' is reviewer-call prose that should be updated.",
+        "judgment": "SHOULD MIGRATE (trigger prose), but save_trace.sh invocation stays"
+      },
+      "summary": "4 of 5 flagged lines (57, 166, 415, 432) are reviewer-call prose that SHOULD be migrated per plan category #3. Line 369 is detector-adjacent and correctly unchanged. The 'constants unchanged' constraint (category #2) applies to workflow skills only; for leaf skills, category #3 governs: change ONLY reviewer-call prose."
+    },
+    "cross_skill_stale_prose_audit": {
+      "pattern": "kill-argument is not alone. Other leaf skills have similar stale tracing prose:",
+      "paper-claim-audit": "line 272 (trace trigger: 'After each mcp__codex__codex or mcp__codex__codex-reply reviewer call'), line 339 ('Every invocation uses a fresh mcp__codex__codex thread')",
+      "experiment-audit": "line 304 (trace trigger with same pattern)",
+      "research-review": "line 190 (trace trigger with same pattern)",
+      "note": "These are all save_trace.sh trigger prose \u2014 same borderline as kill-argument line 432. The save_trace.sh CALL is unchanged; the trigger description is reviewer-call prose per category #3."
+    },
+    "verification_10_tests_mapping": {
+      "runtime_tests": [
+        "#1 happy-path",
+        "#2 resume",
+        "#3 heartbeat-fence",
+        "#4 audit-gate",
+        "#5 continuation",
+        "#6 bias-guard",
+        "#8 parallel-fanout",
+        "#9 tracing"
+      ],
+      "structural_tests": [
+        "#7 reviewer-independence (can grep prompts for file-paths-only)",
+        "#10 graceful-degradation (documented in every skill + CLAUDE_MD_PASEO_SECTION.md + both dispatch docs)"
+      ],
+      "feature_check_coverage": "My 13 feature_checks cover all 10 E2E tests: #1-#6,#9 (structural artifacts of runtime behaviors) + #7 (helpers untouched) + #8 (third_parties untouched) + #10 (inventory) + #11-#13 (fanout, crossrefs, graceful degradation). Runtime tests #1-#6,#8-#9 cannot be fully verified by reading alone; their structural prerequisites (docs, state schemas, dispatch shapes) are verified."
+    },
+    "issues_found": [
+      {
+        "severity": "major",
+        "file": "skills/kill-argument/SKILL.md",
+        "lines": [
+          57,
+          166,
+          415,
+          432
+        ],
+        "desc": "4 reviewer-call prose spots still reference mcp__codex__codex instead of paseo codex sub-agent. Line 57 (CONTEXT_POLICY constant prose), line 166 (adversary probe step), line 415 (Key Rule), line 432 (save_trace.sh trigger). Per plan category #3, leaf skills 'change ONLY the reviewer-call prose' \u2014 these ARE reviewer-call prose and should be migrated. Line 369 (error table) is correctly unchanged (detector-adjacent)."
+      },
+      {
+        "severity": "minor",
+        "file": "skills/paper-claim-audit/SKILL.md",
+        "lines": [
+          272,
+          339
+        ],
+        "desc": "2 stale reviewer-call prose spots: line 272 (save_trace.sh trigger: 'After each mcp__codex__codex or mcp__codex__codex-reply reviewer call'), line 339 ('Every invocation uses a fresh mcp__codex__codex thread'). Same category #3 migration scope."
+      },
+      {
+        "severity": "minor",
+        "file": "skills/experiment-audit/SKILL.md",
+        "lines": [
+          304
+        ],
+        "desc": "1 stale save_trace.sh trigger prose: 'After each reviewer call (mcp__codex__codex, mcp__codex__codex-reply...)'."
+      },
+      {
+        "severity": "minor",
+        "file": "skills/research-review/SKILL.md",
+        "lines": [
+          190
+        ],
+        "desc": "1 stale save_trace.sh trigger prose with same pattern."
+      },
+      {
+        "severity": "minor",
+        "file": "skills/kill-argument/SKILL.md",
+        "lines": [
+          5
+        ],
+        "desc": "allowed-tools line has trailing comment '# mcp__codex__codex retained only as documented fallback' causing grep false-positive. Functionally harmless but inconsistent with other 15 skills where the same comment is absent from the allowed-tools line."
+      }
+    ]
+  },
+  "issues_found": [
+    {
+      "severity": "major",
+      "file": "skills/kill-argument/SKILL.md",
+      "desc": "4 stale mcp__codex__codex reviewer-call prose spots (lines 57, 166, 415, 432) not migrated to paseo wording. Per plan category #3, leaf skills 'change ONLY the reviewer-call prose' \u2014 these are reviewer-call prose."
+    },
+    {
+      "severity": "minor",
+      "file": "skills/paper-claim-audit/SKILL.md, skills/experiment-audit/SKILL.md, skills/research-review/SKILL.md",
+      "desc": "3 additional leaf skills have 1-2 stale save_trace.sh trigger prose references each (paper-claim-audit:272,339; experiment-audit:304; research-review:190). Same category #3 scope."
+    }
+  ],
+  "summary": "WARN \u2014 5 CREATE files complete with all required subsections + comparison table + state-schema tables. 12 CLAUDE.md variables correct. Helpers + third_parties untouched. kill-argument has 4 stale reviewer-call prose spots (lines 57,166,415,432) per plan category #3; 3 other leaf skills have 1-2 each. No blockers.",
+  "third_pass": {
+    "verdict": "PASS",
+    "timestamp": "2026-07-01",
+    "fix_verification": {
+      "kill-argument": {
+        "line_57_CONTEXT_POLICY": {
+          "before": "Each thread is a fresh `mcp__codex__codex` call. **Never** use `mcp__codex__codex-reply`.",
+          "after": "Each thread spawns a **fresh paseo codex reviewer sub-agent** (`create_agent`). **Never** continue a prior reviewer agent (`send_agent_prompt` / the `codex-reply` analog).",
+          "status": "FIXED"
+        },
+        "line_166_adversary_probe": {
+          "before": "Each probe is a fresh `mcp__codex__codex` call",
+          "after": "Each probe spawns a fresh paseo codex reviewer sub-agent",
+          "status": "FIXED"
+        },
+        "line_415_key_rule": {
+          "before": "Both Attack and Adjudication use `mcp__codex__codex`, never `codex-reply`.",
+          "after": "Both Attack and Adjudication spawn a **fresh paseo codex reviewer sub-agent** (`create_agent`), never continued (`send_agent_prompt` / the `codex-reply` analog).",
+          "status": "FIXED"
+        },
+        "line_432_review_tracing": {
+          "before": "After each `mcp__codex__codex` reviewer call, save the trace... Use `save_trace.sh`",
+          "after": "After each paseo codex reviewer sub-agent call (fresh `create_agent`, or `send_agent_prompt` continuation), save the trace... Use `save_trace.sh`",
+          "status": "FIXED"
+        },
+        "line_369_error_table": {
+          "content": "`mcp__codex__codex` call failed",
+          "status": "CORRECTLY_PRESERVED (detector-adjacent error code)"
+        },
+        "lines_92_190_fallback_blocks": {
+          "content": "verbatim `mcp__codex__codex:` fallback code-block headers",
+          "status": "CORRECTLY_PRESERVED (documented fallback)"
+        }
+      },
+      "paper-claim-audit": {
+        "line_272_review_tracing": {
+          "before": "After each `mcp__codex__codex` or `mcp__codex__codex-reply` reviewer call, save the trace",
+          "after": "After each paseo codex reviewer sub-agent call (fresh `create_agent`, or `send_agent_prompt` continuation), save the trace",
+          "status": "FIXED"
+        },
+        "line_339_thread_independence": {
+          "before": "Every invocation uses a fresh `mcp__codex__codex` thread. Never",
+          "after": "Every invocation spawns a fresh paseo codex reviewer sub-agent (`create_agent`). Never continued (`send_agent_prompt` / the `codex-reply` analog).",
+          "status": "FIXED"
+        },
+        "line_95_fallback_block": {
+          "content": "verbatim `mcp__codex__codex:` fallback code-block header",
+          "status": "CORRECTLY_PRESERVED"
+        }
+      },
+      "experiment-audit": {
+        "line_304_review_tracing": {
+          "before": "After each reviewer call (`mcp__codex__codex`, `mcp__codex__codex-reply`, `mcp__manual_review__review`, or `mcp__manual_review__review_reply`)",
+          "after": "After each reviewer call (a paseo codex sub-agent \u2014 fresh `create_agent` or `send_agent_prompt` continuation; or the manual backend `mcp__manual_review__review` / `mcp__manual_review__review_reply`)",
+          "status": "FIXED (manual backend preserved)"
+        }
+      },
+      "research-review": {
+        "line_190_review_tracing": {
+          "before": "After each reviewer call (`mcp__codex__codex`, `mcp__codex__codex-reply`, `mcp__manual_review__review`, or `mcp__manual_review__review_reply`)",
+          "after": "After each reviewer call (a paseo codex sub-agent \u2014 fresh `create_agent` or `send_agent_prompt` continuation; or the manual backend `mcp__manual_review__review` / `mcp__manual_review__review_reply`)",
+          "status": "FIXED (manual backend preserved)"
+        },
+        "line_60_install_note": {
+          "content": "This gives Claude Code access to `mcp__codex__codex` and `mcp__codex__codex-reply` tools",
+          "status": "CORRECTLY_PRESERVED (install/setup documentation)"
+        },
+        "lines_78_109_fallback_blocks": {
+          "content": "verbatim `mcp__codex__codex:` and `mcp__codex__codex-reply:` fallback code-block headers",
+          "status": "CORRECTLY_PRESERVED"
+        }
+      }
+    },
+    "integrity_rechecks": {
+      "tools_untouched": "git diff --name-only HEAD -- tools/ \u2192 EMPTY",
+      "third_parties_untouched": "git diff --name-only HEAD -- third_parties/ \u2192 EMPTY",
+      "inventory_consistent": "python3 tools/check_skills_inventory.py \u2192 'ARIS skill inventory is consistent.' exit 0"
+    },
+    "summary": "All 7 stale reviewer-call prose spots migrated to paseo codex sub-agent wording. All 5 correctly-preserved items (error table line 369, install note line 60, verbatim fallback blocks at kill-argument:92/190, paper-claim-audit:95, research-review:78/109) remain intact. No regressions in helpers, third_parties, or skill inventory. Migration is structurally complete."
+  }
+}

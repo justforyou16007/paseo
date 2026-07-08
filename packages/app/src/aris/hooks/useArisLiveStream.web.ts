@@ -66,11 +66,11 @@ export function useArisLiveStream({
       }
     });
 
-    es.onerror = () => {
+    es.addEventListener("error", () => {
       setState({ kind: "error", error: "SSE connection failed" });
       es.close();
       eventSourceRef.current = null;
-    };
+    });
 
     return () => {
       es.close();

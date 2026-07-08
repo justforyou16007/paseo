@@ -24,6 +24,7 @@ import {
   Copy,
   Ellipsis,
   EllipsisVertical,
+  FlaskConical,
   Globe,
   Import as ImportIcon,
   PanelRight,
@@ -245,6 +246,7 @@ const ThemedX = withUnistyles(X);
 const ThemedSquarePen = withUnistyles(SquarePen);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
 const ThemedGlobe = withUnistyles(Globe);
+const ThemedFlaskConical = withUnistyles(FlaskConical);
 const ThemedImport = withUnistyles(ImportIcon);
 const ThemedSettings = withUnistyles(Settings);
 const ThemedPanelRight = withUnistyles(PanelRight);
@@ -271,6 +273,7 @@ const sourceControlPanelStrokeWidth15 = { strokeWidth: 1.5 };
 const MENU_NEW_AGENT_ICON = <ThemedSquarePen size={16} uniProps={mutedColorMapping} />;
 const MENU_NEW_TERMINAL_ICON = <ThemedSquareTerminal size={16} uniProps={mutedColorMapping} />;
 const MENU_NEW_BROWSER_ICON = <ThemedGlobe size={16} uniProps={mutedColorMapping} />;
+const MENU_NEW_ARIS_ICON = <ThemedFlaskConical size={16} uniProps={mutedColorMapping} />;
 const MENU_IMPORT_ICON = <ThemedImport size={16} uniProps={mutedColorMapping} />;
 const MENU_COPY_ICON = <ThemedCopy size={16} uniProps={mutedColorMapping} />;
 const MENU_SETTINGS_ICON = <ThemedSettings size={16} uniProps={mutedColorMapping} />;
@@ -959,6 +962,7 @@ interface WorkspaceHeaderMenuProps {
   onCreateTerminal: () => void;
   onCreateTerminalWithProfile: (profile: TerminalProfileInput) => void;
   onCreateBrowser: () => void;
+  onCreateArisTab: () => void;
   onOpenImportSheet: () => void;
   onCopyWorkspacePath: () => void;
   onCopyBranchName: () => void;
@@ -1040,6 +1044,7 @@ function WorkspaceHeaderMenu({
   onCreateTerminal,
   onCreateTerminalWithProfile,
   onCreateBrowser,
+  onCreateArisTab,
   onOpenImportSheet,
   onCopyWorkspacePath,
   onCopyBranchName,
@@ -1091,6 +1096,13 @@ function WorkspaceHeaderMenu({
             {t("workspace.header.actions.newBrowser")}
           </DropdownMenuItem>
         ) : null}
+        <DropdownMenuItem
+          testID="workspace-header-new-aris"
+          leading={MENU_NEW_ARIS_ICON}
+          onSelect={onCreateArisTab}
+        >
+          {t("workspace.header.actions.aris")}
+        </DropdownMenuItem>
         <DropdownMenuItem
           testID="workspace-header-import-agent"
           leading={menuImportIcon}
@@ -1184,6 +1196,7 @@ interface WorkspaceHeaderTitleBarProps {
   onCreateTerminal: () => void;
   onCreateTerminalWithProfile: (profile: TerminalProfileInput) => void;
   onCreateBrowser: () => void;
+  onCreateArisTab: () => void;
   onOpenImportSheet: () => void;
   onCopyWorkspacePath: () => void;
   onCopyBranchName: () => void;
@@ -1219,6 +1232,7 @@ function WorkspaceHeaderTitleBar({
   onCreateTerminal,
   onCreateTerminalWithProfile,
   onCreateBrowser,
+  onCreateArisTab,
   onOpenImportSheet,
   onCopyWorkspacePath,
   onCopyBranchName,
@@ -1267,6 +1281,7 @@ function WorkspaceHeaderTitleBar({
           onCreateTerminal={onCreateTerminal}
           onCreateTerminalWithProfile={onCreateTerminalWithProfile}
           onCreateBrowser={onCreateBrowser}
+          onCreateArisTab={onCreateArisTab}
           onOpenImportSheet={onOpenImportSheet}
           onCopyWorkspacePath={onCopyWorkspacePath}
           onCopyBranchName={onCopyBranchName}
@@ -3559,6 +3574,7 @@ function WorkspaceScreenContent({
                 onCreateTerminal={handleCreateTerminal}
                 onCreateTerminalWithProfile={handleCreateTerminalWithProfile}
                 onCreateBrowser={handleCreateBrowserTab}
+                onCreateArisTab={handleCreateArisTab}
                 onOpenImportSheet={openImportSheet}
                 onCopyWorkspacePath={handleCopyWorkspacePath}
                 onCopyBranchName={handleCopyBranchName}

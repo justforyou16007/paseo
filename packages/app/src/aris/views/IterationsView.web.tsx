@@ -21,7 +21,7 @@ function buildScorePoints(iterations: ArisIteration[]) {
     }));
 }
 
-export function IterationsView({ iterations, runId, width }: IterationsViewProps) {
+export function IterationsView({ iterations, runId: _runId, width }: IterationsViewProps) {
   const scorePoints = useMemo(() => buildScorePoints(iterations), [iterations]);
   const sparklineValues = useMemo(() => iterations.map((it) => it.score ?? 0), [iterations]);
 

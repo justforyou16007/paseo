@@ -44,7 +44,7 @@ export function BarChart({
         const y = padding.top + chartHeight - barHeight;
         const fill = d.color ?? defaultColor;
         return (
-          <G key={i}>
+          <G key={d.label ?? i}>
             <Rect x={x} y={y} width={barWidthVal} height={barHeight} rx={4} ry={4} fill={fill} />
             <SvgText
               x={x + barWidthVal / 2}

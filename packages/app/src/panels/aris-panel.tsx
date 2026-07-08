@@ -6,6 +6,7 @@ import { usePaneContext } from "@/panels/pane-context";
 import { isWeb } from "@/constants/platform";
 import { useArisReviewQuery } from "@/aris/use-aris-review-query";
 import { useArisEventsQuery } from "@/aris/use-aris-events-query";
+import { useArisRunsQuery, useArisRunQuery, useArisIterationsQuery } from "@/hooks/use-aris-query";
 import { ArisCockpitView } from "@/aris/ArisCockpitView.web";
 
 function useArisPanelDescriptor(target: {
@@ -78,8 +79,25 @@ function ArisPanelContent({
     workspaceId,
     runId: target.runId,
   });
+  const runsQuery = useArisRunsQuery({ serverId, workspaceId });
+  const runQuery = useArisRunQuery({
+    serverId,
+    workspaceId,
+    runId: target.runId ?? null,
+  });
+  const iterationsQuery = useArisIterationsQuery({
+    serverId,
+    workspaceId,
+    runId: target.runId ?? null,
+  });
 
-  if (reviewQuery.isLoading || eventsQuery.isLoading) {
+  if (
+    reviewQuery.isLoading ||
+    eventsQuery.isLoading ||
+    runsQuery.isLoading ||
+    runQuery.isLoading ||
+    iterationsQuery.isLoading
+  ) {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
         <ActivityIndicator />
@@ -87,11 +105,16 @@ function ArisPanelContent({
     );
   }
 
-  const error = reviewQuery.error ?? eventsQuery.error;
+  const error =
+    reviewQuery.error ??
+    eventsQuery.error ??
+    runsQuery.error ??
+    runQuery.error ??
+    iterationsQuery.error;
   if (error) {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }}>
-        <Text style={{ textAlign: "center", color: "#ef4444" }}>{error}</Text>
+        <Text style={{ textAlign: "center", color: "#ef4444" }}>{String(error)}</Text>
       </View>
     );
   }
@@ -100,6 +123,9 @@ function ArisPanelContent({
     <ArisCockpitView
       review={reviewQuery.data ?? null}
       events={eventsQuery.data ?? null}
+      runs={runsQuery.runs}
+      run={runQuery.run}
+      iterations={iterationsQuery.iterations}
       activeView={target.view ?? "cockpit"}
     />
   );

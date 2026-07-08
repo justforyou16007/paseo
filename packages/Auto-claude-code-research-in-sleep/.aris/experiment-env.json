@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "env_type": "modal",
+  "warnings": [
+    "'modal_app' is deprecated; use 'modal_app_file' (agent should translate; not auto-converted)",
+    "unknown field modal.code_dir (ignored)"
+  ],
+  "modal": {
+    "modal_gpu": "auto",
+    "modal_timeout": 21600,
+    "modal_secrets": []
+  },
+  "source": "AGENTS.md",
+  "source_path": "AGENTS.md",
+  "parsed_at": "2026-07-03T02:17:55Z"
+}

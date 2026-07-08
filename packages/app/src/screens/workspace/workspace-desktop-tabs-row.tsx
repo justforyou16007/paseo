@@ -23,6 +23,7 @@ import {
   ChevronDown,
   Columns2,
   Copy,
+  FlaskConical,
   Pencil,
   RotateCw,
   Rows2,
@@ -106,6 +107,7 @@ const ThemedSquarePen = withUnistyles(SquarePen);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedGlobe = withUnistyles(Globe);
+const ThemedFlaskConical = withUnistyles(FlaskConical);
 const ThemedColumns2 = withUnistyles(Columns2);
 const ThemedRows2 = withUnistyles(Rows2);
 const ThemedPlus = withUnistyles(Plus);
@@ -115,10 +117,12 @@ const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMut
 const AGENT_ICON = <ThemedSquarePen size={14} uniProps={mutedColorMapping} />;
 const TERMINAL_ICON = <ThemedSquareTerminal size={14} uniProps={mutedColorMapping} />;
 const BROWSER_ICON = <ThemedGlobe size={14} uniProps={mutedColorMapping} />;
+const ARIS_ICON = <ThemedFlaskConical size={14} uniProps={mutedColorMapping} />;
 
 const DRAFT_TARGET: PinnedTabTarget = { kind: "draft" };
 const TERMINAL_TARGET: PinnedTabTarget = { kind: "terminal" };
 const BROWSER_TARGET: PinnedTabTarget = { kind: "browser" };
+const ARIS_TARGET: PinnedTabTarget = { kind: "aris" };
 
 function newTabActionButtonStyle({ hovered, pressed }: PressableStateCallbackType) {
   return [styles.newTabActionButton, (hovered || pressed) && styles.newTabActionButtonHovered];
@@ -307,6 +311,13 @@ function WorkspaceTabRowExtras({
               onSelect={onCreateBrowser}
             />
           ) : null}
+          <PinnableMenuItem
+            testID="workspace-new-tab-menu-aris"
+            target={ARIS_TARGET}
+            label={t("workspace.tabs.actions.newAris")}
+            leading={ARIS_ICON}
+            onSelect={onCreateArisTab}
+          />
           <DropdownMenuSeparator />
           <DropdownMenuLabel>{t("workspace.tabs.actions.terminalProfilesMenu")}</DropdownMenuLabel>
           {profiles.map((profile) => (
