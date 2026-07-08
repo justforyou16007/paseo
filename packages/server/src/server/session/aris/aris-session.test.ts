@@ -26,6 +26,11 @@ describe("ArisSession", () => {
       host: {
         emit: (msg) => emitted.push(msg),
       },
+      arisDataService: createArisDataService({
+        workspaceRegistry: { list: async () => [] } as unknown as WorkspaceRegistry,
+        logger: createLogger(),
+      }),
+      workspaceRegistry: { list: async () => [] } as unknown as WorkspaceRegistry,
       logger: createLogger(),
     });
   });
@@ -153,6 +158,7 @@ describe("ArisSession - aris.workflow.status.read", () => {
         workspaceRegistry: createRegistry(cwd),
         logger: pino({ level: "silent" }),
       }),
+      workspaceRegistry: { list: async () => [] } as unknown as WorkspaceRegistry,
       logger: pino({ level: "silent" }),
     });
   }
@@ -379,6 +385,7 @@ describe("ArisSession - aris.workflow.status.read", () => {
         workspaceRegistry: { get: async () => null } as unknown as WorkspaceRegistry,
         logger: pino({ level: "silent" }),
       }),
+      workspaceRegistry: { list: async () => [] } as unknown as WorkspaceRegistry,
       logger: pino({ level: "silent" }),
     });
 
