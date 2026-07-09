@@ -195,6 +195,8 @@ export function WorkflowArtifactDrawer({ stage, onClose }: WorkflowArtifactDrawe
   );
   const cursorBeforeDragRef = useRef<string | null>(null);
 
+  const dragCleanupRef = useRef<(() => void) | null>(null);
+
   const handlePointerEnter = useCallback(() => setIsHandleHovered(true), []);
   const handlePointerLeave = useCallback(() => setIsHandleHovered(false), []);
 
@@ -237,6 +239,7 @@ export function WorkflowArtifactDrawer({ stage, onClose }: WorkflowArtifactDrawe
         const finalWidth = dragStateRef.current?.currentWidth;
         dragStateRef.current = null;
         setIsResizing(false);
+        setIsHandleHovered(false);
         document.body.style.cursor = cursorBeforeDragRef.current ?? "";
         cursorBeforeDragRef.current = null;
         if (pointerCaptureElement.hasPointerCapture?.(pointerId)) {
@@ -248,7 +251,9 @@ export function WorkflowArtifactDrawer({ stage, onClose }: WorkflowArtifactDrawe
         if (finalWidth != null) {
           persistDrawerWidth(finalWidth);
         }
+        dragCleanupRef.current = null;
       }
+      dragCleanupRef.current = cleanup;
 
       function handlePointerUp(upEvent: PointerEvent) {
         if (upEvent.pointerId !== pointerId) {
@@ -264,6 +269,20 @@ export function WorkflowArtifactDrawer({ stage, onClose }: WorkflowArtifactDrawe
     [drawerWidth],
   );
 
+  // Release the drag's window listeners if the drawer unmounts mid-drag.
+  useEffect(() => {
+    return () => {
+      dragCleanupRef.current?.();
+    };
+  }, []);
+
+  // Re-clamp the drawer width when the browser viewport changes.
+  useEffect(() => {
+    const onResize = () => setDrawerWidth((w) => Math.min(w, computeMaxDrawerWidth()));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
   // Esc closes the drawer while it is open.
   useEffect(() => {
     if (!stage) {
@@ -271,7 +290,6 @@ export function WorkflowArtifactDrawer({ stage, onClose }: WorkflowArtifactDrawe
     }
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        event.stopPropagation();
         onClose();
       }
     }
