@@ -157,8 +157,9 @@ ARIS 的所有 skill 都接受两个正交维度:
 | 6 组件要求    | `integration-contract.md` | 每个跨 skill 集成必须提供:激活谓词 + 规范 helper + 产物 + 清单 + 回退 + 验证器 |
 | Helper 解析链 | `integration-contract.md` | `$CLAUDE_SKILL_DIR/scripts/` → `.aris/tools/` → `tools/` → `$ARIS_REPO/tools/` |
 | 失败策略 A-E  | `integration-contract.md` | A=阻塞 / B=告警跳过 / C=取证 / D1=级联 / D2=多源 / E=诊断                      |
+| Agent 全景契约 | `paseo-subagent-dispatch.md` (executor half) + `paseo-reviewer-dispatch.md` (reviewer half) | Rule 1 (One Agent = One Skill) / Rule 2 (Parent-Child Push) / Rule 3 (Content-Free Inter-Agent Handshake) / Rule 4 (Paseo MCP Only, Strict)。每条 ARIS skill 都必须满足;`reviewer-independence.md` 是 Rule 3 的子集,`external-cadence.md` 是 Rule 4 在调度场景的扩展,`resumable-runs.md` 是 Rule 2 在 resume 场景的扩展,`skill-governance.md` 是 Rule 4 的结构性保证。 |
 
-> **新功能检查**:如果你的功能需要调用其他 skill 或工具,必须提供 6 组件集成,不能只写"必须调用 X"。
+> **新功能检查**:如果你的功能需要调用其他 skill 或工具,必须提供 6 组件集成,不能只写"必须调用 X"。同时,你的功能必须满足 `paseo-subagent-dispatch.md` / `paseo-reviewer-dispatch.md` §"Global Agent Rules" 中的 Rule 1–4(尤其 Rule 1:每个 agent 只能跑当前 skill;Rule 4:仅通过 Paseo MCP 管理生命周期)。
 
 ### 3.7 输出管理
 
@@ -311,6 +312,7 @@ ARIS 在以下平台均可运行,核心 skill 不变:
 - [ ] 我的功能是否遵循输出版本化(时间戳 + 固定名)?
 - [ ] 我的功能是否需要在多个平台运行?是否需要镜像到 `skills/skills-codex/`?
 - [ ] 我的功能涉及的评审调用是否保存 trace 到 `.aris/traces/`?
+- [ ] 我的功能是否符合 `paseo-subagent-dispatch.md` / `paseo-reviewer-dispatch.md` §"Global Agent Rules" 的 Rule 1–4(Rule 1:一 agent = 一 skill;Rule 2:push 模型父子工作流;Rule 3:内容空白的握手;Rule 4:仅 Paseo MCP)?
 
 ### Step 4: 确认反模式规避
 

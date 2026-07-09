@@ -92,6 +92,12 @@ python3 tools/run_state.py status <root> <run_id>
 
 ### Paseo driver note (re-attach vs recreate)
 
+> Resume operates under the Global Rule 2 push model: re-attach if
+> `list_agents` shows the W-agent alive, else `create_agent` fresh.
+> See [`paseo-subagent-dispatch.md`](paseo-subagent-dispatch.md)
+> §"Rule 2" for the parent-child push contract this section
+> depends on.
+
 When the workflow runs on the paseo substrate (per
 `paseo-subagent-dispatch.md`), each phase's W-agent (and, for verdict phases,
 its codex reviewer) is a paseo agent with its own `agentId`. Resume therefore

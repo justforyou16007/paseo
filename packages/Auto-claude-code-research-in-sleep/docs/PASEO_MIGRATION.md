@@ -284,9 +284,12 @@ submission` exits 0; delete `CITATION_AUDIT.json` → exit 1 blocks Final
 9. **Tracing**: after each reviewer round, `save_trace.sh` wrote
    `.aris/traces/<skill>/...` with `thread_id`=codex agent-id; audit
    artifacts' `trace_path` non-empty (verifier checks).
-10. **Graceful degradation**: paseo MCP unavailable → orchestrator falls
-    back to in-process `Skill` + `mcp__codex__codex` (today's behavior)
-    and still completes.
+10. **Strict-substrate gate**: paseo MCP unavailable → run_state.py
+    emits `BLOCKED` for the current phase; the run does NOT start.
+    Per Global Rule 4 in
+    [`skills/shared-references/paseo-subagent-dispatch.md`](../skills/shared-references/paseo-subagent-dispatch.md),
+    there is no graceful-degradation fallback to in-process `Skill` +
+    `mcp__codex__codex` — the user must start the Paseo daemon.
 
 ## Post-migration optimizations (v2)
 

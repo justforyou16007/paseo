@@ -85,6 +85,12 @@ it _is_ the authorization to auto-curate.
   Type-B (quality/correctness) rule: a quality acquittal of an auto-authored
   artifact must be cross-model, and the provenance record is the proof that it was.
 
+> Global Rule 4 (Paseo MCP Only) is enforced by the same
+> `provenance.stamp()` discipline in
+> [`paseo-subagent-dispatch.md`](paseo-subagent-dispatch.md): a
+> same-family stamp raises `assert_cross_family`; an unavailable
+> Paseo MCP substrate blocks the run before any stamp is written.
+
 ## Why (the Hermes contrast)
 
 Hermes-agent (NousResearch, MIT) has the _shape_ — a `skill_provenance` marker and

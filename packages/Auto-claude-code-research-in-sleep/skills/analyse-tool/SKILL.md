@@ -2,8 +2,10 @@
 name: analyse-tool
 description: 'General-purpose experiment-analysis tool: analyse experiment results (logs / metrics / artifacts) by reusing a registered analysis method, or — if none fits — distilling the run into a reusable tool (SKILL.md + scripts/ + references/ test data) and registering it via analysis_tools.py. Work≠Verifier: the analysis method (SKILL.md + scripts) is authored by the Claude fan-out subagent (the registered 实验分析Agent), but the verification side (references/ test data + scripts/tool-unit-test.py) is authored by Codex in a fresh thread — never the same model. Use when user says "analyse results", "分析实验结果", "analyse tool", "分析工具注册/查询", "register analysis skill", "merge analysis tools", or an agent needs a reusable analysis method for experiment results. Helper lives in a personal long-running dir because skills cannot be reloaded at runtime. Register/merge/run MUST fan out to the registered 实验分析Agent subagent — only find (query) runs in the main agent.'
 argument-hint: "[find <query> | load <slug> | register <description> | merge <slug-a> <slug-b> | run <slug>]"
-allowed-tools: Bash(*), Read, Grep, Glob, Write, Edit, Agent
+allowed-tools: Bash(*), Read, Grep, Glob, Write, Edit, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__wait_for_agent, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission
 ---
+
+> **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in [](shared-references/paseo-subagent-dispatch.md) (Rule 1: One Agent = One Skill; Rule 4: Paseo MCP Only, Strict). Spawn any sub-skill or sub-phase via `mcp__paseo__create_agent` — do **not** use the host `Skill` / `Agent` / `Task` tools.
 
 # Experiment-Analysis Tool
 

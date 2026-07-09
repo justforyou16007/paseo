@@ -2,8 +2,10 @@
 name: kill-argument
 description: 'Two-thread adversarial review: a fresh reviewer constructs the strongest 200-word rejection memo, then a second fresh reviewer defends the paper point-by-point and surfaces still-unresolved critical issues. Use when user says "kill argument", "adversarial review", "hostile review", "rebuttal preparation", "reviewer-2 simulation", or before submitting a theory paper that has already passed standard review rounds.'
 argument-hint: [paper-directory]
-allowed-tools: Skill, Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__wait_for_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent # mcp__codex__codex retained only as documented fallback when paseo MCP unavailable
+allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__wait_for_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent
 ---
+
+> **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in [](shared-references/paseo-subagent-dispatch.md) (Rule 1: One Agent = One Skill; Rule 4: Paseo MCP Only, Strict). Spawn any sub-skill or sub-phase via `mcp__paseo__create_agent` — do **not** use the host `Skill` / `Agent` / `Task` tools.
 
 > **Paseo substrate.** This skill runs inside a paseo claude sub-agent; its 2-thread Attack-Adjudication uses two FRESH paseo codex reviewer sub-agents (no continuation between them). See `shared-references/paseo-reviewer-dispatch.md` + `fan-out-pattern.md`. When paseo MCP is unavailable, fall back to `mcp__codex__codex`.
 

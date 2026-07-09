@@ -200,7 +200,17 @@ When the pipeline runs on the paseo substrate (orchestrator + W-agents as
 paseo parent-child agents per `paseo-subagent-dispatch.md`), the **driver** is
 the orchestrator session's self-target `create_heartbeat`. The **doctrine
 above is unchanged** — only the mechanism that delivers the tick is paseo's,
-not `/loop` / `CronCreate`. Two paseo-specific constraints follow directly from
+not `/loop` / `CronCreate`.
+
+> The Paseo MCP substrate is **mandatory** for any scheduled run per
+> Global Rule 4 in
+> [`paseo-subagent-dispatch.md`](paseo-subagent-dispatch.md) and
+> [`paseo-reviewer-dispatch.md`](paseo-reviewer-dispatch.md). If
+> `mcp__paseo__create_heartbeat` is unavailable, the schedule MUST
+> emit `BLOCKED` and the user must start the agent manually — there
+> is no fallback to `/loop` / `CronCreate` for ARIS work.
+
+Two paseo-specific constraints follow directly from
 the existing fence and are restated here so a paseo driver author does not
 re-derive them:
 
@@ -211,8 +221,10 @@ re-derive them:
   `get_agent_status` / read on-disk artifacts to detect a stall, but once a
   verdict agent is `running` it is hands-off until it `notifyOnFinish`-es.
 - **Nudge Type-A sub-phases only.** A stalled Type-A sub-phase (a blocked
-  experiment job, a dropped monitor) may be nudged (re-dispatch its
-  sub-agent). A stalled Type-B verdict phase must NOT be re-created or
+  experiment job, a dropped monitor) may be nudged (re-dispatch the
+  stalled sub-phase's parent (which, as the child's owner, re-dispatches
+  its own sub-agent if needed)). A stalled Type-B verdict phase must NOT
+  be re-created or
   re-prompted by the heartbeat — the fence forbids it; recovery is a
   human/cron decision, as below.
 

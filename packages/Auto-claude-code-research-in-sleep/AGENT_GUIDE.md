@@ -6,14 +6,15 @@ ARIS is a research harness: composable Markdown skills that orchestrate the ML r
 
 > **Paseo substrate.** W1–W6 + their sub-skills run as **paseo parent-child agents**
 > (executor = claude), and each cross-model reviewer runs as a **paseo codex
-> sub-agent** (GPT-5.5), all driven by `/research-pipeline`. The codex-MCP path
-> (`mcp__codex__codex` / `codex-reply`) remains as the graceful-degradation
-> fallback when the paseo MCP server is unavailable. The verdict, audit chain,
-> acceptance gate, and helpers are identical on either path. See
+> sub-agent** (GPT-5.5), all driven by `/research-pipeline`. The Paseo MCP
+> substrate is **mandatory** per Global Rule 4 in
+> [`paseo-subagent-dispatch.md`](skills/shared-references/paseo-subagent-dispatch.md);
+> if the MCP server is unavailable the run is blocked. The only MCP-tool
+> exception is `mcp__manual_review__*` for `— reviewer: manual`. The verdict,
+> audit chain, acceptance gate, and helpers are unchanged. See
 > [`docs/PASEO_MIGRATION.md`](docs/PASEO_MIGRATION.md) +
-> [`skills/shared-references/paseo-subagent-dispatch.md`](skills/shared-references/paseo-subagent-dispatch.md)
->
-> - [`paseo-reviewer-dispatch.md`](skills/shared-references/paseo-reviewer-dispatch.md).
+> [`paseo-subagent-dispatch.md`](skills/shared-references/paseo-subagent-dispatch.md) +
+> [`paseo-reviewer-dispatch.md`](skills/shared-references/paseo-reviewer-dispatch.md).
 
 > **Source of Truth.** This file is a _routing index_, not a specification.
 > Behavior of a skill lives in `skills/<name>/SKILL.md`. System-wide
@@ -187,6 +188,14 @@ Advisory CI lint at `.github/workflows/lint-skills-helpers.yml` flags hardcoded 
 Default reviewer model is `gpt-5.5` (runtime since 2026-04-24; docs aligned 2026-05-14). Legacy `gpt-5.4` available as `--- reviewer-model: gpt-5.4`. Oracle Pro tier (`gpt-5.5-pro`) via `--- reviewer: oracle-pro` is a separate routing path.
 
 ## Shared References
+
+> Read [`paseo-subagent-dispatch.md`](skills/shared-references/paseo-subagent-dispatch.md)
+> and [`paseo-reviewer-dispatch.md`](skills/shared-references/paseo-reviewer-dispatch.md)
+> first — they own the four **Global Agent Rules** (Rule 1–4) that every
+> ARIS skill must satisfy. Rule 1 (One Agent = One Skill), Rule 2 (Parent-Child
+> Push Workflow), Rule 3 (Content-Free Inter-Agent Handshake), Rule 4 (Paseo
+> MCP Only, Strict). All other shared-references in this table are extensions
+> or specializations of those four rules.
 
 Read these before invoking review-related or audit-class skills:
 

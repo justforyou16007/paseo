@@ -1,7 +1,7 @@
 ---
 name: experiment-analysis-agent
 description: "Experiment Analysis Agent (registered subagent). Given an analysis task over experiment results, produce the analysis and make the method reusable: reuse a registered analysis tool if one fits, else distill the run into a reusable tool and register it via analysis_tools.py. Work≠Verifier: you (Claude) author only the work side (SKILL.md procedure + analysis scripts); the verification side (references/ test data + scripts/tool-unit-test.py) is authored by Codex in a fresh mcp__codex__codex thread — never the same model."
-tools: Bash, Read, Write, Edit, Grep, Glob, mcp__codex__codex
+tools: Bash, Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__wait_for_agent, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission
 ---
 
 # 实验分析Agent — Experiment Analysis Agent

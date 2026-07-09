@@ -181,21 +181,50 @@ def check_inventory() -> list[str]:
     require(en_h2 == 16, f"README.md has {en_h2} numbered H2 sections; expected 16 (Phase A)", failures)
     require(cn_h2 == 16, f"README_CN.md has {cn_h2} numbered H2 sections; expected 16 (Phase A)", failures)
 
-    # Agent-grant hygiene (WB2): `Agent` in allowed-tools is the Tier-2
-    # fan-out capability gate. Per shared-references/fan-out-pattern.md it is
-    # granted ONLY to skills that actually fan out, and such skills MUST cite
-    # the convention doc in their body. A grant without that citation is a
-    # vestigial/boilerplate grant and fails the drift check.
+    # Paseo-grant hygiene (Rule 1 + Rule 4, Paseo MCP Only, Strict).
+    # Per shared-references/paseo-subagent-dispatch.md §"Global Agent Rules":
+    #   - The host `Agent` tool is FORBIDDEN in ARIS workflows. Any mainline
+    #     skill that grants `Agent` fails the drift check.
+    #   - `mcp__paseo__create_agent` in allowed-tools is the fan-out gate.
+    #     A skill that grants it MUST cite `paseo-subagent-dispatch.md` in
+    #     its body — same dead-code guard as the old `Agent` rule.
+    #   - Symmetrically, a skill whose body cites the Paseo dispatch docs
+    #     for fan-out MUST grant `mcp__paseo__create_agent` (the grant
+    #     tracks usage; never the reverse).
     for skill_file in sorted(SKILLS_ROOT.glob("*/SKILL.md")):
         text = read(skill_file)
-        if "Agent" not in allowed_tools(text):
-            continue
-        if "fan-out-pattern.md" not in frontmatter_split(text):
+        frontmatter = frontmatter_split(text)
+        at = allowed_tools(text)
+        # Rule 4 (Strict): `Agent` is forbidden.
+        if re.search(r"(^|,)\s*Agent\s*(,|$)", ", ".join(at)):
             rel = skill_file.relative_to(REPO_ROOT)
             failures.append(
-                f"{rel} grants `Agent` in allowed-tools but its body does not "
-                f"cite fan-out-pattern.md — vestigial grant or undocumented "
-                f"fan-out (see shared-references/fan-out-pattern.md)"
+                f"{rel} grants host `Agent` in allowed-tools — "
+                f"FORBIDDEN per Global Rule 4 (Paseo MCP Only, Strict) in "
+                f"shared-references/paseo-subagent-dispatch.md. Use "
+                f"`mcp__paseo__create_agent` instead."
+            )
+        # Rule 1 + Rule 4: a grant of `mcp__paseo__create_agent` requires
+        # body citation of the dispatch convention; a body citation requires
+        # the grant. Two-way binding prevents vestigial grants and broken
+        # prose pointers.
+        has_paseo_create = "mcp__paseo__create_agent" in at
+        body_cites_paseo = "paseo-subagent-dispatch.md" in frontmatter
+        if has_paseo_create and not body_cites_paseo:
+            rel = skill_file.relative_to(REPO_ROOT)
+            failures.append(
+                f"{rel} grants `mcp__paseo__create_agent` in allowed-tools "
+                f"but its body does not cite paseo-subagent-dispatch.md — "
+                f"vestigial grant or undocumented fan-out (see "
+                f"shared-references/paseo-subagent-dispatch.md "
+                f"§\"Global Agent Rules\")"
+            )
+        if body_cites_paseo and not has_paseo_create:
+            rel = skill_file.relative_to(REPO_ROOT)
+            failures.append(
+                f"{rel} cites paseo-subagent-dispatch.md in its body but "
+                f"does not grant `mcp__paseo__create_agent` in allowed-tools "
+                f"— body points at a capability the skill cannot call"
             )
 
     # Watchdog 'loop' task type ⇔ its documented trigger (A2). Mirrors the Agent-grant⇒cite

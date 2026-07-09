@@ -1,5 +1,11 @@
 # Fan-Out Pattern
 
+> **Compliance**: This file is governed by
+> [`paseo-subagent-dispatch.md`](paseo-subagent-dispatch.md) Global
+> Rule 1 (One Agent = One Skill) and Rule 4 (Paseo MCP Only, Strict).
+> The single fan-out primitive is `mcp__paseo__create_agent` × N. The
+> legacy 3-tier host-`Agent`-tool ladder is **removed**.
+
 When a skill needs **breadth** — many candidate ideas, many sources, many
 attack angles, many proof obligations, many draft sections — it may fan
 the generation step out across same-family subagents. This document is
@@ -47,47 +53,55 @@ clustering, schema validation, sorting by a declared field) are **not**
 judgment and are explicitly allowed on the executor — see
 § Structured-output contract.
 
-## The 3-tier degradation ladder
+## The unified fan-out pattern: Paseo N-subagent
 
-Fan-out is a **skill-prompt pattern, not a harness capability.** ARIS
-already fans out today on runtimes that have no parallel-orchestration
-primitive at all (`/kill-argument` runs two sequential fresh codex
-threads with **no Agent tool**; `/citation-audit` verifies per-entry;
-`/proof-checker` re-derives per-round). A richer runtime (ultracode /
-Workflow true parallelism) merely _accelerates_ the same pattern.
+Fan-out is a **single, substrate-agnostic pattern** under the Global
+Rules: spawn **N Paseo sub-agents** (one per shard) with
+`mcp__paseo__create_agent`, each with `notifyOnFinish: true`. The
+parent collects N push notifications, reads N receipt files, runs
+mechanical dedup, then forwards the deduped set to the cross-model
+jury. Per Global Rule 1, every shard is a separate agent executing
+exactly one skill.
 
-Therefore fan-out must degrade gracefully across runtimes. The three
-tiers below differ **only** in how the candidate-generation step is
-dispatched. They terminate in the **identical** cross-model jury step.
+The dispatch substrate has **two** runtime properties (NOT tiers):
 
-| Tier       | Dispatch mechanism                                                                                                 | When available                                                         |
-| ---------- | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
-| **Tier 1** | ultracode / Workflow true parallel — N shards run concurrently with dynamic orchestration                          | Runtime exposes a parallel-spawn primitive                             |
-| **Tier 2** | Plain `Agent`-tool spawn — N subagents launched, no dynamic orchestration (static fan, collect, merge)             | Host has the `Agent` tool but no Workflow engine                       |
-| **Tier 3** | Sequential fallback — the same N shards run one-by-one, each in a **fresh context** (context reset between shards) | Any runtime, including codex CLI / bare Claude Code with no Agent tool |
+  - **Claude sub-agents** can run in parallel. The Paseo MCP allows
+    concurrent `create_agent` calls; each child runs in its own
+    context; the parent receives N `notifyOnFinish` events and reads
+    N receipt files.
+  - **Codex sub-agents** must run sequentially. Concurrent codex
+    sub-agents hang on shared resources (see
+    [`skills/kill-argument/SKILL.md`](../kill-argument/SKILL.md) line
+    165-170). For codex-shard fan-out, the parent issues
+    `create_agent` calls one at a time and waits for each receipt
+    before issuing the next.
+
+The legacy 3-tier ladder (ultracode / `Agent` tool / sequential) is
+**removed**. Per Global Rule 4, the host `Agent` tool is forbidden in
+ARIS workflows; per Global Rule 1, all fan-out shards are
+Paseo-spawned sub-agents.
 
 ```
-                 ┌─────────────────────────────────────────┐
-  Tier 1  ──┐    │                                          │
-  Tier 2  ──┼──► │  merged union → mechanical dedup (SAFE)  │ ──► CROSS-MODEL JURY
-  Tier 3  ──┘    │     (executor-side, NOT judgment)        │      (identical step)
-                 └─────────────────────────────────────────┘
-       (dispatch differs)         (same)                          (same — invariant)
+            ┌─────────────────────────────────────────┐
+   N        │                                          │
+Paseo  ──┐  │  merged union → mechanical dedup (SAFE)  │ ──► CROSS-MODEL JURY
+shards ──┘  │     (executor-side, NOT judgment)        │      (identical step)
+            └─────────────────────────────────────────┘
+       (all Paseo)         (same)                          (same — invariant)
 ```
 
 **The jury invariant is strictly orthogonal to whether subagents
-exist.** Tier 3 with zero subagents (one fresh-context pass per shard,
-in series) must produce a verdict from the _same_ cross-model jury as
-Tier 1 with eight parallel workers. If a skill cannot run Tier 1, it
-drops to Tier 2; if it cannot run Tier 2, it drops to Tier 3. It never
-drops the jury. Degrading the dispatch is free; degrading the verdict is
-a breach.
+exist.** A single sequential pass that runs each shard in a fresh
+context (e.g. for codex serial fan-out) must produce a verdict from
+the _same_ cross-model jury as a parallel Claude fan-out across
+N workers. The dispatch substrate changes; the jury step does not.
+Degrading the dispatch is free; degrading the verdict is a breach.
 
-Known failure mode: a skill author "optimizes" Tier 3 by letting the
+Known failure mode: a skill author "optimizes" by letting the
 single sequential pass _also_ pick the winner, because there is no
-orchestrator to do it. That is self-acquittal smuggled in through the
-fallback path. Tier 3 still ends at the cross-model jury; the sequential
-pass only generates.
+parallel orchestrator to do it. That is self-acquittal smuggled in
+through the substrate. Even sequential fan-out still ends at the
+cross-model jury; the sequential pass only generates.
 
 ## Structured-output contract for shards
 
@@ -203,38 +217,41 @@ never fan out the bench.**
 
 ## Worked examples (real ARIS skills)
 
-### `/kill-argument` — Tier 3 sequential fan-out, NO Agent tool
+### `/kill-argument` — sequential codex sub-agent fan-out (substrate property, not a tier)
 
 `/kill-argument` is the canonical proof that fan-out is a prompt pattern,
-not a harness feature. It runs **two** fresh `mcp__codex__codex` threads
-in series — Thread 1 writes the strongest 200-word rejection memo; Thread
-2 (independent, no `codex-reply`) decomposes that memo into 3-7 atomic
-rejection points and adjudicates each. There is **no `Agent` tool** in
-its `allowed-tools`; the "fan" is the decomposition into per-point
-obligations, run sequentially with context reset between threads. The
-jury here is cross-model by construction — both threads are GPT-5.5
-adjudicating a Claude-executor's paper, and **the skill code computes the
-final verdict from per-point counts; the codex thread is forbidden from
-emitting the top-level verdict** (`Verdict is computed by the skill, not
-by the adjudicator`). Generation (the attack, the per-point
+not a harness feature. It runs **two** fresh `mcp__paseo__create_agent`
+codex sub-agents in series — Thread 1 writes the strongest 200-word
+rejection memo; Thread 2 (independent, no `send_agent_prompt` to the
+same agent) decomposes that memo into 3-7 atomic rejection points and
+adjudicates each. The sequential ordering is mandated by the
+**substrate property** that concurrent codex sub-agents hang (see
+`skills/kill-argument/SKILL.md:165-170`); the parent issues the second
+`create_agent` only after reading the first sub-agent's receipt file.
+The "fan" is the decomposition into per-point obligations, run
+sequentially with context reset between sub-agents. The jury here is
+cross-model by construction — both sub-agents are GPT-5.5 adjudicating
+a Claude-executor's paper, and **the skill code computes the final
+verdict from per-point counts; the codex sub-agent is forbidden from
+emitting the top-level verdict** (`Verdict is computed by the skill,
+not by the adjudicator`). Generation (the attack, the per-point
 classification) fans out; the ACCEPT/FAIL mapping is mechanical and
 lives in the skill, not the model.
 
-### `/idea-creator` — Tier-1 parallel lens fan-out → dedup → existing cross-model jury
+### `/idea-creator` — Paseo N-subagent lens fan-out → dedup → existing cross-model jury
 
 `/idea-creator` fans out idea generation across analytic _lenses_
 (structural gaps: method-in-A-not-B, contradictory findings, untested
-assumptions, unexplored scaling regimes — Phase 1). On a Tier-1 runtime
-these lenses run as parallel shards; on Tier 3 they are enumerated in one
-pass. After fan-out the merged set should be **mechanically deduped only**
-(cluster near-identical ideas; never drop one for being "weak"). The
-**jury** is the already-existing Phase-4 cross-model devil's-advocate
-pass: GPT-5.5 via Codex MCP surfaces the strongest reviewer objection per
-idea and ranks for a top venue. `/idea-creator` declares the `Agent` tool — re-granted (per the re-grant
-rule in **Allowed-tools hygiene**) when the lens fan-out was wired, after
-the WB2 sweep had stripped the earlier vestigial grant. On a Tier-1 runtime
-the lenses run as Workflow shards; on Tier 3 they fall back to sequential
-enumeration with no grant needed.
+assumptions, unexplored scaling regimes — Phase 1). The parent spawns
+5 Paseo sub-agents (one per lens) via `mcp__paseo__create_agent` with
+`notifyOnFinish: true`. Claude sub-agents run in parallel (the Paseo
+MCP allows concurrent `create_agent` calls); the parent collects 5
+push notifications, reads 5 receipt files, then runs **mechanical
+dedup only** (cluster near-identical ideas; never drop one for being
+"weak"). The **jury** is the already-existing Phase-4 cross-model
+devil's-advocate pass: a fresh paseo codex sub-agent
+(`provider: "codex/gpt-5.5"`) reads the deduped set cold and emits the
+strongest reviewer objection per idea.
 
 > ⚠️ **Known gap — idea-creator is an _aspirational_ example here, not yet a clean one.**
 > Today `/idea-creator` Phase 3 (`skills/idea-creator/SKILL.md:159,175`)
@@ -310,8 +327,13 @@ Two invariants keep a fan-out from manufacturing or laundering errors:
 
 A SKILL that fans out must specify all of:
 
-1. **Tier-portable dispatch.** State the Tier-1 parallel form AND the
-   Tier-3 sequential fallback. Never assume `Agent` or Workflow exists.
+1. **Paseo N-subagent dispatch.** State the parent dispatches N
+   `mcp__paseo__create_agent` calls with `notifyOnFinish: true`; each
+   sub-agent runs exactly one skill (per Global Rule 1). Identify which
+   sub-agent type is used (Claude: parallel; codex: serial substrate
+   property). Cite
+   [`paseo-subagent-dispatch.md`](paseo-subagent-dispatch.md) in the
+   skill body.
 2. **Per-shard structured output.** Each shard returns a structured object
    keyed by `shard_id`, never prose. A _generation_ fan-out (e.g.
    idea-creator's lenses) returns `candidates[]`, each item carrying a
@@ -322,45 +344,43 @@ A SKILL that fans out must specify all of:
 3. **Mechanical dedup before the jury.** On the merged union, on the
    executor, judgment-free, declared metric — to control jury cost and
    rate-limit exposure.
-4. **A single cross-model jury step** (per `reviewer-routing.md` +
-   `reviewer-independence.md`) — OR a deterministic verifier gate — that
-   is **identical** across all three tiers.
+4. **A single cross-model jury step** (per
+   [`paseo-reviewer-dispatch.md`](paseo-reviewer-dispatch.md) +
+   [`reviewer-independence.md`](reviewer-independence.md)) — OR a
+   deterministic verifier gate — that is **identical** regardless of
+   whether fan-out is parallel (Claude) or sequential (codex).
 5. **A breadth-bound justification.** State why this task benefits from
    breadth. If the deliverable IS a verdict, do not fan out the verdict;
    fan out only the evidence that feeds it.
 
-## Allowed-tools hygiene — the `Agent` grant policy
+## Allowed-tools hygiene — the Paseo grant policy
 
-`Agent` in a skill's `allowed-tools` frontmatter is the capability gate for
-**Tier-2** dispatch (spawning Claude subagents via the Agent tool). It is
-**granted only to skills whose body actually fans out** — i.e. whose prose
-instructs the model to spawn parallel Claude subagents. It is **not**
-boilerplate to be copied across skills.
+`mcp__paseo__create_agent` in a skill's `allowed-tools` frontmatter is
+the capability gate for **Paseo N-subagent fan-out** (per Global Rule
+4). It is **granted only to skills whose body actually fans out** —
+i.e. whose prose instructs the parent to spawn N Paseo sub-agents via
+`create_agent`. It is **not** boilerplate to be copied across skills.
 
-This matters because the other two tiers need no per-skill grant:
+The host `Agent` tool is **forbidden** in ARIS workflows per Global
+Rule 4. A skill that previously granted `Agent` for the legacy Tier-2
+form MUST be migrated to the Paseo primitive. As of this rewrite the
+four fan-out skills (`idea-creator`, `research-lit`, `proof-checker`,
+`analyse-tool`) all already have `mcp__paseo__create_agent` in their
+`allowed-tools`; the legacy `Agent` grant becomes a no-op and is being
+removed (see follow-up commit).
 
-- **Tier-1** (ultracode / Workflow) is a _harness_ capability, not a tool a
-  skill lists. A skill cannot "grant itself" Workflow; the runtime provides
-  it. So fanning out at Tier-1 requires no `Agent` in `allowed-tools`.
-- **Tier-3** (sequential fallback) spawns nothing — e.g. `/kill-argument`
-  runs its two passes as fresh `mcp__codex__codex` threads, no Agent tool.
-  Correctly, `kill-argument` does **not** grant `Agent`.
+**Re-granting rule.** A skill that adds genuine fan-out introduces
+`mcp__paseo__create_agent` to its `allowed-tools` **in the same change
+that adds the fan-out prose**, and that prose must cite
+[`paseo-subagent-dispatch.md`](paseo-subagent-dispatch.md) so the
+grant is self-justifying. Grant tracks usage; never the reverse.
+**Also: any mainline skill that grants `Agent` is rejected.** The
+forbidden list is enforced at the schema level — see
+`tools/check_skills_inventory.py`.
 
-So `Agent` is needed _only_ for the Tier-2 form, _only_ in skills that
-genuinely fan out. The WB2 least-privilege sweep removed 48 vestigial grants
-(pure copied boilerplate, never invoked); since then **only skills that
-genuinely fan out at Tier-2 re-grant `Agent`, and each must cite this doc in
-its body** (enforced by `check_skills_inventory.py`). As of writing those are
-`idea-creator`, `proof-checker`, and `research-lit`. Note that "reviewer
-**sub-agent**" in several skills refers to the cross-model _codex/GPT
-reviewer_, not the Agent tool, and never implied a real grant need.
-
-**Re-granting rule.** A skill that adds genuine fan-out re-introduces
-`Agent` to its `allowed-tools` **in the same change that adds the fan-out
-prose**, and that prose must cite this document (`fan-out-pattern.md`) so
-the grant is self-justifying. Grant tracks usage; never the reverse.
-
-**Enforcement.** `tools/check_skills_inventory.py` fails the drift check if
-any mainline skill grants `Agent` without citing `fan-out-pattern.md` in its
-body. This keeps vestigial grants from creeping back and guarantees every
-real grant is traceable to the convention it follows.
+**Enforcement.** `tools/check_skills_inventory.py` fails the drift
+check if any mainline skill grants `Agent` (forbidden per Rule 4), or
+grants `mcp__paseo__create_agent` without citing
+`paseo-subagent-dispatch.md` in its body. This keeps vestigial grants
+from creeping back and guarantees every real grant is traceable to
+the convention it follows.

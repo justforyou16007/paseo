@@ -163,5 +163,6 @@ Find the complete daemon logs and traces in the $PASEO_HOME/daemon.log
 
 ## Agent Validation
 
-When you need to verify your own work output, you must use Codex/GLM-5.2 with `full-access` mode for end-to-end functional validation. It is strictly forbidden to validate your own work output by yourself.
+Sub-Agent Generation Principle: Whoever creates a new Agent is responsible for archiving the corresponding Agent.
+When you need to complete a coding task, you must use claude/minimax-m3 to generate a sub-Worker Agent in a new worktree. After completion, the sub-Agent must use codex/glm-5.2 to create a verification Agent to review and validate the sub-Worker Agent's work. Upon successful validation, each party shall archive the Agent they are responsible for.
 When your test objectives involve frontend content, you are required to use Playwright MCP for frontend operation validation.

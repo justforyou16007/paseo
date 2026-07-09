@@ -19,6 +19,143 @@ the cross-model jury step and lives in its own doc:
 the lifecycle / continuity / fanout discipline below; only the provider and
 independence rules differ.
 
+## Global Agent Rules (apply to every ARIS workflow skill)
+
+> These four rules govern ARIS agent identity, handshake, content boundary,
+> and lifecycle. They are the single source of truth; this document is the
+> **executor** half (Claude parent → Claude child), and the reviewer half
+> lives in [`paseo-reviewer-dispatch.md`](paseo-reviewer-dispatch.md).
+> Companion extensions: `reviewer-independence.md` (Rule 3 detail),
+> `external-cadence.md` (Rule 4 heartbeat detail), `resumable-runs.md`
+> (Rule 2 resume detail), `skill-governance.md` (Rule 4 provenance detail).
+
+### Rule 1 — One Agent = One Skill (Strict)
+
+Every agent executes **exactly one** currently-loaded skill. The skill plus
+its run-bound context variables (`run_id`, `phase`, `project root`,
+`CLAUDE.md` vars) is the agent's whole identity. If the skill's body
+instructs the agent to trigger another skill, a sub-skill, a cross-model
+review, or any fan-out shard, the agent **MUST** spawn a Paseo child
+agent — it MUST NOT use the host `Skill` tool, `Task` tool, or `Agent`
+tool to do it in-process.
+
+### Rule 2 — Parent-Child Push Workflow
+
+A parent agent dispatches work; it never dispatches the verdict. The
+handshake is **push**, not request-response:
+
+  1. **Spawn** — `mcp__paseo__create_agent` with `notifyOnFinish: true`,
+     `relationship: {kind: "subagent"}`, `workspace: {kind: "current"}`.
+     Bind the child to one skill (Rule 1) and to the run's variables.
+  2. **Wait** — parent calls `mcp__paseo__wait_for_agent` (or reacts to
+     the push notification). Parent **MUST NOT** poll `get_agent_status`
+     in a loop.
+  3. **Judge** — parent reads the child's receipt file
+     (`.aris/runs/<run_id>.<phase>.done.json`). The receipt is the
+     authoritative payload; `<agent-response>` text is convenience only
+     and can be lost to preemption (`replaceRunning: true`).
+  4. **Archive** — for fresh-purpose children, call
+     `mcp__paseo__archive_agent` the moment the receipt is read
+     ("用完即 archive"). For continuation children, keep alive until the
+     loop terminates, then archive.
+
+Children **MUST NOT** spawn their parent (no cycles). Children are free
+to spawn their own sub-children (cascading sub-agent tree is fine;
+grandchild archives cascade with the child).
+
+### Rule 4 — Paseo MCP Only (Strict, no graceful degradation)
+
+Agent lifecycle is **exclusively** managed by Paseo MCP — the 33 tools
+listed at `mcp__paseo__*` (see `paseo-tools.ts` in `packages/server`).
+The host `Skill` / `Task` / `Agent` tools and the legacy `mcp__codex__codex`
+/ `mcp__codex__codex-reply` are **forbidden** in ARIS workflows.
+
+**Strict mode**: if `mcp__paseo__list_agents` is unavailable at
+orchestrator startup, the run is **blocked** (`run_state.py` writes
+`status=BLOCKED` for the current phase) — it does **not** fall back to
+in-process `Skill` + `mcp__codex__codex`. The run stops and the user is
+asked to start the Paseo daemon.
+
+The only MCP exception is `mcp__manual_review__*`, used for the
+`— reviewer: manual` option (human-in-browser; cannot be a real agent).
+
+#### Rule 4a — Creator Owns Lifecycle (sub-rule of Rule 4)
+
+The agent that calls `mcp__paseo__create_agent` is the **lifecycle owner**
+of the spawned child agent — sole authority for every other LIFECYCLE tool
+against that child, for the child's full lifetime. This is the same
+"owned by its parent" discipline the cascade-archive rule
+(`relationship: {kind: "subagent"}`) already implies; this sub-rule makes
+it explicit and exhaustive.
+
+**The 13 LIFECYCLE tools** (the lifecycle-sensitive subset of the 33
+`mcp__paseo__*` tools; the other ~20 — terminals, worktrees, schedules,
+provider discovery — are adjacent but are NOT lifecycle ownership) are
+reserved to the owner of the child they target. For any child the
+owner spawned, only that owner may call:
+
+  - `wait_for_agent` — receive the child's `notifyOnFinish` signal
+  - `send_agent_prompt` — continuation (e.g. round 2+ reviewer, stalled
+    child recovery per `Idle agent supervision`)
+  - `get_agent_status` / `get_agent_activity` — supervision / idle
+    detection
+  - `set_agent_mode` / `update_agent` — runtime tuning
+  - `list_pending_permissions` / `respond_to_permission` — permission
+    lifecycle for that child
+  - `cancel_agent` / `kill_agent` — forced termination
+  - `archive_agent` — 用完即 archive (the Rule 2 step 4 / `Child lifecycle`
+    discipline)
+
+**Non-owners must not invoke LIFECYCLE tools against the owner's child.**
+Specifically:
+
+  - **Siblings** (other children of the same parent) are non-owners. They
+    must not call any of the 13 tools against a peer's agent-id.
+  - **The grandparent** (e.g. the orchestrator that spawned the parent
+    W-agent) is a non-owner of the W-agent's children. The grandparent
+    may read the W-agent's child IDs only via the W-agent's own report
+    (e.g. the receipt file's `sub_agent_ids` array) or via
+    `list_agents` (read-only inventory); it MUST NOT `send_agent_prompt`
+    / `cancel_agent` / `archive_agent` them.
+  - **The heartbeat** (`create_heartbeat` / overnight nudge) is a
+    non-owner of every W-agent's children. Per
+    `external-cadence.md` "Paseo driver note", the heartbeat may
+    `get_agent_status` to detect a stall, but once a verdict agent is
+    `running` it is hands-off until it `notifyOnFinish`-es. Recovery is
+    **the owner's** job — the heartbeat nudges the owner, the owner
+    re-dispatches.
+  - **Cascade-archive reinforces, does not replace, this rule.**
+    `relationship: {kind: "subagent"}` prunes grandchildren when the
+    parent is archived (see `Verified paseo semantics` above), but the
+    owner is still the only one that should call `archive_agent` on its
+    own child explicitly (step 4 of Rule 2). Cascade-archive is the
+    safety net; the owner is the primary.
+
+**Owner-transfer rule (resume edge case).** If the original owner is
+dead / archived and a fresh agent calls `create_agent` on resume, the
+resuming agent becomes the new owner. The new owner may `send_agent_prompt`
+to a still-alive codex reviewer that the dead owner spawned (reading its
+agent-id from `REVIEW_STATE.json` per `resumable-runs.md`); the resume
+hand-off re-attaches, it does not create a third owner. There is at all
+times exactly **one** owner per child.
+
+The owner's authority is bounded by the other rules: it cannot inject
+guidance into a reviewer child (Rule 3 / `reviewer-independence.md`),
+cannot self-acquit a quality verdict (`acceptance-gate.md`), and cannot
+re-create a verdict-bearing loop's claude agent per round (the fence in
+`external-cadence.md`). Ownership is a **lifecycle** authority, not a
+verdict authority.
+
+### Relationship to existing ARIS principles
+
+- The DRIVE/ACQUIT split (`acceptance-gate.md`) is preserved: a Rule 1
+  child is a DRIVE; the parent's gate is the ACQUIT step.
+- The 6-component contract (`integration-contract.md`) applies: every
+  cross-skill dispatch still needs predicate + helper + artifact +
+  checklist + backfill + verifier.
+- The fan-out pattern (`fan-out-pattern.md`) lives entirely **inside**
+  the child agent spawned under Rule 2 — never across children.
+
 ## Why this contract exists
 
 ARIS today chains sub-skills inside one Claude session via synchronous
@@ -256,26 +393,6 @@ The orchestrator never judges quality on resume — it reads on-disk
 artifacts, runs the gate, calls `run_state.py accept`. The
 `run_state.py` self-acquittal tripwire (`accept` warns on a `claude*`
 reviewer) is the backstop.
-
-## Auto-skip-if-unconfigured (graceful degradation)
-
-Paseo is an additive substrate, never load-bearing on the verdict. If the
-paseo MCP server is unavailable (the tools `mcp__paseo__create_agent` etc.
-are not present), the workflow falls back to today's behavior with **no
-change to the jury**:
-
-- Executor sub-skill dispatch → in-process `Skill`-tool call (Tier 3
-  sequential, per `fan-out-pattern.md`).
-- Cross-model reviewer → `mcp__codex__codex` / `codex-reply` per
-  `reviewer-routing.md`.
-
-Detect once at orchestrator startup: probe for `mcp__paseo__list_agents`
-(or any paseo tool). If absent, set `fanout_subagents=false` for the run,
-log a WARN, and proceed on the in-process path. The cross-model jury,
-acceptance gate, audit chain, and `verify_paper_audits.sh` gate are
-identical on either path — only the dispatch substrate changes. This is
-the paseo analog of `fan-out-pattern.md`'s "degrade the dispatch, never
-the verdict."
 
 ## Anti-patterns to refuse in review
 

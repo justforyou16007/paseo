@@ -16,6 +16,116 @@ review = `send_agent_prompt` to the same codex agent.** Nothing else
 changes — the reviewer is still GPT-5.5, still `xhigh`, still receives file
 paths only, still writes a traceable verdict.
 
+## Global Agent Rules (reviewer half)
+
+> Companion to [`paseo-subagent-dispatch.md`](paseo-subagent-dispatch.md)
+> §"Global Agent Rules". The executor half is the single source of
+> truth for Rule 1 / Rule 4; this document owns the **reviewer-
+> specific** view of Rule 2 and the **full** Rule 3 (content-free
+> handshake), since review is the only path where executor and
+> reviewer are different model families.
+
+### Rule 1 — One Agent = One Skill (reviewer applies)
+
+A reviewer sub-agent runs exactly one review skill
+(`/auto-review-loop`, `/proof-checker`, `/paper-claim-audit`, etc.).
+Cross-skill composition (e.g. running novelty + paper-claim-audit in
+one reviewer) is **forbidden** — spawn separate children.
+
+### Rule 2 — Parent-Child Push Workflow (reviewer adds: cross-model verification BEFORE notify)
+
+A reviewer-bearing child **MUST** invoke cross-model verification per
+the §"When to apply" pattern below before notifying its parent.
+Specifically: the child runs its skill, the cross-model reviewer
+(typically codex/GPT-5.5) reads the artifact cold and emits a
+verdict, the child records the verdict in its receipt file, and
+**only then** does `notifyOnFinish` fire. The parent sees the verdict
+in the receipt — not in the child's text.
+
+For multi-round review (e.g. `auto-review-loop` r2+), the reviewer
+is a **continuation** child (`send_agent_prompt` to the same
+agentId), not a fresh child — see §"Fresh vs continuation" below.
+
+### Rule 3 — Content-Free Inter-Agent Handshake (full text)
+
+Communication between any two ARIS agents (parent ↔ child, child ↔
+sub-child, executor ↔ reviewer) **MUST NOT** carry:
+
+  - ❌ File contents, snippets, or previews
+  - ❌ Executor summaries, paraphrases, or interpretations
+  - ❌ Key findings or bullet points extracted by the sender
+  - ❌ Recommendations, leading questions, or assertions of quality
+  - ❌ Previous round feedback from any agent other than the
+    recipient's own prior round
+
+Communication **MAY** carry:
+
+  - ✅ Task status (`pending` / `running` / `done` / `failed` /
+     `accepted` / `skipped`)
+  - ✅ Verdict id, reviewer name, verdict schema path
+  - ✅ Artifact **paths** (let the recipient read the file)
+  - ✅ Role/persona, review objective, structural metadata
+  - ✅ Venue constraints (page limit, format)
+
+**Exception — reviewer's self-reference**: a reviewer's continuation
+`send_agent_prompt` MAY reference **its own** prior feedback ("did
+you fix round 1's gap?"). It MUST NOT reference the executor's
+interpretation of that feedback (the same exclusion that
+`reviewer-independence.md` §"Exception" already documents).
+
+### Rule 4 — Paseo MCP Only
+
+See [`paseo-subagent-dispatch.md`](paseo-subagent-dispatch.md)
+§"Rule 4". The reviewer is a Paseo agent (`provider: "codex/gpt-5.5"`
+via `create_agent`); it MUST NOT be called via legacy
+`mcp__codex__codex` or `mcp__codex__codex-reply`. The only allowed
+MCP exception is `mcp__manual_review__*` for `— reviewer: manual`.
+
+#### Rule 4a — Creator Owns Lifecycle (reviewer view; sub-rule of Rule 4)
+
+The agent that calls `mcp__paseo__create_agent` is the **lifecycle owner**
+of the spawned child — for the reviewer's two sides:
+
+  - **The reviewer is itself an owned child.** A codex reviewer agent
+    is created by its parent W-agent (e.g. `auto-review-loop` round 1,
+    `proof-checker`, `paper-claim-audit`). That W-agent — and only that
+    W-agent — is the reviewer's owner. The 13 LIFECYCLE tools against
+    the reviewer (`wait_for_agent`, `send_agent_prompt` for round 2+
+    continuation, `get_agent_status` / `get_agent_activity`,
+    `archive_agent` for 用完即 archive, etc.) are reserved to the
+    owning W-agent. The heartbeat, the orchestrator, and any other
+    W-agent are non-owners of THIS reviewer — they must not invoke
+    LIFECYCLE tools against its agent-id.
+  - **The reviewer that spawns a sub-child is itself an owner.** A
+    codex reviewer that fan-outs sub-audits (e.g. a novelty pass that
+    spawns a per-section audit) becomes the lifecycle owner of those
+    sub-children, with the same 13-tool authority. The reviewer's
+    parent W-agent (the original owner) is NOT the owner of the
+    reviewer's children; the reviewer is. This is the same
+    "owned by its parent" cascade-archive discipline applied one level
+    down.
+
+**Owner-transfer (resume).** Same as the executor half: on
+`/research-pipeline — resume <run_id>`, if the original owning W-agent
+is dead / archived, the fresh W-agent that `create_agent`s on resume
+becomes the new owner of any still-alive codex reviewer (read its
+agent-id from `REVIEW_STATE.json` `threadId` and re-attach with
+`send_agent_prompt`). At all times exactly one owner per child.
+
+The owner is the **lifecycle** authority. The reviewer's verdict
+independence is preserved by Rule 3 + `reviewer-independence.md` —
+ownership does not let the parent inject guidance into a reviewer
+child. The two are orthogonal: lifecycle ≠ verdict.
+
+### Cross-references
+
+- `reviewer-independence.md` — the detailed CAN/CANNOT list for
+  executor→reviewer comm; this rule generalizes it to **all**
+  inter-agent comm.
+- `acceptance-gate.md` — the cross-model-vs-same-model distinction
+  that motivates Rule 3.
+- `resumable-runs.md` — Rule 2's resume / re-attach path lives there.
+
 ## Why a separate doc from the executor dispatch
 
 The executor and the reviewer share the paseo substrate, the lifecycle, and
@@ -280,16 +390,6 @@ migration:
 
 The `REVIEWER_DIFFICULTY` / `REVIEWER_BACKEND` pass-throughs are unchanged;
 they now select a paseo codex agent (default) vs an MCP fallback.
-
-## Auto-skip-if-unconfigured (graceful degradation)
-
-If the paseo MCP server is unavailable, the reviewer falls back to
-`mcp__codex__codex` / `codex-reply` per `reviewer-routing.md`'s existing
-default — today's behavior, byte-for-byte. The verdict, trace, and
-acceptance gate are identical on either path. Detect once at orchestrator
-startup (probe for `mcp__paseo__list_agents`); if absent, log WARN and use
-codex MCP for the reviewer this run. This is the jury half of "degrade the
-dispatch, never the verdict."
 
 ## Anti-patterns to refuse in review
 

@@ -75,6 +75,15 @@ This protocol applies to ALL cross-model review calls in ARIS:
 - `/meta-optimize` — patch review
 - Any skill that sends artifacts to `mcp__codex__codex` or `mcp__codex__codex-reply`
 
+> **Scope expansion**: This document is now a **specialization** of
+> [`paseo-reviewer-dispatch.md`](paseo-reviewer-dispatch.md) §"Rule 3 —
+> Content-Free Inter-Agent Handshake". The CAN/CANNOT list below was
+> originally written for executor→reviewer only; per the new Global
+> Rules, the **same** content-free contract applies to **all** ARIS
+> inter-agent communication (parent↔child, child↔sub-child,
+> executor↔reviewer). The reviewer's self-reference Exception below
+> is preserved verbatim.
+
 ## Exception
 
 Multi-round review within the SAME thread (`codex-reply`) may reference the reviewer's own previous feedback to check resolution — but still must not include executor interpretations of that feedback.
