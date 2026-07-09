@@ -1,7 +1,15 @@
 /* eslint-disable jsx-no-new-object-as-prop -- ARIS visualization views use inline styles for rapid prototyping */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ActivityIndicator, Animated, Pressable, ScrollView, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Animated,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+  type PointerEvent as RNPointerEvent,
+} from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import type {
   ArisWorkflowArtifact,
@@ -23,6 +31,9 @@ export interface WorkflowArtifactDrawerProps {
 }
 
 const DRAWER_WIDTH = 440;
+const MIN_DRAWER_WIDTH = 320;
+const MAX_DRAWER_WIDTH_CAP = 960;
+const DRAWER_WIDTH_STORAGE_KEY = "aris.workflow-drawer.width";
 const TEXT_CAP = 200_000;
 const JSONL_TAIL_LINES = 400;
 
@@ -63,6 +74,44 @@ function formatTime(iso: string | null | undefined): string {
 
 function decodeText(result: FileReadResult): string {
   return new TextDecoder().decode(result.bytes);
+}
+
+// ---------------------------------------------------------------------------
+// Drawer width helpers: clamped to [MIN_DRAWER_WIDTH, min(MAX_DRAWER_WIDTH_CAP,
+// viewport - 80)] and persisted across sessions via localStorage.
+// ---------------------------------------------------------------------------
+
+function computeMaxDrawerWidth(): number {
+  if (typeof window === "undefined") {
+    return MAX_DRAWER_WIDTH_CAP;
+  }
+  return Math.min(MAX_DRAWER_WIDTH_CAP, window.innerWidth - 80);
+}
+
+function readPersistedDrawerWidth(fallback: number, max: number): number {
+  if (typeof window === "undefined") {
+    return fallback;
+  }
+  const raw = window.localStorage.getItem(DRAWER_WIDTH_STORAGE_KEY);
+  if (raw == null) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.min(Math.max(parsed, MIN_DRAWER_WIDTH), max);
+}
+
+function persistDrawerWidth(width: number): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(DRAWER_WIDTH_STORAGE_KEY, String(width));
+  } catch {
+    // Ignore storage errors (e.g. disabled storage or quota).
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -407,6 +456,105 @@ export function WorkflowArtifactDrawer({
     }
   }, [viewing, openInExplorer]);
 
+  // Horizontally resizable width. Initialized from the persisted value
+  // (clamped) or the default; bounds are recomputed on every drag so a
+  // viewport change between sessions is respected.
+  const [drawerWidth, setDrawerWidth] = useState<number>(() =>
+    readPersistedDrawerWidth(DRAWER_WIDTH, computeMaxDrawerWidth()),
+  );
+  const [isHandleHovered, setIsHandleHovered] = useState(false);
+  const [isResizing, setIsResizing] = useState(false);
+  const dragStateRef = useRef<{ startX: number; startWidth: number; currentWidth: number } | null>(
+    null,
+  );
+  const cursorBeforeDragRef = useRef<string | null>(null);
+
+  const handlePointerEnter = useCallback(() => setIsHandleHovered(true), []);
+  const handlePointerLeave = useCallback(() => setIsHandleHovered(false), []);
+
+  const handleResizePointerDown = useCallback(
+    (event: RNPointerEvent) => {
+      const hitArea = event.currentTarget as unknown as HTMLElement | null;
+      if (!hitArea) {
+        return;
+      }
+      const pointerCaptureElement = hitArea;
+      const pointerId = event.nativeEvent.pointerId;
+      dragStateRef.current = {
+        startX: event.nativeEvent.clientX,
+        startWidth: drawerWidth,
+        currentWidth: drawerWidth,
+      };
+      setIsResizing(true);
+      cursorBeforeDragRef.current = document.body.style.cursor;
+      document.body.style.cursor = "ew-resize";
+      // Prevent the backdrop press-to-close and text selection while dragging.
+      event.preventDefault();
+      event.stopPropagation();
+      pointerCaptureElement.setPointerCapture?.(pointerId);
+
+      function handlePointerMove(moveEvent: PointerEvent) {
+        if (moveEvent.pointerId !== pointerId || !dragStateRef.current) {
+          return;
+        }
+        moveEvent.preventDefault();
+        const delta = moveEvent.clientX - dragStateRef.current.startX;
+        const next = Math.min(
+          Math.max(dragStateRef.current.startWidth - delta, MIN_DRAWER_WIDTH),
+          computeMaxDrawerWidth(),
+        );
+        dragStateRef.current.currentWidth = next;
+        setDrawerWidth(next);
+      }
+
+      function cleanup() {
+        const finalWidth = dragStateRef.current?.currentWidth;
+        dragStateRef.current = null;
+        setIsResizing(false);
+        document.body.style.cursor = cursorBeforeDragRef.current ?? "";
+        cursorBeforeDragRef.current = null;
+        if (pointerCaptureElement.hasPointerCapture?.(pointerId)) {
+          pointerCaptureElement.releasePointerCapture(pointerId);
+        }
+        window.removeEventListener("pointermove", handlePointerMove);
+        window.removeEventListener("pointerup", handlePointerUp);
+        window.removeEventListener("pointercancel", handlePointerUp);
+        if (finalWidth != null) {
+          persistDrawerWidth(finalWidth);
+        }
+      }
+
+      function handlePointerUp(upEvent: PointerEvent) {
+        if (upEvent.pointerId !== pointerId) {
+          return;
+        }
+        cleanup();
+      }
+
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointerup", handlePointerUp);
+      window.addEventListener("pointercancel", handlePointerUp);
+    },
+    [drawerWidth],
+  );
+
+  // Esc closes the drawer while it is open.
+  useEffect(() => {
+    if (!stage) {
+      return;
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        onClose();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [stage, onClose]);
+
   // Slide-in from the right.
   const slide = useRef(new Animated.Value(1)).current;
   useEffect(() => {
@@ -416,7 +564,7 @@ export function WorkflowArtifactDrawer({
       useNativeDriver: false,
     }).start();
   }, [slide]);
-  const translateX = slide.interpolate({ inputRange: [0, 1], outputRange: [0, DRAWER_WIDTH] });
+  const translateX = slide.interpolate({ inputRange: [0, 1], outputRange: [0, drawerWidth] });
 
   if (!stage) {
     return null;
@@ -441,8 +589,9 @@ export function WorkflowArtifactDrawer({
           top: 0,
           right: 0,
           bottom: 0,
-          width: DRAWER_WIDTH,
+          width: drawerWidth,
           maxWidth: "100%",
+          overflow: "visible",
           backgroundColor: "#ffffff",
           borderLeftWidth: 1,
           borderLeftColor: "#e2e8f0",
@@ -454,6 +603,40 @@ export function WorkflowArtifactDrawer({
           transform: [{ translateX }],
         }}
       >
+        {/* Left-edge resize handle (web only). The visible bar sits flush with
+            the panel edge; a wider transparent hit area straddles the edge for
+            easier grabbing and stops pointer-down from reaching the backdrop. */}
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: isResizing || isHandleHovered ? 6 : 4,
+            backgroundColor: isResizing || isHandleHovered ? "#2563eb" : "#e2e8f0",
+            zIndex: 5,
+          }}
+        />
+        <View
+          role="separator"
+          aria-orientation="vertical"
+          onPointerDown={handleResizePointerDown}
+          onPointerEnter={handlePointerEnter}
+          onPointerLeave={handlePointerLeave}
+          style={
+            {
+              position: "absolute",
+              left: -5,
+              top: 0,
+              bottom: 0,
+              width: 12,
+              zIndex: 10,
+              cursor: "ew-resize",
+              touchAction: "none",
+            } as object
+          }
+        />
         <View
           style={{
             flexDirection: "row",
