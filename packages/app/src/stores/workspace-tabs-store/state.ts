@@ -530,6 +530,12 @@ function coerceWorkspaceTabTarget(raw: Record<string, unknown>): WorkspaceTabTar
   if (kind === "aris") {
     return coerceArisTabTarget(raw);
   }
+  if (kind === "aris-artifact" && typeof raw.stageId === "string") {
+    return normalizeWorkspaceTabTarget({
+      kind: "aris-artifact",
+      stageId: raw.stageId as Extract<WorkspaceTabTarget, { kind: "aris-artifact" }>["stageId"],
+    });
+  }
   return null;
 }
 
