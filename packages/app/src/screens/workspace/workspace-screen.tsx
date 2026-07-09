@@ -385,6 +385,9 @@ function getFallbackTabOptionDescription(
   if (tab.target.kind === "aris") {
     return `ARIS ${tab.target.view ?? "cockpit"}`;
   }
+  if (tab.target.kind === "aris-artifact") {
+    return `ARIS ${tab.target.stageId}`;
+  }
   return tab.target.path;
 }
 

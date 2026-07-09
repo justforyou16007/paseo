@@ -39,6 +39,9 @@ export function normalizeWorkspaceTabTarget(
   if (value.kind === "aris") {
     return normalizeArisTabTarget(value);
   }
+  if (value.kind === "aris-artifact") {
+    return normalizeArisArtifactTabTarget(value);
+  }
   return null;
 }
 
@@ -51,6 +54,23 @@ function normalizeArisTabTarget(
       : undefined;
   const view = value.view === "graph" || value.view === "review" ? value.view : "cockpit";
   return { kind: "aris", runId, view };
+}
+
+const ARIS_ARTIFACT_STAGE_IDS = ["W1", "W1.5", "W2", "W3", "W4", "W5", "W6"] as const;
+
+function isArisArtifactStageId(value: unknown): value is (typeof ARIS_ARTIFACT_STAGE_IDS)[number] {
+  return (
+    typeof value === "string" && (ARIS_ARTIFACT_STAGE_IDS as readonly string[]).includes(value)
+  );
+}
+
+function normalizeArisArtifactTabTarget(
+  value: Extract<WorkspaceTabTarget, { kind: "aris-artifact" }>,
+): WorkspaceTabTarget | null {
+  if (!isArisArtifactStageId(value.stageId)) {
+    return null;
+  }
+  return { kind: "aris-artifact", stageId: value.stageId };
 }
 
 export function normalizeWorkspaceDraftTabSetup(
@@ -104,6 +124,9 @@ export function workspaceTabTargetsEqual(
   }
   if (left.kind === "aris" && right.kind === "aris") {
     return left.runId === right.runId && left.view === right.view;
+  }
+  if (left.kind === "aris-artifact" && right.kind === "aris-artifact") {
+    return left.stageId === right.stageId;
   }
   return false;
 }
@@ -160,6 +183,9 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
   if (target.kind === "aris") {
     const view = target.view ?? "cockpit";
     return target.runId ? `aris_${view}_${target.runId}` : `aris_${view}`;
+  }
+  if (target.kind === "aris-artifact") {
+    return `aris-artifact_${target.stageId}`;
   }
   return `file_${target.path}`;
 }

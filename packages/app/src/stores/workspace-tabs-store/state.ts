@@ -23,7 +23,8 @@ export type WorkspaceTabTarget =
   | { kind: "browser"; browserId: string }
   | WorkspaceFileTabTarget
   | { kind: "setup"; workspaceId: string }
-  | { kind: "aris"; runId?: string; view?: "cockpit" | "graph" | "review" };
+  | { kind: "aris"; runId?: string; view?: "cockpit" | "graph" | "review" }
+  | { kind: "aris-artifact"; stageId: "W1" | "W1.5" | "W2" | "W3" | "W4" | "W5" | "W6" };
 
 export interface WorkspaceTab {
   tabId: string;

@@ -17,7 +17,6 @@ import { getArisWorkflowStageColor } from "../charts/color-palette";
 import { ChartKitEmpty } from "../chart-kit";
 import { useArisWorkflowStatus } from "../use-aris-workflow-status";
 import { usePaneContext } from "@/panels/pane-context";
-import { WorkflowArtifactDrawer } from "./WorkflowArtifactDrawer.web";
 
 const STAGE_ORDER: ArisWorkflowStageId[] = ["W1", "W1.5", "W2", "W3", "W4", "W5", "W6"];
 
@@ -157,20 +156,20 @@ const WorkflowNodeHotspot = memo(function WorkflowNodeHotspot({
 });
 
 export function WorkflowGraphView() {
-  const { serverId, workspaceId } = usePaneContext();
+  const { serverId, workspaceId, openTab } = usePaneContext();
   const { data, isLoading, isError, error } = useArisWorkflowStatus(serverId, workspaceId);
   const status = data?.status ?? null;
   const stages = useMemo(() => buildStages(status), [status]);
   const positions = useNodePositions();
 
-  const [selectedId, setSelectedId] = useState<ArisWorkflowStageId | null>(null);
   const [hoveredId, setHoveredId] = useState<ArisWorkflowStageId | null>(null);
-  const selectedStage = stages.find((stage) => stage.id === selectedId) ?? null;
 
-  const handleSelect = useCallback((id: ArisWorkflowStageId) => setSelectedId(id), []);
+  const handleSelect = useCallback(
+    (id: ArisWorkflowStageId) => openTab({ kind: "aris-artifact", stageId: id }),
+    [openTab],
+  );
   const handleHover = useCallback((id: ArisWorkflowStageId) => setHoveredId(id), []);
   const handleHoverEnd = useCallback(() => setHoveredId(null), []);
-  const handleClose = useCallback(() => setSelectedId(null), []);
 
   // The layered layout utility owns the topology/layering; node positions are
   // mapped to a horizontal pipeline below.
@@ -473,13 +472,6 @@ export function WorkflowGraphView() {
             : null}
         </View>
       </ScrollView>
-
-      <WorkflowArtifactDrawer
-        stage={selectedStage}
-        serverId={serverId}
-        workspaceId={workspaceId}
-        onClose={handleClose}
-      />
     </View>
   );
 }

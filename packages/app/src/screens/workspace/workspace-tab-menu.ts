@@ -143,6 +143,9 @@ function getCloseButtonTestId(tab: WorkspaceTabDescriptor): string {
     const runId = tab.target.runId ?? "all";
     return `workspace-aris-close-${view}-${runId}`;
   }
+  if (tab.target.kind === "aris-artifact") {
+    return `workspace-aris-artifact-close-${tab.target.stageId}`;
+  }
   return `workspace-file-close-${encodeFilePathForPathSegment(tab.target.path)}`;
 }
 

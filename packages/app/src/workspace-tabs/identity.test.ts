@@ -4,6 +4,7 @@ import {
   normalizeWorkspaceTabTarget,
   workspaceTabTargetsEqual,
 } from "./identity";
+import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 
 describe("normalizeWorkspaceTabTarget", () => {
   test("normalizes an aris target without a runId", () => {
@@ -86,5 +87,57 @@ describe("buildDeterministicWorkspaceTabId", () => {
     expect(
       buildDeterministicWorkspaceTabId({ kind: "aris", runId: "run-1", view: "cockpit" }),
     ).toBe("aris_cockpit_run-1");
+  });
+});
+
+describe("aris-artifact tab target", () => {
+  test("normalize returns the target for a valid stageId", () => {
+    expect(normalizeWorkspaceTabTarget({ kind: "aris-artifact", stageId: "W2" })).toEqual({
+      kind: "aris-artifact",
+      stageId: "W2",
+    });
+  });
+
+  test("normalize returns null for an invalid stageId", () => {
+    expect(
+      normalizeWorkspaceTabTarget({
+        kind: "aris-artifact",
+        stageId: "W9",
+      } as unknown as WorkspaceTabTarget),
+    ).toBeNull();
+    expect(
+      normalizeWorkspaceTabTarget({
+        kind: "aris-artifact",
+        stageId: "",
+      } as unknown as WorkspaceTabTarget),
+    ).toBeNull();
+    expect(normalizeWorkspaceTabTarget(null)).toBeNull();
+  });
+
+  test("workspaceTabTargetsEqual compares stageId", () => {
+    expect(
+      workspaceTabTargetsEqual(
+        { kind: "aris-artifact", stageId: "W2" },
+        { kind: "aris-artifact", stageId: "W2" },
+      ),
+    ).toBe(true);
+    expect(
+      workspaceTabTargetsEqual(
+        { kind: "aris-artifact", stageId: "W2" },
+        { kind: "aris-artifact", stageId: "W3" },
+      ),
+    ).toBe(false);
+    expect(
+      workspaceTabTargetsEqual(
+        { kind: "aris-artifact", stageId: "W2" },
+        { kind: "aris", view: "cockpit" },
+      ),
+    ).toBe(false);
+  });
+
+  test("buildDeterministicWorkspaceTabId returns aris-artifact_<stageId>", () => {
+    expect(buildDeterministicWorkspaceTabId({ kind: "aris-artifact", stageId: "W2" })).toBe(
+      "aris-artifact_W2",
+    );
   });
 });

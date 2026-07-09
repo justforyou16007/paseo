@@ -1,5 +1,6 @@
 import { agentPanelRegistration } from "@/panels/agent-panel";
 import { arisPanelRegistration } from "@/panels/aris-panel";
+import { arisArtifactPanelRegistration } from "@/panels/aris-artifact-panel";
 import { browserPanelRegistration } from "@/panels/browser-panel";
 import { draftPanelRegistration } from "@/panels/draft-panel";
 import { filePanelRegistration } from "@/panels/file-panel";
@@ -16,6 +17,7 @@ export function ensurePanelsRegistered(): void {
   registerPanel(draftPanelRegistration);
   registerPanel(agentPanelRegistration);
   registerPanel(arisPanelRegistration);
+  registerPanel(arisArtifactPanelRegistration);
   registerPanel(setupPanelRegistration);
   registerPanel(terminalPanelRegistration);
   registerPanel(browserPanelRegistration);
