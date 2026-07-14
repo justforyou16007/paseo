@@ -30,7 +30,8 @@
     "packages/relay",
     "packages/website",
     "packages/desktop",
-    "packages/cli"
+    "packages/cli",
+    "packages/Auto-claude-code-research-in-sleep"
   ],
   "scripts": {
     "dev": "npm run dev:server",

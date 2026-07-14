@@ -12,5 +12,5 @@
     "isolatedModules": true,
     "incremental": true
   },
-  "exclude": ["node_modules", "packages/Auto-claude-code-research-in-sleep"]
+  "exclude": ["node_modules"]
 }
