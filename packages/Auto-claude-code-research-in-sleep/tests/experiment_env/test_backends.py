@@ -20,7 +20,7 @@ import local_env  # noqa: E402
 import remote_env  # noqa: E402
 import vast_env  # noqa: E402
 import modal_env  # noqa: E402
-import docker_env
+import docker_env  # noqa: E402
 
 
 def _run_ok(stdout="", rc=0):
@@ -179,6 +179,21 @@ class DockerDestroyTests(unittest.TestCase):
         cmd = r["command"]
         self.assertNotIn("docker stop", cmd)
         self.assertNotIn("docker rm", cmd)
+
+    def test_destroy_uses_deployed_container_name(self):
+        """deploy with exp_name saves state; destroy reads it back."""
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as td:
+            env = EnvBackend.create("docker", {"auto_remove": True},
+                                    state_dir=td, dry_run=True)
+            # Simulate deploy saving state
+            env._save_state({"container_name": "aris-myexp",
+                             "container_id": "abc123"})
+            r = env.destroy()
+            cmd = r["command"]
+            self.assertIn("docker stop aris-myexp", cmd)
+            self.assertIn("docker rm aris-myexp", cmd)
+            self.assertNotIn("aris-experiment", cmd)
 
 
 if __name__ == "__main__":

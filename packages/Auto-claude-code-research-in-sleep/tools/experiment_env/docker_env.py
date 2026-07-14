@@ -14,6 +14,7 @@ Commands:
 - destroy: docker stop + docker rm (if auto_remove)
 """
 
+import json as _json
 import shlex
 import os
 from pathlib import Path
@@ -22,6 +23,8 @@ try:
     from .env_backend import EnvBackend, EnvError, run
 except ImportError:  # script mode
     from env_backend import EnvBackend, EnvError, run
+
+_STATE_FILE = "docker-state.json"
 
 
 class DockerEnv(EnvBackend):
@@ -33,6 +36,20 @@ class DockerEnv(EnvBackend):
         if run_spec and run_spec.get("exp_name"):
             return f"aris-{run_spec['exp_name']}"
         return "aris-experiment"
+
+    def _state_path(self):
+        return Path(self.state_dir) / _STATE_FILE
+
+    def _save_state(self, state: dict):
+        p = self._state_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(_json.dumps(state, indent=2) + "\n")
+
+    def _load_state(self) -> dict:
+        p = self._state_path()
+        if p.exists():
+            return _json.loads(p.read_text())
+        return {}
 
     # -- lifecycle -------------------------------------------------------
 
@@ -163,8 +180,8 @@ class DockerEnv(EnvBackend):
         for vol in self.config.get("volumes", []):
             cmd_parts.append(f"-v {shlex.quote(vol)}")
 
-        # Add env vars
-        env_vars = self.config.get("env_vars", {})
+        # Add env vars (copy to avoid mutating config)
+        env_vars = dict(self.config.get("env_vars", {}))
         # Merge run-specific env vars
         env_vars.update(run_spec.get("env_vars", {}))
         for k, v in env_vars.items():
@@ -193,6 +210,10 @@ class DockerEnv(EnvBackend):
             "image": image
         }
 
+        # Persist state so destroy can find the container
+        self._save_state({"container_name": container_name,
+                          "container_id": container_id})
+
         return {
             "status": "launched",
             "handle": handle,
@@ -208,7 +229,7 @@ class DockerEnv(EnvBackend):
             return {"status": "unknown", "tail": "", "exit_code": None}
 
         if self.dry_run:
-            return self._announce("monitor", f"docker inspect {container_id} && docker logs --tail 50 {container_id}")
+            return self._announce("monitor", f"docker inspect {shlex.quote(container_id)} && docker logs --tail 50 {shlex.quote(container_id)}")
 
         # Get container status
         status_out, rc = run(f"docker inspect --format '{{{{.State.Status}}}}' {shlex.quote(container_id)}", check=False)
@@ -236,7 +257,9 @@ class DockerEnv(EnvBackend):
     def destroy(self) -> dict:
         """Stop and remove the container if auto_remove is enabled."""
         auto_remove = self.config.get("auto_remove", True)
-        container_name = self._container_name()
+        # Recover container name from state saved by deploy, fall back to default
+        state = self._load_state()
+        container_name = state.get("container_name", self._container_name())
 
         if self.dry_run:
             cmds = []
