@@ -15,6 +15,13 @@
     "*.lock",
     "**/*.gen.ts",
     "**/*.gen.tsx",
-    "packages/Auto-claude-code-research-in-sleep"
+    "packages/Auto-claude-code-research-in-sleep/**/*.py",
+    "packages/Auto-claude-code-research-in-sleep/**/*.md",
+    "packages/Auto-claude-code-research-in-sleep/tools",
+    "packages/Auto-claude-code-research-in-sleep/mcp-servers",
+    "packages/Auto-claude-code-research-in-sleep/skills",
+    "packages/Auto-claude-code-research-in-sleep/templates",
+    "packages/Auto-claude-code-research-in-sleep/tests",
+    "packages/Auto-claude-code-research-in-sleep/aris-monitor"
   ]
 }
