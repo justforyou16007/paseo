@@ -151,4 +151,47 @@ class WriteConfigTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
+
+class DockerSchemaTests(unittest.TestCase):
+    def test_valid_docker_config_passes_and_defaults_filled(self):
+        cand = {"env_type": "docker", "docker": {"image": "nvidia/cuda:12.1.0-runtime-ubuntu22.04"}}
+        v = parse_env.validate(cand)
+        self.assertEqual(v["env_type"], "docker")
+        self.assertEqual(v["docker"]["shm_size"], "16g")  # default
+        self.assertEqual(v["docker"]["work_dir"], "/workspace")  # default
+        self.assertEqual(v["docker"]["results_dir"], "/results")  # default
+        self.assertEqual(v["docker"]["auto_remove"], True)  # default
+        self.assertEqual(v["docker"]["env_vars"], {})  # default
+        self.assertEqual(v["docker"]["volumes"], [])  # default
+        self.assertEqual(v["docker"]["build_args"], {})  # default
+
+    def test_docker_config_with_all_fields_passes(self):
+        cand = {"env_type": "docker", "docker": {
+            "dockerfile": "Dockerfile.train",
+            "build_context": "./",
+            "gpus": "all",
+            "shm_size": "64g",
+            "runtime": "nvidia",
+            "network": "host",
+            "env_vars": {"WANDB_API_KEY": "xyz"},
+            "volumes": ["/data:/data", "/models:/models"],
+            "build_args": {"BASE_IMAGE": "nvidia/cuda:12.1.0-devel-ubuntu22.04"},
+            "auto_remove": False
+        }}
+        v = parse_env.validate(cand)
+        self.assertEqual(v["docker"]["dockerfile"], "Dockerfile.train")
+        self.assertEqual(v["docker"]["gpus"], "all")
+        self.assertEqual(v["docker"]["runtime"], "nvidia")
+        self.assertEqual(v["docker"]["network"], "host")
+        self.assertEqual(v["docker"]["auto_remove"], False)
+
+    def test_invalid_type_errors(self):
+        # gpus should be str, not int
+        cand = {"env_type": "docker", "docker": {"image": "python:3.11", "gpus": 1}}
+        with self.assertRaises(parse_env.ValidationError):
+            parse_env.validate(cand)
+        # env_vars should be dict, not list
+        cand = {"env_type": "docker", "docker": {"image": "python:3.11", "env_vars": []}}
+        with self.assertRaises(parse_env.ValidationError):
+            parse_env.validate(cand)
     unittest.main()

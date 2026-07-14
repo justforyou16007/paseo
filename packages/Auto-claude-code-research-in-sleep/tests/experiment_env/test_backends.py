@@ -20,6 +20,7 @@ import local_env  # noqa: E402
 import remote_env  # noqa: E402
 import vast_env  # noqa: E402
 import modal_env  # noqa: E402
+import docker_env
 
 
 def _run_ok(stdout="", rc=0):
@@ -43,6 +44,7 @@ class FactoryTests(unittest.TestCase):
         self.assertIsInstance(EnvBackend.create("vast", {"instance_id": 1}),
                               vast_env.VastEnv)
         self.assertIsInstance(EnvBackend.create("modal", {}), modal_env.ModalEnv)
+        self.assertIsInstance(EnvBackend.create("docker", {}), docker_env.DockerEnv)
 
 
 class LocalDeployTests(unittest.TestCase):
@@ -127,4 +129,55 @@ class ModalLauncherTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
+
+class DockerDeployTests(unittest.TestCase):
+    def test_deploy_generates_correct_docker_run_command(self):
+        env = EnvBackend.create("docker", {
+            "image": "python:3.11", "gpus": "all", "shm_size": "32g",
+            "work_dir": "/code", "results_dir": "/output",
+            "env_vars": {"WANDB_MODE": "online"},
+            "volumes": ["/local/data:/data"]
+        }, dry_run=True)
+        r = env.deploy({"script": "train.py", "args": ["--batch_size", "32"],
+                        "exp_name": "docker_exp", "env_vars": {"LR": "0.001"}})
+        cmd = r["command"]
+        self.assertIn("docker run -d", cmd)
+        self.assertIn("--name aris-docker_exp", cmd)
+        self.assertIn("--gpus all", cmd)
+        self.assertIn("--shm-size 32g", cmd)
+        self.assertIn("-w /code", cmd)
+        self.assertIn("-v", cmd)
+        self.assertIn(":/code", cmd)
+        self.assertIn(":/output", cmd)
+        self.assertIn("/local/data:/data", cmd)
+        self.assertIn("-e WANDB_MODE=online", cmd)
+        self.assertIn("-e LR=0.001", cmd)
+        self.assertIn("python:3.11 python train.py --batch_size 32", cmd)
+
+class DockerBuildTests(unittest.TestCase):
+    def test_provision_with_dockerfile_generates_build_command(self):
+        env = EnvBackend.create("docker", {
+            "dockerfile": "Dockerfile.custom", "build_context": "./src",
+            "build_args": {"PY_VERSION": "3.10"}
+        }, dry_run=True)
+        r = env.provision()
+        cmd = r["command"]
+        self.assertIn("docker info", cmd)
+        self.assertIn("docker build --build-arg PY_VERSION=3.10 -t aris-custom -f Dockerfile.custom ./src", cmd)
+
+class DockerDestroyTests(unittest.TestCase):
+    def test_destroy_generates_stop_and_remove(self):
+        env = EnvBackend.create("docker", {"auto_remove": True}, dry_run=True)
+        r = env.destroy()
+        cmd = r["command"]
+        self.assertIn("docker stop aris-experiment", cmd)
+        self.assertIn("docker rm aris-experiment", cmd)
+
+    def test_destroy_auto_remove_false_skips(self):
+        env = EnvBackend.create("docker", {"auto_remove": False}, dry_run=True)
+        r = env.destroy()
+        cmd = r["command"]
+        self.assertNotIn("docker stop", cmd)
+        self.assertNotIn("docker rm", cmd)
+
     unittest.main()

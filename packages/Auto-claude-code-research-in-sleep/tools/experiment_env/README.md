@@ -142,3 +142,40 @@ complementary:
 | `provision`/`preflight`/`sync`/`deploy`/`monitor`/`collect`/`destroy` | A (gate — unresolved or failed blocks the skill) |
 
 Exit codes: `0` ok, `1` hard error, `2` no config, `10-16` per-method error.
+
+## Docker environment support
+
+The Docker backend runs experiments in isolated containers with optional GPU passthrough.
+It supports both pre-built images and local Dockerfile builds, bind-mounts for code
+and results, custom volumes, environment variables, and network configuration.
+
+Example candidate JSON (using pre-built image):
+```json
+{
+  "env_type": "docker",
+  "docker": {
+    "image": "nvidia/cuda:12.1.0-devel-ubuntu22.04",
+    "gpus": "all",
+    "shm_size": "32g",
+    "runtime": "nvidia",
+    "env_vars": {"WANDB_MODE": "online"},
+    "volumes": ["/local/data:/data", "/local/models:/models"],
+    "auto_remove": true
+  }
+}
+```
+
+Example candidate JSON (building from local Dockerfile):
+```json
+{
+  "env_type": "docker",
+  "docker": {
+    "dockerfile": "Dockerfile.train",
+    "build_context": "./",
+    "build_args": {"PY_VERSION": "3.10"},
+    "gpus": "all",
+    "work_dir": "/code",
+    "results_dir": "/output"
+  }
+}
+```

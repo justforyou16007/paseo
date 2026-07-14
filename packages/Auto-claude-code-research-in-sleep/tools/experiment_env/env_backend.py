@@ -70,17 +70,20 @@ class EnvBackend(ABC):
         # package dir to sys.path).
         if __package__:
             from .local_env import LocalEnv
+            from .docker_env import DockerEnv
             from .remote_env import RemoteEnv
             from .vast_env import VastEnv
             from .modal_env import ModalEnv
         else:
             from local_env import LocalEnv
+            from docker_env import DockerEnv
             from remote_env import RemoteEnv
             from vast_env import VastEnv
             from modal_env import ModalEnv
 
         registry = {
             "local": LocalEnv,
+            "docker": DockerEnv,
             "remote": RemoteEnv,
             "vast": VastEnv,
             "modal": ModalEnv,

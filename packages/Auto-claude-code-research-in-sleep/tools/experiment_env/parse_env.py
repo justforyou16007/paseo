@@ -34,7 +34,7 @@ from pathlib import Path
 SCHEMA_VERSION = 1
 DEFAULT_OUT = ".aris/experiment-env.json"
 
-ENV_TYPES = ("local", "remote", "vast", "modal")
+ENV_TYPES = ("local", "remote", "vast", "modal", "docker")
 
 # Per-env field specs: field -> (type, required, default-or-None, is_conditional)
 # type is a callable / tuple of types; "list_str" means list[str].
@@ -75,6 +75,21 @@ ENV_SCHEMAS: dict = {
         "modal_volume":   (str, False, None),
         "modal_app_file": (str, False, None),
         "modal_secrets":  (list, False, []),
+    },
+    "docker": {
+        "image":        (str,  False, "python:3.11"),
+        "dockerfile":   (str,  False, None),
+        "build_context": (str, False, None),
+        "gpus":         (str,  False, None),
+        "shm_size":     (str,  False, "16g"),
+        "runtime":      (str,  False, None),
+        "work_dir":     (str,  False, "/workspace"),
+        "results_dir":  (str,  False, "/results"),
+        "network":      (str,  False, None),
+        "env_vars":     (dict, False, {}),
+        "volumes":      (list, False, []),
+        "build_args":   (dict, False, {}),
+        "auto_remove":  (bool, False, True),
     },
     "local": {
         "conda_env":      (str, False, "base"),
