@@ -150,8 +150,6 @@ class WriteConfigTests(unittest.TestCase):
             self.assertEqual(loaded["env_type"], "local")
 
 
-if __name__ == "__main__":
-
 class DockerSchemaTests(unittest.TestCase):
     def test_valid_docker_config_passes_and_defaults_filled(self):
         cand = {"env_type": "docker", "docker": {"image": "nvidia/cuda:12.1.0-runtime-ubuntu22.04"}}
@@ -194,4 +192,7 @@ class DockerSchemaTests(unittest.TestCase):
         cand = {"env_type": "docker", "docker": {"image": "python:3.11", "env_vars": []}}
         with self.assertRaises(parse_env.ValidationError):
             parse_env.validate(cand)
+
+
+if __name__ == "__main__":
     unittest.main()

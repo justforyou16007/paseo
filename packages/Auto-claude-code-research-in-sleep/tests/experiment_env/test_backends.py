@@ -128,8 +128,6 @@ class ModalLauncherTests(unittest.TestCase):
             self.assertIn(needle, code, f"launcher missing {needle!r}")
 
 
-if __name__ == "__main__":
-
 class DockerDeployTests(unittest.TestCase):
     def test_deploy_generates_correct_docker_run_command(self):
         env = EnvBackend.create("docker", {
@@ -154,6 +152,7 @@ class DockerDeployTests(unittest.TestCase):
         self.assertIn("-e LR=0.001", cmd)
         self.assertIn("python:3.11 python train.py --batch_size 32", cmd)
 
+
 class DockerBuildTests(unittest.TestCase):
     def test_provision_with_dockerfile_generates_build_command(self):
         env = EnvBackend.create("docker", {
@@ -164,6 +163,7 @@ class DockerBuildTests(unittest.TestCase):
         cmd = r["command"]
         self.assertIn("docker info", cmd)
         self.assertIn("docker build --build-arg PY_VERSION=3.10 -t aris-custom -f Dockerfile.custom ./src", cmd)
+
 
 class DockerDestroyTests(unittest.TestCase):
     def test_destroy_generates_stop_and_remove(self):
@@ -180,4 +180,6 @@ class DockerDestroyTests(unittest.TestCase):
         self.assertNotIn("docker stop", cmd)
         self.assertNotIn("docker rm", cmd)
 
+
+if __name__ == "__main__":
     unittest.main()
