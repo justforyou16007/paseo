@@ -150,9 +150,9 @@ async function searchWorks(
 
   if (!resp.ok) throw new Error(`OpenAlex API error: HTTP ${resp.status}`);
 
-  const data = await resp.json();
+  const data = (await resp.json()) as Record<string, unknown>;
   const results: OpenAlexWork[] = [];
-  for (const work of data.results ?? []) {
+  for (const work of (data.results as Record<string, unknown>[]) ?? []) {
     results.push(parseWork(work));
   }
   return results.slice(0, maxResults);
@@ -178,7 +178,7 @@ async function getWork(workId: string, clientOpts: ClientOptions = {}): Promise<
 
   if (!resp.ok) throw new Error(`OpenAlex API error: HTTP ${resp.status}`);
 
-  return parseWork(await resp.json());
+  return parseWork((await resp.json()) as Record<string, unknown>);
 }
 
 function formatTextResults(results: OpenAlexWork[]): void {
