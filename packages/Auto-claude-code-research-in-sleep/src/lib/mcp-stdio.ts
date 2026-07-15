@@ -17,6 +17,19 @@ export interface JsonRpcResponse {
 type Handler = (params: Record<string, unknown>) => Promise<unknown> | unknown;
 
 export class McpStdio {
+  static toolSuccess(payload: object): unknown {
+    return {
+      content: [{ type: "text", text: JSON.stringify(payload) }],
+    };
+  }
+
+  static toolError(message: string): unknown {
+    return {
+      content: [{ type: "text", text: JSON.stringify({ error: message }) }],
+      isError: true,
+    };
+  }
+
   private handlers = new Map<string, Handler>();
   private useNdjson = false;
   private serverName: string;
@@ -58,7 +71,12 @@ export class McpStdio {
     this.sendResponse({ jsonrpc: "2.0", id, result });
   }
 
-  private sendError(id: string | number | undefined, code: number, message: string, data?: unknown): void {
+  private sendError(
+    id: string | number | undefined,
+    code: number,
+    message: string,
+    data?: unknown,
+  ): void {
     this.sendResponse({ jsonrpc: "2.0", id, error: { code, message, data } });
   }
 
@@ -70,7 +88,7 @@ export class McpStdio {
     process.stdin.setEncoding("utf-8");
     process.stdin.on("data", (chunk: string) => {
       buffer += chunk;
-      this.processBuffer(buffer).then(remaining => {
+      this.processBuffer(buffer).then((remaining) => {
         buffer = remaining;
       });
     });
