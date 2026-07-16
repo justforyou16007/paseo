@@ -137,8 +137,13 @@ resolve_aris_repo() {
     if [[ -n "$ARIS_REPO_OVERRIDE" ]]; then
         p="$(abs_path "$ARIS_REPO_OVERRIDE")" || die "--aris-repo path not found: $ARIS_REPO_OVERRIDE"
     else
-        local script_dir parent
-        script_dir="$(cd "$(dirname "$0")" && pwd)"
+        local script_dir parent script_real
+        script_real="$(canonicalize "$0")"
+        if [[ -n "$script_real" ]]; then
+            script_dir="$(dirname "$script_real")"
+        else
+            script_dir="$(cd "$(dirname "$0")" && pwd)"
+        fi
         parent="$(cd "$script_dir/.." && pwd)"
         if [[ -d "$parent/skills" && -f "$parent/AGENT_GUIDE.md" ]]; then
             p="$parent"

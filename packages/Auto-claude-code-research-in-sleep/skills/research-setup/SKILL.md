@@ -524,6 +524,12 @@ Created:
   • RESEARCH_BRIEF.md — 研究方向简报
   • research-wiki/ — 知识库（5 个子目录，5 个种子文件）
   • .gitignore — 已添加 ARIS 条目
+
+⚠️ If ARIS skills were installed or updated during this setup, they won't
+   appear until you reload. Run `/reload-skills` or start a new Claude Code session.
+
+   如果此次设置安装或更新了 ARIS 技能，需要重新加载才能使用。
+   请运行 `/reload-skills` 或启动新的 Claude Code 会话。
 ```
 
 Then suggest next steps based on work type:

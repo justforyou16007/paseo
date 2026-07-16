@@ -207,8 +207,13 @@ resolve_aris_repo() {
         [[ -d "$p/skills" ]] || die "--aris-repo has no skills/ subdir: $p"
         echo "$p"; return
     fi
-    local script_dir parent
-    script_dir="$(cd "$(dirname "$0")" && pwd)"
+    local script_dir parent script_real
+    script_real="$(canonicalize "$0")"
+    if [[ -n "$script_real" ]]; then
+        script_dir="$(dirname "$script_real")"
+    else
+        script_dir="$(cd "$(dirname "$0")" && pwd)"
+    fi
     parent="$(cd "$script_dir/.." && pwd)"
     if [[ -d "$parent/skills" ]]; then echo "$parent"; return; fi
     if [[ -n "${ARIS_REPO:-}" && -d "$ARIS_REPO/skills" ]]; then abs_path "$ARIS_REPO"; return; fi
@@ -336,7 +341,13 @@ if [[ "$PLATFORM" == "codex" ]]; then
     if [[ ${#CLAUDE_ONLY_FLAGS_USED[@]} -gt 0 ]]; then
         die "Claude-only flags incompatible with codex platform: ${CLAUDE_ONLY_FLAGS_USED[*]}"
     fi
-    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    local _script_real
+    _script_real="$(canonicalize "$0")"
+    if [[ -n "$_script_real" ]]; then
+        SCRIPT_DIR="$(dirname "$_script_real")"
+    else
+        SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    fi
     CODEX_INSTALLER="$SCRIPT_DIR/install_aris_codex.sh"
     [[ -f "$CODEX_INSTALLER" ]] || die "Codex installer not found: $CODEX_INSTALLER"
     log ""
