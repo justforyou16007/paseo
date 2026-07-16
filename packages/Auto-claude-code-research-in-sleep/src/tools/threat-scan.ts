@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import { createCli, runCli } from "../lib/cli.js";
 
 type Scope = "all" | "context" | "strict";
@@ -305,4 +307,6 @@ program.action(async (filePath: string, opts: { scope: string; quarantine?: bool
   process.exit(0);
 });
 
-runCli(program);
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  runCli(program);
+}
