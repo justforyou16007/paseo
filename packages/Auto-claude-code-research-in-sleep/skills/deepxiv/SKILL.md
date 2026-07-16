@@ -24,7 +24,7 @@ Use DeepXiv when you want to avoid loading full papers too early.
 
 ## Constants
 
-- **DEEPXIV_FETCHER** — canonical name `deepxiv_fetch.py`, resolved per
+- **DEEPXIV_FETCHER** — canonical name `deepxiv-fetch.js`, resolved per
   [`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2
   (Policy D1 — primary + fallback cascade). If unresolved (canonical
   chain exhausted), fall back to the raw `deepxiv` CLI (documented per
@@ -82,9 +82,9 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
 if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
     ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
 fi
-DEEPXIV_FETCHER=".aris/tools/deepxiv_fetch.py"
-[ -f "$DEEPXIV_FETCHER" ] || DEEPXIV_FETCHER="tools/deepxiv_fetch.py"
-[ -f "$DEEPXIV_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && DEEPXIV_FETCHER="$ARIS_REPO/tools/deepxiv_fetch.py"; }
+DEEPXIV_FETCHER=".aris/dist/tools/deepxiv-fetch.js"
+[ -f "$DEEPXIV_FETCHER" ] || DEEPXIV_FETCHER="dist/tools/deepxiv-fetch.js"
+[ -f "$DEEPXIV_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && DEEPXIV_FETCHER="$ARIS_REPO/dist/tools/deepxiv-fetch.js"; }
 [ -f "$DEEPXIV_FETCHER" ] || DEEPXIV_FETCHER=""
 
 # Smoke test (optional — adapter resolution shown to user). The cascade
@@ -102,7 +102,7 @@ fi
 **Search papers**
 
 ```bash
-python3 "$DEEPXIV_FETCHER" search "QUERY" --max MAX_RESULTS
+node "$DEEPXIV_FETCHER" search "QUERY" --max MAX_RESULTS
 ```
 
 Fallback:
@@ -114,7 +114,7 @@ deepxiv search "QUERY" --limit MAX_RESULTS --format json
 **Brief summary**
 
 ```bash
-python3 "$DEEPXIV_FETCHER" paper-brief ARXIV_ID
+node "$DEEPXIV_FETCHER" paper-brief ARXIV_ID
 ```
 
 Fallback:
@@ -126,7 +126,7 @@ deepxiv paper ARXIV_ID --brief --format json
 **Section map**
 
 ```bash
-python3 "$DEEPXIV_FETCHER" paper-head ARXIV_ID
+node "$DEEPXIV_FETCHER" paper-head ARXIV_ID
 ```
 
 Fallback:
@@ -138,7 +138,7 @@ deepxiv paper ARXIV_ID --head --format json
 **Specific section**
 
 ```bash
-python3 "$DEEPXIV_FETCHER" paper-section ARXIV_ID "SECTION_NAME"
+node "$DEEPXIV_FETCHER" paper-section ARXIV_ID "SECTION_NAME"
 ```
 
 Fallback:
@@ -150,7 +150,7 @@ deepxiv paper ARXIV_ID --section "SECTION_NAME" --format json
 **Trending**
 
 ```bash
-python3 "$DEEPXIV_FETCHER" trending --days 7 --max MAX_RESULTS
+node "$DEEPXIV_FETCHER" trending --days 7 --max MAX_RESULTS
 ```
 
 Fallback:
@@ -162,7 +162,7 @@ deepxiv trending --days 7 --limit MAX_RESULTS --output json
 **Web search**
 
 ```bash
-python3 "$DEEPXIV_FETCHER" wsearch "QUERY"
+node "$DEEPXIV_FETCHER" wsearch "QUERY"
 ```
 
 Fallback:
@@ -174,7 +174,7 @@ deepxiv wsearch "QUERY" --output json
 **Semantic Scholar metadata**
 
 ```bash
-python3 "$DEEPXIV_FETCHER" sc "SEMANTIC_SCHOLAR_ID"
+node "$DEEPXIV_FETCHER" sc "SEMANTIC_SCHOLAR_ID"
 ```
 
 Fallback:
@@ -227,16 +227,16 @@ read (brief / head / section / full) during this invocation — mere
 if [ -d research-wiki/ ]; then
   cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
   ARIS_REPO="${ARIS_REPO:-$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null)}"
-  WIKI_SCRIPT=".aris/tools/research_wiki.py"
-  [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="tools/research_wiki.py"
-  [ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/tools/research_wiki.py"; }
+  WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
+  [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
+  [ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/dist/tools/research-wiki.js"; }
   [ -f "$WIKI_SCRIPT" ] || {
-    echo "WARN: research_wiki.py not found; depth-read summary delivered, wiki ingest skipped. Fix: bash tools/install_aris.sh, export ARIS_REPO, or cp <ARIS-repo>/tools/research_wiki.py tools/." >&2
+    echo "WARN: research-wiki.js not found; depth-read summary delivered, wiki ingest skipped. Fix: bash tools/install_aris.sh, export ARIS_REPO, or cp <ARIS-repo>/dist/tools/research-wiki.js tools/." >&2
     WIKI_SCRIPT=""
   }
   if [ -n "$WIKI_SCRIPT" ]; then
     for each arxiv_id the user asked this skill to read in depth:
-        python3 "$WIKI_SCRIPT" ingest_paper research-wiki/ \
+        node "$WIKI_SCRIPT" ingest_paper research-wiki/ \
             --arxiv-id "<arxiv_id>"
   fi
 fi
@@ -246,7 +246,7 @@ The helper handles metadata / slug / dedup / page / index / log in one
 call — **do not handwrite `papers/<slug>.md`**. See
 [`shared-references/integration-contract.md`](../shared-references/integration-contract.md).
 Backfill missed ingests with
-`python3 "$WIKI_SCRIPT" sync research-wiki/ --arxiv-ids <id1>,<id2>,...`
+`node "$WIKI_SCRIPT" sync research-wiki/ --arxiv-ids <id1>,<id2>,...`
 after resolving `$WIKI_SCRIPT` as above.
 
 ## Key Rules

@@ -24,7 +24,7 @@ Use Exa when you need results beyond academic databases, or when you want conten
 
 ## Constants
 
-- **EXA_FETCHER** — canonical name `exa_search.py`, resolved per
+- **EXA_FETCHER** — canonical name `exa-search.js`, resolved per
   [`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2
   (Policy D1 — standalone `/exa-search` has no documented fallback,
   so unresolved helper terminates with an explicit error).
@@ -91,11 +91,11 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
 if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
     ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
 fi
-EXA_FETCHER=".aris/tools/exa_search.py"
-[ -f "$EXA_FETCHER" ] || EXA_FETCHER="tools/exa_search.py"
-[ -f "$EXA_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && EXA_FETCHER="$ARIS_REPO/tools/exa_search.py"; }
+EXA_FETCHER=".aris/dist/tools/exa-search.js"
+[ -f "$EXA_FETCHER" ] || EXA_FETCHER="dist/tools/exa-search.js"
+[ -f "$EXA_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && EXA_FETCHER="$ARIS_REPO/dist/tools/exa-search.js"; }
 [ -f "$EXA_FETCHER" ] || {
-  echo "ERROR: exa_search.py not resolved at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
+  echo "ERROR: exa-search.js not resolved at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
   echo "       Fix: rerun bash tools/install_aris.sh, export ARIS_REPO, or copy the helper to tools/." >&2
   echo "       Also ensure 'exa-py' is installed: pip install exa-py" >&2
   exit 1
@@ -107,13 +107,13 @@ EXA_FETCHER=".aris/tools/exa_search.py"
 **Standard search:**
 
 ```bash
-python3 "$EXA_FETCHER" search "QUERY" --max 10 --content highlights
+node "$EXA_FETCHER" search "QUERY" --max 10 --content highlights
 ```
 
 **With filters:**
 
 ```bash
-python3 "$EXA_FETCHER" search "QUERY" --max 10 \
+node "$EXA_FETCHER" search "QUERY" --max 10 \
   --category "research paper" \
   --start-date 2025-01-01 \
   --content text --max-chars 8000
@@ -122,13 +122,13 @@ python3 "$EXA_FETCHER" search "QUERY" --max 10 \
 **Find similar pages:**
 
 ```bash
-python3 "$EXA_FETCHER" find-similar "URL" --max 5 --content highlights
+node "$EXA_FETCHER" find-similar "URL" --max 5 --content highlights
 ```
 
 **Get content for known URLs:**
 
 ```bash
-python3 "$EXA_FETCHER" get-contents "URL1" "URL2" --content text
+node "$EXA_FETCHER" get-contents "URL1" "URL2" --content text
 ```
 
 ### Step 4: Present Results
@@ -179,19 +179,19 @@ use `--arxiv-id`. Otherwise fall back to manual metadata:
 if [ -d research-wiki/ ] and query category was "research paper":
     cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
     ARIS_REPO="${ARIS_REPO:-$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null)}"
-    WIKI_SCRIPT=".aris/tools/research_wiki.py"
-    [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="tools/research_wiki.py"
-    [ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/tools/research_wiki.py"; }
+    WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
+    [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
+    [ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/dist/tools/research-wiki.js"; }
     [ -f "$WIKI_SCRIPT" ] || {
-      echo "WARN: research_wiki.py not found; exa-search results delivered, wiki ingest skipped. Fix: bash tools/install_aris.sh, export ARIS_REPO, or cp <ARIS-repo>/tools/research_wiki.py tools/." >&2
+      echo "WARN: research-wiki.js not found; exa-search results delivered, wiki ingest skipped. Fix: bash tools/install_aris.sh, export ARIS_REPO, or cp <ARIS-repo>/dist/tools/research-wiki.js tools/." >&2
       WIKI_SCRIPT=""
     }
     [ -n "$WIKI_SCRIPT" ] && for each research-paper hit in results:
         if URL matches arxiv.org/abs/<id>:
-            python3 "$WIKI_SCRIPT" ingest_paper research-wiki/ \
+            node "$WIKI_SCRIPT" ingest_paper research-wiki/ \
                 --arxiv-id "<id>"
         else:
-            python3 "$WIKI_SCRIPT" ingest_paper research-wiki/ \
+            node "$WIKI_SCRIPT" ingest_paper research-wiki/ \
                 --title "<title>" --authors "<authors joined by , >" \
                 --year <year> --venue "<venue or publisher>"
 ```

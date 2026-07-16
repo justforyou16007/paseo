@@ -127,10 +127,10 @@ Most tutorials converge in 3-5 rounds. Going to 5-6 rounds is fine if substantiv
 
 ### Step 5 — Render via /render-html
 
-Call directly (do not invoke `/render-html` as a sub-skill; call its python script — gives clear control):
+Call directly (do not invoke `/render-html` as a sub-skill; call its script — gives clear control):
 
 ```bash
-python3 skills/render-html/scripts/render_html.py docs/tutorials/<slug>_tutorial.md \
+node skills/render-html/scripts/render-html.js docs/tutorials/<slug>_tutorial.md \
   --template academic \
   --out docs/tutorials/<slug>_tutorial.html \
   --title "<Topic> 面试 Cheat Sheet" \
@@ -140,7 +140,7 @@ python3 skills/render-html/scripts/render_html.py docs/tutorials/<slug>_tutorial
   --lang zh-CN
 ```
 
-`render_html.py` runs its own 13-check codex review automatically. If that FAILs, fix the MD (often a table-pipe or callout-list issue the math/code reviewer missed) and re-render. Note that `render_html.py` itself writes `<slug>_tutorial.review.json` for the render-stage audit.
+`render-html.js` runs its own 13-check codex review automatically. If that FAILs, fix the MD (often a table-pipe or callout-list issue the math/code reviewer missed) and re-render. Note that `render-html.js` itself writes `<slug>_tutorial.review.json` for the render-stage audit.
 
 ### Step 6 — Combine audit trail
 

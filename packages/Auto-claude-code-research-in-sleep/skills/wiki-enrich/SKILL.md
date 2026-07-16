@@ -26,7 +26,7 @@ This contradicts the Karpathy LLM-wiki design (https://gist.github.com/karpathy/
 - **SOURCE_DEFAULT = `auto`** — Fetch order: alphaxiv overview → alphaxiv abs → deepxiv brief → arXiv API abstract → page abstract fallback. First non-empty wins (full chain documented in Phase 2.3 table). Override with `--source` to pin one source.
 - **MAX_PAPERS = 20** — Hard cap per invocation; LLMs touch many files but token budgets are real. Override with `--max N`.
 - **FORCE = false** — When `false` (default), skip sections that already have non-TODO content. When `true`, overwrite every fillable section, but **never** touch the two protected sections: `## Connections` (auto-generated from `edges.jsonl`) and `## Abstract (original)` (immutable arXiv-fetched source data).
-- **SECTIONS_TO_FILL** — 10 fillable sections + 2 protected. `ingest_paper` (`research_wiki.py:436-473`) scaffolds 11 section headers unconditionally and a 12th — `## Abstract (original)` — only when arXiv returns an abstract for the given `--arxiv-id` (`research_wiki.py:469-473`). Of these, 10 carry a `_TODO._` (or `_TODO: fill in after reading._`) marker and need filling. The other 2 — `## Connections` (position 10 in the enumeration below) and `## Abstract (original)` (position 12, conditional) — are protected by construction: `Connections` is auto-generated from `graph/edges.jsonl`, `Abstract (original)` is immutable source data from the arXiv API. This skill writes to the 10, never the 2.
+- **SECTIONS_TO_FILL** — 10 fillable sections + 2 protected. `ingest_paper` (`research-wiki.js:436-473`) scaffolds 11 section headers unconditionally and a 12th — `## Abstract (original)` — only when arXiv returns an abstract for the given `--arxiv-id` (`research-wiki.js:469-473`). Of these, 10 carry a `_TODO._` (or `_TODO: fill in after reading._`) marker and need filling. The other 2 — `## Connections` (position 10 in the enumeration below) and `## Abstract (original)` (position 12, conditional) — are protected by construction: `Connections` is auto-generated from `graph/edges.jsonl`, `Abstract (original)` is immutable source data from the arXiv API. This skill writes to the 10, never the 2.
   1. `One-line thesis` (marker: `_TODO: fill in after reading._`)
   2. `Problem / Gap` (marker: `_TODO._`)
   3. `Method` (marker: `_TODO._`)
@@ -57,10 +57,10 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
 [ -d research-wiki/ ] || { echo "ERROR: research-wiki/ not found. Run /research-wiki init first." >&2; exit 1; }
 
 ARIS_REPO="${ARIS_REPO:-$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null)}"
-WIKI_SCRIPT=".aris/tools/research_wiki.py"
-[ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="tools/research_wiki.py"
-[ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/tools/research_wiki.py"; }
-[ -f "$WIKI_SCRIPT" ] || { echo "ERROR: research_wiki.py not found." >&2; exit 1; }
+WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
+[ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
+[ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/dist/tools/research-wiki.js"; }
+[ -f "$WIKI_SCRIPT" ] || { echo "ERROR: research-wiki.js not found." >&2; exit 1; }
 ```
 
 If either fails, **hard-fail** — this skill manipulates wiki state and must not run blind.
@@ -134,7 +134,7 @@ The fetch chain runs **in order** until one returns usable content (>200 chars o
 | ----- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1     | **alphaxiv overview** (`auto` default; `--source alphaxiv` to pin) | `WebFetch https://alphaxiv.org/overview/<arxiv_id>.md` — LLM-optimized summary, often best for filling sections                                               |
 | 2     | **alphaxiv abs** (fallback within alphaxiv)                        | `WebFetch https://alphaxiv.org/abs/<arxiv_id>.md`                                                                                                             |
-| 3     | **deepxiv brief** (`--source deepxiv` to pin)                      | `python3 "$DEEPXIV_FETCHER" paper-brief <arxiv_id>` if helper resolves                                                                                        |
+| 3     | **deepxiv brief** (`--source deepxiv` to pin)                      | `node "$DEEPXIV_FETCHER" paper-brief <arxiv_id>` if helper resolves                                                                                        |
 | 4     | **arXiv API abstract — fresh fetch** (`--source arxiv` to pin)     | `curl http://export.arxiv.org/api/query?id_list=<arxiv_id>` — log label: `arxiv-api-abstract`                                                                 |
 | 5     | **Page abstract — fallback** (last resort)                         | Reuse the existing `## Abstract (original)` blockquote already present in the page body from a prior `ingest_paper` run — log label: `page-abstract-fallback` |
 | —     | **No arxiv id + no page abstract**                                 | Skip this paper, log `"skip: <slug> (no arxiv id, no abstract)"`, continue                                                                                    |
@@ -197,7 +197,7 @@ _TODO._
 **Step 2.6 — Append log entry.**
 
 ```bash
-python3 "$WIKI_SCRIPT" log research-wiki/ "wiki-enrich: enriched paper:<slug> from <source> (filled N/M sections)"
+node "$WIKI_SCRIPT" log research-wiki/ "wiki-enrich: enriched paper:<slug> from <source> (filled N/M sections)"
 ```
 
 Record which source provided content (`alphaxiv-overview`, `alphaxiv-abs`, `deepxiv-brief`, `arxiv-api-abstract`, or `page-abstract-fallback`) so the audit trail is honest about provenance.
@@ -224,7 +224,7 @@ Source breakdown:
 Re-ideation suggestion: <if ≥5 papers were enriched, recommend `/idea-creator "topic"` so the freshly-filled `Reusable Ingredients` and `Limitations` feed brainstorming. `query_pack.md` is already rebuilt below — the user does NOT need to call `/research-wiki query` manually.>
 ```
 
-Also rebuild `query_pack.md` once at the end (single `python3 "$WIKI_SCRIPT" rebuild_query_pack research-wiki/` call) so `/idea-creator` sees the new bodies on its next run.
+Also rebuild `query_pack.md` once at the end (single `node "$WIKI_SCRIPT" rebuild_query_pack research-wiki/` call) so `/idea-creator` sees the new bodies on its next run.
 
 ## Output Protocols
 

@@ -20,19 +20,19 @@ Monitor: $ARGUMENTS
 
 ## Workflow
 
-> **Environment queries are delegated to the `experiment_env` helper** (`tools/experiment_env/env_helper.py`). Resolve it once, then `monitor`/`collect` handle all four env types (remote screen, vast instance, modal app, local pid) uniformly. The `handle` saved by `/run-experiment` Step 4 drives these calls.
+> **Environment queries are delegated to the `experiment-env` helper** (`tools/experiment-env/env-helper.js`). Resolve it once, then `monitor`/`collect` handle all four env types (remote screen, vast instance, modal app, local pid) uniformly. The `handle` saved by `/run-experiment` Step 4 drives these calls.
 
 ```bash
-# --- resolve experiment_env helper (multi-owner, Layer 2 canonical) ---
+# --- resolve experiment-env helper (multi-owner, Layer 2 canonical) ---
 ENV_HELPER=""
 if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
     ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
 fi
-ENV_HELPER=".aris/tools/experiment_env/env_helper.py"
-[ -f "$ENV_HELPER" ] || ENV_HELPER="tools/experiment_env/env_helper.py"
-[ -f "$ENV_HELPER" ] || { [ -n "${ARIS_REPO:-}" ] && ENV_HELPER="$ARIS_REPO/tools/experiment_env/env_helper.py"; }
+ENV_HELPER=".aris/dist/tools/experiment-env/env-helper.js"
+[ -f "$ENV_HELPER" ] || ENV_HELPER="dist/tools/experiment-env/env-helper.js"
+[ -f "$ENV_HELPER" ] || { [ -n "${ARIS_REPO:-}" ] && ENV_HELPER="$ARIS_REPO/dist/tools/experiment-env/env-helper.js"; }
 [ -f "$ENV_HELPER" ] || ENV_HELPER=""
-[ -z "$ENV_HELPER" ] && { echo "ERROR: experiment_env helper not found (Layer 1-3)" >&2; exit 1; }
+[ -z "$ENV_HELPER" ] && { echo "ERROR: experiment-env helper not found (Layer 1-3)" >&2; exit 1; }
 ENV_CONFIG=".aris/experiment-env.json"
 # handle.json was saved by /run-experiment Step 4 (deploy). If absent, the
 # agent reconstructs it from the env config + experiment name.
@@ -42,7 +42,7 @@ HANDLE="${HANDLE:-/tmp/handle.json}"
 ### Step 1: Check What's Running
 
 ```bash
-python3 "$ENV_HELPER" monitor --env-config "$ENV_CONFIG" --handle "$HANDLE"
+node "$ENV_HELPER" monitor --env-config "$ENV_CONFIG" --handle "$HANDLE"
 ```
 
 Returns `{status: running|done|failed|unknown, gpu_usage?, tail, exit_code?}`. The backend queries the right surface per env_type:
@@ -58,7 +58,7 @@ For each running job, the `monitor` `tail` field already carries the last screen
 ### Step 3: Check for JSON Result Files
 
 ```bash
-python3 "$ENV_HELPER" collect --env-config "$ENV_CONFIG"   # downloads results + logs to ./results/ ./logs/
+node "$ENV_HELPER" collect --env-config "$ENV_CONFIG"   # downloads results + logs to ./results/ ./logs/
 ```
 
 Then read the collected JSON locally:

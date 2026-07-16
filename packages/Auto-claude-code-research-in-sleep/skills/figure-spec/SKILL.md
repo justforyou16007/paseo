@@ -37,25 +37,22 @@ Generate publication-quality **architecture diagrams**, **workflow pipelines**, 
 
 ## Tool Location
 
-Phase 3.1 (Arch C) move: the canonical implementation now lives at
-`skills/figure-spec/scripts/figure_renderer.py` (this SKILL's own
-`scripts/` subdirectory). A backwards-compatible shim at
-`tools/figure_renderer.py` forwards to the canonical file via
-`os.execv`, so existing users with `.aris/tools/figure_renderer.py`
-or a manually copied `tools/figure_renderer.py` keep working
-unchanged.
+The TypeScript implementation lives at
+`src/skills/figure-spec/figure-renderer.ts` and compiles to
+`dist/skills/figure-spec/figure-renderer.js`.
 
-Resolve `$FIGURE_RENDERER` with the hybrid chain (layer 0 prefers the
-self-contained location for the owning SKILL; layers 1-3 are the
+Resolve `$FIGURE_RENDERER` with the hybrid chain (layer 0 resolves
+from the ARIS repo's `dist/` via `$CLAUDE_SKILL_DIR`; layers 1-3 are the
 shared-runtime chain documented in
 [`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2,
 Policy A — skill-local gate):
 
 ```bash
-# Layer 0: self-contained (CC 1.0+ exposes $CLAUDE_SKILL_DIR).
+# Layer 0: compiled TS (CC 1.0+ exposes $CLAUDE_SKILL_DIR).
 FIGURE_RENDERER=""
-if [ -n "${CLAUDE_SKILL_DIR:-}" ] && [ -f "$CLAUDE_SKILL_DIR/scripts/figure_renderer.py" ]; then
-  FIGURE_RENDERER="$CLAUDE_SKILL_DIR/scripts/figure_renderer.py"
+if [ -n "${CLAUDE_SKILL_DIR:-}" ]; then
+  _ARIS_ROOT="${CLAUDE_SKILL_DIR%/skills/*}"
+  [ -f "$_ARIS_ROOT/dist/skills/figure-spec/figure-renderer.js" ] && FIGURE_RENDERER="$_ARIS_ROOT/dist/skills/figure-spec/figure-renderer.js"
 fi
 # Layers 1-3: shared-runtime chain (legacy compatibility + non-CC hosts).
 if [ -z "$FIGURE_RENDERER" ]; then
@@ -63,14 +60,14 @@ if [ -z "$FIGURE_RENDERER" ]; then
   if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
       ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
   fi
-  FIGURE_RENDERER=".aris/tools/figure_renderer.py"
-  [ -f "$FIGURE_RENDERER" ] || FIGURE_RENDERER="tools/figure_renderer.py"
-  [ -f "$FIGURE_RENDERER" ] || { [ -n "${ARIS_REPO:-}" ] && FIGURE_RENDERER="$ARIS_REPO/tools/figure_renderer.py"; }
+  FIGURE_RENDERER=".aris/dist/skills/figure-spec/figure-renderer.js"
+  [ -f "$FIGURE_RENDERER" ] || FIGURE_RENDERER="dist/skills/figure-spec/figure-renderer.js"
+  [ -f "$FIGURE_RENDERER" ] || { [ -n "${ARIS_REPO:-}" ] && FIGURE_RENDERER="$ARIS_REPO/dist/skills/figure-spec/figure-renderer.js"; }
   [ -f "$FIGURE_RENDERER" ] || FIGURE_RENDERER=""
 fi
 [ -z "$FIGURE_RENDERER" ] && {
-  echo "ERROR: figure_renderer.py not resolved (layer 0: \$CLAUDE_SKILL_DIR/scripts/; layers 1-3: .aris/tools/, tools/, \$ARIS_REPO/tools/)." >&2
-  echo "       /figure-spec cannot produce SVG output. Fix: rerun bash tools/install_aris.sh, or copy the helper from \$ARIS_REPO/skills/figure-spec/scripts/." >&2
+  echo "ERROR: figure-renderer.js not resolved (layer 0: \$CLAUDE_SKILL_DIR dist/; layers 1-3: .aris/dist/, dist/, \$ARIS_REPO/dist/)." >&2
+  echo "       /figure-spec cannot produce SVG output. Fix: run npm run build in ARIS repo, or rerun install_aris.sh." >&2
   exit 1
 }
 ```
@@ -78,9 +75,9 @@ fi
 Invoke:
 
 ```bash
-python3 "$FIGURE_RENDERER" render <spec.json> --output <out.svg>
-python3 "$FIGURE_RENDERER" validate <spec.json>
-python3 "$FIGURE_RENDERER" schema
+node "$FIGURE_RENDERER" render <spec.json> --output <out.svg>
+node "$FIGURE_RENDERER" validate <spec.json>
+node "$FIGURE_RENDERER" schema
 ```
 
 ## Workflow
@@ -145,10 +142,10 @@ Start from a template based on the diagram type:
 
 ```bash
 # Validate first ($FIGURE_RENDERER was resolved in "Tool Location" above)
-python3 "$FIGURE_RENDERER" validate /tmp/spec.json
+node "$FIGURE_RENDERER" validate /tmp/spec.json
 
 # Render to SVG
-python3 "$FIGURE_RENDERER" render /tmp/spec.json --output figures/fig_arch.svg
+node "$FIGURE_RENDERER" render /tmp/spec.json --output figures/fig_arch.svg
 
 # Convert to PDF for LaTeX inclusion
 rsvg-convert -f pdf figures/fig_arch.svg -o figures/fig_arch.pdf
@@ -194,7 +191,7 @@ Iterate until all three axes ≥ 7/10. The ARIS tech report figures went through
 
 ## Schema Quick Reference
 
-Run `python3 "$FIGURE_RENDERER" schema` (resolve $FIGURE_RENDERER per "Tool Location" above) for the authoritative schema.
+Run `node "$FIGURE_RENDERER" schema` (resolve $FIGURE_RENDERER per "Tool Location" above) for the authoritative schema.
 
 ### Nodes
 

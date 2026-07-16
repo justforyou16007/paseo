@@ -70,9 +70,9 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" 2>/dev/null || true
 if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
     ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
 fi
-EVIDENCE_CHECK=".aris/tools/evidence_check.py"
-[ -f "$EVIDENCE_CHECK" ] || EVIDENCE_CHECK="tools/evidence_check.py"
-[ -f "$EVIDENCE_CHECK" ] || { [ -n "${ARIS_REPO:-}" ] && EVIDENCE_CHECK="$ARIS_REPO/tools/evidence_check.py"; }
+EVIDENCE_CHECK=".aris/dist/tools/evidence-check.js"
+[ -f "$EVIDENCE_CHECK" ] || EVIDENCE_CHECK="dist/tools/evidence-check.js"
+[ -f "$EVIDENCE_CHECK" ] || { [ -n "${ARIS_REPO:-}" ] && EVIDENCE_CHECK="$ARIS_REPO/dist/tools/evidence-check.js"; }
 [ -f "$EVIDENCE_CHECK" ] || EVIDENCE_CHECK=""
 
 mkdir -p .aris
@@ -80,7 +80,7 @@ if [ -n "$EVIDENCE_CHECK" ]; then
     # NB: evidence_check exits 1 when it FINDS hallucinated evidence (value_not_found /
     # path_missing) — that is the useful signal, NOT a failure. So judge success by
     # whether valid JSON was produced, never by exit code. `|| true` keeps set -e calm.
-    python3 "$EVIDENCE_CHECK" . --batch .aris/claims.json > .aris/evidence_precheck.json 2>.aris/evidence_precheck.err || true
+    node "$EVIDENCE_CHECK" . --batch .aris/claims.json > .aris/evidence_precheck.json 2>.aris/evidence_precheck.err || true
     if [ -s .aris/evidence_precheck.json ] && python3 -c "import json,sys;json.load(open('.aris/evidence_precheck.json'))" 2>/dev/null; then
         cat .aris/evidence_precheck.json
     else
@@ -88,7 +88,7 @@ if [ -n "$EVIDENCE_CHECK" ]; then
         echo "      pre-check skipped (Policy B); the Codex jury still runs." >&2
     fi
 else
-    echo "WARN: evidence_check.py not resolved at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
+    echo "WARN: evidence-check.js not resolved at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
     echo "      Pre-check skipped (Policy B); the Codex jury still runs. Fix: rerun" >&2
     echo "      bash tools/install_aris.sh, export ARIS_REPO, or copy the helper to tools/." >&2
 fi
@@ -237,11 +237,11 @@ proof `status` set) by `/proof-checker`; here we only attach experiment edges.
 ```bash
 cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
 ARIS_REPO="${ARIS_REPO:-$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null)}"
-WIKI_SCRIPT=".aris/tools/research_wiki.py"
-[ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="tools/research_wiki.py"
-[ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/tools/research_wiki.py"; }
+WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
+[ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
+[ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/dist/tools/research-wiki.js"; }
 [ -f "$WIKI_SCRIPT" ] || {
-  echo "WARN: research_wiki.py not found; verdict will be reported but wiki edges/query-pack/log will be skipped. Fix: bash tools/install_aris.sh, export ARIS_REPO, or cp <ARIS-repo>/tools/research_wiki.py tools/." >&2
+  echo "WARN: research-wiki.js not found; verdict will be reported but wiki edges/query-pack/log will be skipped. Fix: bash tools/install_aris.sh, export ARIS_REPO, or cp <ARIS-repo>/dist/tools/research-wiki.js tools/." >&2
   WIKI_SCRIPT=""
 }
 ```
@@ -255,7 +255,7 @@ if research-wiki/ exists:
     #    (the exact bug this closes). On failure: warn, skip the wiki edges, still report.
     EXP_NODE_OK=0
     if [ -n "$WIKI_SCRIPT" ]; then
-      if python3 "$WIKI_SCRIPT" add_experiment research-wiki/ \
+      if node "$WIKI_SCRIPT" add_experiment research-wiki/ \
            --slug "<exp_id>" --idea "idea:<active_idea>" \
            --verdict "<yes|partial|no>" --confidence "<high|medium|low>" \
            --date "<date>" --hardware "<hw>" --duration "<dur>" \
@@ -275,11 +275,11 @@ if research-wiki/ exists:
     #    target should ALREADY be born by /proof-checker; add_edge does not verify it.
     for each claim resolved by this verdict (only if [ "$EXP_NODE_OK" = 1 ]):
         if verdict == "yes":
-            python3 "$WIKI_SCRIPT" add_edge research-wiki/ --from "exp:<id>" --to "claim:<cid>" --type supports --evidence "<metric>"
+            node "$WIKI_SCRIPT" add_edge research-wiki/ --from "exp:<id>" --to "claim:<cid>" --type supports --evidence "<metric>"
         elif verdict == "partial":
-            python3 "$WIKI_SCRIPT" add_edge research-wiki/ --from "exp:<id>" --to "claim:<cid>" --type supports --evidence "partial: <metric>"
+            node "$WIKI_SCRIPT" add_edge research-wiki/ --from "exp:<id>" --to "claim:<cid>" --type supports --evidence "partial: <metric>"
         else:
-            python3 "$WIKI_SCRIPT" add_edge research-wiki/ --from "exp:<id>" --to "claim:<cid>" --type invalidates --evidence "<why>"
+            node "$WIKI_SCRIPT" add_edge research-wiki/ --from "exp:<id>" --to "claim:<cid>" --type invalidates --evidence "<why>"
 
     # 3. Update idea outcome (raw markdown, helper-free)
     Update research-wiki/ideas/<idea_id>.md:
@@ -288,8 +288,8 @@ if research-wiki/ exists:
       - If positive: fill "Actual Outcome" and "Reusable Components"
 
     # 4. Rebuild + log (only if $WIKI_SCRIPT resolved)
-    [ -n "$WIKI_SCRIPT" ] && python3 "$WIKI_SCRIPT" rebuild_query_pack research-wiki/
-    [ -n "$WIKI_SCRIPT" ] && python3 "$WIKI_SCRIPT" log research-wiki/ "result-to-claim: exp:<id> verdict=<verdict> for idea:<idea_id>"
+    [ -n "$WIKI_SCRIPT" ] && node "$WIKI_SCRIPT" rebuild_query_pack research-wiki/
+    [ -n "$WIKI_SCRIPT" ] && node "$WIKI_SCRIPT" log research-wiki/ "result-to-claim: exp:<id> verdict=<verdict> for idea:<idea_id>"
 
     # 5. Re-ideation suggestion
     Count failed/partial ideas since last /idea-creator run.

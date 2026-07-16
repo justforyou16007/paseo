@@ -32,10 +32,10 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, WebSearch, WebFetch, mcp_
 > (the fence, restated for the paseo driver, below). At heartbeat startup, touch
 > the run state first each tick and register this run with the watchdog `loop`
 > type; unregister on completion. The watchdog only detects — it never acquits.
-> Each tick also record the new-finding count via `iteration_log.py` (resolve
+> Each tick also record the new-finding count via `iteration-log.js` (resolve
 > through the canonical `.aris/tools → tools → $ARIS_REPO/tools` chain,
 > integration-contract §2; warn-and-skip if unresolved):
-> `python3 "$ITER_LOG" note <root> <run_id> <phase> <n>`. On `pivot=structural`
+> `node "$ITER_LOG" note <root> <run_id> <phase> <n>`. On `pivot=structural`
 > (stale ≥ 2) the nudge must change a STRUCTURAL constraint and pick an untried
 > direction; on `pivot=human` (stale ≥ 4) flag for attention. Counting only —
 > never a quality verdict.
@@ -79,7 +79,7 @@ create_agent W1 (idea-discovery) → W1.5 (experiment-bridge) → W2 (auto-revie
 Workflow 3 (paper writing) is optional and controlled by `AUTO_WRITE`. The
 orchestrator itself does no research work — it renders each W-agent's
 `initialPrompt`, dispatches it, reads the receipt on `notifyOnFinish`, runs the
-gate, and calls `run_state.py accept`.
+gate, and calls `run-state.js accept`.
 
 ## Paseo substrate setup (do once at start)
 
@@ -126,17 +126,17 @@ Skill + mcp__codex__codex fallback`. Use today's synchronous `Skill`-tool +
 
 Skip this section if `RESUMABLE = false`.
 
-Resolve `run_state.py` via the canonical chain (integration-contract §2):
-`.aris/tools/run_state.py` → `tools/run_state.py` → `$ARIS_REPO/tools/run_state.py`
+Resolve `run-state.js` via the canonical chain (integration-contract §2):
+`.aris/dist/tools/run-state.js` → `dist/tools/run-state.js` → `$ARIS_REPO/dist/tools/run-state.js`
 (warn-and-skip if unresolved — never block the pipeline).
 
 **Phases**, in order: `idea-discovery, experiment-bridge, auto-review-loop, summary, paper-writing`.
 
 - **At start:** if `— resume <run_id>` was passed, run
-  `run_state.py resume <root> <run_id>` — it prints the first non-`accepted`
+  `run-state.js resume <root> <run_id>` — it prints the first non-`accepted`
   phase; **begin the pipeline at that stage** (re-dispatch a `running`/`failed`
   stage; **re-audit** a `done`-but-unaccepted stage). Otherwise derive `<run_id>`
-  from the direction slug + date and `run_state.py start <root> <run_id> --phases
+  from the direction slug + date and `run-state.js start <root> <run_id> --phases
 "idea-discovery,experiment-bridge,auto-review-loop,summary,paper-writing"`.
 - **Per stage:** `set <run_id> <phase> running` on entry; `set <run_id> <phase>
 done --artifact <path>` once the W-agent's receipt reports the artifact.
@@ -149,7 +149,7 @@ done --artifact <path>` once the W-agent's receipt reports the artifact.
   still alive, else a fresh codex agent — reviewer memory may be lost, same risk
   as today's codex-server-restart; trace files survive).
 - **Mark `accepted` ONLY after the stage's gate passes** — never on the
-  executor's own say-so (`run_state.py accept` requires a recorded verdict id +
+  executor's own say-so (`run-state.js accept` requires a recorded verdict id +
   reviewer):
 
   | phase               | what sets `accepted`                                                                     | record as reviewer                     |
@@ -184,7 +184,7 @@ timer. For the paseo driver this means concretely:
   rounds; each round creates a NEW codex reviewer agent (REVIEWER_BIAS_GUARD =
   fresh). The claude agent is one; the codex agents are per-round.
 - **Heartbeat (self-target `create_heartbeat`) is Type-A only**: touch
-  `run_state`, `iteration_log.py note`, nudge stalled Type-A sub-phases via
+  `run_state`, `iteration-log.js note`, nudge stalled Type-A sub-phases via
   their sub-agent status. **FORBIDDEN**: creating/re-creating W2/W3/W5/W6,
   `send_agent_prompt` to a running verdict agent (would interrupt it via
   `replaceRunning`), calling `accept`, quality verdicts.
@@ -202,21 +202,21 @@ Skip otherwise. Doctrine + rationale:
 → "Stall detection & forced structural pivot". This is a Type-A signal — it counts
 findings and changes _direction_, never _judges quality_.
 
-Resolve `iteration_log.py` via the canonical chain (integration-contract §2),
+Resolve `iteration-log.js` via the canonical chain (integration-contract §2),
 warn-and-skip if unresolved (never block the run):
 
 ```bash
-ITER_LOG=".aris/tools/iteration_log.py"
-[ -f "$ITER_LOG" ] || ITER_LOG="tools/iteration_log.py"
-[ -f "$ITER_LOG" ] || ITER_LOG="${ARIS_REPO:-}/tools/iteration_log.py"
-[ -f "$ITER_LOG" ] || { echo "WARN: iteration_log.py not resolved; skipping stall detection" >&2; ITER_LOG=""; }
+ITER_LOG=".aris/dist/tools/iteration-log.js"
+[ -f "$ITER_LOG" ] || ITER_LOG="dist/tools/iteration-log.js"
+[ -f "$ITER_LOG" ] || ITER_LOG="${ARIS_REPO:-}/dist/tools/iteration-log.js"
+[ -f "$ITER_LOG" ] || { echo "WARN: iteration-log.js not resolved; skipping stall detection" >&2; ITER_LOG=""; }
 ```
 
 Then, **each heartbeat tick**, record how many concrete new findings the current
 stage produced and read the returned `pivot`:
 
 ```bash
-[ -n "$ITER_LOG" ] && python3 "$ITER_LOG" note "$ROOT" "$RUN_ID" "$STAGE" "$N_NEW_FINDINGS"
+[ -n "$ITER_LOG" ] && node "$ITER_LOG" note "$ROOT" "$RUN_ID" "$STAGE" "$N_NEW_FINDINGS"
 # → {"stale_count": N, "pivot": "none|structural|human"}
 ```
 
@@ -226,7 +226,7 @@ Act on `pivot`:
 - `structural` (stale ≥ 2) — the next nudge must change a **structural constraint**
   (frame / objective / data / representation), not a tactical parameter, and pick a
   direction different from every one already tried. Record the chosen frame so future
-  ticks can avoid it: `python3 "$ITER_LOG" note "$ROOT" "$RUN_ID" "$STAGE" 0 --direction "<the new frame>"`.
+  ticks can avoid it: `node "$ITER_LOG" note "$ROOT" "$RUN_ID" "$STAGE" 0 --direction "<the new frame>"`.
 - `human` (stale ≥ 4) — stop nudging blindly; flag for human attention (escalate, do
   not silently abandon).
 
@@ -260,7 +260,7 @@ substrate setup" step 2) — read it as `$CFG`:
    — preemption-safe, NOT `<agent-response>` — and `set <run_id> <phase> done
 --artifact <receipt.artifact_path>`.
 4. **Run the gate** (per the acceptance-authority table). Only on a positive
-   verdict call `run_state.py accept <run_id> <phase> --verdict-id <id>
+   verdict call `run-state.js accept <run_id> <phase> --verdict-id <id>
 --reviewer <name>`. Then `archive_agent` the W-agent (用完即 archive — fresh-purpose).
 
 **Reviewer sub-agents** (spawned by the W-agents, not the orchestrator) read
@@ -318,7 +318,7 @@ Recommended: Idea 1. Shall I proceed with implementation?
 **If AUTO_PROCEED=true:** Present the top ideas, wait 10 seconds for user input. If no response, auto-select the #1 ranked idea (highest pilot signal + novelty confirmed) and proceed to Stage 2. Log: `"AUTO_PROCEED: selected Idea 1 — [title]"`.
 
 On a positive Gate 1 (novelty-check + research-review passed inside W1 as codex
-sub-agents), `run_state.py accept idea-discovery --verdict-id <codex-agent-id>
+sub-agents), `run-state.js accept idea-discovery --verdict-id <codex-agent-id>
 --reviewer codex-gpt-5.5`, then `archive_agent` W1.
 
 > ⚠️ **This gate waits for user confirmation when AUTO_PROCEED=false.** When `true`, it auto-proceeds after presenting results. The rest of the pipeline (Stages 2-3) is expensive (GPU time + multiple review rounds), so set `AUTO_PROCEED=false` if you want a final review checkpoint before committing GPU resources.
@@ -352,7 +352,7 @@ PROMPT=$(bash "$RENDER" --phase experiment-bridge --run-id "$RUN_ID" --root "$RO
 - `refine-logs/EXPERIMENT_TRACKER.md` — updated run-by-run status
 - `EXPERIMENT_LOG.md` (when `COMPACT=true`) — session-recovery-friendly log
 
-On jobs-completed (deterministic gate), `run_state.py accept experiment-bridge
+On jobs-completed (deterministic gate), `run-state.js accept experiment-bridge
 --verdict-id <results-path/sha> --reviewer deterministic:experiment-bridge`,
 then `archive_agent` W1.5.
 
@@ -378,7 +378,7 @@ PROMPT=$(bash "$RENDER" --phase auto-review-loop --run-id "$RUN_ID" --root "$ROO
 
 **Output:** `review-stage/AUTO_REVIEW.md` with full review history and final assessment.
 
-On W2's positive STOP (codex verdict), `run_state.py accept auto-review-loop
+On W2's positive STOP (codex verdict), `run-state.js accept auto-review-loop
 --verdict-id <codex-agent-id> --reviewer codex-gpt-5.5`, then `archive_agent` W2
 (and its codex reviewer).
 
@@ -434,7 +434,7 @@ The narrative report must contain:
 ```
 
 `set <run_id> summary done --artifact NARRATIVE_REPORT.md`, then
-`run_state.py accept summary --verdict-id <narrative-path/sha> --reviewer deterministic:summary`.
+`run-state.js accept summary --verdict-id <narrative-path/sha> --reviewer deterministic:summary`.
 
 ### Stage 5: Paper Writing (Workflow 3 — Optional)
 
@@ -490,7 +490,7 @@ sub-agent. When W3 finishes, update the pipeline report with:
 **Output:** `paper/` directory with LaTeX source, compiled PDF, and `PAPER_IMPROVEMENT_LOG.md`.
 
 On `verify_paper_audits.sh paper/ --assurance submission` exit 0 (deterministic
-gate), `run_state.py accept paper-writing --verdict-id <audit-report-path/sha>
+gate), `run-state.js accept paper-writing --verdict-id <audit-report-path/sha>
 --reviewer deterministic:verify_paper_audits.sh`, then `archive_agent` W3.
 
 ## Render HTML view (auto, when `RENDER_HTML = true`)
@@ -519,7 +519,7 @@ Skip this step if `RENDER_HTML = false`.
 
 - **Large file handling**: If the Write tool fails due to file size, immediately retry using Bash (`cat << 'EOF' > file`) to write in chunks. Do NOT ask the user for permission — just do it silently.
 
-- **The orchestrator never judges quality.** It renders prompts, dispatches W-agents, reads receipts, runs gates, calls `accept`. Every quality verdict is rendered by a codex sub-agent inside a W-agent (Type-B, cross-model) or a deterministic verifier (Type-A). The `run_state.py` self-acquittal tripwire is the backstop.
+- **The orchestrator never judges quality.** It renders prompts, dispatches W-agents, reads receipts, runs gates, calls `accept`. Every quality verdict is rendered by a codex sub-agent inside a W-agent (Type-B, cross-model) or a deterministic verifier (Type-A). The `run-state.js` self-acquittal tripwire is the backstop.
 - **Human checkpoint after Stage 1 is controlled by AUTO_PROCEED.** When `false`, do not proceed without user confirmation. When `true`, auto-select the top idea after presenting results.
 - **Stages 2-3 can run autonomously** once the user confirms the idea. This is the "sleep and wake up to results" part.
 - **If Stage 3 ends at round 4 without positive assessment**, stop and report remaining issues. Do not loop forever.

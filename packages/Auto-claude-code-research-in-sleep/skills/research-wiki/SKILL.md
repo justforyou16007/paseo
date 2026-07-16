@@ -47,9 +47,9 @@ Before persisting an **idea / claim / experiment** note, screen it for
 operational noise that would harden into a self-cited falsehood (see
 [`shared-references/capture-antipatterns.md`](../shared-references/capture-antipatterns.md)).
 Resolve the helper via the canonical chain (integration-contract §2):
-`.aris/tools/capture_filter.py` → `tools/capture_filter.py` →
-`$ARIS_REPO/tools/capture_filter.py` (warn-and-skip if unresolved). Run
-`python3 <capture_filter> -` on the note text; if it flags **env-failure /
+`.aris/dist/tools/capture-filter.js` → `dist/tools/capture-filter.js` →
+`$ARIS_REPO/dist/tools/capture-filter.js` (warn-and-skip if unresolved). Run
+`node <capture_filter> -` on the note text; if it flags **env-failure /
 transient-error / negative-tool-claim**, do NOT store it as a durable node —
 rewrite it to the _fix / missing config / workaround_, or drop it. Never store
 "codex/gemini/the reviewer can't do X" — that gets loaded into every future
@@ -82,9 +82,9 @@ research-wiki/
 ## Helper resolution (run before any subcommand below)
 
 All wiki operations except plain directory bootstrap go through a single
-canonical helper, `tools/research_wiki.py`. Skills that touch the wiki
+canonical helper, `dist/tools/research-wiki.js`. Skills that touch the wiki
 must resolve `$WIKI_SCRIPT` via the chain below — never hard-code
-`python3 tools/research_wiki.py …`. Hard-coding silently fails when
+`node dist/tools/research-wiki.js …`. Hard-coding silently fails when
 the project does not have `tools/` on disk (the post-`install_aris.sh`
 default), which is exactly the failure mode that left a real user's
 `research-wiki/` empty for a week.
@@ -92,15 +92,15 @@ default), which is exactly the failure mode that left a real user's
 ```bash
 cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
 ARIS_REPO="${ARIS_REPO:-$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null)}"
-WIKI_SCRIPT=".aris/tools/research_wiki.py"
-[ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="tools/research_wiki.py"
-[ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/tools/research_wiki.py"; }
+WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
+[ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
+[ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/dist/tools/research-wiki.js"; }
 [ -f "$WIKI_SCRIPT" ] || {
-  echo "ERROR: research_wiki.py not found at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
+  echo "ERROR: research-wiki.js not found at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
   echo "       Fix one of:" >&2
   echo "         1. rerun 'bash tools/install_aris.sh' from the ARIS repo (creates .aris/tools symlink)" >&2
   echo "         2. export ARIS_REPO=<path-to-ARIS-repo>" >&2
-  echo "         3. cp <ARIS-repo>/tools/research_wiki.py tools/" >&2
+  echo "         3. cp <ARIS-repo>/dist/tools/research-wiki.js tools/" >&2
   exit 1
 }
 ```
@@ -119,7 +119,7 @@ Initialize the wiki for the current project. After resolving
 `$WIKI_SCRIPT` per the chain above:
 
 ```bash
-python3 "$WIKI_SCRIPT" init research-wiki/
+node "$WIKI_SCRIPT" init research-wiki/
 ```
 
 The helper creates `research-wiki/{papers,ideas,experiments,claims,graph}/`
@@ -136,7 +136,7 @@ truth for the wiki schema.)
 ### `/research-wiki ingest "<paper title>" — arxiv: <id>`
 
 Add a paper to the wiki. This subcommand is thin wrapping around
-`python3 "$WIKI_SCRIPT" ingest_paper …`, which is the single
+`node "$WIKI_SCRIPT" ingest_paper …`, which is the single
 implementation of paper ingest in ARIS (per
 [`shared-references/integration-contract.md`](../shared-references/integration-contract.md)
 — one helper, no copies). The helper does all of:
@@ -154,16 +154,16 @@ identified:
 
 ```bash
 # arXiv-known paper
-python3 "$WIKI_SCRIPT" ingest_paper research-wiki/ \
+node "$WIKI_SCRIPT" ingest_paper research-wiki/ \
     --arxiv-id 2501.12345 --thesis "One-line claim from abstract."
 
 # Venue paper with no arXiv mirror
-python3 "$WIKI_SCRIPT" ingest_paper research-wiki/ \
+node "$WIKI_SCRIPT" ingest_paper research-wiki/ \
     --title "Attention Is All You Need" \
     --authors "Ashish Vaswani, Noam Shazeer, …" --year 2017 --venue "NeurIPS"
 
 # Manual edge after ingest
-python3 "$WIKI_SCRIPT" add_edge research-wiki/ \
+node "$WIKI_SCRIPT" add_edge research-wiki/ \
     --from "paper:vaswani2017_attention_all_you" \
     --to "paper:chen2025_factorized_gap" \
     --type "extends" --evidence "Section 3.2: adapts the encoder block …"
@@ -182,11 +182,11 @@ the reading happened, or a hook didn't fire).
 
 ```bash
 # Explicit list
-python3 "$WIKI_SCRIPT" sync research-wiki/ \
+node "$WIKI_SCRIPT" sync research-wiki/ \
     --arxiv-ids 2310.06770,1706.03762
 
 # From a file (one id per line, # comments ok)
-python3 "$WIKI_SCRIPT" sync research-wiki/ --from-file ids.txt
+node "$WIKI_SCRIPT" sync research-wiki/ --from-file ids.txt
 ```
 
 Dedup is handled per-id; already-ingested papers are skipped silently.
@@ -320,7 +320,7 @@ All paper-reading skills follow the same **integration contract** (see
 [`shared-references/integration-contract.md`](../shared-references/integration-contract.md)):
 
 - single predicate — `[ -d research-wiki/ ]`
-- single canonical helper — `python3 "$WIKI_SCRIPT" ingest_paper …` after resolving `$WIKI_SCRIPT` via the chain at the top of this SKILL
+- single canonical helper — `node "$WIKI_SCRIPT" ingest_paper …` after resolving `$WIKI_SCRIPT` via the chain at the top of this SKILL
 - concrete artifact — `papers/<slug>.md` + `log.md` entry
 - backfill — `sync --arxiv-ids …`
 - diagnostic — `verify_wiki_coverage.sh` (Policy E; resolved per integration-contract §2)
@@ -331,16 +331,16 @@ All paper-reading skills follow the same **integration contract** (see
 # At end of research-lit, after synthesis:
 if research-wiki/ exists AND $WIKI_SCRIPT resolved (chain at top of this SKILL):
     for paper in top_relevant_papers (limit 8-12):
-        python3 "$WIKI_SCRIPT" ingest_paper research-wiki/ \
+        node "$WIKI_SCRIPT" ingest_paper research-wiki/ \
             --arxiv-id <id> [--thesis "..."] [--tags "..."]
         for each explicit relation to existing wiki paper:
-            python3 "$WIKI_SCRIPT" add_edge research-wiki/ \
+            node "$WIKI_SCRIPT" add_edge research-wiki/ \
                 --from "paper:<slug>" --to "<target>" \
                 --type <extends|contradicts|addresses_gap|...> \
                 --evidence "..."
     log "research-lit ingested N papers"
 elif research-wiki/ exists but $WIKI_SCRIPT did not resolve:
-    warn "wiki update skipped — research_wiki.py unreachable; rerun install_aris.sh"
+    warn "wiki update skipped — research-wiki.js unreachable; rerun install_aris.sh"
 ```
 
 Each paper-reading skill ships its own Step "Update Research Wiki (if
@@ -366,7 +366,7 @@ generation, including a re-run with updated constraints):** the page write is a
 
 ```
 for idea in all_generated_ideas (recommended + killed):
-    python3 "$WIKI_SCRIPT" upsert_idea research-wiki/ \
+    node "$WIKI_SCRIPT" upsert_idea research-wiki/ \
       --slug <stable-id> --title <title> --stage <proposed|archived> --outcome pending \
       --thesis <...> --risks <...> --based-on <paper:slug,...> --target-gaps <G2,...>
     # one call: writes ideas/<slug>.md, wires inspired_by/addresses_gap edges,
@@ -384,7 +384,7 @@ log "idea-creator wrote N ideas to wiki"
 # → --update-on-exist). This is the experiment BIRTH point. add_edge does NOT verify
 # node existence, so GATE the supports/invalidates edges below on the node having been
 # born (EXP_NODE_OK) — else they'd dangle off a missing exp node.
-EXP_NODE_OK = (python3 "$WIKI_SCRIPT" add_experiment research-wiki/ --slug <exp_id> \
+EXP_NODE_OK = (node "$WIKI_SCRIPT" add_experiment research-wiki/ --slug <exp_id> \
   --idea idea:<active_idea> --verdict <yes|partial|no> --confidence <high|medium|low> \
   --metrics <...> --reasoning <...> --provenance <run dir> --update-on-exist) succeeded
   # writes page + idea--tested_by-->exp edge + rebuilds index/query_pack
@@ -424,7 +424,7 @@ skill creates a claim node: `/result-to-claim` (Hook 3) only adds empirical
 
 ```bash
 # (run by /proof-checker; shown here for the wiki's record)
-python3 "$WIKI_SCRIPT" add_claim research-wiki/ --slug thm-main-ub \
+node "$WIKI_SCRIPT" add_claim research-wiki/ --slug thm-main-ub \
   --name "Main upper bound" --status verified \
   --provenance ".aris/traces/proof-checker/<run>/" --statement "..." --update-on-exist
 ```

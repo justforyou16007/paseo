@@ -48,18 +48,18 @@ relevant."
 ### 2. Canonical helper — one implementation, not copy-pasted
 
 The business logic lives in **exactly one place** — a script under
-`tools/` (canonical name, no path prefix), or a single subcommand of
-an existing helper. Every caller invokes the same entrypoint, but
-every caller must also resolve **where** that entrypoint lives,
+`dist/tools/` (compiled from `src/tools/`, canonical name in kebab-case `.js`),
+or a single subcommand of an existing helper. Every caller invokes the same
+entrypoint, but every caller must also resolve **where** that entrypoint lives,
 because the helper may sit at any of:
 
-- `<project>/.aris/tools/<helper>` — symlinked by `install_aris.sh` (Phase 0, #174)
-- `<project>/tools/<helper>` — manual copy or running from inside the ARIS repo
-- `$ARIS_REPO/tools/<helper>` — env var or auto-resolved from the install manifest
+- `<project>/.aris/dist/tools/<helper>` — symlinked by `install_aris.sh`
+- `<project>/dist/tools/<helper>` — running from inside the ARIS repo (after `npm run build`)
+- `$ARIS_REPO/dist/tools/<helper>` — env var or auto-resolved from the install manifest
 
 Every caller — including those primarily exercised from inside the
 ARIS repo — MUST use the resolution chain. The chain's middle layer
-(`tools/<helper>`) covers the in-repo case at the same code path,
+(`dist/tools/<helper>`) covers the in-repo case at the same code path,
 with no special-casing needed. The exception that used to live here
 ("helpers run from inside ARIS repo may stay plain `tools/...`")
 caused the canonical user-report bug: `/paper-writing` invoked from
@@ -77,9 +77,9 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
 if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
     ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
 fi
-HELPER=".aris/tools/<helper>"
-[ -f "$HELPER" ] || HELPER="tools/<helper>"
-[ -f "$HELPER" ] || { [ -n "${ARIS_REPO:-}" ] && HELPER="$ARIS_REPO/tools/<helper>"; }
+HELPER=".aris/dist/tools/<helper>"
+[ -f "$HELPER" ] || HELPER="dist/tools/<helper>"
+[ -f "$HELPER" ] || { [ -n "${ARIS_REPO:-}" ] && HELPER="$ARIS_REPO/dist/tools/<helper>"; }
 [ -f "$HELPER" ] || HELPER=""
 ```
 
@@ -116,15 +116,15 @@ verifiers whose exit code gates submission readiness (e.g.
 
 **B. Optional side-effect — unresolved helper warns and skips.** Use
 when the SKILL's primary output is still delivered without the
-helper (e.g. `research_wiki.py ingest_paper` — idea ranking still
+helper (e.g. `research-wiki.js ingest_paper` — idea ranking still
 gets produced, only the wiki side-effect is missed).
 
 ```bash
 [ -n "$WIKI_SCRIPT" ] || {
-  echo "WARN: research_wiki.py not resolved; primary output unaffected, wiki side-effect skipped." >&2
+  echo "WARN: research-wiki.js not resolved; primary output unaffected, wiki side-effect skipped." >&2
   echo "      Fix: rerun bash tools/install_aris.sh, export ARIS_REPO, or copy the helper to tools/." >&2
 }
-[ -n "$WIKI_SCRIPT" ] && python3 "$WIKI_SCRIPT" ingest_paper research-wiki/ --arxiv-id "$id"
+[ -n "$WIKI_SCRIPT" ] && node "$WIKI_SCRIPT" ingest_paper research-wiki/ --arxiv-id "$id"
 ```
 
 **C. Forensic helper — unresolved means write artifacts directly.**
@@ -158,16 +158,16 @@ explicit `source_used=""` init) so the same snippet works under
 ```bash
 source_used=""
 if [ -n "${S2_FETCHER:-}" ]; then
-  if python3 "$S2_FETCHER" --query "$Q" > results.jsonl; then
+  if node "$S2_FETCHER" --query "$Q" > results.jsonl; then
     source_used="semantic_scholar"
   else
-    echo "WARN: semantic_scholar_fetch.py invocation failed; trying arxiv." >&2
+    echo "WARN: semantic-scholar-fetch.js invocation failed; trying arxiv." >&2
     S2_FETCHER=""  # force cascade
   fi
 fi
 if [ -z "$source_used" ] && [ -n "${ARXIV_FETCHER:-}" ]; then
-  echo "WARN: semantic_scholar_fetch.py not resolved or failed; falling back to arxiv_fetch.py." >&2
-  if python3 "$ARXIV_FETCHER" --query "$Q" > results.jsonl; then
+  echo "WARN: semantic-scholar-fetch.js not resolved or failed; falling back to arxiv-fetch.js." >&2
+  if node "$ARXIV_FETCHER" --query "$Q" > results.jsonl; then
     source_used="arxiv_fallback"
   fi
 fi
@@ -200,17 +200,17 @@ append_source() {
 }
 
 if [ -n "${S2_FETCHER:-}" ]; then
-  if python3 "$S2_FETCHER" --query "$Q" >> results.jsonl 2>>fetch.log; then
+  if node "$S2_FETCHER" --query "$Q" >> results.jsonl 2>>fetch.log; then
     append_source "semantic_scholar"
   else
-    echo "WARN: semantic_scholar_fetch.py failed; see fetch.log" >&2
+    echo "WARN: semantic-scholar-fetch.js failed; see fetch.log" >&2
   fi
 fi
 if [ -n "${ARXIV_FETCHER:-}" ]; then
-  if python3 "$ARXIV_FETCHER" --query "$Q" >> results.jsonl 2>>fetch.log; then
+  if node "$ARXIV_FETCHER" --query "$Q" >> results.jsonl 2>>fetch.log; then
     append_source "arxiv"
   else
-    echo "WARN: arxiv_fetch.py failed; see fetch.log" >&2
+    echo "WARN: arxiv-fetch.js failed; see fetch.log" >&2
   fi
 fi
 # ... repeat for openalex, exa, deepxiv ...
@@ -252,17 +252,18 @@ of this generic resolver, and is the precedent for everything in §2.
 
 #### Layer 0 — self-contained owner SKILL (Arch C, Phase 3+)
 
-Single-owner helpers progressively migrate into the owning SKILL's
-`scripts/` subdirectory (matching the Claude Code official skill
-layout). When an owner SKILL invokes its own helper, it tries the
-self-contained location FIRST, then falls through to the canonical
-3-layer chain so legacy users continue to work:
+Single-owner helpers have their TypeScript source in the owning SKILL's
+`src/skills/<skill-name>/` directory and compile to
+`dist/skills/<skill-name>/`. When an owner SKILL invokes its own helper,
+it resolves from the ARIS repo root's `dist/` first, then falls through
+to the canonical 3-layer chain:
 
 ```bash
-# Layer 0 (owner SKILL only): self-contained at $CLAUDE_SKILL_DIR/scripts/.
+# Layer 0 (owner SKILL only): compiled TS at dist/skills/<skill-name>/.
 HELPER=""
-if [ -n "${CLAUDE_SKILL_DIR:-}" ] && [ -f "$CLAUDE_SKILL_DIR/scripts/<helper>" ]; then
-  HELPER="$CLAUDE_SKILL_DIR/scripts/<helper>"
+if [ -n "${CLAUDE_SKILL_DIR:-}" ]; then
+  _ARIS_ROOT="${CLAUDE_SKILL_DIR%/skills/*}"
+  [ -f "$_ARIS_ROOT/dist/skills/<skill-name>/<helper>" ] && HELPER="$_ARIS_ROOT/dist/skills/<skill-name>/<helper>"
 fi
 # Layers 1-3: fall through to the standard chain.
 if [ -z "$HELPER" ]; then
@@ -273,7 +274,7 @@ fi
 Three properties of layer 0:
 
 1. **Single-skill only.** Only the owning SKILL uses layer 0. Cross-skill
-   helpers (`research_wiki.py` consumed by 9 SKILLs; `save_trace.sh`
+   helpers (`research-wiki.js` consumed by 9 SKILLs; `save_trace.sh`
    by 14) stay on the shared-runtime chain because there is no single
    `${CLAUDE_SKILL_DIR}` to point at.
 
@@ -283,11 +284,10 @@ Three properties of layer 0:
    standard chain.
 
 3. **Backwards-compatible.** The canonical 3-layer chain still works
-   because Phase 3 keeps the legacy entry at `tools/<helper>` as a
-   thin `os.execv` shim that forwards to the canonical location. So
-   `.aris/tools/<helper>` (layer 1), `tools/<helper>` (layer 2), and
-   `$ARIS_REPO/tools/<helper>` (layer 3) all resolve to a working
-   Python script for any user who has not re-run `install_aris.sh`.
+   because compiled JS exists at `dist/tools/<helper>` (layer 2). So
+   `.aris/dist/tools/<helper>` (layer 1), `dist/tools/<helper>` (layer 2),
+   and `$ARIS_REPO/dist/tools/<helper>` (layer 3) all resolve to a working
+   compiled JS tool after `npm run build`.
 
 The per-helper policy table at the end of §2 marks Phase 3 moves
 with a "Phase 3.N move" note pointing at the new canonical location.
@@ -301,8 +301,8 @@ are never invoked from a SKILL.md — installers
 (`install_aris.sh`, `install_aris_codex.sh`), update scripts
 (`smart_update.sh`, `smart_update_codex.sh`), manual setup
 (`overleaf_setup.sh`), generators
-(`convert_skills_to_llm_chat.py`, `generate_codex_claude_review_overrides.py`),
-the `meta_opt/` hook scripts, and `watchdog.py` — are out of scope.
+(`convert-skills-to-llm-chat.js`, `generate_codex_claude_review_overrides.py`),
+the `meta_opt/` hook scripts, and `watchdog.js` — are out of scope.
 If a future helper does not fit any policy, extend the taxonomy
 here first.
 
@@ -310,25 +310,25 @@ here first.
 | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `verify_paper_audits.sh`                                                                                                  | A (gate)                                                                                                                           | Exit code is the source of truth for submission readiness                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `save_trace.sh`                                                                                                           | C (forensic)                                                                                                                       | Trace artifacts are load-bearing for audit traceability and reviewer-independence audit                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `research_wiki.py ingest_paper` (caller skills)                                                                           | B (side-effect)                                                                                                                    | Primary output (idea ranking, paper summary) is delivered without wiki ingestion                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `research_wiki.py` (in `/research-wiki` itself)                                                                           | A (gate)                                                                                                                           | The SKILL is the wiki tool; missing helper means no functionality (Variant A in `wiki-helper-resolution.md`)                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `research-wiki.js ingest_paper` (caller skills)                                                                           | B (side-effect)                                                                                                                    | Primary output (idea ranking, paper summary) is delivered without wiki ingestion                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `research-wiki.js` (in `/research-wiki` itself)                                                                           | A (gate)                                                                                                                           | The SKILL is the wiki tool; missing helper means no functionality (Variant A in `wiki-helper-resolution.md`)                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `verify_wiki_coverage.sh`                                                                                                 | E (diagnostic)                                                                                                                     | Reports coverage gaps; not load-bearing on any research outcome                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `verify_papers.py`                                                                                                        | D1 (primary + fallback cascade)                                                                                                    | Filters candidate papers via arXiv/CrossRef/S2 cross-checks; when unresolved **or** invocation fails, callers emit a degraded `verified_papers.json` tagging every candidate `status=unverified, method=none` with explicit WARN                                                                                                                                                                                                                                                                                                                            |
-| `arxiv_fetch.py`, `semantic_scholar_fetch.py`, `deepxiv_fetch.py`, `exa_search.py`, `openalex_fetch.py`                   | D2 (multi-source aggregate) when SKILL queries multiple sources (e.g. `/research-lit`); D1 (cascade) when a single source suffices | Each fetcher is one paper-discovery source; SKILLs aggregate or cascade across resolved sources and record which contributed                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `extract_paper_style.py`                                                                                                  | A when activation predicate `literal "— style-ref:" or equivalent in $ARGUMENTS` is true; not invoked otherwise                    | If the user asked for style transfer and the helper is unresolved, the SKILL cannot satisfy the request                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `paper_illustration_image2.py` (`preflight`, `finalize`, `verify`)                                                        | A (skill-local gate)                                                                                                               | Image2 finalization cannot complete without these checks; verify exits 1 on missing artifacts and that is a skill-local gate (the parent paper-writing workflow may still continue with the alternate illustration path). **Phase 3.2 move**: canonical location is `skills/paper-illustration-image2/scripts/paper_illustration_image2.py`; `tools/paper_illustration_image2.py` retained as `os.execv` shim for legacy resolver layers.                                                                                                                   |
-| `figure_renderer.py`                                                                                                      | A (skill-local gate, single-skill)                                                                                                 | `figure-spec` cannot produce vector SVG output without the renderer. **Phase 3.1 move**: canonical location is `skills/figure-spec/scripts/figure_renderer.py`; `tools/figure_renderer.py` retained as `os.execv` shim for legacy resolver layers.                                                                                                                                                                                                                                                                                                          |
-| `experiment_queue/queue_manager.py`, `experiment_queue/build_manifest.py`                                                 | A (skill-local gate, single-skill)                                                                                                 | `/experiment-queue` cannot operate without these; canonical resolver applies the same chain. **Phase 3.3 move**: canonical location is `skills/experiment-queue/scripts/{queue_manager.py, build_manifest.py}`; both `tools/experiment_queue/*.py` retained as `os.execv` shims for legacy resolver layers.                                                                                                                                                                                                                                                 |
+| `verify-papers.js`                                                                                                        | D1 (primary + fallback cascade)                                                                                                    | Filters candidate papers via arXiv/CrossRef/S2 cross-checks; when unresolved **or** invocation fails, callers emit a degraded `verified_papers.json` tagging every candidate `status=unverified, method=none` with explicit WARN                                                                                                                                                                                                                                                                                                                            |
+| `arxiv-fetch.js`, `semantic-scholar-fetch.js`, `deepxiv-fetch.js`, `exa-search.js`, `openalex-fetch.js`                   | D2 (multi-source aggregate) when SKILL queries multiple sources (e.g. `/research-lit`); D1 (cascade) when a single source suffices | Each fetcher is one paper-discovery source; SKILLs aggregate or cascade across resolved sources and record which contributed                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `extract-paper-style.js`                                                                                                  | A when activation predicate `literal "— style-ref:" or equivalent in $ARGUMENTS` is true; not invoked otherwise                    | If the user asked for style transfer and the helper is unresolved, the SKILL cannot satisfy the request                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `paper-illustration-image2.js` (`preflight`, `finalize`, `verify`)                                                        | A (skill-local gate)                                                                                                               | Image2 finalization cannot complete without these checks; verify exits 1 on missing artifacts and that is a skill-local gate (the parent paper-writing workflow may still continue with the alternate illustration path). Canonical location: `dist/skills/paper-illustration-image2/paper-illustration-image2.js`.                                                                                                                   |
+| `figure-renderer.js`                                                                                                      | A (skill-local gate, single-skill)                                                                                                 | `figure-spec` cannot produce vector SVG output without the renderer. Canonical location: `dist/skills/figure-spec/figure-renderer.js`.                                                                                                                                                                                                          |
+| `experiment-queue/queue-manager.js`, `experiment-queue/build-manifest.js`                                                 | A (skill-local gate, single-skill)                                                                                                 | `/experiment-queue` cannot operate without these; canonical resolver applies the same chain. Canonical location: `dist/skills/experiment-queue/{queue-manager.js, build-manifest.js}`.                                                                                                                                                                                                                                                 |
 | `overleaf_audit.sh`                                                                                                       | E (diagnostic)                                                                                                                     | Reports overleaf sync drift; surfaces gaps but does not gate the parent workflow                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `evidence_check.py` (in `/result-to-claim`, `/paper-claim-audit`)                                                         | B (side-effect)                                                                                                                    | Deterministic pre-check that downgrades hallucinated-evidence claims before the Codex jury; if unresolved the jury still runs (warn-and-skip). A deterministic gate DRIVES, it does not ACQUIT — `verified` means the cited number exists, not that it supports the claim                                                                                                                                                                                                                                                                                   |
-| `capture_filter.py` (in `/research-wiki` capture, `/meta-optimize` Step 3)                                                | B (side-effect)                                                                                                                    | Anti-self-poisoning screen on durable captures; if unresolved the capture proceeds (the screen is advisory, and a passing screen is never an ACCEPT — the cross-model jury still judges)                                                                                                                                                                                                                                                                                                                                                                    |
-| `provenance.py` (in `/meta-apply`; `assert_cross_family`/`stamp`)                                                         | A (gate)                                                                                                                           | The landing acquittal: if unresolved, `/meta-apply` cannot verify author≠reviewer family and MUST refuse to land (fail-closed). `stamp()` itself raises on same-family, so an unresolved or same-family case blocks the corpus mutation                                                                                                                                                                                                                                                                                                                     |
-| `run_state.py` (in `/research-pipeline`)                                                                                  | B (side-effect)                                                                                                                    | Resumability is a convenience; the pipeline still runs end-to-end without it (warn-and-skip, never block). Predicate = `RESUMABLE` / `— resume <run_id>` set                                                                                                                                                                                                                                                                                                                                                                                                |
-| `iteration_log.py` (in `/research-pipeline`, `/idea-discovery`)                                                           | B (side-effect)                                                                                                                    | Stall→pivot ledger is a convenience for overnight loops; the pipeline runs without it (warn-and-skip, never block). Predicate = an overnight heartbeat is driving the loop. Mainline-only for now (Codex-mirror sync pending external-cadence mirror).                                                                                                                                                                                                                                                                                                      |
-| `analysis_tools.py` `register` / `deprecate` / `add-category` (in `/analyse-tool`)                                        | B (side-effect)                                                                                                                    | The registry is a personal convenience collection of reusable analysis methods (`$HOME/.aris/analysis_tools/`, overridable via `$ARIS_ANALYSIS_TOOLS_DIR`); the primary research output is delivered without it (warn-and-skip). Personal — not repo-local — because skills cannot be reloaded at runtime so the helper _is_ the access mechanism. Register enforces the mandatory `scripts/tool-unit-test.py` + `references/` test-data contract (Policy B, but the test itself is a Type-A deterministic gate the subagent runs first via `test --slug`). |
-| `analysis_tools.py` `list` / `query` / `get` / `load` / `resource` / `test` / `categories` / `stats` (in `/analyse-tool`) | B (side-effect)                                                                                                                    | Read-only / execution access to the registry; unresolved ⇒ warn-and-skip (primary output unaffected). `load`/`resource` provide the 3-tier progressive disclosure (L0 metadata → L1 full SKILL.md → L2 per-script/reference); `test` runs a tool's `tool-unit-test.py` and appends a `test` ledger receipt. All of `load`/`register`/`merge`/`run` must fan out to a subagent — only `find` runs in the main agent.                                                                                                                                         |
-| `experiment_env/env_helper.py` `provision` / `preflight` / `sync` / `deploy` / `monitor` / `collect` / `destroy`          | A (gate, multi-owner)                                                                                                              | Unified experiment-environment control across local/remote/vast/modal; consumed by `/run-experiment`, `/monitor-experiment`, `/vast-gpu`, `/serverless-modal`, `/experiment-queue` (5 owners). Canonical location is `tools/experiment_env/` (Layer 2, **no `os.execv` shim** — the code lives at Layer 2 directly, so Layers 1-3 all resolve to it). A failed action subcommand blocks the calling skill.                                                                                                                                                  |
-| `experiment_env/env_helper.py` `parse` / `info`                                                                           | E (diagnostic)                                                                                                                     | Validates the agent's candidate env JSON + writes `.aris/experiment-env.json`; emits non-blocking warnings for unknown fields / deprecated aliases. Does NOT read markdown — the agent extracts env params from CLAUDE.md/AGENTS.md and emits canonical-field JSON; this subcommand only validates+writes.                                                                                                                                                                                                                                                  |
+| `evidence-check.js` (in `/result-to-claim`, `/paper-claim-audit`)                                                         | B (side-effect)                                                                                                                    | Deterministic pre-check that downgrades hallucinated-evidence claims before the Codex jury; if unresolved the jury still runs (warn-and-skip). A deterministic gate DRIVES, it does not ACQUIT — `verified` means the cited number exists, not that it supports the claim                                                                                                                                                                                                                                                                                   |
+| `capture-filter.js` (in `/research-wiki` capture, `/meta-optimize` Step 3)                                                | B (side-effect)                                                                                                                    | Anti-self-poisoning screen on durable captures; if unresolved the capture proceeds (the screen is advisory, and a passing screen is never an ACCEPT — the cross-model jury still judges)                                                                                                                                                                                                                                                                                                                                                                    |
+| `provenance.js` (in `/meta-apply`; `assert_cross_family`/`stamp`)                                                         | A (gate)                                                                                                                           | The landing acquittal: if unresolved, `/meta-apply` cannot verify author≠reviewer family and MUST refuse to land (fail-closed). `stamp()` itself raises on same-family, so an unresolved or same-family case blocks the corpus mutation                                                                                                                                                                                                                                                                                                                     |
+| `run-state.js` (in `/research-pipeline`)                                                                                  | B (side-effect)                                                                                                                    | Resumability is a convenience; the pipeline still runs end-to-end without it (warn-and-skip, never block). Predicate = `RESUMABLE` / `— resume <run_id>` set                                                                                                                                                                                                                                                                                                                                                                                                |
+| `iteration-log.js` (in `/research-pipeline`, `/idea-discovery`)                                                           | B (side-effect)                                                                                                                    | Stall→pivot ledger is a convenience for overnight loops; the pipeline runs without it (warn-and-skip, never block). Predicate = an overnight heartbeat is driving the loop. Mainline-only for now (Codex-mirror sync pending external-cadence mirror).                                                                                                                                                                                                                                                                                                      |
+| `analysis-tools.js` `register` / `deprecate` / `add-category` (in `/analyse-tool`)                                        | B (side-effect)                                                                                                                    | The registry is a personal convenience collection of reusable analysis methods (`$HOME/.aris/analysis_tools/`, overridable via `$ARIS_ANALYSIS_TOOLS_DIR`); the primary research output is delivered without it (warn-and-skip). Personal — not repo-local — because skills cannot be reloaded at runtime so the helper _is_ the access mechanism. Register enforces the mandatory `scripts/tool-unit-test.py` + `references/` test-data contract (Policy B, but the test itself is a Type-A deterministic gate the subagent runs first via `test --slug`). |
+| `analysis-tools.js` `list` / `query` / `get` / `load` / `resource` / `test` / `categories` / `stats` (in `/analyse-tool`) | B (side-effect)                                                                                                                    | Read-only / execution access to the registry; unresolved ⇒ warn-and-skip (primary output unaffected). `load`/`resource` provide the 3-tier progressive disclosure (L0 metadata → L1 full SKILL.md → L2 per-script/reference); `test` runs a tool's `tool-unit-test.py` and appends a `test` ledger receipt. All of `load`/`register`/`merge`/`run` must fan out to a subagent — only `find` runs in the main agent.                                                                                                                                         |
+| `experiment-env/env-helper.js` `provision` / `preflight` / `sync` / `deploy` / `monitor` / `collect` / `destroy`          | A (gate, multi-owner)                                                                                                              | Unified experiment-environment control across local/remote/vast/modal; consumed by `/run-experiment`, `/monitor-experiment`, `/vast-gpu`, `/serverless-modal`, `/experiment-queue` (5 owners). Canonical location: `dist/tools/experiment-env/` (compiled from `src/tools/experiment-env/`). A failed action subcommand blocks the calling skill.                                                                                                                                                  |
+| `experiment-env/env-helper.js` `parse` / `info`                                                                           | E (diagnostic)                                                                                                                     | Validates the agent's candidate env JSON + writes `.aris/experiment-env.json`; emits non-blocking warnings for unknown fields / deprecated aliases. Does NOT read markdown — the agent extracts env params from CLAUDE.md/AGENTS.md and emits canonical-field JSON; this subcommand only validates+writes.                                                                                                                                                                                                                                                  |
 
 When a SKILL invokes a helper not listed above, add the row here as
 part of the same commit and link the chosen policy. Inconsistency in
@@ -336,9 +336,9 @@ this table is the cheapest place to catch policy drift.
 
 #### Examples
 
-- ✅ Resolved-via-chain invocation: `python3 "$WIKI_SCRIPT" ingest_paper <root> --arxiv-id <id>` (where `$WIKI_SCRIPT` was set by the chain above with `<helper>=research_wiki.py`)
+- ✅ Resolved-via-chain invocation: `node "$WIKI_SCRIPT" ingest_paper <root> --arxiv-id <id>` (where `$WIKI_SCRIPT` was set by the chain above with `<helper>=research-wiki.js`)
 - ✅ Resolver block + policy A above for `verify_paper_audits.sh` (submission-gate verifier)
-- ❌ Hard-coded `python3 tools/research_wiki.py …` from a downstream skill that may run in a project without `tools/` on disk — it silently exits 2 and the caller proceeds with no side effect, which is exactly the failure mode that left a real user's `research-wiki/` empty for a week.
+- ❌ Hard-coded `node dist/tools/research-wiki.js …` from a downstream skill that may run in a project without `dist/` on disk — it silently exits 2 and the caller proceeds with no side effect, which is exactly the failure mode that left a real user's `research-wiki/` empty for a week.
 - ❌ N skills each paraphrasing the same 10-line bash snippet. When one drifts, they all drift.
 
 If the same 3+ lines of prose appear in more than two SKILL.md files,
@@ -433,8 +433,8 @@ resolve actual paths via §2.
 | Integration                            | Predicate                                                                    | Helper                                                             | Artifact                                                                                                             | Checklist                                       | Backfill                                                                     | Verifier                                                                                                                                                                       |
 | -------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Submission audits (`max`/`beast`)      | `paper/.aris/assurance.txt = submission`                                     | `verify_paper_audits.sh` + 3 audit skills emit JSON                | `paper/PROOF_AUDIT.json`, `PAPER_CLAIM_AUDIT.json`, `CITATION_AUDIT.json` + `paper/.aris/audit-verifier-report.json` | Phase 6.0 pre-flight checklist                  | Rerun the failed audit                                                       | `verify_paper_audits.sh` (exit 1 blocks)                                                                                                                                       |
-| Research wiki ingest                   | `research-wiki/` exists                                                      | `research_wiki.py ingest_paper`                                    | `research-wiki/papers/<slug>.md` + `log.md` entry                                                                    | Step in each paper-reading skill                | `research_wiki.py sync --arxiv-ids …`                                        | `verify_wiki_coverage.sh` (diagnostic)                                                                                                                                         |
-| paper-illustration-image2 finalization | `paper_illustration_image2.py preflight --workspace <cwd>` returns `ok=true` | `paper_illustration_image2.py` (`preflight`, `finalize`, `verify`) | `figures/ai_generated/figure_final.png`, `latex_include.tex`, `review_log.json`                                      | Step 0 checklist in `paper-illustration-image2` | `paper_illustration_image2.py finalize --workspace <cwd> --best-image <png>` | `paper_illustration_image2.py verify` (skill-local gate; exit 1 on missing artifacts blocks finalize claim, parent workflow may continue with the alternate illustration path) |
+| Research wiki ingest                   | `research-wiki/` exists                                                      | `research-wiki.js ingest_paper`                                    | `research-wiki/papers/<slug>.md` + `log.md` entry                                                                    | Step in each paper-reading skill                | `research-wiki.js sync --arxiv-ids …`                                        | `verify_wiki_coverage.sh` (diagnostic)                                                                                                                                         |
+| paper-illustration-image2 finalization | `paper-illustration-image2.js preflight --workspace <cwd>` returns `ok=true` | `paper-illustration-image2.js` (`preflight`, `finalize`, `verify`) | `figures/ai_generated/figure_final.png`, `latex_include.tex`, `review_log.json`                                      | Step 0 checklist in `paper-illustration-image2` | `paper-illustration-image2.js finalize --workspace <cwd> --best-image <png>` | `paper-illustration-image2.js verify` (skill-local gate; exit 1 on missing artifacts blocks finalize claim, parent workflow may continue with the alternate illustration path) |
 
 When adding a new cross-skill integration, add a row to the table above
 and confirm all six columns are populated.
@@ -445,5 +445,6 @@ and confirm all six columns are populated.
   paper-writing submission gate under this contract
 - `shared-references/reviewer-independence.md` — the adjacent contract
   for cross-model review (executor never filters reviewer inputs)
-- `tools/verify_paper_audits.sh`, `tools/research_wiki.py ingest_paper`,
-  `tools/verify_wiki_coverage.sh` — current canonical helpers
+- `tools/verify_paper_audits.sh`, `dist/tools/research-wiki.js ingest_paper`,
+  `tools/verify_wiki_coverage.sh` — current canonical helpers (shell scripts
+  remain as `.sh`; TypeScript helpers compile to `dist/`)

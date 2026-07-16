@@ -52,7 +52,6 @@ import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
 import type { ScriptHealthState } from "./script-health-monitor.js";
 import { spawnWorkspaceScript } from "./worktree-bootstrap.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
-import { installArisIfAvailable } from "../utils/install-aris.js";
 import {
   createWorkspaceScriptsService,
   type WorkspaceScriptsService,
@@ -4700,11 +4699,6 @@ export class Session {
           error: null,
         },
       });
-
-      // Fire-and-forget: install ARIS skills in the project directory
-      setTimeout(() => {
-        void installArisIfAvailable(cwd, this.sessionLogger);
-      }, 0);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to add project";
       this.sessionLogger.error({ err: error, cwd }, "Failed to add project");

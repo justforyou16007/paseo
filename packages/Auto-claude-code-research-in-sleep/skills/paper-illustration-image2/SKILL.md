@@ -74,38 +74,39 @@ and a **local Codex app-server MCP bridge** as the raster renderer.
 - **OUTPUT_DIR = `figures/ai_generated/`** — Output directory
 - **TEXT_LANGUAGE = `English`** — Default figure text language unless the user requests otherwise
 - **NATIVE_IMAGE_REQUIREMENT = `strict`** — Accept only native `imageGeneration` output; reject shell/Python fallbacks
-- **IMAGE2_HELPER** — canonical name `paper_illustration_image2.py`, resolved
+- **IMAGE2_HELPER** — canonical name `paper-illustration-image2.js`, resolved
   per [`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2
-  (Policy A — skill-local gate). Phase 3.2 (Arch C) moved the canonical
-  implementation into `skills/paper-illustration-image2/scripts/`;
-  `tools/paper_illustration_image2.py` remains as an `os.execv` shim so
-  legacy resolver layers keep working without a re-install. Resolve via:
+  (Policy A — skill-local gate). The TypeScript implementation lives in
+  `src/skills/paper-illustration-image2/` and compiles to
+  `dist/skills/paper-illustration-image2/paper-illustration-image2.js`.
+  Resolve via:
 
   ```bash
-  # Layer 0: self-contained (CC 1.0+ exposes $CLAUDE_SKILL_DIR).
+  # Layer 0: compiled TS (CC 1.0+ exposes $CLAUDE_SKILL_DIR).
   IMAGE2_HELPER=""
-  if [ -n "${CLAUDE_SKILL_DIR:-}" ] && [ -f "$CLAUDE_SKILL_DIR/scripts/paper_illustration_image2.py" ]; then
-    IMAGE2_HELPER="$CLAUDE_SKILL_DIR/scripts/paper_illustration_image2.py"
+  if [ -n "${CLAUDE_SKILL_DIR:-}" ]; then
+    _ARIS_ROOT="${CLAUDE_SKILL_DIR%/skills/*}"
+    [ -f "$_ARIS_ROOT/dist/skills/paper-illustration-image2/paper-illustration-image2.js" ] && IMAGE2_HELPER="$_ARIS_ROOT/dist/skills/paper-illustration-image2/paper-illustration-image2.js"
   fi
-  # Layers 1-3: shared-runtime chain via shim at tools/paper_illustration_image2.py.
+  # Layers 1-3: shared-runtime chain.
   if [ -z "$IMAGE2_HELPER" ]; then
     cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
     if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
         ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
     fi
-    IMAGE2_HELPER=".aris/tools/paper_illustration_image2.py"
-    [ -f "$IMAGE2_HELPER" ] || IMAGE2_HELPER="tools/paper_illustration_image2.py"
-    [ -f "$IMAGE2_HELPER" ] || { [ -n "${ARIS_REPO:-}" ] && IMAGE2_HELPER="$ARIS_REPO/tools/paper_illustration_image2.py"; }
+    IMAGE2_HELPER=".aris/dist/skills/paper-illustration-image2/paper-illustration-image2.js"
+    [ -f "$IMAGE2_HELPER" ] || IMAGE2_HELPER="dist/skills/paper-illustration-image2/paper-illustration-image2.js"
+    [ -f "$IMAGE2_HELPER" ] || { [ -n "${ARIS_REPO:-}" ] && IMAGE2_HELPER="$ARIS_REPO/dist/skills/paper-illustration-image2/paper-illustration-image2.js"; }
     [ -f "$IMAGE2_HELPER" ] || IMAGE2_HELPER=""
   fi
   [ -z "$IMAGE2_HELPER" ] && {
-    echo "ERROR: paper_illustration_image2.py not resolved (layer 0: \$CLAUDE_SKILL_DIR/scripts/; layers 1-3: .aris/tools/, tools/, \$ARIS_REPO/tools/)." >&2
-    echo "       /paper-illustration-image2 cannot proceed. Fix: rerun bash tools/install_aris.sh, or copy the canonical script from \$ARIS_REPO/skills/paper-illustration-image2/scripts/." >&2
+    echo "ERROR: paper-illustration-image2.js not resolved (layer 0: \$CLAUDE_SKILL_DIR dist/; layers 1-3: .aris/dist/, dist/, \$ARIS_REPO/dist/)." >&2
+    echo "       /paper-illustration-image2 cannot proceed. Fix: run npm run build in ARIS repo, or rerun install_aris.sh." >&2
     exit 1
   }
   ```
 
-  All invocations below use `python3 "$IMAGE2_HELPER" <subcommand>`.
+  All invocations below use `node "$IMAGE2_HELPER" <subcommand>`.
 
 ## CVPR/ICLR/NeurIPS Top-Tier Conference Style Guide
 
@@ -190,11 +191,11 @@ Render this checklist explicitly before starting:
 
 ```text
 📋 paper-illustration-image2 integration checklist:
-   [ ] 1. python3 "$IMAGE2_HELPER" preflight --workspace <cwd> --json-out figures/ai_generated/preflight.json
+   [ ] 1. node "$IMAGE2_HELPER" preflight --workspace <cwd> --json-out figures/ai_generated/preflight.json
    [ ] 2. Confirm preflight JSON says ok=true before rendering
    [ ] 3. Render via mcp__codex-image2__generate_start + generate_status
-   [ ] 4. Finalize via python3 "$IMAGE2_HELPER" finalize --workspace <cwd> --best-image <best_png>
-   [ ] 5. Verify artifacts via python3 "$IMAGE2_HELPER" verify --workspace <cwd> --json-out figures/ai_generated/verify.json
+   [ ] 4. Finalize via node "$IMAGE2_HELPER" finalize --workspace <cwd> --best-image <best_png>
+   [ ] 5. Verify artifacts via node "$IMAGE2_HELPER" verify --workspace <cwd> --json-out figures/ai_generated/verify.json
 ```
 
 1. Create `figures/ai_generated/` if it does not exist.
@@ -206,7 +207,7 @@ Render this checklist explicitly before starting:
 4. Run:
 
 ```bash
-python3 "$IMAGE2_HELPER" preflight \
+node "$IMAGE2_HELPER" preflight \
   --workspace <cwd> \
   --json-out figures/ai_generated/preflight.json
 ```
@@ -316,13 +317,13 @@ When accepted:
 - run helper verification before claiming success
 
 ```bash
-python3 "$IMAGE2_HELPER" finalize \
+node "$IMAGE2_HELPER" finalize \
   --workspace <cwd> \
   --best-image figures/ai_generated/figure_vN.png \
   --score 9 \
   --review-summary "Accepted after strict review; labels and arrows are paper-ready."
 
-python3 "$IMAGE2_HELPER" verify \
+node "$IMAGE2_HELPER" verify \
   --workspace <cwd> \
   --json-out figures/ai_generated/verify.json
 ```
@@ -351,19 +352,19 @@ Suggested LaTeX:
 9. Use specific, actionable refinement feedback instead of vague comments.
 10. Review arrow direction, label clarity, and visual hierarchy every round.
 11. Accept only figures that look paper-ready, not slide-ready.
-12. Always use `tools/paper_illustration_image2.py finalize` to emit the final artifacts.
-13. Always use `tools/paper_illustration_image2.py verify` before claiming success.
+12. Always use `tools/paper-illustration-image2.js finalize` to emit the final artifacts.
+13. Always use `tools/paper-illustration-image2.js verify` before claiming success.
 
 ## Repair Path
 
 If rendering succeeded but final artifacts were skipped, repair the integration explicitly:
 
 ```bash
-python3 "$IMAGE2_HELPER" finalize \
+node "$IMAGE2_HELPER" finalize \
   --workspace <cwd> \
   --best-image figures/ai_generated/figure_vN.png
 
-python3 "$IMAGE2_HELPER" verify \
+node "$IMAGE2_HELPER" verify \
   --workspace <cwd> \
   --json-out figures/ai_generated/verify.json
 ```
@@ -386,10 +387,10 @@ figures/ai_generated/
 
 | Stage  | Agent / Tool                                            | Purpose                                                    |
 | ------ | ------------------------------------------------------- | ---------------------------------------------------------- |
-| Step 0 | `python3 "$IMAGE2_HELPER" preflight`                    | Observable activation predicate and preflight receipt      |
+| Step 0 | `node "$IMAGE2_HELPER" preflight`                    | Observable activation predicate and preflight receipt      |
 | Step 1 | Claude                                                  | Parse request and create the initial figure prompt         |
 | Step 2 | Claude (+ optional Codex critique)                      | Refine layout, grouping, spacing, and arrow routing        |
 | Step 3 | Claude (+ optional Codex critique)                      | Verify academic visual style before rendering              |
 | Step 4 | `mcp__codex-image2__generate_start` + `generate_status` | Native raster image generation through Codex app-server    |
 | Step 5 | Claude                                                  | Strict visual review and scoring                           |
-| Step 7 | `python3 "$IMAGE2_HELPER" finalize` + `verify`          | Emit canonical artifacts and external verification receipt |
+| Step 7 | `node "$IMAGE2_HELPER" finalize` + `verify`          | Emit canonical artifacts and external verification receipt |

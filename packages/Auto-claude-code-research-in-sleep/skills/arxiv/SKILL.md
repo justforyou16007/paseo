@@ -13,7 +13,7 @@ Search topic or arXiv paper ID: $ARGUMENTS
 
 - **PAPER_DIR** - Local directory to save downloaded PDFs. Default: `papers/` in the current project directory.
 - **MAX_RESULTS = 10** - Default number of search results.
-- **ARXIV_FETCHER** — canonical name `arxiv_fetch.py`, resolved per
+- **ARXIV_FETCHER** — canonical name `arxiv-fetch.js`, resolved per
   [`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2
   (Policy D1 — primary + fallback cascade). If unresolved (canonical
   chain exhausted), fall back to the inline Python alternative
@@ -50,16 +50,16 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
 if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
     ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
 fi
-ARXIV_FETCHER=".aris/tools/arxiv_fetch.py"
-[ -f "$ARXIV_FETCHER" ] || ARXIV_FETCHER="tools/arxiv_fetch.py"
-[ -f "$ARXIV_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && ARXIV_FETCHER="$ARIS_REPO/tools/arxiv_fetch.py"; }
+ARXIV_FETCHER=".aris/dist/tools/arxiv-fetch.js"
+[ -f "$ARXIV_FETCHER" ] || ARXIV_FETCHER="dist/tools/arxiv-fetch.js"
+[ -f "$ARXIV_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && ARXIV_FETCHER="$ARIS_REPO/dist/tools/arxiv-fetch.js"; }
 [ -f "$ARXIV_FETCHER" ] || ARXIV_FETCHER=""
 ```
 
 **If `$ARXIV_FETCHER` is non-empty**, run:
 
 ```bash
-python3 "$ARXIV_FETCHER" search "QUERY" --max MAX_RESULTS
+node "$ARXIV_FETCHER" search "QUERY" --max MAX_RESULTS
 ```
 
 **If `$ARXIV_FETCHER` is empty** (Policy D1 cascade), fall back to inline Python:
@@ -113,7 +113,7 @@ Present results as a table:
 When a single paper ID is requested (either directly or from Step 2):
 
 ```bash
-python3 "$ARXIV_FETCHER" search "id:ARXIV_ID" --max 1
+node "$ARXIV_FETCHER" search "id:ARXIV_ID" --max 1
 # or fallback:
 python3 -c "
 import urllib.request, xml.etree.ElementTree as ET
@@ -133,7 +133,7 @@ When download is requested, for each paper ID to download:
 
 ```bash
 # Using fetch script:
-python3 "$ARXIV_FETCHER" download ARXIV_ID --dir PAPER_DIR
+node "$ARXIV_FETCHER" download ARXIV_ID --dir PAPER_DIR
 
 # Fallback:
 mkdir -p PAPER_DIR && python3 -c "
@@ -193,16 +193,16 @@ invocation:
 if [ -d research-wiki/ ]; then
   cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
   ARIS_REPO="${ARIS_REPO:-$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null)}"
-  WIKI_SCRIPT=".aris/tools/research_wiki.py"
-  [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="tools/research_wiki.py"
-  [ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/tools/research_wiki.py"; }
+  WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
+  [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
+  [ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/dist/tools/research-wiki.js"; }
   [ -f "$WIKI_SCRIPT" ] || {
-    echo "WARN: research_wiki.py not found; arxiv results delivered, wiki ingest skipped. Fix: bash tools/install_aris.sh, export ARIS_REPO, or cp <ARIS-repo>/tools/research_wiki.py tools/." >&2
+    echo "WARN: research-wiki.js not found; arxiv results delivered, wiki ingest skipped. Fix: bash tools/install_aris.sh, export ARIS_REPO, or cp <ARIS-repo>/dist/tools/research-wiki.js tools/." >&2
     WIKI_SCRIPT=""
   }
   if [ -n "$WIKI_SCRIPT" ]; then
     for each arxiv_id in results:
-        python3 "$WIKI_SCRIPT" ingest_paper research-wiki/ \
+        node "$WIKI_SCRIPT" ingest_paper research-wiki/ \
             --arxiv-id "<arxiv_id>"
   fi
 fi
@@ -213,7 +213,7 @@ rebuild, and log append in a single call — **do not handwrite
 `papers/<slug>.md`**. See
 [`shared-references/integration-contract.md`](../shared-references/integration-contract.md)
 for the canonical-helper rule. Missed ingests can be backfilled later
-with `python3 "$WIKI_SCRIPT" sync research-wiki/ --arxiv-ids <id1>,<id2>,...`
+with `node "$WIKI_SCRIPT" sync research-wiki/ --arxiv-ids <id1>,<id2>,...`
 after resolving `$WIKI_SCRIPT` as above.
 
 ### Step 7: Final Output

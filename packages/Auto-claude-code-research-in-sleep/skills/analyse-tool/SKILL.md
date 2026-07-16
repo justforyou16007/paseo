@@ -1,6 +1,6 @@
 ---
 name: analyse-tool
-description: 'General-purpose experiment-analysis tool: analyse experiment results (logs / metrics / artifacts) by reusing a registered analysis method, or — if none fits — distilling the run into a reusable tool (SKILL.md + scripts/ + references/ test data) and registering it via analysis_tools.py. Work≠Verifier: the analysis method (SKILL.md + scripts) is authored by the Claude fan-out subagent (the registered 实验分析Agent), but the verification side (references/ test data + scripts/tool-unit-test.py) is authored by Codex in a fresh thread — never the same model. Use when user says "analyse results", "分析实验结果", "analyse tool", "分析工具注册/查询", "register analysis skill", "merge analysis tools", or an agent needs a reusable analysis method for experiment results. Helper lives in a personal long-running dir because skills cannot be reloaded at runtime. Register/merge/run MUST fan out to the registered 实验分析Agent subagent — only find (query) runs in the main agent.'
+description: 'General-purpose experiment-analysis tool: analyse experiment results (logs / metrics / artifacts) by reusing a registered analysis method, or — if none fits — distilling the run into a reusable tool (SKILL.md + scripts/ + references/ test data) and registering it via analysis-tools.js. Work≠Verifier: the analysis method (SKILL.md + scripts) is authored by the Claude fan-out subagent (the registered 实验分析Agent), but the verification side (references/ test data + scripts/tool-unit-test.py) is authored by Codex in a fresh thread — never the same model. Use when user says "analyse results", "分析实验结果", "analyse tool", "分析工具注册/查询", "register analysis skill", "merge analysis tools", or an agent needs a reusable analysis method for experiment results. Helper lives in a personal long-running dir because skills cannot be reloaded at runtime. Register/merge/run MUST fan out to the registered 实验分析Agent subagent — only find (query) runs in the main agent.'
 argument-hint: "[find <query> | load <slug> | register <description> | merge <slug-a> <slug-b> | run <slug>]"
 allowed-tools: Bash(*), Read, Grep, Glob, Write, Edit, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__wait_for_agent, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission
 ---
@@ -15,7 +15,7 @@ analysis method when one fits, and otherwise **distilling** the just-performed
 analysis into a reusable tool (procedure + script + deterministic unit test +
 test data), registering it, and running it, so the next agent facing the same
 analysis shape finds it ready. The deterministic storage/lookup lives in one
-helper, `tools/analysis_tools.py`; the LLM only **drives**.
+helper, `dist/tools/analysis-tools.js`; the LLM only **drives**.
 
 The reusable-method registry is the _mechanism_, not the product. The product is
 the analysis. ARIS previously had no reuse entry point for experiment-result
@@ -64,7 +64,7 @@ Two structural constraints:
 
 The registry is a convenience collection; the primary research output is
 delivered without it. So this is **Policy B** (warn-and-skip), not a gate.
-Canonical name `analysis_tools.py`; resolve via the standard 3-layer chain
+Canonical name `analysis-tools.js`; resolve via the standard 3-layer chain
 (`integration-contract.md` §2). Semantic var `ANALYSIS_TOOLS`:
 
 ```bash
@@ -72,18 +72,18 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
 if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
     ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
 fi
-ANALYSIS_TOOLS=".aris/tools/analysis_tools.py"
-[ -f "$ANALYSIS_TOOLS" ] || ANALYSIS_TOOLS="tools/analysis_tools.py"
-[ -f "$ANALYSIS_TOOLS" ] || { [ -n "${ARIS_REPO:-}" ] && ANALYSIS_TOOLS="$ARIS_REPO/tools/analysis_tools.py"; }
+ANALYSIS_TOOLS=".aris/dist/tools/analysis-tools.js"
+[ -f "$ANALYSIS_TOOLS" ] || ANALYSIS_TOOLS="dist/tools/analysis-tools.js"
+[ -f "$ANALYSIS_TOOLS" ] || { [ -n "${ARIS_REPO:-}" ] && ANALYSIS_TOOLS="$ARIS_REPO/dist/tools/analysis-tools.js"; }
 [ -f "$ANALYSIS_TOOLS" ] || ANALYSIS_TOOLS=""
 [ -n "$ANALYSIS_TOOLS" ] || {
-  echo "WARN: analysis_tools.py not resolved at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
+  echo "WARN: analysis-tools.js not resolved at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
   echo "      Primary research output unaffected; analysis-tool registry unavailable." >&2
 }
 ```
 
 All examples below assume `$ANALYSIS_TOOLS` is resolved and use:
-`python3 "$ANALYSIS_TOOLS" <subcommand> ...`
+`node "$ANALYSIS_TOOLS" <subcommand> ...`
 
 ## Progressive disclosure — three tiers
 
@@ -130,7 +130,7 @@ runtime role-file Read. `install_aris.sh` distributes it to
 the repo `agents/` source) so it is present after install.
 
 The loop is **mechanism-agnostic** for the bash part — it only drives
-`analysis_tools.py` over bash. Two things differ by host: how the subagent is
+`analysis-tools.js` over bash. Two things differ by host: how the subagent is
 _spawned_ (`Agent` tool with a registered `subagent_type` here;
 `spawn_agent`/`send_input` in the Codex mirror), and which model family authors
 the **verification side**. Here (Claude host) the subagent is Claude and does
@@ -230,4 +230,4 @@ Full detail and the authoring checklist live in the
 - [`shared-references/acceptance-gate.md`](../shared-references/acceptance-gate.md)
   — Type-A (deterministic `test` gate, safe same-model) vs Type-B (promoting a
   tool into the canonical `skills/` corpus, which routes through `/meta-apply`).
-- `tools/analysis_tools.py --help` — the canonical helper.
+- `dist/tools/analysis-tools.js --help` — the canonical helper.

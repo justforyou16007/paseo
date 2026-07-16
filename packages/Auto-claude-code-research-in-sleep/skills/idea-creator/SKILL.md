@@ -64,14 +64,14 @@ contract):
 ```bash
 cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
 ARIS_REPO="${ARIS_REPO:-$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null)}"
-WIKI_SCRIPT=".aris/tools/research_wiki.py"
-[ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="tools/research_wiki.py"
-[ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/tools/research_wiki.py"; }
+WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
+[ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
+[ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/dist/tools/research-wiki.js"; }
 [ -f "$WIKI_SCRIPT" ] || {
-  echo "WARN: research_wiki.py not found at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
+  echo "WARN: research-wiki.js not found at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
   echo "      The idea-creation primary output (idea ranking) will still be produced." >&2
   echo "      Wiki integration (load query_pack, write idea pages, add edges, rebuild query_pack) will be skipped." >&2
-  echo "      Fix: rerun 'bash tools/install_aris.sh', export ARIS_REPO, or 'cp <ARIS-repo>/tools/research_wiki.py tools/'." >&2
+  echo "      Fix: rerun 'bash tools/install_aris.sh', export ARIS_REPO, or 'cp <ARIS-repo>/dist/tools/research-wiki.js tools/'." >&2
   WIKI_SCRIPT=""
 }
 ```
@@ -84,7 +84,7 @@ if research-wiki/query_pack.md exists AND is less than 7 days old:
     - Treat top papers as known prior work (do not re-search them)
     Still run Phase 1 below for papers from the last 3-6 months (wiki may be stale)
 else if research-wiki/ exists but query_pack.md is stale or missing:
-    if [ -n "$WIKI_SCRIPT" ]: python3 "$WIKI_SCRIPT" rebuild_query_pack research-wiki/
+    if [ -n "$WIKI_SCRIPT" ]: node "$WIKI_SCRIPT" rebuild_query_pack research-wiki/
     Then read query_pack.md as above
 ```
 
@@ -451,16 +451,16 @@ if research-wiki/ exists AND [ -n "$WIKI_SCRIPT" ]:
         # recommended → --stage proposed; eliminated-at-ideation → --stage archived.
         # --outcome stays "pending" (the experiment verdict, negative/mixed/positive,
         # is set LATER by /result-to-claim — never guessed here).
-        python3 "$WIKI_SCRIPT" upsert_idea research-wiki/ \
+        node "$WIKI_SCRIPT" upsert_idea research-wiki/ \
           --slug "<stable-idea-id>" --title "<idea title>" \
           --stage "<proposed|archived>" --outcome pending \
           --thesis "<core hypothesis / direction>" \
           --risks "<novelty / feasibility risks; why killed if eliminated>" \
           --based-on "<paper:slug,paper:slug2>" --target-gaps "<G2,G10>" \
           || echo "WARN: upsert_idea failed for <id> (continuing; audit/report unaffected)" >&2
-    python3 "$WIKI_SCRIPT" log research-wiki/ "idea-creator wrote N ideas (M recommended, K eliminated)"
+    node "$WIKI_SCRIPT" log research-wiki/ "idea-creator wrote N ideas (M recommended, K eliminated)"
 elif research-wiki/ exists AND [ -z "$WIKI_SCRIPT" ]:
-    echo "WARN: ideas NOT recorded — research_wiki.py unreachable (see Phase 0). Fix: bash tools/install_aris.sh or export ARIS_REPO." >&2
+    echo "WARN: ideas NOT recorded — research-wiki.js unreachable (see Phase 0). Fix: bash tools/install_aris.sh or export ARIS_REPO." >&2
 ```
 
 ## Output Protocols
@@ -496,7 +496,7 @@ elif research-wiki/ exists AND [ -z "$WIKI_SCRIPT" ]:
 - "Apply X to Y" is the lowest form of research idea. Push for deeper questions.
 - Include eliminated ideas in the report — they save future time by documenting dead ends.
 - **If the user's direction is too broad (e.g., "NLP", "computer vision", "reinforcement learning"), STOP and ask them to narrow it.** A good direction is 1-2 sentences specifying the problem, domain, and constraint — e.g., "factorized gap in discrete diffusion LMs" or "sample efficiency of offline RL with image observations". Without sufficient specificity, generated ideas will be too vague to run experiments on.
-- **Anti-hallucination for cited papers.** When the landscape survey or novelty justification cites specific papers, every cited paper must pass pre-search verification (`verify_papers.py`, canonical name resolved per [`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2; 3-layer arXiv / CrossRef / S2 fallback inside the helper itself). Policy D1 (primary + degraded-output fallback): if the helper is unresolved **or** its invocation fails, mark candidates `[UNVERIFIED]` and continue rather than dropping or guessing. Never fabricate arXiv IDs, DOIs, or titles from memory. Full protocol in [`shared-references/citation-discipline.md`](../shared-references/citation-discipline.md) § Pre-Search Verification Protocol.
+- **Anti-hallucination for cited papers.** When the landscape survey or novelty justification cites specific papers, every cited paper must pass pre-search verification (`verify-papers.js`, canonical name resolved per [`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2; 3-layer arXiv / CrossRef / S2 fallback inside the helper itself). Policy D1 (primary + degraded-output fallback): if the helper is unresolved **or** its invocation fails, mark candidates `[UNVERIFIED]` and continue rather than dropping or guessing. Never fabricate arXiv IDs, DOIs, or titles from memory. Full protocol in [`shared-references/citation-discipline.md`](../shared-references/citation-discipline.md) § Pre-Search Verification Protocol.
 
 ## Composing with Other Skills
 

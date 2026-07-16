@@ -36,20 +36,21 @@ allowed-tools: Bash(*), Read, Write
 - **Drift detection.** Every rendered HTML embeds the source path, SHA256, and generation timestamp in `<meta>` tags AND in the visible page header. If the HTML and source diverge, the meta tells you which version of the source produced it.
 - **Single-file output.** No build system, no separate CSS, no `node_modules`. Just one `.html`.
 - **CDN-friendly default, `--offline` fallback.** MathJax 3 and highlight.js load from `cdn.jsdelivr.net` by default. Pass `--offline` to skip both — math will appear as raw `$x$`, code blocks won't get syntax highlighting, but everything stays readable.
-- **Pure stdlib helper.** `render_html.py` uses only `re`, `html`, `hashlib`, `json`, `datetime`, `pathlib`, `argparse`, `sys`. No pip install required.
+- **Pure stdlib helper.** `render-html.js` uses only `re`, `html`, `hashlib`, `json`, `datetime`, `pathlib`, `argparse`, `sys`. No pip install required.
 - **Defense-in-depth XSS sanitization.** The helper strips `<script>`/`<style>`/`<iframe>`/`<object>`/`<embed>`/`<form>`/`<input>`/`<button>`/`<link>`/`<meta>`/`<base>` tags, all `on*` event-handler attributes (`onclick`, `onload`, …), and rewrites `javascript:`/`vbscript:`/`data:` href/src/action schemes to `#blocked-unsafe-url:`. ARIS workflow artifacts should not contain these in the first place, but the sanitizer is the safety net in case an LLM hallucinates one. Markdown text content is HTML-escaped separately and never reaches the sanitizer.
 
 ## Tool Location
 
-Arch C self-contained: the canonical implementation lives at `skills/render-html/scripts/render_html.py` (this SKILL's own `scripts/` subdirectory), together with its templates at `skills/render-html/scripts/templates/{academic,dashboard}.html`. The helper is new — no legacy `tools/` shim exists.
+Arch C self-contained: the canonical implementation lives at `skills/render-html/scripts/render-html.js` (this SKILL's own `scripts/` subdirectory), together with its templates at `skills/render-html/scripts/templates/{academic,dashboard}.html`. The helper is new — no legacy `tools/` shim exists.
 
 Resolve `$RENDER_HTML` with the hybrid chain (Layer 0 prefers the self-contained location for the owning SKILL; Layers 1-3 are the shared-runtime chain documented in [`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2, **Policy A — skill-local gate**):
 
 ```bash
-# Layer 0: self-contained (CC 1.0+ exposes $CLAUDE_SKILL_DIR).
+# Layer 0: compiled TS (CC 1.0+ exposes $CLAUDE_SKILL_DIR).
 RENDER_HTML=""
-if [ -n "${CLAUDE_SKILL_DIR:-}" ] && [ -f "$CLAUDE_SKILL_DIR/scripts/render_html.py" ]; then
-  RENDER_HTML="$CLAUDE_SKILL_DIR/scripts/render_html.py"
+if [ -n "${CLAUDE_SKILL_DIR:-}" ]; then
+  _ARIS_ROOT="${CLAUDE_SKILL_DIR%/skills/*}"
+  [ -f "$_ARIS_ROOT/dist/skills/render-html/render-html.js" ] && RENDER_HTML="$_ARIS_ROOT/dist/skills/render-html/render-html.js"
 fi
 # Layers 1-3: shared-runtime chain (non-CC hosts + manual installs).
 if [ -z "$RENDER_HTML" ]; then
@@ -57,14 +58,14 @@ if [ -z "$RENDER_HTML" ]; then
   if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
       ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
   fi
-  RENDER_HTML=".aris/skills/render-html/scripts/render_html.py"
-  [ -f "$RENDER_HTML" ] || RENDER_HTML="skills/render-html/scripts/render_html.py"
-  [ -f "$RENDER_HTML" ] || { [ -n "${ARIS_REPO:-}" ] && RENDER_HTML="$ARIS_REPO/skills/render-html/scripts/render_html.py"; }
+  RENDER_HTML=".aris/dist/skills/render-html/render-html.js"
+  [ -f "$RENDER_HTML" ] || RENDER_HTML="dist/skills/render-html/render-html.js"
+  [ -f "$RENDER_HTML" ] || { [ -n "${ARIS_REPO:-}" ] && RENDER_HTML="$ARIS_REPO/dist/skills/render-html/render-html.js"; }
   [ -f "$RENDER_HTML" ] || RENDER_HTML=""
 fi
 [ -z "$RENDER_HTML" ] && {
-  echo "ERROR: render_html.py not resolved (layer 0: \$CLAUDE_SKILL_DIR/scripts/; layers 1-3: .aris/skills/render-html/scripts/, skills/render-html/scripts/, \$ARIS_REPO/skills/render-html/scripts/)." >&2
-  echo "       /render-html cannot produce HTML output. Fix: rerun bash tools/install_aris.sh, or copy from \$ARIS_REPO/skills/render-html/scripts/." >&2
+  echo "ERROR: render-html.js not resolved (layer 0: \$CLAUDE_SKILL_DIR dist/; layers 1-3: .aris/dist/, dist/, \$ARIS_REPO/dist/)." >&2
+  echo "       /render-html cannot produce HTML output. Fix: run npm run build in ARIS repo, or rerun install_aris.sh." >&2
   exit 1
 }
 ```
@@ -73,43 +74,43 @@ fi
 
 ```bash
 # Default: academic template, output to <input>.html alongside source
-python3 "$RENDER_HTML" idea-stage/IDEA_REPORT.md
+node "$RENDER_HTML" idea-stage/IDEA_REPORT.md
 
 # Dashboard template for cockpit-style views
-python3 "$RENDER_HTML" research-wiki/SUMMARY.md --template dashboard
+node "$RENDER_HTML" research-wiki/SUMMARY.md --template dashboard
 
 # Custom output path + title + eyebrow
-python3 "$RENDER_HTML" review-stage/AUTO_REVIEW.md \
+node "$RENDER_HTML" review-stage/AUTO_REVIEW.md \
   --out review-stage/AUTO_REVIEW.html \
   --title "Auto Review — overnight run" \
   --eyebrow "Workflow 2"
 
 # Embed sidecar state JSON (rendered as a folded <details> JSON block at end)
-python3 "$RENDER_HTML" review-stage/AUTO_REVIEW.md \
+node "$RENDER_HTML" review-stage/AUTO_REVIEW.md \
   --state review-stage/REVIEW_STATE.json
 
 # Embed sidecar JSON (e.g., for KILL_ARGUMENT.md + KILL_ARGUMENT.json)
-python3 "$RENDER_HTML" paper/KILL_ARGUMENT.md \
+node "$RENDER_HTML" paper/KILL_ARGUMENT.md \
   --json paper/KILL_ARGUMENT.json \
   --title "Kill Argument — adversarial review"
 
 # Offline (no CDN; math + code render as plain text)
-python3 "$RENDER_HTML" idea-stage/IDEA_REPORT.md --offline
+node "$RENDER_HTML" idea-stage/IDEA_REPORT.md --offline
 
 # JSON-only input (wrapped in a <pre><code class="language-json"> block)
-python3 "$RENDER_HTML" review-stage/REVIEW_STATE.json --template dashboard
+node "$RENDER_HTML" review-stage/REVIEW_STATE.json --template dashboard
 
 # Language attr (default zh-CN; set for English-primary artifacts)
-python3 "$RENDER_HTML" docs/SKILLS_CATALOG.md --lang en
+node "$RENDER_HTML" docs/SKILLS_CATALOG.md --lang en
 
 # Skip review (academic template otherwise reviews by default)
-python3 "$RENDER_HTML" idea-stage/IDEA_REPORT.md
+node "$RENDER_HTML" idea-stage/IDEA_REPORT.md
 # … then the skill skips the mcp__codex__codex review step if --no-review
 # was on the command line. Pass --review to a dashboard render to force it.
 ```
 
 The `--review` / `--no-review` flags are parsed by the SKILL orchestrator
-(Claude Code), not by `render_html.py`. The helper itself stays pure
+(Claude Code), not by `render-html.js`. The helper itself stays pure
 stdlib and never calls MCP. See § _HTML Review Gate_ below for the
 exact resolution and prompt.
 
@@ -297,7 +298,7 @@ The two templates live at `skills/render-html/scripts/templates/{academic,dashbo
 
 1. Copy one of the templates to a new name, e.g., `my_brand.html`.
 2. Edit the CSS variables in `:root { ... }` to change colors, the font stack, or layout dimensions.
-3. Add the template name to the `--template` choices in `render_html.py` `argparse`.
+3. Add the template name to the `--template` choices in `render-html.js` `argparse`.
 4. Re-run `/render-html <input> --template my_brand`.
 
 The default templates are derived from the user's own academic-newspaper tutorial style (Source Serif Pro + Songti SC, 3-color palette, sticky TOC, low-flash). Stay close to that idiom for ARIS artifacts unless you have a specific reason to break the visual language.
@@ -314,4 +315,4 @@ For deck / poster / Xiaohongshu card / tweet card / data report style outputs, p
 - **The reviewer audits rendering, not research.** Claim truthfulness is owned upstream by `/paper-claim-audit`, `/result-to-claim`, `/research-review`. The HTML reviewer asks: "did the renderer faithfully + safely convert this source?" — nothing more.
 - **CDN dependency is opt-out, not opt-in.** Most users have internet; `--offline` is for air-gapped runs / archival.
 - **The default style is academic-newspaper, not marketing-flashy.** Match the existing ARIS tonal voice. If you want decks/posters/social cards, point users to html-anything.
-- **Pure stdlib only.** Adding a `pip install` dependency to `render_html.py` requires an explicit decision — the helper currently has none. MCP calls live in the skill orchestrator, never in the helper script.
+- **Pure stdlib only.** Adding a `pip install` dependency to `render-html.js` requires an explicit decision — the helper currently has none. MCP calls live in the skill orchestrator, never in the helper script.

@@ -603,7 +603,7 @@ when `verdict == NOT_APPLICABLE` (no theorems) or no wiki is found.
 > / `refuted` / `unproven` / `drafted` / `retracted`). Empirical experiment support is
 > a **separate axis** carried by `supports` / `invalidates` _edges_ from
 > `/result-to-claim` — those words are NEVER written into this `status` field (the
-> `research_wiki.py` validator rejects them).
+> `research-wiki.js` validator rejects them).
 
 Resolve the helper via the **canonical resolver** (integration-contract §2). Check
 `NOT_APPLICABLE` first (in cwd, where the audit ran), then run from the project root
@@ -618,10 +618,10 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 0
 if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
     ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
 fi
-WIKI_SCRIPT=".aris/tools/research_wiki.py"
-[ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="tools/research_wiki.py"
-[ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/tools/research_wiki.py"; }
-[ -f "$WIKI_SCRIPT" ] || { echo "WARN: research_wiki.py not resolved; skipping claim ledger (audit unaffected)" >&2; exit 0; }
+WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
+[ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
+[ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/dist/tools/research-wiki.js"; }
+[ -f "$WIKI_SCRIPT" ] || { echo "WARN: research-wiki.js not resolved; skipping claim ledger (audit unaffected)" >&2; exit 0; }
 ```
 
 For each top-level theorem/headline in `PROOF_SKELETON.md` (the main theorem + the
@@ -639,7 +639,7 @@ Never invent a status: a plain proof gap is `unproven` — never `refuted` (whic
 asserts falsity) and never `verified`/`drafted`. Then record (idempotent):
 
 ```bash
-python3 "$WIKI_SCRIPT" add_claim research-wiki/ \
+node "$WIKI_SCRIPT" add_claim research-wiki/ \
   --slug "<stable-theorem-id, e.g. thm-main-ub>" --name "<theorem headline>" \
   --status "<mapped status>" --provenance "<trace_path from PROOF_AUDIT.json>" \
   --statement "<canonical theorem statement>" \

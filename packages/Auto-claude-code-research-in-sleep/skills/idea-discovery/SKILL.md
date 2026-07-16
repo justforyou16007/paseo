@@ -196,7 +196,7 @@ Which ideas should I validate further? Or should I regenerate with different con
   regenerating, read the already-tried directions (research-wiki Failed Ideas + any
   `.aris/runs/<run_id>.iterations.jsonl`) and forbid a candidate too close to one already
   tried — enforced direction diversity; when an overnight heartbeat drives the run,
-  record each chosen direction via `iteration_log.py note ... --direction "<frame>"`
+  record each chosen direction via `iteration-log.js note ... --direction "<frame>"`
   so later ticks can reject near-duplicates (see
   [`shared-references/external-cadence.md`](../shared-references/external-cadence.md) →
   Stall detection & forced structural pivot). Repeat until the user selects at least 1 idea.

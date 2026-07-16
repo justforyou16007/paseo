@@ -71,11 +71,11 @@ Examples:
 | 2        | **Obsidian** (via MCP)   | `obsidian`         | Try calling any `mcp__obsidian-vault__*` tool — if unavailable, skip                                                                              | Research notes, paper summaries, tagged references, wikilinks                                                                                                                                                                                       |
 | 3        | **Local PDFs**           | `local`            | `Glob: papers/**/*.pdf, literature/**/*.pdf`                                                                                                      | Raw PDF content (first 3 pages)                                                                                                                                                                                                                     |
 | 4        | **Web search**           | `web`              | Always available (WebSearch)                                                                                                                      | arXiv, Semantic Scholar, Google Scholar                                                                                                                                                                                                             |
-| 5        | **Semantic Scholar API** | `semantic-scholar` | `$S2_FETCHER` resolves (canonical name `semantic_scholar_fetch.py`, per integration-contract §2)                                                  | Published venue papers (IEEE, ACM, Springer) with structured metadata: citation counts, venue info, TLDR. **Only runs when explicitly requested** via `— sources: semantic-scholar` or `— sources: web, semantic-scholar`                           |
-| 6        | **DeepXiv CLI**          | `deepxiv`          | `$DEEPXIV_FETCHER` resolves (canonical name `deepxiv_fetch.py`, per integration-contract §2) **and** `deepxiv` CLI present (`command -v deepxiv`) | Progressive paper retrieval: search, brief, head, section, trending, web search. **Only runs when explicitly requested** via `— sources: deepxiv` or `— sources: all, deepxiv`                                                                      |
-| 7        | **Exa Search**           | `exa`              | `$EXA_FETCHER` resolves (canonical name `exa_search.py`, per integration-contract §2); fetcher handles `exa-py` SDK + API key internally          | AI-powered broad web search with content extraction (highlights, text, summaries). Covers blogs, docs, news, companies, and research papers beyond arXiv/S2. **Only runs when explicitly requested** via `— sources: exa` or `— sources: all, exa`  |
+| 5        | **Semantic Scholar API** | `semantic-scholar` | `$S2_FETCHER` resolves (canonical name `semantic-scholar-fetch.js`, per integration-contract §2)                                                  | Published venue papers (IEEE, ACM, Springer) with structured metadata: citation counts, venue info, TLDR. **Only runs when explicitly requested** via `— sources: semantic-scholar` or `— sources: web, semantic-scholar`                           |
+| 6        | **DeepXiv CLI**          | `deepxiv`          | `$DEEPXIV_FETCHER` resolves (canonical name `deepxiv-fetch.js`, per integration-contract §2) **and** `deepxiv` CLI present (`command -v deepxiv`) | Progressive paper retrieval: search, brief, head, section, trending, web search. **Only runs when explicitly requested** via `— sources: deepxiv` or `— sources: all, deepxiv`                                                                      |
+| 7        | **Exa Search**           | `exa`              | `$EXA_FETCHER` resolves (canonical name `exa-search.js`, per integration-contract §2); fetcher handles `exa-py` SDK + API key internally          | AI-powered broad web search with content extraction (highlights, text, summaries). Covers blogs, docs, news, companies, and research papers beyond arXiv/S2. **Only runs when explicitly requested** via `— sources: exa` or `— sources: all, exa`  |
 | 8        | **Gemini** (MCP / CLI)   | `gemini`           | `mcp__gemini-cli__ask-gemini` tool available, or `gemini` CLI installed                                                                           | AI-powered broad literature discovery — decomposes topics into sub-problems, aliases, and variants for wider retrieval. Prefers MCP, falls back to CLI. **Only runs when explicitly requested** via `— sources: gemini` or `— sources: all, gemini` |
-| 9        | **OpenAlex**             | `openalex`         | `$OPENALEX_FETCHER` resolves (canonical name `openalex_fetch.py`, per integration-contract §2) **and** Python `requests` module importable        | Open citation graph with institutional affiliations, funding data, and comprehensive metadata across 250M+ works. Fully open API. **Only runs when explicitly requested** via `— sources: openalex` or `— sources: all, openalex`                   |
+| 9        | **OpenAlex**             | `openalex`         | `$OPENALEX_FETCHER` resolves (canonical name `openalex-fetch.js`, per integration-contract §2) **and** `node` available        | Open citation graph with institutional affiliations, funding data, and comprehensive metadata across 250M+ works. Fully open API. **Only runs when explicitly requested** via `— sources: openalex` or `— sources: all, openalex`                   |
 
 > **Graceful degradation**: If no MCP servers are configured, the skill works exactly as before (local PDFs + web search). Zotero and Obsidian are pure additions.
 
@@ -177,21 +177,21 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
 if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
     ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
 fi
-ARXIV_FETCHER=".aris/tools/arxiv_fetch.py"
-[ -f "$ARXIV_FETCHER" ] || ARXIV_FETCHER="tools/arxiv_fetch.py"
-[ -f "$ARXIV_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && ARXIV_FETCHER="$ARIS_REPO/tools/arxiv_fetch.py"; }
+ARXIV_FETCHER=".aris/dist/tools/arxiv-fetch.js"
+[ -f "$ARXIV_FETCHER" ] || ARXIV_FETCHER="dist/tools/arxiv-fetch.js"
+[ -f "$ARXIV_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && ARXIV_FETCHER="$ARIS_REPO/dist/tools/arxiv-fetch.js"; }
 [ -f "$ARXIV_FETCHER" ] || ARXIV_FETCHER=""
 
 if [ -n "$ARXIV_FETCHER" ]; then
   # Search arXiv API for structured results (title, abstract, authors, categories).
   # Wrap with if/then/else so set -e doesn't abort the SKILL.
-  if python3 "$ARXIV_FETCHER" search "QUERY" --max 10; then
+  if node "$ARXIV_FETCHER" search "QUERY" --max 10; then
     echo "D2 contribution: arxiv (helper invocation exit 0)" >&2
   else
-    echo "WARN: arxiv_fetch.py invocation failed; D2 aggregate continues with WebSearch results." >&2
+    echo "WARN: arxiv-fetch.js invocation failed; D2 aggregate continues with WebSearch results." >&2
   fi
 else
-  echo "WARN: arxiv_fetch.py not resolved; falling back to WebSearch for arXiv hits." >&2
+  echo "WARN: arxiv-fetch.js not resolved; falling back to WebSearch for arXiv hits." >&2
 fi
 ```
 
@@ -219,20 +219,20 @@ if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
     ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
 fi
 # Resolve $S2_FETCHER (Policy D2 — warn-and-skip on missing).
-S2_FETCHER=".aris/tools/semantic_scholar_fetch.py"
-[ -f "$S2_FETCHER" ] || S2_FETCHER="tools/semantic_scholar_fetch.py"
-[ -f "$S2_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && S2_FETCHER="$ARIS_REPO/tools/semantic_scholar_fetch.py"; }
+S2_FETCHER=".aris/dist/tools/semantic-scholar-fetch.js"
+[ -f "$S2_FETCHER" ] || S2_FETCHER="dist/tools/semantic-scholar-fetch.js"
+[ -f "$S2_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && S2_FETCHER="$ARIS_REPO/dist/tools/semantic-scholar-fetch.js"; }
 [ -f "$S2_FETCHER" ] || S2_FETCHER=""
 
 if [ -n "$S2_FETCHER" ]; then
   # Search for published CS/Engineering papers with quality filters.
   # Wrap with if/then/else so set -e doesn't abort the SKILL.
-  if python3 "$S2_FETCHER" search "QUERY" --max 10 \
+  if node "$S2_FETCHER" search "QUERY" --max 10 \
       --fields-of-study "Computer Science,Engineering" \
       --publication-types "JournalArticle,Conference"; then
     echo "D2 contribution: semantic_scholar (helper invocation exit 0)" >&2
   else
-    echo "WARN: semantic_scholar_fetch.py invocation failed; D2 aggregate continues with remaining sources." >&2
+    echo "WARN: semantic-scholar-fetch.js invocation failed; D2 aggregate continues with remaining sources." >&2
   fi
 fi
 ```
@@ -258,25 +258,25 @@ if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
     ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
 fi
 # Resolve $DEEPXIV_FETCHER (Policy D2 — warn-and-skip on missing).
-DEEPXIV_FETCHER=".aris/tools/deepxiv_fetch.py"
-[ -f "$DEEPXIV_FETCHER" ] || DEEPXIV_FETCHER="tools/deepxiv_fetch.py"
-[ -f "$DEEPXIV_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && DEEPXIV_FETCHER="$ARIS_REPO/tools/deepxiv_fetch.py"; }
+DEEPXIV_FETCHER=".aris/dist/tools/deepxiv-fetch.js"
+[ -f "$DEEPXIV_FETCHER" ] || DEEPXIV_FETCHER="dist/tools/deepxiv-fetch.js"
+[ -f "$DEEPXIV_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && DEEPXIV_FETCHER="$ARIS_REPO/dist/tools/deepxiv-fetch.js"; }
 [ -f "$DEEPXIV_FETCHER" ] || DEEPXIV_FETCHER=""
 
 if [ -n "$DEEPXIV_FETCHER" ] && command -v deepxiv >/dev/null 2>&1; then
   # Wrap each adapter call so set -e doesn't abort the SKILL.
-  if python3 "$DEEPXIV_FETCHER" search "QUERY" --max 10; then
+  if node "$DEEPXIV_FETCHER" search "QUERY" --max 10; then
     echo "D2 contribution: deepxiv (helper invocation exit 0)" >&2
 
     # Then deepen only for the most relevant papers (sub-calls don't change D2 aggregate count):
-    python3 "$DEEPXIV_FETCHER" paper-brief ARXIV_ID \
-      || echo "WARN: deepxiv_fetch.py paper-brief failed; skipping deepen step." >&2
-    python3 "$DEEPXIV_FETCHER" paper-head ARXIV_ID \
-      || echo "WARN: deepxiv_fetch.py paper-head failed; skipping deepen step." >&2
-    python3 "$DEEPXIV_FETCHER" paper-section ARXIV_ID "Experiments" \
-      || echo "WARN: deepxiv_fetch.py paper-section failed; skipping deepen step." >&2
+    node "$DEEPXIV_FETCHER" paper-brief ARXIV_ID \
+      || echo "WARN: deepxiv-fetch.js paper-brief failed; skipping deepen step." >&2
+    node "$DEEPXIV_FETCHER" paper-head ARXIV_ID \
+      || echo "WARN: deepxiv-fetch.js paper-head failed; skipping deepen step." >&2
+    node "$DEEPXIV_FETCHER" paper-section ARXIV_ID "Experiments" \
+      || echo "WARN: deepxiv-fetch.js paper-section failed; skipping deepen step." >&2
   else
-    echo "WARN: deepxiv_fetch.py search invocation failed; D2 aggregate continues with remaining sources." >&2
+    echo "WARN: deepxiv-fetch.js search invocation failed; D2 aggregate continues with remaining sources." >&2
   fi
 fi
 ```
@@ -302,25 +302,25 @@ if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
     ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
 fi
 # Resolve $EXA_FETCHER (Policy D2 — warn-and-skip on missing).
-EXA_FETCHER=".aris/tools/exa_search.py"
-[ -f "$EXA_FETCHER" ] || EXA_FETCHER="tools/exa_search.py"
-[ -f "$EXA_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && EXA_FETCHER="$ARIS_REPO/tools/exa_search.py"; }
+EXA_FETCHER=".aris/dist/tools/exa-search.js"
+[ -f "$EXA_FETCHER" ] || EXA_FETCHER="dist/tools/exa-search.js"
+[ -f "$EXA_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && EXA_FETCHER="$ARIS_REPO/dist/tools/exa-search.js"; }
 [ -f "$EXA_FETCHER" ] || EXA_FETCHER=""
 
 if [ -n "$EXA_FETCHER" ]; then
   # Search for research papers with highlights.
   # Wrap with if/then/else so set -e doesn't abort the SKILL.
   exa_contributed=false
-  if python3 "$EXA_FETCHER" search "QUERY" --max 10 --category "research paper" --content highlights; then
+  if node "$EXA_FETCHER" search "QUERY" --max 10 --category "research paper" --content highlights; then
     exa_contributed=true
   else
-    echo "WARN: exa_search.py research-paper invocation failed; D2 aggregate continues." >&2
+    echo "WARN: exa-search.js research-paper invocation failed; D2 aggregate continues." >&2
   fi
   # Search for broader web content (blogs, docs, news)
-  if python3 "$EXA_FETCHER" search "QUERY" --max 10 --content highlights; then
+  if node "$EXA_FETCHER" search "QUERY" --max 10 --content highlights; then
     exa_contributed=true
   else
-    echo "WARN: exa_search.py broad-web invocation failed; D2 aggregate continues." >&2
+    echo "WARN: exa-search.js broad-web invocation failed; D2 aggregate continues." >&2
   fi
   [ "$exa_contributed" = "true" ] && echo "D2 contribution: exa (at least one invocation exit 0)" >&2
 fi
@@ -392,32 +392,32 @@ if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
     ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
 fi
 # Resolve $OPENALEX_FETCHER (Policy D2 — warn-and-skip on missing).
-OPENALEX_FETCHER=".aris/tools/openalex_fetch.py"
-[ -f "$OPENALEX_FETCHER" ] || OPENALEX_FETCHER="tools/openalex_fetch.py"
-[ -f "$OPENALEX_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && OPENALEX_FETCHER="$ARIS_REPO/tools/openalex_fetch.py"; }
+OPENALEX_FETCHER=".aris/dist/tools/openalex-fetch.js"
+[ -f "$OPENALEX_FETCHER" ] || OPENALEX_FETCHER="dist/tools/openalex-fetch.js"
+[ -f "$OPENALEX_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && OPENALEX_FETCHER="$ARIS_REPO/dist/tools/openalex-fetch.js"; }
 [ -f "$OPENALEX_FETCHER" ] || OPENALEX_FETCHER=""
 
 # Preflight: skip OpenAlex silently if the helper is unresolved OR the
 # `requests` Python package is missing. Both checks must pass before
 # the script is invoked, so users without `requests` installed never see
 # a stack trace from a default `/research-lit` run.
-if [ -z "$OPENALEX_FETCHER" ] || ! python3 -c "import requests" >/dev/null 2>&1; then
-  echo "OpenAlex source not available (openalex_fetch.py unresolved or 'requests' module missing); skipping." >&2
+if [ -z "$OPENALEX_FETCHER" ] || ! command -v node >/dev/null 2>&1; then
+  echo "OpenAlex source not available (openalex-fetch.js unresolved or node unavailable); skipping." >&2
 else
   # Search for papers with comprehensive metadata.
   # Wrap with if/then/else so set -e doesn't abort the SKILL.
-  if python3 "$OPENALEX_FETCHER" search "QUERY" --max 10 \
+  if node "$OPENALEX_FETCHER" search "QUERY" --max 10 \
       --year "2022-" \
       --type article \
       --sort relevance; then
     echo "D2 contribution: openalex (helper invocation exit 0)" >&2
   else
-    echo "WARN: openalex_fetch.py invocation failed; D2 aggregate continues with remaining sources." >&2
+    echo "WARN: openalex-fetch.js invocation failed; D2 aggregate continues with remaining sources." >&2
   fi
 fi
 ```
 
-If `openalex_fetch.py` is not found or `requests` module is missing, skip this source gracefully and continue with the remaining requested sources.
+If `openalex-fetch.js` is not found or node is unavailable, skip this source gracefully and continue with the remaining requested sources.
 
 **Why use OpenAlex?** Fully open citation graph (no API key required), institutional affiliations, funding data (NSF, NIH), comprehensive topic/keyword metadata, and coverage across all disciplines (not just CS).
 
@@ -474,13 +474,13 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
 if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
     ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
 fi
-ARXIV_FETCHER=".aris/tools/arxiv_fetch.py"
-[ -f "$ARXIV_FETCHER" ] || ARXIV_FETCHER="tools/arxiv_fetch.py"
-[ -f "$ARXIV_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && ARXIV_FETCHER="$ARIS_REPO/tools/arxiv_fetch.py"; }
+ARXIV_FETCHER=".aris/dist/tools/arxiv-fetch.js"
+[ -f "$ARXIV_FETCHER" ] || ARXIV_FETCHER="dist/tools/arxiv-fetch.js"
+[ -f "$ARXIV_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && ARXIV_FETCHER="$ARIS_REPO/dist/tools/arxiv-fetch.js"; }
 [ -f "$ARXIV_FETCHER" ] || ARXIV_FETCHER=""
 
 # Download top N most relevant arXiv papers; skip silently if helper unresolved.
-[ -n "$ARXIV_FETCHER" ] && python3 "$ARXIV_FETCHER" download ARXIV_ID --dir papers/
+[ -n "$ARXIV_FETCHER" ] && node "$ARXIV_FETCHER" download ARXIV_ID --dir papers/
 ```
 
 - Only download papers ranked in the top ARXIV_MAX_DOWNLOAD by relevance
@@ -492,7 +492,7 @@ ARXIV_FETCHER=".aris/tools/arxiv_fetch.py"
 
 Before analysis, run pre-search verification on **all** candidate papers
 collected from Steps 0a-1 to filter out LLM-fabricated arXiv IDs / DOIs /
-titles. Helper: `verify_papers.py` (canonical name; resolved per
+titles. Helper: `verify-papers.js` (canonical name; resolved per
 [`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2,
 Policy D1 — primary helper with degraded-output fallback). If the
 helper is unresolved on this machine, the SKILL emits a fallback
@@ -506,9 +506,9 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
 if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
     ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
 fi
-VERIFY_PAPERS=".aris/tools/verify_papers.py"
-[ -f "$VERIFY_PAPERS" ] || VERIFY_PAPERS="tools/verify_papers.py"
-[ -f "$VERIFY_PAPERS" ] || { [ -n "${ARIS_REPO:-}" ] && VERIFY_PAPERS="$ARIS_REPO/tools/verify_papers.py"; }
+VERIFY_PAPERS=".aris/dist/tools/verify-papers.js"
+[ -f "$VERIFY_PAPERS" ] || VERIFY_PAPERS="dist/tools/verify-papers.js"
+[ -f "$VERIFY_PAPERS" ] || { [ -n "${ARIS_REPO:-}" ] && VERIFY_PAPERS="$ARIS_REPO/dist/tools/verify-papers.js"; }
 [ -f "$VERIFY_PAPERS" ] || VERIFY_PAPERS=""
 
 # 2. Emit candidates as JSON. Verification scratch lives under .aris/
@@ -526,40 +526,39 @@ JSON
 # 3. Run 3-layer verification (arXiv batch → CrossRef → Semantic Scholar fuzzy).
 #    Policy D1: when the helper is unresolved OR its invocation fails, emit
 #    a degraded verified set tagging everything [UNVERIFIED] so the user
-#    can audit search quality. If python3 itself is missing, we BLOCK
+#    can audit search quality. If node itself is missing, we BLOCK
 #    rather than hand-roll JSON in shell.
 verify_ok=false
 if [ -n "$VERIFY_PAPERS" ]; then
-  if python3 "$VERIFY_PAPERS" \
+  if node "$VERIFY_PAPERS" \
         --input  .aris/verify-papers/candidate_papers.json \
         --output .aris/verify-papers/verified_papers.json; then
     verify_ok=true
   else
-    echo "WARN: verify_papers.py invocation failed (resolved at $VERIFY_PAPERS); falling back to [UNVERIFIED] tagging." >&2
+    echo "WARN: verify-papers.js invocation failed (resolved at $VERIFY_PAPERS); falling back to [UNVERIFIED] tagging." >&2
   fi
 else
-  echo "WARN: verify_papers.py not resolved at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
+  echo "WARN: verify-papers.js not resolved at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
   echo "      Fix: rerun bash tools/install_aris.sh, export ARIS_REPO, or copy the helper to tools/." >&2
 fi
 if [ "$verify_ok" = "false" ]; then
-  if ! command -v python3 >/dev/null 2>&1; then
-    echo "ERROR: python3 unavailable; cannot emit fallback verified_papers.json." >&2
-    echo "       Status: BLOCKED. Install python3 or restore the helper to proceed." >&2
+  if ! command -v node >/dev/null 2>&1; then
+    echo "ERROR: node unavailable; cannot emit fallback verified_papers.json." >&2
+    echo "       Status: BLOCKED. Install node or restore the helper to proceed." >&2
     exit 1
   fi
   echo "      Emitting unverified candidate set with [UNVERIFIED] tags." >&2
-  python3 - <<'PY'
-import json
-cands = json.load(open('.aris/verify-papers/candidate_papers.json'))
-out = {
-  'verdict': 'WARN',
-  'reason_code': 'verify_papers_unavailable',
-  'summary': 'verify_papers.py helper unresolved or invocation failed; all candidates tagged [UNVERIFIED] for audit visibility.',
-  'papers': [dict(p, status='unverified', method='none') for p in cands],
-}
-with open('.aris/verify-papers/verified_papers.json', 'w') as f:
-  json.dump(out, f, indent=2)
-PY
+  node <<'JS'
+const fs = require('fs');
+const cands = JSON.parse(fs.readFileSync('.aris/verify-papers/candidate_papers.json', 'utf8'));
+const out = {
+  verdict: 'WARN',
+  reason_code: 'verify_papers_unavailable',
+  summary: 'verify-papers.js helper unresolved or invocation failed; all candidates tagged [UNVERIFIED] for audit visibility.',
+  papers: cands.map(p => ({ ...p, status: 'unverified', method: 'none' })),
+};
+fs.writeFileSync('.aris/verify-papers/verified_papers.json', JSON.stringify(out, null, 2));
+JS
 fi
 
 # 4. Read verdict + per-paper status from .aris/verify-papers/verified_papers.json;
@@ -599,7 +598,7 @@ arXiv-id / DOI / title-hash, already assigned upstream in Step 1.5>",
 problem, method, results, relevance, source, verification_status}]}`.
 >
 > The "jury" here is **not a model** — it is the **deterministic**
-> `verify_papers.py` gate already run in Step 1.5 (3-layer arXiv / CrossRef /
+> `verify-papers.js` gate already run in Step 1.5 (3-layer arXiv / CrossRef /
 > Semantic Scholar cross-check). Because the acceptance gate is a deterministic
 > verifier, not a model verdict, the cross-model-family rule is automatically
 > satisfied (a process is not a model family — see
@@ -677,7 +676,7 @@ If Zotero BibTeX was exported, include a `references.bib` snippet for direct use
 error) if the directory is absent. Per
 [`shared-references/integration-contract.md`](../shared-references/integration-contract.md),
 this step follows the canonical ingest contract — business logic lives
-in `tools/research_wiki.py`, not in this prose.
+in `dist/tools/research-wiki.js`, not in this prose.
 
 When `research-wiki/` exists, resolve `$WIKI_SCRIPT` per the canonical
 chain documented in
@@ -687,11 +686,11 @@ chain documented in
 ```bash
 cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
 ARIS_REPO="${ARIS_REPO:-$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null)}"
-WIKI_SCRIPT=".aris/tools/research_wiki.py"
-[ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="tools/research_wiki.py"
-[ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/tools/research_wiki.py"; }
+WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
+[ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
+[ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/dist/tools/research-wiki.js"; }
 [ -f "$WIKI_SCRIPT" ] || {
-  echo "WARN: research_wiki.py not found; literature synthesis will be reported but wiki ingest will be skipped. Fix: bash tools/install_aris.sh, export ARIS_REPO, or cp <ARIS-repo>/tools/research_wiki.py tools/." >&2
+  echo "WARN: research-wiki.js not found; literature synthesis will be reported but wiki ingest will be skipped. Fix: bash tools/install_aris.sh, export ARIS_REPO, or cp <ARIS-repo>/dist/tools/research-wiki.js tools/." >&2
   WIKI_SCRIPT=""
 }
 ```
@@ -702,11 +701,11 @@ WIKI_SCRIPT=".aris/tools/research_wiki.py"
    [ ] 2. If $WIKI_SCRIPT empty (helper unreachable), skip the rest of this step
           (the warning above already explains why).
    [ ] 3. For each of the top 8–12 relevant papers (arxiv IDs collected above):
-          python3 "$WIKI_SCRIPT" ingest_paper research-wiki/ \
+          node "$WIKI_SCRIPT" ingest_paper research-wiki/ \
               --arxiv-id <id> [--thesis "<one-line>"] [--tags <t1>,<t2>]
    [ ] 4. For each explicit relationship to an existing wiki entity,
           add an edge:
-          python3 "$WIKI_SCRIPT" add_edge research-wiki/ \
+          node "$WIKI_SCRIPT" add_edge research-wiki/ \
               --from "paper:<slug>" --to "<target_node_id>" \
               --type <extends|contradicts|addresses_gap|inspired_by|...> \
               --evidence "<one-sentence quote or reasoning>"
@@ -727,7 +726,7 @@ For non-arXiv sources (Semantic Scholar only, IEEE/ACM journals without
 arXiv mirrors, blog posts), pass manual metadata instead:
 
 ```bash
-python3 "$WIKI_SCRIPT" ingest_paper research-wiki/ \
+node "$WIKI_SCRIPT" ingest_paper research-wiki/ \
     --title "<full title>" --authors "A, B, C" --year <yyyy> \
     --venue "<venue>" [--external-id-doi "<doi>"] [--thesis "..."]
 ```

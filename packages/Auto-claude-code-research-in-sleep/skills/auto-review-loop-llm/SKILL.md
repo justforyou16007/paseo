@@ -39,8 +39,8 @@ Add to `~/.claude/settings.json`:
 {
   "mcpServers": {
     "llm-chat": {
-      "command": "/usr/bin/python3",
-      "args": ["/Users/yourname/.claude/mcp-servers/llm-chat/server.py"],
+      "command": "node",
+      "args": ["<ARIS_ROOT>/dist/mcp-servers/llm-chat/server.js"],
       "env": {
         "LLM_API_KEY": "your-api-key",
         "LLM_BASE_URL": "https://api.deepseek.com/v1",

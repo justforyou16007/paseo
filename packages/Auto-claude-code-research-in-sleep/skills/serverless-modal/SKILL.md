@@ -87,25 +87,25 @@ Cost estimate (Modal):
 
 ## Workflow
 
-> **Launcher generation, run, monitor, collect, cleanup are delegated to the `experiment_env` helper's `modal` backend** (`tools/experiment_env/modal_env.py`). Resolve it once, then `deploy` generates the `modal_launcher.py` (Pattern A) and runs it; `monitor`/`collect`/`destroy` cover the rest. The cost-estimate + GPU-choice UX (Step 1) stays in this skill.
+> **Launcher generation, run, monitor, collect, cleanup are delegated to the `experiment-env` helper's `modal` backend** (`tools/experiment-env/modal-env.js`). Resolve it once, then `deploy` generates the `modal_launcher.py` (Pattern A) and runs it; `monitor`/`collect`/`destroy` cover the rest. The cost-estimate + GPU-choice UX (Step 1) stays in this skill.
 
 ```bash
-# --- resolve experiment_env helper (multi-owner, Layer 2 canonical) ---
+# --- resolve experiment-env helper (multi-owner, Layer 2 canonical) ---
 ENV_HELPER=""
 if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
     ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
 fi
-ENV_HELPER=".aris/tools/experiment_env/env_helper.py"
-[ -f "$ENV_HELPER" ] || ENV_HELPER="tools/experiment_env/env_helper.py"
-[ -f "$ENV_HELPER" ] || { [ -n "${ARIS_REPO:-}" ] && ENV_HELPER="$ARIS_REPO/tools/experiment_env/env_helper.py"; }
+ENV_HELPER=".aris/dist/tools/experiment-env/env-helper.js"
+[ -f "$ENV_HELPER" ] || ENV_HELPER="dist/tools/experiment-env/env-helper.js"
+[ -f "$ENV_HELPER" ] || { [ -n "${ARIS_REPO:-}" ] && ENV_HELPER="$ARIS_REPO/dist/tools/experiment-env/env-helper.js"; }
 [ -f "$ENV_HELPER" ] || ENV_HELPER=""
-[ -z "$ENV_HELPER" ] && { echo "ERROR: experiment_env helper not found (Layer 1-3)" >&2; exit 1; }
+[ -z "$ENV_HELPER" ] && { echo "ERROR: experiment-env helper not found (Layer 1-3)" >&2; exit 1; }
 ENV_CONFIG=".aris/experiment-env.json"
 ```
 
 ### Step 1: Analyze Task → Estimate Cost → Choose GPU
 
-Same analysis as any GPU skill — determine VRAM needs from model size, pick GPU, estimate hours, calculate cost. See pricing table above. Then ensure the chosen GPU is in `$ENV_CONFIG` as `modal_gpu` (the agent writes the candidate from CLAUDE.md/AGENTS.md + this choice, then `env_helper.py parse`).
+Same analysis as any GPU skill — determine VRAM needs from model size, pick GPU, estimate hours, calculate cost. See pricing table above. Then ensure the chosen GPU is in `$ENV_CONFIG` as `modal_gpu` (the agent writes the candidate from CLAUDE.md/AGENTS.md + this choice, then `env-helper.js parse`).
 
 **VRAM Rules of Thumb:**
 | Model Size | FP16 VRAM | Recommended GPU |
@@ -120,8 +120,8 @@ Same analysis as any GPU skill — determine VRAM needs from model size, pick GP
 
 ```bash
 echo '<run_spec-json>' > /tmp/run_spec.json   # {script, args, exp_name, gpu_id?}
-python3 "$ENV_HELPER" deploy --env-config "$ENV_CONFIG" --run-spec /tmp/run_spec.json --dry-run   # inspect generated launcher
-python3 "$ENV_HELPER" deploy --env-config "$ENV_CONFIG" --run-spec /tmp/run_spec.json > /tmp/handle.json   # generates + `modal run`
+node "$ENV_HELPER" deploy --env-config "$ENV_CONFIG" --run-spec /tmp/run_spec.json --dry-run   # inspect generated launcher
+node "$ENV_HELPER" deploy --env-config "$ENV_CONFIG" --run-spec /tmp/run_spec.json > /tmp/handle.json   # generates + `modal run`
 ```
 
 `deploy` generates `modal_launcher.py` reproducing Pattern A (`modal.Mount.from_local_dir` + `modal.Volume` + `@app.function(gpu=modal_gpu, timeout=modal_timeout, secrets=modal_secrets)` + `volume.commit()` + `train.remote()`) and runs `modal run`. The Pattern A/B/C/D/E/F reference below documents what the backend generates — kept for choosing the right pattern (Pattern A is the run-experiment default).
@@ -266,7 +266,7 @@ modal deploy app.py       # Persistent service deployment
 ### Step 4: Verify & Monitor
 
 ```bash
-python3 "$ENV_HELPER" monitor --env-config "$ENV_CONFIG" --handle /tmp/handle.json
+node "$ENV_HELPER" monitor --env-config "$ENV_CONFIG" --handle /tmp/handle.json
 ```
 
 (Backend runs `modal app list` + `modal app logs <app>` — reference below.)
@@ -279,7 +279,7 @@ modal app logs <app-name> # Stream logs
 ### Step 5: Collect Results
 
 ```bash
-python3 "$ENV_HELPER" collect --env-config "$ENV_CONFIG"   # modal volume ls + get → ./results/
+node "$ENV_HELPER" collect --env-config "$ENV_CONFIG"   # modal volume ls + get → ./results/
 ```
 
 Results collection depends on the pattern used (reference):
@@ -302,7 +302,7 @@ Results are printed to terminal or returned from the function — already local.
 Modal auto-scales to zero — no manual instance destruction needed. But clean up unused resources:
 
 ```bash
-python3 "$ENV_HELPER" destroy --env-config "$ENV_CONFIG"   # modal app stop + modal volume rm
+node "$ENV_HELPER" destroy --env-config "$ENV_CONFIG"   # modal app stop + modal volume rm
 ```
 
 (Reference commands the backend reproduces:)

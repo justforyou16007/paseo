@@ -23,7 +23,7 @@ This skill is the **published venue** counterpart to `/arxiv`:
 ## Constants
 
 - **MAX_RESULTS = 10** — Default number of search results.
-- **S2_FETCHER** — canonical name `semantic_scholar_fetch.py`, resolved per
+- **S2_FETCHER** — canonical name `semantic-scholar-fetch.js`, resolved per
   [`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2
   (Policy D1 — primary + fallback cascade). If unresolved (canonical
   chain exhausted), fall back to the inline Python alternative
@@ -73,16 +73,16 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
 if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
     ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
 fi
-S2_FETCHER=".aris/tools/semantic_scholar_fetch.py"
-[ -f "$S2_FETCHER" ] || S2_FETCHER="tools/semantic_scholar_fetch.py"
-[ -f "$S2_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && S2_FETCHER="$ARIS_REPO/tools/semantic_scholar_fetch.py"; }
+S2_FETCHER=".aris/dist/tools/semantic-scholar-fetch.js"
+[ -f "$S2_FETCHER" ] || S2_FETCHER="dist/tools/semantic-scholar-fetch.js"
+[ -f "$S2_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && S2_FETCHER="$ARIS_REPO/dist/tools/semantic-scholar-fetch.js"; }
 [ -f "$S2_FETCHER" ] || S2_FETCHER=""
 ```
 
 **Standard search** (default — relevance-ranked):
 
 ```bash
-python3 "$S2_FETCHER" search "QUERY" --max MAX_RESULTS \
+node "$S2_FETCHER" search "QUERY" --max MAX_RESULTS \
   --fields-of-study "Computer Science,Engineering" \
   --publication-types JournalArticle,Conference
 ```
@@ -90,7 +90,7 @@ python3 "$S2_FETCHER" search "QUERY" --max MAX_RESULTS \
 **Bulk search** (when `- sort:` is specified, or MAX_RESULTS > 100):
 
 ```bash
-python3 "$S2_FETCHER" search-bulk "QUERY" --max MAX_RESULTS \
+node "$S2_FETCHER" search-bulk "QUERY" --max MAX_RESULTS \
   --sort citationCount:desc \
   --fields-of-study "Computer Science" \
   --year "2020-"
@@ -114,7 +114,7 @@ If `$S2_FETCHER` is empty (Policy D1 cascade), fall back to inline Python using 
 When a single paper ID is requested:
 
 ```bash
-python3 "$S2_FETCHER" paper "PAPER_ID"
+node "$S2_FETCHER" paper "PAPER_ID"
 ```
 
 Where PAPER_ID can be:
@@ -180,19 +180,19 @@ common for IEEE/ACM), fall back to manual metadata:
 if [ -d research-wiki/ ]; then
   cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
   ARIS_REPO="${ARIS_REPO:-$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null)}"
-  WIKI_SCRIPT=".aris/tools/research_wiki.py"
-  [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="tools/research_wiki.py"
-  [ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/tools/research_wiki.py"; }
+  WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
+  [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
+  [ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/dist/tools/research-wiki.js"; }
   [ -f "$WIKI_SCRIPT" ] || {
-    echo "WARN: research_wiki.py not found; semantic-scholar results delivered, wiki ingest skipped. Fix: bash tools/install_aris.sh, export ARIS_REPO, or cp <ARIS-repo>/tools/research_wiki.py tools/." >&2
+    echo "WARN: research-wiki.js not found; semantic-scholar results delivered, wiki ingest skipped. Fix: bash tools/install_aris.sh, export ARIS_REPO, or cp <ARIS-repo>/dist/tools/research-wiki.js tools/." >&2
     WIKI_SCRIPT=""
   }
   [ -n "$WIKI_SCRIPT" ] && for each paper in results:
         if paper.externalIds.ArXiv:
-            python3 "$WIKI_SCRIPT" ingest_paper research-wiki/ \
+            node "$WIKI_SCRIPT" ingest_paper research-wiki/ \
                 --arxiv-id "<ArXiv>"
         else:
-            python3 "$WIKI_SCRIPT" ingest_paper research-wiki/ \
+            node "$WIKI_SCRIPT" ingest_paper research-wiki/ \
                 --title "<title>" --authors "<authors joined by , >" \
                 --year <year> --venue "<venue>" \
                 [--external-id-doi "<externalIds.DOI>"]

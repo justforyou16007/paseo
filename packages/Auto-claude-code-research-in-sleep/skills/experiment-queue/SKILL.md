@@ -53,29 +53,29 @@ All of these are pure engineering friction that can be orchestrated.
 
 ### Job Manifest
 
-> **Environment config source:** the manifest's `ssh` (alias), `conda`/`conda_hook`, and `cwd` should be filled from `.aris/experiment-env.json` (the `remote` block produced by `env_helper.py parse` from CLAUDE.md/AGENTS.md). Before launching the queue, ensure the host is prepared via the `experiment_env` helper:
+> **Environment config source:** the manifest's `ssh` (alias), `conda`/`conda_hook`, and `cwd` should be filled from `.aris/experiment-env.json` (the `remote` block produced by `env-helper.js parse` from CLAUDE.md/AGENTS.md). Before launching the queue, ensure the host is prepared via the `experiment-env` helper:
 >
 > ```bash
-> # --- resolve experiment_env helper (multi-owner, Layer 2 canonical) ---
+> # --- resolve experiment-env helper (multi-owner, Layer 2 canonical) ---
 > ENV_HELPER=""
 > if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
 >     ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
 > fi
-> ENV_HELPER=".aris/tools/experiment_env/env_helper.py"
-> [ -f "$ENV_HELPER" ] || ENV_HELPER="tools/experiment_env/env_helper.py"
-> [ -f "$ENV_HELPER" ] || { [ -n "${ARIS_REPO:-}" ] && ENV_HELPER="$ARIS_REPO/tools/experiment_env/env_helper.py"; }
+> ENV_HELPER=".aris/dist/tools/experiment-env/env-helper.js"
+> [ -f "$ENV_HELPER" ] || ENV_HELPER="dist/tools/experiment-env/env-helper.js"
+> [ -f "$ENV_HELPER" ] || { [ -n "${ARIS_REPO:-}" ] && ENV_HELPER="$ARIS_REPO/dist/tools/experiment-env/env-helper.js"; }
 > [ -f "$ENV_HELPER" ] || ENV_HELPER=""
-> [ -z "$ENV_HELPER" ] && { echo "ERROR: experiment_env helper not found (Layer 1-3)" >&2; exit 1; }
+> [ -z "$ENV_HELPER" ] && { echo "ERROR: experiment-env helper not found (Layer 1-3)" >&2; exit 1; }
 > ENV_CONFIG=".aris/experiment-env.json"
 > # Prepare the host ONCE (provision + preflight + sync); queue_manager then
 > # batch-schedules N jobs on this already-ready host — no per-job provision/destroy.
-> python3 "$ENV_HELPER" provision --env-config "$ENV_CONFIG"
-> python3 "$ENV_HELPER" preflight --env-config "$ENV_CONFIG"
-> python3 "$ENV_HELPER" sync --env-config "$ENV_CONFIG" --src ./src
+> node "$ENV_HELPER" provision --env-config "$ENV_CONFIG"
+> node "$ENV_HELPER" preflight --env-config "$ENV_CONFIG"
+> node "$ENV_HELPER" sync --env-config "$ENV_CONFIG" --src ./src
 > # Read ssh alias / conda_hook / conda_env / code_dir from $ENV_CONFIG into the manifest below.
 > ```
 >
-> `queue_manager.py` itself is unchanged — it runs on the remote host and batch-schedules jobs. The `experiment_env` helper runs locally and prepares the host; they are complementary (single-env control vs batch scheduling).
+> `queue-manager.js` itself is unchanged — it runs on the remote host and batch-schedules jobs. The `experiment-env` helper runs locally and prepares the host; they are complementary (single-env control vs batch scheduling).
 
 A manifest lists jobs with explicit state:
 
@@ -146,7 +146,7 @@ Bind the run identifiers once so every later step (manifest save, scp, launch, m
 # REPLACE the placeholder path before running, or pre-export PROJECT_DIR:
 PROJECT_DIR="${PROJECT_DIR:?set PROJECT_DIR to the local project root}"
 RUN_TS=$(date -u +%Y%m%dT%H%M%SZ)             # one timestamp per run, reused everywhere
-LOCAL_RUN_DIR="$PROJECT_DIR/experiment_queue/$RUN_TS"
+LOCAL_RUN_DIR="$PROJECT_DIR/experiment-queue/$RUN_TS"
 mkdir -p "$LOCAL_RUN_DIR"
 ```
 
@@ -164,31 +164,32 @@ If any precondition fails, show user which jobs are blocked and why.
 
 ### Step 3: Launch Scheduler
 
-The canonical scheduler implementation lives in `skills/experiment-queue/scripts/queue_manager.py` (Phase 3.3 move, Arch C). `tools/experiment_queue/queue_manager.py` is now a Python `os.execv` shim retained for legacy resolver-chain compatibility. Three preliminaries before launch.
+The canonical scheduler implementation is compiled from `src/skills/experiment-queue/` to `dist/skills/experiment-queue/queue-manager.js`. Three preliminaries before launch.
 
-**3a. Resolve the local helper directory.** The two helpers (`queue_manager.py`, `build_manifest.py`) now sit under `skills/experiment-queue/scripts/` in the ARIS repo, with shims at `tools/experiment_queue/` for legacy resolver layers. Use this hybrid chain so the skill works from any project layout:
+**3a. Resolve the local helper directory.** The two helpers (`queue-manager.js`, `build-manifest.js`) compile from `src/skills/experiment-queue/` into `dist/skills/experiment-queue/`. Use this hybrid chain so the skill works from any project layout:
 
 ```bash
-# Layer 0: self-contained (CC 1.0+ exposes $CLAUDE_SKILL_DIR).
+# Layer 0: compiled TS (CC 1.0+ exposes $CLAUDE_SKILL_DIR).
 QUEUE_TOOLS=""
-if [ -n "${CLAUDE_SKILL_DIR:-}" ] && [ -f "$CLAUDE_SKILL_DIR/scripts/queue_manager.py" ]; then
-  QUEUE_TOOLS="$CLAUDE_SKILL_DIR/scripts"
+if [ -n "${CLAUDE_SKILL_DIR:-}" ]; then
+  _ARIS_ROOT="${CLAUDE_SKILL_DIR%/skills/*}"
+  [ -f "$_ARIS_ROOT/dist/skills/experiment-queue/queue-manager.js" ] && QUEUE_TOOLS="$_ARIS_ROOT/dist/skills/experiment-queue"
 fi
-# Layers 1-3: legacy chain via tools/experiment_queue/ shims.
+# Layers 1-3: shared-runtime chain.
 if [ -z "$QUEUE_TOOLS" ]; then
   cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
   if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
       ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
   fi
-  QUEUE_TOOLS=".aris/tools/experiment_queue"
-  [ -f "$QUEUE_TOOLS/queue_manager.py" ] || QUEUE_TOOLS="tools/experiment_queue"
-  [ -f "$QUEUE_TOOLS/queue_manager.py" ] || { [ -n "${ARIS_REPO:-}" ] && QUEUE_TOOLS="$ARIS_REPO/tools/experiment_queue"; }
-  [ -f "$QUEUE_TOOLS/queue_manager.py" ] || QUEUE_TOOLS=""
+  QUEUE_TOOLS=".aris/dist/skills/experiment-queue"
+  [ -f "$QUEUE_TOOLS/queue-manager.js" ] || QUEUE_TOOLS="dist/skills/experiment-queue"
+  [ -f "$QUEUE_TOOLS/queue-manager.js" ] || { [ -n "${ARIS_REPO:-}" ] && QUEUE_TOOLS="$ARIS_REPO/dist/skills/experiment-queue"; }
+  [ -f "$QUEUE_TOOLS/queue-manager.js" ] || QUEUE_TOOLS=""
 fi
-[ -z "$QUEUE_TOOLS" ] && { echo "ERROR: experiment_queue helpers not found (layer 0: \$CLAUDE_SKILL_DIR/scripts/; layers 1-3: .aris/tools/, tools/, \$ARIS_REPO/tools/). Rerun install_aris.sh, set ARIS_REPO, or copy the canonical scripts from \$ARIS_REPO/skills/experiment-queue/scripts/." >&2; exit 1; }
+[ -z "$QUEUE_TOOLS" ] && { echo "ERROR: experiment-queue helpers not found (layer 0: \$CLAUDE_SKILL_DIR dist/; layers 1-3: .aris/dist/, dist/, \$ARIS_REPO/dist/). Run npm run build in ARIS repo, or rerun install_aris.sh." >&2; exit 1; }
 ```
 
-The `.aris/tools` symlink is set up by `install_aris.sh` (#174). Older installs without that symlink fall through to `tools/experiment_queue` (works if invoked from inside the ARIS repo) or `$ARIS_REPO/tools/experiment_queue`. After Phase 3.3, each of those legacy paths contains a Python `os.execv` shim that forwards to the canonical `skills/experiment-queue/scripts/` location, so existing users do not need to re-run anything.
+After Phase 4 (TypeScript migration), the compiled JS lives at `dist/skills/experiment-queue/`. The `npm run build` step compiles from `src/skills/experiment-queue/` into `dist/`.
 
 **3b. Compute remote paths.** Use both a remote-relative form (for `scp` destinations — modern `scp` runs in SFTP mode and does NOT reliably expand `$HOME` in destination paths) and a `$HOME`-prefixed form (for `ssh ... command` strings, where remote bash WILL expand `$HOME`):
 
@@ -201,14 +202,14 @@ REMOTE_RUN_DIR="\$HOME/$REMOTE_RUN_REL"            # for ssh command strings (li
 
 ```bash
 ssh <server> "mkdir -p \"$REMOTE_RUN_DIR/logs\" \"\$HOME/.aris_queue\""
-scp "$QUEUE_TOOLS/queue_manager.py" "$QUEUE_TOOLS/build_manifest.py" <server>:.aris_queue/
+scp "$QUEUE_TOOLS/queue-manager.js" "$QUEUE_TOOLS/build-manifest.js" <server>:.aris_queue/
 scp "$LOCAL_RUN_DIR/manifest.json" <server>:"$REMOTE_RUN_REL/manifest.json"
 ```
 
 **3d. Launch the scheduler as a detached `nohup` process on the SSH host:**
 
 ```bash
-ssh <server> "nohup python3 \"\$HOME/.aris_queue/queue_manager.py\" \\
+ssh <server> "nohup node \"\$HOME/.aris_queue/queue-manager.js\" \\
   --manifest \"$REMOTE_RUN_DIR/manifest.json\" \\
   --state    \"$REMOTE_RUN_DIR/queue_state.json\" \\
   --log-dir  \"$REMOTE_RUN_DIR/logs\" \\
@@ -217,7 +218,7 @@ ssh <server> "nohup python3 \"\$HOME/.aris_queue/queue_manager.py\" \\
 
 Notes for callers:
 
-- `--log-dir` is what `queue_manager.py` actually consumes (per-job log files for OOM detection). Do NOT pass `--log <path>` — that flag is declared but unused, and a single combined log breaks the per-job stale-screen / OOM heuristics.
+- `--log-dir` is what `queue-manager.js` actually consumes (per-job log files for OOM detection). Do NOT pass `--log <path>` — that flag is declared but unused, and a single combined log breaks the per-job stale-screen / OOM heuristics.
 - Persist `RUN_TS` / `REMOTE_RUN_REL` / `REMOTE_RUN_DIR` to disk so monitoring and resume can reload them without regenerating:
 
   ```bash
@@ -235,7 +236,7 @@ Notes for callers:
 **3e. Resume an existing queue (only when the user asks).** A fresh `RUN_TS` per invocation is correct for _new_ queues. To resume a crashed queue, do NOT regenerate `RUN_TS` — reload the recorded values and re-run only the launch command (Step 3d), not the bootstrap (Step 3c):
 
 ```bash
-LOCAL_RUN_DIR="/abs/path/to/project/experiment_queue/<existing-run-ts>"   # the run dir to resume
+LOCAL_RUN_DIR="/abs/path/to/project/experiment-queue/<existing-run-ts>"   # the run dir to resume
 . "$LOCAL_RUN_DIR/run_meta.txt"                                            # reloads PROJECT_DIR / RUN_TS / REMOTE_RUN_REL / REMOTE_RUN_DIR
 # Then re-run Step 3d verbatim. Do NOT re-run Step 3c (would overwrite manifest.json + state.json).
 ```
@@ -266,7 +267,7 @@ Note: `/monitor-experiment` is currently focused on screen sessions, result JSON
 
 When all jobs in `manifest.json` are `completed` or `stuck`:
 
-- The remote scheduler (`queue_manager.py`) exits cleanly with `All jobs done` to its own stdout (captured in `$REMOTE_RUN_DIR/queue_mgr.log`). It does NOT write the local summary.
+- The remote scheduler (`queue-manager.js`) exits cleanly with `All jobs done` to its own stdout (captured in `$REMOTE_RUN_DIR/queue_mgr.log`). It does NOT write the local summary.
 - The **local** skill agent then aggregates state into `$LOCAL_RUN_DIR/summary.md` (read `$REMOTE_RUN_DIR/queue_state.json`, group by status, optionally pull per-job logs).
 - Local skill agent invokes `/analyze-results` if `analyze_on_complete: true`.
 
@@ -427,8 +428,8 @@ Then user can check anytime or wait for summary report.
 - `/run-experiment` — single experiment deployment
 - `/monitor-experiment` — check progress (now reads from queue_state.json)
 - `/analyze-results` — post-hoc analysis
-- `skills/experiment-queue/scripts/queue_manager.py` (canonical, Phase 3.3 move) — the scheduler implementation; resolved at runtime via the fallback chain in Step 3a. Legacy entry at `tools/experiment_queue/queue_manager.py` is an `os.execv` shim.
-- `skills/experiment-queue/scripts/build_manifest.py` (canonical, Phase 3.3 move) — build manifest from grid spec; same resolution chain. Legacy entry at `tools/experiment_queue/build_manifest.py` is an `os.execv` shim.
+- `dist/skills/experiment-queue/queue-manager.js` — the scheduler implementation; resolved at runtime via the fallback chain in Step 3a.
+- `dist/skills/experiment-queue/build-manifest.js` — build manifest from grid spec; same resolution chain.
 
 ## Rationale / Source
 

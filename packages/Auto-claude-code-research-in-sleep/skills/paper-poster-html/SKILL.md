@@ -37,7 +37,7 @@ paper (.tex / PDF) ──► content plan + claim→evidence audit (codex, fresh
                               │
    figures extracted ─────────┤  FIGURE_MANIFEST.json (provenance, sha256)
    (real paper figures ONLY)  ▼
-   template scaffold ──► fill ──► run_gates.py            ◄─── HARD, loop here
+   template scaffold ──► fill ──► run-gates.js            ◄─── HARD, loop here
                                   preflight → style → asset → measure → polish
                               │ all hard gates PASS
                               ▼
@@ -52,10 +52,18 @@ paper (.tex / PDF) ──► content plan + claim→evidence audit (codex, fresh
 
 ## Constants
 
-- **SKILL_SCRIPTS** = `${CLAUDE_SKILL_DIR}/scripts` — all helpers are single-owner and
-  ship inside this skill (Arch C). If the directory is missing the install is broken:
-  abort and tell the user to re-install the skill (Policy A — the gates ARE the skill;
-  never improvise replacements).
+- **SKILL_SCRIPTS** — resolved from the ARIS repo's compiled TypeScript:
+  ```bash
+  SKILL_SCRIPTS=""
+  if [ -n "${CLAUDE_SKILL_DIR:-}" ]; then
+    _ARIS_ROOT="${CLAUDE_SKILL_DIR%/skills/*}"
+    [ -d "$_ARIS_ROOT/dist/skills/paper-poster-html" ] && SKILL_SCRIPTS="$_ARIS_ROOT/dist/skills/paper-poster-html"
+  fi
+  [ -z "$SKILL_SCRIPTS" ] && { echo "ERROR: paper-poster-html scripts not found. Run npm run build in ARIS repo." >&2; exit 1; }
+  ```
+  All helpers are single-owner and compile to `dist/skills/paper-poster-html/`.
+  If the directory is missing the build is stale: run `npm run build` in the ARIS repo
+  (Policy A — the gates ARE the skill; never improvise replacements).
 - **REVIEWER_MODEL** = `gpt-5.5`, reasoning `xhigh`, **fresh thread per review call**
   (`mcp__codex__codex`, never `codex-reply` across review boundaries).
 - **CANVAS** — from the venue's official spec, looked up live in Phase 0. Never assume.
@@ -139,11 +147,11 @@ Source preference chain:
 
 1. Paper source `figures/` (vector SVG/PDF → convert to SVG via
    `inkscape`/`pdf2svg` if available, else rasterize ≥ 2× rendered px).
-2. PDF-only: `extract_pdf_figures.py contact-sheet` + `auto` to list candidate
+2. PDF-only: `extract-pdf-figures.js contact-sheet` + `auto` to list candidate
    regions → pick crops (**🚦 human confirms crop choices**) → `crop` at 300–450 DPI.
 3. Last resort: user supplies explicit `page,x0,y0,x1,y1` bboxes.
 
-Then `preprocess_figures.py --autocrop` every asset. Every paper-derived image gets a
+Then `preprocess-figures.js --autocrop` every asset. Every paper-derived image gets a
 `FIGURE_MANIFEST.json` entry (source hash, page, bbox, dpi, sha256, natural_px) and is
 embedded as `<img data-source="paper" data-asset-id="...">`.
 
@@ -172,7 +180,7 @@ scaffold is _expected_ to fail `measure` — that gate judges a filled poster.)
 After every layout change:
 
 ```bash
-python3 "$SKILL_SCRIPTS/run_gates.py" poster_html/poster.html \
+node "$SKILL_SCRIPTS/run-gates.js" poster_html/poster.html \
     --tokens <pack.json> --manifest poster_html/FIGURE_MANIFEST.json \
     --report poster_html/GATE_REPORT.json
 ```
@@ -190,7 +198,7 @@ whitespace, `space-between`, or stretched cards.
 Render and read the result yourself:
 
 ```bash
-python3 "$SKILL_SCRIPTS/render_preview.py" poster_html/poster.html
+node "$SKILL_SCRIPTS/render-preview.js" poster_html/poster.html
 pdftoppm -r 100 poster_html/poster_preview.pdf poster_html/review_full -png -f 1 -l 1
 # plus 2-4 region crops at higher res (header / one column / equations) via PIL
 ```
@@ -247,7 +255,7 @@ straight to re-review.
 ### Phase 7 — Final verification + report
 
 ```bash
-python3 "$SKILL_SCRIPTS/poster_check.py" verify-final poster_html/poster_preview.pdf \
+node "$SKILL_SCRIPTS/poster-check.js" verify-final poster_html/poster_preview.pdf \
     --from-html poster_html/poster.html --max-size-mb 20
 ```
 
@@ -264,7 +272,7 @@ phase; enables compact-recovery resume.
 
 ## Key rules
 
-- **Measure, don't eyeball.** No layout claim without `run_gates.py` output.
+- **Measure, don't eyeball.** No layout claim without `run-gates.js` output.
 - **Gates before aesthetics.** Claude/codex review only ever sees a poster whose hard
   gates PASS. This ordering is what kills the patch-loop death spiral.
 - **Never invent paper numbers or figures.** Numbers come from the paper source;
@@ -278,7 +286,7 @@ phase; enables compact-recovery resume.
 - **Cross-model verdicts.** Claude drives the loop and scores visuals; acceptance of
   content fidelity comes from the fresh codex thread (a loop can drive, never acquit).
 - **Preserve user decisions.** Re-read `design_decisions` before "improving" anything.
-- **Vendor boundary.** `poster_check.py`, `render_preview.py`, `_posterly/` are
+- **Vendor boundary.** `poster-check.js`, `render-preview.js`, `posterly/` are
   vendored from posterly — keep diffs minimal; ARIS-side logic goes in the new
   scripts, not in vendored files.
 

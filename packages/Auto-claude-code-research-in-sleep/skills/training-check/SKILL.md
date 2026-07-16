@@ -29,7 +29,7 @@ Periodically read WandB metrics during training to catch problems early. Do not 
 
 - After training is confirmed running (session alive, loss decreasing for first few steps)
 - Set up via CronCreate to fire periodically during training
-- **This skill checks training QUALITY, not process HEALTH.** Process health (session alive, GPU utilization) is [watchdog.py](../../tools/watchdog.py)'s job.
+- **This skill checks training QUALITY, not process HEALTH.** Process health (session alive, GPU utilization) is [watchdog.js](../../dist/tools/watchdog.js)'s job.
 
 ## Workflow
 
@@ -103,11 +103,11 @@ mcp__codex__codex:
 
 ## Integration with Watchdog
 
-Training-check and [watchdog.py](../../tools/watchdog.py) operate at different levels:
+Training-check and [watchdog.js](../../dist/tools/watchdog.js) operate at different levels:
 
 | Layer            | Tool           | What it checks                 | Frequency                  |
 | ---------------- | -------------- | ------------------------------ | -------------------------- |
-| Process health   | watchdog.py    | Session alive? GPU active?     | Every 60s (continuous)     |
+| Process health   | watchdog.js    | Session alive? GPU active?     | Every 60s (continuous)     |
 | Training quality | training-check | Loss trend? Metrics improving? | Every 10-60 min (periodic) |
 
 Use both together:

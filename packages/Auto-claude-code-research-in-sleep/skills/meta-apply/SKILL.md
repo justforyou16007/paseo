@@ -43,7 +43,7 @@ never silently apply:
    override a KILL — they may only pick among jury-PASSED survivors. (A loop can DRIVE;
    only the cross-model jury can ACQUIT.)
 3. **Author ≠ reviewer family.** The author is the producer's executor model; the reviewer
-   is the codex model that just judged it. Run `provenance.py assert_cross_family` — if it
+   is the codex model that just judged it. Run `provenance.js assert_cross_family` — if it
    raises (same family / unknown), refuse. (Here it always holds: producer=Claude,
    jury=codex. The check is the structural backstop.)
 
@@ -57,9 +57,9 @@ PENDING=".aris/meta/pending"
 echo "Staged:"; cat "$PENDING/manifest.jsonl"
 ```
 
-Resolve `provenance.py` via the 3-layer chain in
+Resolve `provenance.js` via the 3-layer chain in
 [`integration-contract.md`](../shared-references/integration-contract.md) §2
-(`.aris/tools/` → `tools/` → `$ARIS_REPO/tools/`).
+(`.aris/dist/tools/` → `dist/tools/` → `$ARIS_REPO/dist/tools/`).
 
 ### Step 1: Jury-at-landing for each requested patch
 
@@ -82,7 +82,7 @@ For each patch that PASSED Step 1 **and** was named by the user:
 2. **Apply** the diff by **Edit/Write** on the target corpus file.
 3. **Stamp provenance** on the changed file:
    ```bash
-   python3 "$PROVENANCE" stamp "$TARGET" --author "$AUTHOR" \
+   node "$PROVENANCE" stamp "$TARGET" --author "$AUTHOR" \
      --reviewer "$JURY_MODEL" --verdict-id "$JURY_THREAD_ID"
    ```
    `stamp()` re-asserts cross-family and refuses on same-family — the structural backstop

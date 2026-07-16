@@ -34,7 +34,7 @@ Use OpenAlex when you want:
 
 - **MAX_RESULTS = 10** — Default number of results. Override with `— max: 20`.
 - **DEFAULT_SORT = relevance** — Sort by relevance. Override with `— sort: citations` or `— sort: date`.
-- **OPENALEX_FETCHER** — canonical name `openalex_fetch.py`, resolved per
+- **OPENALEX_FETCHER** — canonical name `openalex-fetch.js`, resolved per
   [`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2
   (Policy D1 — standalone `/openalex` has no documented inline fallback,
   so unresolved helper terminates with an explicit error).
@@ -82,7 +82,7 @@ Use OpenAlex when you want:
 ### Verify Setup
 
 ```bash
-python3 "$OPENALEX_FETCHER" search "machine learning" --max 3
+node "$OPENALEX_FETCHER" search "machine learning" --max 3
 ```
 
 (Resolve `$OPENALEX_FETCHER` via the canonical chain first — see Step 2 below.)
@@ -115,11 +115,11 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
 if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
     ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
 fi
-OPENALEX_FETCHER=".aris/tools/openalex_fetch.py"
-[ -f "$OPENALEX_FETCHER" ] || OPENALEX_FETCHER="tools/openalex_fetch.py"
-[ -f "$OPENALEX_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && OPENALEX_FETCHER="$ARIS_REPO/tools/openalex_fetch.py"; }
+OPENALEX_FETCHER=".aris/dist/tools/openalex-fetch.js"
+[ -f "$OPENALEX_FETCHER" ] || OPENALEX_FETCHER="dist/tools/openalex-fetch.js"
+[ -f "$OPENALEX_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && OPENALEX_FETCHER="$ARIS_REPO/dist/tools/openalex-fetch.js"; }
 [ -f "$OPENALEX_FETCHER" ] || {
-  echo "ERROR: openalex_fetch.py not resolved at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
+  echo "ERROR: openalex-fetch.js not resolved at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
   echo "       Fix: rerun bash tools/install_aris.sh, export ARIS_REPO, or copy the helper to tools/." >&2
   echo "       Also ensure 'requests' is installed: pip install requests" >&2
   exit 1
@@ -131,13 +131,13 @@ OPENALEX_FETCHER=".aris/tools/openalex_fetch.py"
 **Basic search:**
 
 ```bash
-python3 "$OPENALEX_FETCHER" search "QUERY" --max 10
+node "$OPENALEX_FETCHER" search "QUERY" --max 10
 ```
 
 **With filters:**
 
 ```bash
-python3 "$OPENALEX_FETCHER" search "QUERY" --max 10 \
+node "$OPENALEX_FETCHER" search "QUERY" --max 10 \
   --year 2023- \
   --type article \
   --open-access \
@@ -148,13 +148,13 @@ python3 "$OPENALEX_FETCHER" search "QUERY" --max 10 \
 **Get specific work by DOI:**
 
 ```bash
-python3 "$OPENALEX_FETCHER" work "10.1109/TWC.2024.1234567"
+node "$OPENALEX_FETCHER" work "10.1109/TWC.2024.1234567"
 ```
 
 **Get specific work by OpenAlex ID:**
 
 ```bash
-python3 "$OPENALEX_FETCHER" work "W2741809807"
+node "$OPENALEX_FETCHER" work "W2741809807"
 ```
 
 ### Step 4: Parse Results

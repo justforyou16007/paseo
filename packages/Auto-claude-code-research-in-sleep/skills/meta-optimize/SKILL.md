@@ -36,7 +36,7 @@ this loop apply its own patch (the self-acquittal failure mode):
   auto-modification volume (a brick-3 trigger). The intended backstop against a deliberate
   write is **detection, not prevention** — a corpus change with no valid/current
   `provenance` stamp (content-hash mismatch) _would be_ catchable in a pre-push integrity
-  check — but that verifier is **NOT yet built** (`provenance.py` has `content_hash` but no
+  check — but that verifier is **NOT yet built** (`provenance.js` has `content_hash` but no
   integrity-check subcommand, and no pre-push hook runs one). So today the deliberate-write
   case is neither prevented nor actively detected; track the integrity verifier as a
   follow-up before this producer goes load-bearing. Its legitimate Bash writes go only to
@@ -164,7 +164,7 @@ For each optimization target, generate a concrete diff:
 - Never change artifact schemas or MCP bridge config in v1
 - Never change behavior that would break existing user workflows
 - **Anti-self-poisoning screen** (see [`shared-references/capture-antipatterns.md`](../shared-references/capture-antipatterns.md)):
-  run a proposed patch's rationale through `tools/capture_filter.py` (resolve via
+  run a proposed patch's rationale through `dist/tools/capture-filter.js` (resolve via
   the canonical chain). NEVER propose a change that encodes a **negative
   tool-capability claim** ("codex can't…", "gemini is broken") or a **one-off /
   transient failure** as a durable rule — those harden into self-cited refusals.

@@ -86,17 +86,17 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
 if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
     ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
 fi
-STYLE_HELPER=".aris/tools/extract_paper_style.py"
-[ -f "$STYLE_HELPER" ] || STYLE_HELPER="tools/extract_paper_style.py"
-[ -f "$STYLE_HELPER" ] || { [ -n "${ARIS_REPO:-}" ] && STYLE_HELPER="$ARIS_REPO/tools/extract_paper_style.py"; }
+STYLE_HELPER=".aris/dist/tools/extract-paper-style.js"
+[ -f "$STYLE_HELPER" ] || STYLE_HELPER="dist/tools/extract-paper-style.js"
+[ -f "$STYLE_HELPER" ] || { [ -n "${ARIS_REPO:-}" ] && STYLE_HELPER="$ARIS_REPO/dist/tools/extract-paper-style.js"; }
 [ -f "$STYLE_HELPER" ] || {
-  echo "ERROR: extract_paper_style.py not resolved at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
+  echo "ERROR: extract-paper-style.js not resolved at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
   echo "       Fix: rerun bash tools/install_aris.sh, export ARIS_REPO, or copy the helper to tools/." >&2
   echo "       --style-ref cannot be satisfied; aborting." >&2
   exit 1
 }
 STYLE_STATUS=0
-CACHE=$(python3 "$STYLE_HELPER" --source "<source>") || STYLE_STATUS=$?
+CACHE=$(node "$STYLE_HELPER" --source "<source>") || STYLE_STATUS=$?
 case "$STYLE_STATUS" in
   0) ;;                                       # use $CACHE/style_profile.md as structural guidance
   2) echo "warning: style-ref skipped (missing optional dep)" >&2 ;;
@@ -107,7 +107,7 @@ esac
 
 Sources accepted: local TeX dir / file, local PDF, arXiv id, http(s) URL. Overleaf URLs/IDs are rejected — clone via `/overleaf-sync setup <id>` first and pass the local clone path.
 
-**Strict rules** (full contract in `tools/extract_paper_style.py` docstring):
+**Strict rules** (full contract in `dist/tools/extract-paper-style.js` docstring):
 
 - Use `style_profile.md` to align caption length and figure density with the reference paper. The CVPR/ICLR/NeurIPS visual standards above still take precedence — `--style-ref` only refines length-and-density tendencies, never image content.
 - **Never copy figure content, color palettes, or specific design elements** from anything reachable through the cache. The visual design comes from the user's prompt, not the reference.
