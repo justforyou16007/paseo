@@ -38,6 +38,20 @@ In this hybrid pack, the pipeline itself is unchanged, but `paper-plan` and `pap
 > Override inline: `/paper-writing "NARRATIVE_REPORT.md" — venue: NeurIPS, illustration: gemini, human checkpoint: true`
 > IEEE example: `/paper-writing "NARRATIVE_REPORT.md" — venue: IEEE_JOURNAL`
 
+## Setup: Debug mode detection
+
+```bash
+DEBUG_MODE=false
+case "$ARGUMENTS" in
+  *debug:\ true*|*debug:true*|*--debug*) DEBUG_MODE=true ;;
+esac
+```
+
+When `DEBUG_MODE=true`, every helper failure triggers the debug halt
+protocol ([`shared-references/debug-mode.md`](../shared-references/debug-mode.md)):
+print a structured error, write `.aris/debug-halt.json`, and wait for
+the developer to send a message before continuing.
+
 ## Inputs
 
 This pipeline accepts one of:
@@ -59,12 +73,6 @@ When `— style-ref: <source>` is in `$ARGUMENTS`, run the helper FIRST, before 
 # shared-references/integration-contract.md §2). Policy A — gate:
 # unresolved helper means --style-ref cannot be satisfied, so abort.
 cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-
-# Debug mode detection
-DEBUG_MODE=false
-case "$ARGUMENTS" in
-  *debug:\ true*|*debug:true*|*--debug*) DEBUG_MODE=true ;;
-esac
 
 if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
     ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true

@@ -54,6 +54,20 @@ equally to both backends.
 
 ## Workflow
 
+### Setup: Debug mode detection
+
+```bash
+DEBUG_MODE=false
+case "$ARGUMENTS" in
+  *debug:\ true*|*debug:true*|*--debug*) DEBUG_MODE=true ;;
+esac
+```
+
+When `DEBUG_MODE=true`, every helper failure triggers the debug halt
+protocol ([`shared-references/debug-mode.md`](../shared-references/debug-mode.md)):
+print a structured error, write `.aris/debug-halt.json`, and wait for
+the developer to send a message before continuing.
+
 ### Phase 0: Load Research Wiki (if active)
 
 **Skip this phase entirely if `research-wiki/` does not exist.**
@@ -64,12 +78,6 @@ contract):
 
 ```bash
 cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-
-# Debug mode detection
-DEBUG_MODE=false
-case "$ARGUMENTS" in
-  *debug:\ true*|*debug:true*|*--debug*) DEBUG_MODE=true ;;
-esac
 
 ARIS_REPO="${ARIS_REPO:-$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null)}"
 WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
