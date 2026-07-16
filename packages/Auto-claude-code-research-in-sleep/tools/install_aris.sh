@@ -341,7 +341,6 @@ if [[ "$PLATFORM" == "codex" ]]; then
     if [[ ${#CLAUDE_ONLY_FLAGS_USED[@]} -gt 0 ]]; then
         die "Claude-only flags incompatible with codex platform: ${CLAUDE_ONLY_FLAGS_USED[*]}"
     fi
-    local _script_real
     _script_real="$(canonicalize "$0")"
     if [[ -n "$_script_real" ]]; then
         SCRIPT_DIR="$(dirname "$_script_real")"
