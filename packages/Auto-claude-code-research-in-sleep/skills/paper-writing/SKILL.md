@@ -33,6 +33,7 @@ In this hybrid pack, the pipeline itself is unchanged, but `paper-plan` and `pap
 - **AUTO_PROCEED = true** — Auto-continue between phases. Set `false` to pause and wait for user approval after each phase.
 - **HUMAN_CHECKPOINT = false** — When `true`, the improvement loop (Phase 5) pauses after each round's review to let you see the score and provide custom modification instructions. When `false` (default), the loop runs fully autonomously. Passed through to `/auto-paper-improvement-loop`.
 - **ILLUSTRATION = `figurespec`** — Architecture/illustration generator for Phase 2b: `figurespec` (default, deterministic JSON→SVG via `/figure-spec`, best for architecture/workflow/topology), `gemini` (AI-generated via `/paper-illustration`, best for qualitative method illustrations; needs `GEMINI_API_KEY`), `codex-image2` (AI-generated via `/paper-illustration-image2` through the local Codex native image bridge — no external API key, uses your ChatGPT Plus/Pro quota; experimental), `mermaid` (Mermaid syntax via `/mermaid-diagram`, free, best for flowcharts), or `false` (skip Phase 2b, manual only).
+- **DEBUG = false** — When `true`, pause on any helper failure and wait for the developer to fix the issue before continuing. See [`shared-references/debug-mode.md`](../shared-references/debug-mode.md).
 
 > Override inline: `/paper-writing "NARRATIVE_REPORT.md" — venue: NeurIPS, illustration: gemini, human checkpoint: true`
 > IEEE example: `/paper-writing "NARRATIVE_REPORT.md" — venue: IEEE_JOURNAL`
@@ -58,6 +59,13 @@ When `— style-ref: <source>` is in `$ARGUMENTS`, run the helper FIRST, before 
 # shared-references/integration-contract.md §2). Policy A — gate:
 # unresolved helper means --style-ref cannot be satisfied, so abort.
 cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
+
+# Debug mode detection
+DEBUG_MODE=false
+case "$ARGUMENTS" in
+  *debug:\ true*|*debug:true*|*--debug*) DEBUG_MODE=true ;;
+esac
+
 if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
     ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
 fi

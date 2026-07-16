@@ -344,6 +344,22 @@ this table is the cheapest place to catch policy drift.
 If the same 3+ lines of prose appear in more than two SKILL.md files,
 factor them into a helper.
 
+#### Debug-mode override (cross-policy)
+
+When `— debug: true` is active in `$ARGUMENTS`, **all** failure
+policies (A through E) are overridden: instead of blocking, warning,
+or silently skipping, the executor pauses and waits for developer
+intervention per [`debug-mode.md`](debug-mode.md).
+
+The developer can then choose:
+- **Fix and resume** — re-run the failed command after fixing the issue
+- **Skip** — fall back to the policy's normal non-debug behavior
+- **Abort** — stop the skill entirely
+
+This override applies to unresolved helpers, resolved helpers that
+exit non-zero, and API calls that fail after retries. It does NOT
+apply to successful executions or informational warnings.
+
 ### 3. Concrete artifact or log entry
 
 Successful execution must leave an observable side effect: a file, a

@@ -64,6 +64,7 @@ End-to-end autonomous research workflow for: **$ARGUMENTS**
 - **VENUE = ICLR** — Target venue for paper writing (Stage 5). Only used when `AUTO_WRITE=true`. Options: `ICLR`, `NeurIPS`, `ICML`, `CVPR`, `ACL`, `AAAI`, `ACM`, `IEEE_CONF`, `IEEE_JOURNAL`.
 - **RENDER_HTML = true** — When `true` (default), auto-render `NARRATIVE_REPORT.md` to HTML at Stage 4 completion via `/render-html`. Uses `--no-review` (internal handoff doc to W3, not reviewer-facing — Stage 3 already cross-model-reviewed the claims). Set `false` to skip, or pass `— render html: false`. **Non-blocking**: if `/render-html` fails, log and continue.
 - **RESUMABLE = true** — When `true` (default), the pipeline records per-stage state to `.aris/runs/<run_id>.json` so a crashed/interrupted run can resume via `/research-pipeline — resume <run_id>` instead of restarting. Stage status splits `done` (executor finished writing) from `accepted` (the stage's cross-model gate / deterministic verifier passed); resume re-validates any `done`-but-unaccepted stage. See `shared-references/resumable-runs.md`.
+- **DEBUG = false** — When `true`, pause on any W-agent failure or helper error and wait for the developer to fix the issue before continuing. The orchestrator prints a debug halt message and goes idle; the developer sends a message to resume, "skip" to skip the failed phase, or "abort" to stop. See [`shared-references/debug-mode.md`](../shared-references/debug-mode.md).
 
 > 💡 Override via argument, e.g., `/research-pipeline "topic" — AUTO_PROCEED: false, human checkpoint: true, difficulty: nightmare, code review: false, base repo: https://github.com/org/project, auto_write: true, venue: NeurIPS`.
 
@@ -82,6 +83,19 @@ orchestrator itself does no research work — it renders each W-agent's
 gate, and calls `run-state.js accept`.
 
 ## Paseo substrate setup (do once at start)
+
+0. **Parse debug mode.** Check `$ARGUMENTS` for `— debug: true` or `--debug`:
+   ```bash
+   DEBUG_MODE=false
+   case "$ARGUMENTS" in
+     *debug:\ true*|*debug:true*|*--debug*) DEBUG_MODE=true ;;
+   esac
+   ```
+   When `DEBUG_MODE=true`, every W-agent failure or helper error triggers the
+   debug halt protocol ([`shared-references/debug-mode.md`](../shared-references/debug-mode.md)):
+   print a structured error, write `.aris/debug-halt.json`, and wait for the
+   developer to send a message before continuing. The developer can also send
+   "skip" (mark phase skipped, continue) or "abort" (stop pipeline).
 
 1. **Probe the paseo MCP.** Check whether `mcp__paseo__list_agents` (or any
    paseo tool) is available.
