@@ -36,6 +36,7 @@ Unlike `/auto-review-loop` (which iterates on **research** — running experimen
 - **REVIEW_LOG = `PAPER_IMPROVEMENT_LOG.md`** — Cumulative log of all rounds, stored in paper directory.
 - **HUMAN_CHECKPOINT = false** — When `true`, pause after each round's review and present score + weaknesses to the user. The user can approve fixes, provide custom modification instructions, skip specific fixes, or stop early. When `false` (default), runs fully autonomously.
 - **EDIT_WHITELIST = `null`** — Optional path to a YAML/JSON whitelist file constraining which paths and operations the fix-implementation step may touch. When `null` (default), all edits proceed unconstrained. When set via `— edit-whitelist <path>` (also accepts `— edit_whitelist <path>`), the loop loads the file at startup and consults it before each edit; rejected edits are logged to `PAPER_IMPROVEMENT_LOG.md` rather than silently dropped. See "Optional: Edit Whitelist" below.
+- **DEBUG = false** — When `true`, pause on any helper failure and wait for the developer to fix the issue before continuing. See [`shared-references/debug-mode.md`](../shared-references/debug-mode.md).
 
 > 💡 Override: `/auto-paper-improvement-loop "paper/" — human checkpoint: true`
 
@@ -223,6 +224,20 @@ Rules:
 - If recovery metadata is needed, store the returned threadId for crash recovery only; do not use it to preserve review context.
 
 Set `REVIEWER_BIAS_GUARD = false` only if you explicitly want the legacy, context-carrying behavior for debugging.
+
+### Setup: Debug mode detection
+
+```bash
+DEBUG_MODE=false
+case "$ARGUMENTS" in
+  *debug:\ true*|*debug:true*|*--debug*) DEBUG_MODE=true ;;
+esac
+```
+
+When `DEBUG_MODE=true`, every helper failure triggers the debug halt
+protocol ([`shared-references/debug-mode.md`](../shared-references/debug-mode.md)):
+print a structured error, write `.aris/debug-halt.json`, and wait for
+the developer to send a message before continuing.
 
 ## Workflow
 

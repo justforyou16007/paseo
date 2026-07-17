@@ -31,6 +31,7 @@ refine-logs/FINAL_PROPOSAL.md
 - **MAX_PARALLEL_RUNS = 4** — Maximum number of experiments to deploy in parallel (limited by available GPUs).
 - **BASE_REPO = false** — GitHub repo URL to use as base codebase. When set, clone the repo first and implement experiments on top of it. When `false` (default), write code from scratch or reuse existing project files.
 - **COMPACT = false** — When `true`, (1) read `idea-stage/IDEA_CANDIDATES.md` instead of full `idea-stage/IDEA_REPORT.md` if available, (2) append experiment results to `EXPERIMENT_LOG.md` after collection.
+- **DEBUG = false** — When `true`, pause on any helper failure and wait for the developer to fix the issue before continuing. See [`shared-references/debug-mode.md`](../shared-references/debug-mode.md).
 
 > Override: `/experiment-bridge "EXPERIMENT_PLAN.md" — compact: true, base repo: https://github.com/org/project`
 
@@ -45,6 +46,20 @@ This skill expects one or more of:
 5. **`idea-stage/IDEA_REPORT.md`** — full brainstorm output _(fall back to `./IDEA_REPORT.md` if not found)_
 
 If none exist, ask the user what experiments to implement.
+
+### Setup: Debug mode detection
+
+```bash
+DEBUG_MODE=false
+case "$ARGUMENTS" in
+  *debug:\ true*|*debug:true*|*--debug*) DEBUG_MODE=true ;;
+esac
+```
+
+When `DEBUG_MODE=true`, every helper failure triggers the debug halt
+protocol ([`shared-references/debug-mode.md`](../shared-references/debug-mode.md)):
+print a structured error, write `.aris/debug-halt.json`, and wait for
+the developer to send a message before continuing.
 
 ## Workflow
 

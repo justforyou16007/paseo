@@ -19,6 +19,7 @@ Research topic: $ARGUMENTS
 - **SOURCES = `all`** — Which literature sources to search. Options: `zotero`, `obsidian`, `local`, `web`, `semantic-scholar`, `deepxiv`, `exa`, `gemini`, `openalex`, `all`. Full source table and selection rules: see `## Data Sources` below.
 - **ARXIV_DOWNLOAD = false** — When `true`, download top 3-5 most relevant arXiv PDFs to PAPER_LIBRARY after search. When `false` (default), only fetch metadata (title, abstract, authors) via arXiv API — no files are downloaded.
 - **ARXIV_MAX_DOWNLOAD = 5** — Maximum number of PDFs to download when `ARXIV_DOWNLOAD = true`.
+- **DEBUG = false** — When `true`, pause on any helper failure and wait for the developer to fix the issue before continuing. See [`shared-references/debug-mode.md`](../shared-references/debug-mode.md).
 
 > 💡 Overrides:
 >
@@ -78,6 +79,20 @@ Examples:
 | 9        | **OpenAlex**             | `openalex`         | `$OPENALEX_FETCHER` resolves (canonical name `openalex-fetch.js`, per integration-contract §2) **and** `node` available        | Open citation graph with institutional affiliations, funding data, and comprehensive metadata across 250M+ works. Fully open API. **Only runs when explicitly requested** via `— sources: openalex` or `— sources: all, openalex`                   |
 
 > **Graceful degradation**: If no MCP servers are configured, the skill works exactly as before (local PDFs + web search). Zotero and Obsidian are pure additions.
+
+### Setup: Debug mode detection
+
+```bash
+DEBUG_MODE=false
+case "$ARGUMENTS" in
+  *debug:\ true*|*debug:true*|*--debug*) DEBUG_MODE=true ;;
+esac
+```
+
+When `DEBUG_MODE=true`, every helper failure triggers the debug halt
+protocol ([`shared-references/debug-mode.md`](../shared-references/debug-mode.md)):
+print a structured error, write `.aris/debug-halt.json`, and wait for
+the developer to send a message before continuing.
 
 ## Workflow
 

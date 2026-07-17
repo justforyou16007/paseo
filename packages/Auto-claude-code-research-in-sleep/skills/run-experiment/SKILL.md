@@ -11,6 +11,20 @@ allowed-tools: Bash(*), Read, Grep, Glob, Edit, Write, mcp__paseo__create_agent,
 
 Deploy and run ML experiment: $ARGUMENTS
 
+### Setup: Debug mode detection
+
+```bash
+DEBUG_MODE=false
+case "$ARGUMENTS" in
+  *debug:\ true*|*debug:true*|*--debug*) DEBUG_MODE=true ;;
+esac
+```
+
+When `DEBUG_MODE=true`, every helper failure triggers the debug halt
+protocol ([`shared-references/debug-mode.md`](../shared-references/debug-mode.md)):
+print a structured error, write `.aris/debug-halt.json`, and wait for
+the developer to send a message before continuing.
+
 ## Workflow
 
 > **Environment control is delegated to the `experiment-env` helper** (`tools/experiment-env/env-helper.js`). Resolve it once via the Layer 0-3 chain, then every step calls a subcommand. The agent reads `CLAUDE.md` (or `AGENTS.md` in codex mode) and translates the env section into a candidate JSON; `env-helper.js parse` validates + writes `.aris/experiment-env.json`. See `tools/experiment-env/README.md` for the translation guide.

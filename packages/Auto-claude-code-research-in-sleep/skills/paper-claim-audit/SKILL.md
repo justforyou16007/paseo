@@ -60,6 +60,20 @@ It does NOT receive:
 
 This is **stricter than reviewer-independence** — it's zero-context evidence audit.
 
+### Setup: Debug mode detection
+
+```bash
+DEBUG_MODE=false
+case "$ARGUMENTS" in
+  *debug:\ true*|*debug:true*|*--debug*) DEBUG_MODE=true ;;
+esac
+```
+
+When `DEBUG_MODE=true`, every helper failure triggers the debug halt
+protocol ([`shared-references/debug-mode.md`](../shared-references/debug-mode.md)):
+print a structured error, write `.aris/debug-halt.json`, and wait for
+the developer to send a message before continuing.
+
 ## Workflow
 
 ### Step 1: Collect Files (Executor — Claude)

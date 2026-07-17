@@ -114,6 +114,20 @@ The `--review` / `--no-review` flags are parsed by the SKILL orchestrator
 stdlib and never calls MCP. See § _HTML Review Gate_ below for the
 exact resolution and prompt.
 
+### Setup: Debug mode detection
+
+```bash
+DEBUG_MODE=false
+case "$ARGUMENTS" in
+  *debug:\ true*|*debug:true*|*--debug*) DEBUG_MODE=true ;;
+esac
+```
+
+When `DEBUG_MODE=true`, every helper failure triggers the debug halt
+protocol ([`shared-references/debug-mode.md`](../shared-references/debug-mode.md)):
+print a structured error, write `.aris/debug-halt.json`, and wait for
+the developer to send a message before continuing.
+
 ## Workflow
 
 ### Step 1: Identify the artifact
