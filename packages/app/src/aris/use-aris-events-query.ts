@@ -47,9 +47,13 @@ export function useArisEventsQuery(input: UseArisEventsQueryInput) {
     },
   });
 
+  const isQueryEnabled = Boolean(enabled && client && isConnected && cwd);
   return {
     data: query.data,
-    isLoading: query.isLoading,
+    // When the query is disabled (no cwd/client/connection), report
+    // isLoading: false so consumers can render with empty data instead of
+    // hanging on a spinner.
+    isLoading: isQueryEnabled && query.isLoading,
     isFetching: query.isFetching,
     error: query.error instanceof Error ? query.error.message : null,
     refetch: query.refetch,

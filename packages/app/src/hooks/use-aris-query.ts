@@ -48,7 +48,7 @@ export function useArisRunsQuery({ serverId, workspaceId }: UseArisRunsQueryOpti
 
   return {
     runs: query.data ?? [],
-    isLoading: query.isLoading,
+    isLoading: !!client && isConnected && !!workspaceId && query.isLoading,
     isFetching: query.isFetching,
     isError: query.isError,
     error: query.error,
@@ -88,7 +88,7 @@ export function useArisRunQuery({ serverId, workspaceId, runId }: UseArisRunQuer
 
   return {
     run: query.data ?? null,
-    isLoading: query.isLoading,
+    isLoading: !!client && isConnected && !!workspaceId && !!runId && query.isLoading,
     isFetching: query.isFetching,
     isError: query.isError,
     error: query.error,
@@ -138,7 +138,7 @@ export function useArisIterationsQuery({
 
   return {
     iterations: query.data ?? [],
-    isLoading: query.isLoading,
+    isLoading: !!client && isConnected && !!workspaceId && !!runId && query.isLoading,
     isFetching: query.isFetching,
     isError: query.isError,
     error: query.error,
