@@ -6,7 +6,7 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, WebSearch, WebFetch, mcp_
 # mcp__codex__codex retained only as documented fallback when paseo MCP unavailable (paseo-subagent-dispatch.md §Auto-skip)
 ---
 
-> **Paseo substrate.** This workflow runs as a paseo claude sub-agent; its sub-skills dispatch as paseo sub-agents and its cross-model reviewer as a paseo codex sub-agent. See `shared-references/paseo-subagent-dispatch.md` + `paseo-reviewer-dispatch.md`. When paseo MCP is unavailable, fall back to in-process `Skill` + `mcp__codex__codex`.
+> **Paseo substrate.** This workflow runs as a paseo claude sub-agent; its sub-skills dispatch as paseo sub-agents and its cross-model reviewer as a paseo codex sub-agent. See `shared-references/paseo-subagent-dispatch.md` + `paseo-reviewer-dispatch.md`.. **Strict mode**: Paseo MCP is required; if unavailable, the run BLOCKS (per `paseo-subagent-dispatch.md`).
 
 # Workflow 1: Idea Discovery Pipeline
 
@@ -137,7 +137,7 @@ Phase 1 and Phase 2 will use `idea-stage/REF_PAPER_SUMMARY.md` as additional con
 
 ### Phase 1: Literature Survey
 
-Dispatch a paseo claude sub-agent for `/research-lit` (per `shared-references/paseo-subagent-dispatch.md`; in-process `Skill` fallback if paseo MCP unavailable) to map the research landscape. Idea discovery is exactly the place where Gemini's AI-driven broad coverage adds value, so include `gemini` as a source by default unless the user already specified an explicit `— sources:` directive in their idea-discovery invocation:
+Dispatch a paseo claude sub-agent for `/research-lit` (per `shared-references/paseo-subagent-dispatch.md`; in-process `Skill` fallback) to map the research landscape. Idea discovery is exactly the place where Gemini's AI-driven broad coverage adds value, so include `gemini` as a source by default unless the user already specified an explicit `— sources:` directive in their idea-discovery invocation:
 
 ```
 # If $ARGUMENTS already contains "— sources:", pass through unchanged
@@ -175,7 +175,7 @@ Does this match your understanding? Should I adjust the scope before generating 
 
 ### Phase 2: Idea Generation + Filtering + Pilots
 
-Dispatch a paseo claude sub-agent for `/idea-creator` (per `shared-references/paseo-subagent-dispatch.md`; in-process `Skill` fallback if paseo MCP unavailable) with the landscape context (and `idea-stage/REF_PAPER_SUMMARY.md` if available):
+Dispatch a paseo claude sub-agent for `/idea-creator` (per `shared-references/paseo-subagent-dispatch.md`; in-process `Skill` fallback) with the landscape context (and `idea-stage/REF_PAPER_SUMMARY.md` if available):
 
 ```
 /idea-creator "$ARGUMENTS" — composed: idea-stage/IDEA_REPORT.md
@@ -219,7 +219,7 @@ Which ideas should I validate further? Or should I regenerate with different con
 
 ### Phase 3: Deep Novelty Verification
 
-For each top idea (positive pilot signal), dispatch a paseo claude sub-agent for `/novelty-check` (per `shared-references/paseo-subagent-dispatch.md`; in-process `Skill` fallback if paseo MCP unavailable) to run a thorough novelty check:
+For each top idea (positive pilot signal), dispatch a paseo claude sub-agent for `/novelty-check` (per `shared-references/paseo-subagent-dispatch.md`; in-process `Skill` fallback) to run a thorough novelty check:
 
 ```
 /novelty-check "[top idea 1 description]"
@@ -237,7 +237,7 @@ For each top idea (positive pilot signal), dispatch a paseo claude sub-agent for
 
 ### Phase 4: External Critical Review
 
-For the surviving top idea(s), dispatch a paseo claude sub-agent for `/research-review` (per `shared-references/paseo-subagent-dispatch.md`; in-process `Skill` fallback if paseo MCP unavailable) to get brutal feedback:
+For the surviving top idea(s), dispatch a paseo claude sub-agent for `/research-review` (per `shared-references/paseo-subagent-dispatch.md`; in-process `Skill` fallback) to get brutal feedback:
 
 ```
 /research-review "[top idea with hypothesis + pilot results]" — composed: idea-stage/IDEA_REPORT.md
@@ -255,7 +255,7 @@ In composed mode `/research-review` folds its conclusions into `idea-stage/IDEA_
 
 ### Phase 4.5: Method Refinement + Experiment Planning
 
-After review, dispatch a paseo claude sub-agent for `/research-refine-pipeline` (per `shared-references/paseo-subagent-dispatch.md`; in-process `Skill` fallback if paseo MCP unavailable) to refine the top idea into a concrete proposal and plan experiments:
+After review, dispatch a paseo claude sub-agent for `/research-refine-pipeline` (per `shared-references/paseo-subagent-dispatch.md`; in-process `Skill` fallback) to refine the top idea into a concrete proposal and plan experiments:
 
 ```
 /research-refine-pipeline "[top idea description + pilot results + reviewer feedback]"

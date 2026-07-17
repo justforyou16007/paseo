@@ -6,8 +6,7 @@ All review calls use the **codex** reviewer (model `gpt-5.5`,
 `reasoning_effort: xhigh`). The **default backend** is now a **paseo codex
 sub-agent** (per [`paseo-reviewer-dispatch.md`](paseo-reviewer-dispatch.md)) —
 the cross-model reviewer is a real paseo agent, not an `mcp__codex__codex` MCP
-tool call. `mcp__codex__codex` / `mcp__codex__codex-reply` remain as the
-documented fallback when the paseo MCP server is unavailable.
+tool call. Paseo MCP is required. The host raises a fatal error if `mcp__paseo__list_agents` is unavailable — see `paseo-subagent-dispatch.md` (strict mode).
 
 This is the default for ALL skills. No parameter, no config, no effort level changes this.
 
@@ -37,8 +36,7 @@ semantics, now a real inspectable/archivable agent instead of a stateless
 one-shot. The `nightmare` mode's "GPT reads repo directly" property is
 preserved exactly; only the substrate changes.
 
-When the paseo MCP server is unavailable, `— reviewer: codex` (or unset) falls
-back to `mcp__codex__codex` / `codex-reply` — today's behavior, byte-for-byte.
+Paseo MCP is required. With `— reviewer: codex` (or unset), the skill spawns a Paseo codex sub-agent per `paseo-reviewer-dispatch.md`. If Paseo is unavailable, the run BLOCKS.
 The verdict, trace, and acceptance gate are identical on either path; only
 the dispatch substrate changes.
 

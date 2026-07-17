@@ -7,7 +7,7 @@ allowed-tools: Bash(*), Read, Grep, Glob, Write, Edit, mcp__paseo__create_agent,
 
 > **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in [](shared-references/paseo-subagent-dispatch.md) (Rule 1: One Agent = One Skill; Rule 4: Paseo MCP Only, Strict). Spawn any sub-skill or sub-phase via `mcp__paseo__create_agent` — do **not** use the host `Skill` / `Agent` / `Task` tools.
 
-> **Paseo substrate.** This skill runs inside a paseo claude sub-agent; its cross-model reviewer is a paseo codex sub-agent (fresh round 1, continued for follow-ups). See `shared-references/paseo-reviewer-dispatch.md`. When paseo MCP is unavailable, fall back to `mcp__codex__codex`.
+> **Paseo substrate.** This skill runs inside a paseo claude sub-agent; its cross-model reviewer is a paseo codex sub-agent (fresh round 1, continued for follow-ups). See `shared-references/paseo-reviewer-dispatch.md`..
 
 # Research Review via External Reviewer Backend (xhigh reasoning)
 
@@ -59,7 +59,7 @@ equally to both backends.
   ```bash
   claude mcp add codex -s user -- codex mcp-server
   ```
-- This gives Claude Code access to `mcp__codex__codex` and `mcp__codex__codex-reply` tools
+- This gives Claude Code access to Paseo codex sub-agent and `paseo-reviewer-dispatch.md` tools
 
 ### Setup: Debug mode detection
 
@@ -94,7 +94,6 @@ the `codex` backend, keep the MCP payload short: write the full briefing to
 _For codex backend:_
 
 ```
-mcp__codex__codex:
   config: {"model_reasoning_effort": "xhigh"}
   prompt: |
     Read the review brief at <absolute path to RESEARCH_REVIEW_REQUEST.md>.
@@ -126,7 +125,7 @@ rounds, write an updated brief such as `RESEARCH_REVIEW_ROUND_2.md` and send
 only the path:
 
 ```text
-mcp__codex__codex-reply:
+
   threadId: [saved reviewer threadId from Step 2]
   config: {"model_reasoning_effort": "xhigh"}
   prompt: |

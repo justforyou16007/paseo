@@ -3,12 +3,12 @@ name: result-to-claim
 description: Use when experiments complete to judge what claims the results support, what they don't, and what evidence is still missing. Codex MCP evaluates results against intended claims and routes to next action (pivot, supplement, or confirm). Use after experiments finish — before writing the paper or running ablations.
 argument-hint: [experiment-description-or-wandb-run]
 allowed-tools: Bash(*), Read, Grep, Glob, Write, Edit, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__wait_for_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent
-# mcp__codex__codex retained only as documented fallback when paseo MCP unavailable
+
 ---
 
 > **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in [](shared-references/paseo-subagent-dispatch.md) (Rule 1: One Agent = One Skill; Rule 4: Paseo MCP Only, Strict). Spawn any sub-skill or sub-phase via `mcp__paseo__create_agent` — do **not** use the host `Skill` / `Agent` / `Task` tools.
 
-> **Paseo substrate.** This skill runs inside a paseo claude sub-agent; its cross-model claim reviewer is a paseo codex sub-agent (fresh round 1, continued for follow-ups). See `shared-references/paseo-reviewer-dispatch.md`. When paseo MCP is unavailable, fall back to `mcp__codex__codex`.
+> **Paseo substrate.** This skill runs inside a paseo claude sub-agent; its cross-model claim reviewer is a paseo codex sub-agent (fresh round 1, continued for follow-ups). See `shared-references/paseo-reviewer-dispatch.md`..
 
 # Result-to-Claim Gate
 
@@ -115,10 +115,9 @@ gate DRIVES, it does not ACQUIT).
 
 ### Step 2: Codex Judgment
 
-Spawn a paseo codex reviewer sub-agent (fresh) per `shared-references/paseo-reviewer-dispatch.md` to evaluate the results objectively. Round 1 is fresh; any follow-up (re-judge after supplementary experiments) continues the same paseo codex reviewer sub-agent (`send_agent_prompt`) per `paseo-reviewer-dispatch.md` (same agent-id; the persisted `threadId` field name is unchanged but now holds that codex agent-id). The `mcp__codex__codex:` block below is the documented fallback shape (used when paseo MCP is unavailable):
+Spawn a paseo codex reviewer sub-agent (fresh) per `shared-references/paseo-reviewer-dispatch.md` to evaluate the results objectively. Round 1 is fresh; any follow-up (re-judge after supplementary experiments) continues the same paseo codex reviewer sub-agent (`send_agent_prompt`) per `paseo-reviewer-dispatch.md` (same agent-id; the persisted `threadId` field name is unchanged but now holds that codex agent-id). The `mcp__codex__codex:` block below is the documented fallback shape:
 
 ```
-mcp__codex__codex:
   config: {"model_reasoning_effort": "xhigh"}
   prompt: |
     RESULT-TO-CLAIM EVALUATION

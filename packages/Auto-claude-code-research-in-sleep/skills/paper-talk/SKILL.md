@@ -3,10 +3,10 @@ name: paper-talk
 description: 'End-to-end conference talk pipeline: paper → slide outline → Beamer + PPTX → per-page polish → assurance checks (claim / citation / anonymity) → final export and report. Default-good for academic conference talks (NeurIPS / ICML / ICLR / VALSE / 投稿 talks). Trigger phrases: "做 talk", "做 PPT 全流程", "talk pipeline", "end-to-end slides", "做演讲", "conference talk full workflow". Use when the user wants the complete talk artifact, not just a slide deck.'
 argument-hint: "[paper-dir] [— talk_type: oral | spotlight | poster-talk | invited] [— minutes: N] [— assurance: draft | polished | conference-ready] [— reference: <pdf>] [— style: generic | why-rf | <venue>] [— style-ref: <paper-source>] [— effort: lite | balanced | max | beast] [— anonymous]"
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__wait_for_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent
-# mcp__codex__codex retained only as documented fallback when paseo MCP unavailable
+
 ---
 
-> **Paseo substrate.** This workflow runs as a paseo claude sub-agent; its sub-skills dispatch as paseo sub-agents and any cross-model reviewer as a paseo codex sub-agent. See `shared-references/paseo-subagent-dispatch.md` + `paseo-reviewer-dispatch.md`. When paseo MCP is unavailable, fall back to in-process `Skill` + `mcp__codex__codex`.
+> **Paseo substrate.** This workflow runs as a paseo claude sub-agent; its sub-skills dispatch as paseo sub-agents and any cross-model reviewer as a paseo codex sub-agent. See `shared-references/paseo-subagent-dispatch.md` + `paseo-reviewer-dispatch.md`.. **Strict mode**: Paseo MCP is required; if unavailable, the run BLOCKS (per `paseo-subagent-dispatch.md`).
 
 # Paper Talk: End-to-End Conference Talk Pipeline
 
@@ -137,7 +137,7 @@ count, time budget, claim-per-slide map) to the user and ask:
 Otherwise, dispatch a paseo claude sub-agent for `/paper-slides` Phase-1
 only (content extraction + slide outline generation) per
 `shared-references/paseo-subagent-dispatch.md` (in-process `Skill` fallback
-if paseo MCP unavailable). `/paper-slides` writes the outline into its own
+. `/paper-slides` writes the outline into its own
 state; we adopt it as `slides/SLIDE_OUTLINE.md`.
 
 The outline must contain, per slide:

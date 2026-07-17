@@ -31,7 +31,6 @@ CC reads available project files to build the full picture:
 ### Step 2: Codex Designs Ablations
 
 ```
-mcp__codex__codex:
   config: {"model_reasoning_effort": "xhigh"}
   prompt: |
     You are a rigorous ML reviewer planning ablation studies.

@@ -7,7 +7,7 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent,
 
 > **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in [](shared-references/paseo-subagent-dispatch.md) (Rule 1: One Agent = One Skill; Rule 4: Paseo MCP Only, Strict). Spawn any sub-skill or sub-phase via `mcp__paseo__create_agent` — do **not** use the host `Skill` / `Agent` / `Task` tools.
 
-> **Paseo substrate.** This skill runs inside a paseo claude sub-agent; its cross-model integrity reviewer is a paseo codex sub-agent (fresh round 1, continued for follow-ups). See `shared-references/paseo-reviewer-dispatch.md`. When paseo MCP is unavailable, fall back to `mcp__codex__codex`.
+> **Paseo substrate.** This skill runs inside a paseo claude sub-agent; its cross-model integrity reviewer is a paseo codex sub-agent (fresh round 1, continued for follow-ups). See `shared-references/paseo-reviewer-dispatch.md`..
 
 # Experiment Audit: Cross-Model Integrity Verification
 

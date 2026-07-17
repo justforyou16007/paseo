@@ -195,7 +195,6 @@ Schema notes:
 #### Triage Codex prompt
 
 ```
-mcp__codex__codex:
   model: gpt-5.5
   config: {"model_reasoning_effort": "xhigh"}
   sandbox: read-only
@@ -230,7 +229,6 @@ recompile or save, move to next slide.
 #### Per-page Codex prompt template
 
 ```
-mcp__codex__codex:
   model: gpt-5.5
   config: {"model_reasoning_effort": "xhigh"}
   sandbox: read-only

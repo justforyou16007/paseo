@@ -82,7 +82,6 @@ Format as a matrix:
 Call `REVIEWER_MODEL` via `mcp__codex__codex` with xhigh reasoning:
 
 ```
-mcp__codex__codex:
   config: {"model_reasoning_effort": "xhigh"}
   prompt: |
     You are a senior patent examiner at the [USPTO/CNIPA/EPO].

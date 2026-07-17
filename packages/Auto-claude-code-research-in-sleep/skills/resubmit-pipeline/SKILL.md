@@ -3,10 +3,10 @@ name: resubmit-pipeline
 description: 'Workflow 5: orchestrate a text-only resubmit of a polished paper to a different venue under hard constraints (no new experiments, no bib edits, no framework changes, never overwrite prior submissions). Use when user says "resubmit pipeline", "重投流程", "port paper to <new venue>", "resubmit to <venue>", "tighten paper for resubmission", or has a rejected/withdrawn paper to move to a different top venue under tight time budget.'
 argument-hint: "[paper-base-dir] [— target-venue: <name>] [— review-corpus: <path>]"
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__wait_for_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent
-# mcp__codex__codex retained only as documented fallback when paseo MCP unavailable
+
 ---
 
-> **Paseo substrate.** This workflow runs as a paseo claude sub-agent; its sub-skills dispatch as paseo sub-agents and its cross-model reviewer as a paseo codex sub-agent. See `shared-references/paseo-subagent-dispatch.md` + `paseo-reviewer-dispatch.md`. When paseo MCP is unavailable, fall back to in-process `Skill` + `mcp__codex__codex`.
+> **Paseo substrate.** This workflow runs as a paseo claude sub-agent; its sub-skills dispatch as paseo sub-agents and its cross-model reviewer as a paseo codex sub-agent. See `shared-references/paseo-subagent-dispatch.md` + `paseo-reviewer-dispatch.md`.. **Strict mode**: Paseo MCP is required; if unavailable, the run BLOCKS (per `paseo-subagent-dispatch.md`).
 
 # Resubmit Pipeline: Text-Only Microedit Mode
 
@@ -142,9 +142,9 @@ Three audits in parallel, all detect-only. The new dir's source files are read; 
 
 | Skill                                                                                                                                                                                                           | Purpose                                                                                                           | Artifact                         |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| dispatch a paseo claude sub-agent for `proof-checker` (`$NEW_VENUE_DIR/main.tex --restatement-check`) per `shared-references/paseo-subagent-dispatch.md` (in-process `Skill` fallback if paseo MCP unavailable) | Gap-find on theorems prior reviewers attacked; cross-location consistency between main statement and restatements | `PROOF_AUDIT.json` + `.md`       |
-| dispatch a paseo claude sub-agent for `paper-claim-audit` (`$NEW_VENUE_DIR/`) per `shared-references/paseo-subagent-dispatch.md` (in-process `Skill` fallback if paseo MCP unavailable)                         | Numerical fidelity (every number in body matches what proofs / result files establish)                            | `PAPER_CLAIM_AUDIT.json` + `.md` |
-| dispatch a paseo claude sub-agent for `citation-audit` (`$NEW_VENUE_DIR/ — soft-only`) per `shared-references/paseo-subagent-dispatch.md` (in-process `Skill` fallback if paseo MCP unavailable)                | Wrong-context citations + misattributions, mapped to "soften citing sentence" actions (NOT bib edits)             | `CITATION_AUDIT.json` + `.md`    |
+| dispatch a paseo claude sub-agent for `proof-checker` (`$NEW_VENUE_DIR/main.tex --restatement-check`) per `shared-references/paseo-subagent-dispatch.md` (Paseo claude sub-agent per `paseo-subagent-dispatch.md`) | Gap-find on theorems prior reviewers attacked; cross-location consistency between main statement and restatements | `PROOF_AUDIT.json` + `.md`       |
+| dispatch a paseo claude sub-agent for `paper-claim-audit` (`$NEW_VENUE_DIR/`) per `shared-references/paseo-subagent-dispatch.md` (Paseo claude sub-agent per `paseo-subagent-dispatch.md`)                         | Numerical fidelity (every number in body matches what proofs / result files establish)                            | `PAPER_CLAIM_AUDIT.json` + `.md` |
+| dispatch a paseo claude sub-agent for `citation-audit` (`$NEW_VENUE_DIR/ — soft-only`) per `shared-references/paseo-subagent-dispatch.md` (Paseo claude sub-agent per `paseo-subagent-dispatch.md`)                | Wrong-context citations + misattributions, mapped to "soften citing sentence" actions (NOT bib edits)             | `CITATION_AUDIT.json` + `.md`    |
 
 **Critical**: the third audit MUST run with `— soft-only`. Without that flag, citation-audit emits `KEEP/FIX/REPLACE/REMOVE` verdicts that presuppose bib mutations — incompatible with resubmit's "no bib edits" constraint. With `--soft-only`, the same findings are translated to per-occurrence sentence-rewrite proposals consumable by Phase 2.
 
@@ -218,7 +218,7 @@ The load-bearing phase. `/auto-paper-improvement-loop` is invoked with **two saf
 
    # Dispatch a paseo claude sub-agent for `auto-paper-improvement-loop` per
    # shared-references/paseo-subagent-dispatch.md (in-process `Skill` fallback
-   # if paseo MCP unavailable). Single dispatch; rounds + checkpoints are
+   #). Single dispatch; rounds + checkpoints are
    # loop-internal. The child's initialPrompt binds the run context:
    #   paper dir:        $NEW_VENUE_DIR/
    #   --edit-whitelist: $NEW_VENUE_DIR/.aris/edit_whitelist.yaml
@@ -249,12 +249,12 @@ The load-bearing phase. `/auto-paper-improvement-loop` is invoked with **two saf
          # Dispatch a paseo claude sub-agent for `proof-checker`
          # (`$NEW_VENUE_DIR/main.tex --restatement-check`) per
          # shared-references/paseo-subagent-dispatch.md (in-process `Skill`
-         # fallback if paseo MCP unavailable).
+         # fallback).
      fi
      if grep -qE '[0-9]+(\.[0-9]+)?\s*(%|±|x|×)' "$NEW_VENUE_DIR/.aris/round-$ROUND-diff.txt"; then
          # Dispatch a paseo claude sub-agent for `paper-claim-audit`
          # (`$NEW_VENUE_DIR/`) per shared-references/paseo-subagent-dispatch.md
-         # (in-process `Skill` fallback if paseo MCP unavailable).
+         # (Paseo claude sub-agent per `paseo-subagent-dispatch.md`).
      fi
 
      # Snapshot this round for next-round diff
@@ -280,7 +280,7 @@ The load-bearing phase. `/auto-paper-improvement-loop` is invoked with **two saf
 
 ### Phase 3: Adversarial Gate
 
-Dispatch a paseo claude sub-agent for `kill-argument` (`$NEW_VENUE_DIR/`) per `shared-references/paseo-subagent-dispatch.md` (in-process `Skill` fallback if paseo MCP unavailable).
+Dispatch a paseo claude sub-agent for `kill-argument` (`$NEW_VENUE_DIR/`) per `shared-references/paseo-subagent-dispatch.md` (Paseo claude sub-agent per `paseo-subagent-dispatch.md`).
 
 **No `--difficulty` parameter exists** in `/kill-argument` — earlier proposal drafts referenced a non-existent flag. The skill always spawns a fresh paseo codex reviewer sub-agent (per `shared-references/paseo-reviewer-dispatch.md`) at gpt-5.5 + xhigh for each of the standard 2-thread Attack-Adjudication rounds; the `assurance` level (set to `submission` for resubmit) determines whether `FAIL` blocks the final report.
 
@@ -306,7 +306,7 @@ If extra round queue is non-empty AND user-budget allows: one extra Phase 2 roun
 # Dispatch a paseo claude sub-agent for `paper-compile`
 # ($NEW_VENUE_DIR/main.tex --venue $TARGET_VENUE) per
 # shared-references/paseo-subagent-dispatch.md (in-process `Skill` fallback
-# if paseo MCP unavailable).
+#).
 ```
 
 `/paper-compile` checks page limit, font, bib resolve, figure overflow, and emits `COMPILE_REPORT.json`. If page limit exceeded → trigger page-shrink heuristic (see below).
@@ -316,7 +316,7 @@ If extra round queue is non-empty AND user-budget allows: one extra Phase 2 roun
 ```bash
 # Dispatch a paseo claude sub-agent for `paper-claim-audit`
 # ($NEW_VENUE_DIR/) per shared-references/paseo-subagent-dispatch.md
-# (in-process `Skill` fallback if paseo MCP unavailable).
+# (Paseo claude sub-agent per `paseo-subagent-dispatch.md`).
 ```
 
 Verifies no Phase 2 microedit accidentally introduced a numerical claim that's not backed by results.
@@ -335,12 +335,12 @@ This goes to the user for skim-review before any export.
 
 **Overleaf push** (if `— overleaf-target: <project-id>` was passed):
 
-Defer entirely to dispatching paseo claude sub-agents for `overleaf-sync` (setup then push) per `shared-references/paseo-subagent-dispatch.md` (in-process `Skill` fallback if paseo MCP unavailable). Do **not** invent a parallel push mechanism — `overleaf-sync` setup already handles token-stays-in-keychain (token never enters the agent), and `overleaf-sync` push has a confirmation gate before writing to shared Overleaf state.
+Defer entirely to dispatching paseo claude sub-agents for `overleaf-sync` (setup then push) per `shared-references/paseo-subagent-dispatch.md` (Paseo claude sub-agent per `paseo-subagent-dispatch.md`). Do **not** invent a parallel push mechanism — `overleaf-sync` setup already handles token-stays-in-keychain (token never enters the agent), and `overleaf-sync` push has a confirmation gate before writing to shared Overleaf state.
 
 ```bash
 # Dispatch a paseo claude sub-agent for `overleaf-sync` setup
 # ($OVERLEAF_TARGET) per shared-references/paseo-subagent-dispatch.md
-# (in-process `Skill` fallback if paseo MCP unavailable).
+# (Paseo claude sub-agent per `paseo-subagent-dispatch.md`).
 #   one-time, user confirms in their terminal.
 # Then dispatch a paseo claude sub-agent for `overleaf-sync` push
 # (confirmation-gated push from $NEW_VENUE_DIR) per the same dispatch.
