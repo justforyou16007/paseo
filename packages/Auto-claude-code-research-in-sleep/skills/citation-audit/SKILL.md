@@ -3,12 +3,12 @@ name: citation-audit
 description: 'Zero-context verification that every bibliographic entry in the paper is real, correctly attributed, and used in a context the cited paper actually supports — catching hallucinated authors, wrong years, fabricated venues, version mismatches, and wrong-context citations. Use when user says "审查引用", "check citations", "citation audit", "verify references", "引用核对", or before submission to ensure bibliography integrity.'
 argument-hint: "[paper-directory-or-bib-file] [--uncited] [— soft-only]"
 allowed-tools: Bash(*), Read, Grep, Glob, Edit, Write, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__wait_for_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent, WebSearch, WebFetch
-# mcp__codex__codex retained only as documented fallback when paseo MCP unavailable
+
 ---
 
 > **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in [](shared-references/paseo-subagent-dispatch.md) (Rule 1: One Agent = One Skill; Rule 4: Paseo MCP Only, Strict). Spawn any sub-skill or sub-phase via `mcp__paseo__create_agent` — do **not** use the host `Skill` / `Agent` / `Task` tools.
 
-> **Paseo substrate.** This skill runs inside a paseo claude sub-agent; its cross-model citation reviewer is a paseo codex sub-agent (fresh). See `shared-references/paseo-reviewer-dispatch.md`. When paseo MCP is unavailable, fall back to `mcp__codex__codex`.
+> **Paseo substrate.** This skill runs inside a paseo claude sub-agent; its cross-model citation reviewer is a paseo codex sub-agent (fresh). See `shared-references/paseo-reviewer-dispatch.md`..
 
 # Citation Audit
 
@@ -107,10 +107,9 @@ Save the extracted contexts to `paper/.aris/citation-audit/contexts.txt` so the 
 
 For each **cited** bib entry — i.e., each key in `cited_keys` with at least one extracted citation context — spawn a paseo codex reviewer sub-agent (fresh) per `shared-references/paseo-reviewer-dispatch.md` (fresh agent per entry, or batch with explicit per-entry isolation). Do **not** send entries in `bib_keys \ cited_keys` to the reviewer; those are detect-only and surface only when `--uncited` is explicitly enabled (see "Uncited Entry Detection" below).
 
-Documented fallback form (when paseo MCP is unavailable, use `mcp__codex__codex` as below):
+Codex reviewer sub-agent prompt:
 
 ```
-mcp__codex__codex:
   model: gpt-5.5
   config: {"model_reasoning_effort": "xhigh"}
   sandbox: read-only

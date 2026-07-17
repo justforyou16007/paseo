@@ -7,7 +7,7 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent,
 
 > **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in [](shared-references/paseo-subagent-dispatch.md) (Rule 1: One Agent = One Skill; Rule 4: Paseo MCP Only, Strict). Spawn any sub-skill or sub-phase via `mcp__paseo__create_agent` — do **not** use the host `Skill` / `Agent` / `Task` tools.
 
-> **Paseo substrate.** This skill runs inside a paseo claude sub-agent; its 2-thread Attack-Adjudication uses two FRESH paseo codex reviewer sub-agents (no continuation between them). See `shared-references/paseo-reviewer-dispatch.md` + `fan-out-pattern.md`. When paseo MCP is unavailable, fall back to `mcp__codex__codex`.
+> **Paseo substrate.** This skill runs inside a paseo claude sub-agent; its 2-thread Attack-Adjudication uses two FRESH paseo codex reviewer sub-agents (no continuation between them). See `shared-references/paseo-reviewer-dispatch.md` + `fan-out-pattern.md`..
 
 # Kill Argument Exercise: Adversarial Attack-Defense Review
 
@@ -91,7 +91,6 @@ If a compiled PDF is missing, the skill should still run on .tex source alone, b
 Spawn a paseo codex reviewer sub-agent (FRESH — no continuation between Thread 1 and Thread 2) per `shared-references/paseo-reviewer-dispatch.md`. The `mcp__codex__codex:` block below is the documented fallback when paseo MCP is unavailable:
 
 ```
-mcp__codex__codex:
   model: gpt-5.5
   config: {"model_reasoning_effort": "xhigh"}
   sandbox: read-only
@@ -189,7 +188,6 @@ ids. The committed attack memo, not the six probes, is what Step 3 consumes.
 Spawn a second paseo codex reviewer sub-agent (FRESH — no continuation between Thread 1 and Thread 2; Thread 2 is a NEW fresh agent, NOT a `send_agent_prompt` continuation of Thread 1 — the independence is the point), per `shared-references/paseo-reviewer-dispatch.md`. The `mcp__codex__codex:` block below is the documented fallback when paseo MCP is unavailable:
 
 ```
-mcp__codex__codex:
   model: gpt-5.5
   config: {"model_reasoning_effort": "xhigh"}
   sandbox: read-only

@@ -181,7 +181,6 @@ For each optimization target, generate a concrete diff:
 Send each patch to GPT-5.5 xhigh for adversarial review:
 
 ```
-mcp__codex__codex:
   model: gpt-5.5
   config: {"model_reasoning_effort": "xhigh"}
   prompt: |

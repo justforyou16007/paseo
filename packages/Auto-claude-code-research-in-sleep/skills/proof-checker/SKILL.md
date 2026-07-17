@@ -7,7 +7,7 @@ allowed-tools: Bash(*), Read, Grep, Glob, Write, Edit, mcp__paseo__create_agent,
 
 > **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in [](shared-references/paseo-subagent-dispatch.md) (Rule 1: One Agent = One Skill; Rule 4: Paseo MCP Only, Strict). Spawn any sub-skill or sub-phase via `mcp__paseo__create_agent` — do **not** use the host `Skill` / `Agent` / `Task` tools.
 
-> **Paseo substrate.** This skill runs inside a paseo claude sub-agent; its cross-model proof reviewer is a paseo codex sub-agent (fresh round 1, continued round 2+). See `shared-references/paseo-reviewer-dispatch.md`. When paseo MCP is unavailable, fall back to `mcp__codex__codex`.
+> **Paseo substrate.** This skill runs inside a paseo claude sub-agent; its cross-model proof reviewer is a paseo codex sub-agent (fresh round 1, continued round 2+). See `shared-references/paseo-reviewer-dispatch.md`..
 
 # Proof Checker: Rigorous Mathematical Verification & Fixing
 
@@ -493,7 +493,6 @@ The blind review prompt:
 
 ```
 [Codex:]
-mcp__codex__codex:
   config: {"model_reasoning_effort": "xhigh"}
   prompt: |
     Blind review of the following proof section. You have NOT seen any prior

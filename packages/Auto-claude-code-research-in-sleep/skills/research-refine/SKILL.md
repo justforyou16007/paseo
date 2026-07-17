@@ -344,7 +344,6 @@ below plus the absolute path to `refine-logs/round-0-initial-proposal.md`, then
 keep the MCP prompt short:
 
 ```
-mcp__codex__codex:
   model: REVIEWER_MODEL
   config: {"model_reasoning_effort": "xhigh"}
   prompt: |
@@ -540,7 +539,7 @@ absolute path to `refine-logs/round-N-refinement.md`, then ask Codex to read
 that bundle file.
 
 ```
-mcp__codex__codex-reply:
+
   threadId: [saved from Phase 2]
   model: REVIEWER_MODEL
   config: {"model_reasoning_effort": "xhigh"}

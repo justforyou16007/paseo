@@ -74,7 +74,6 @@ Check these signals:
 Only escalate to Codex when the signal is ambiguous. For clearly good or clearly bad signals, act directly.
 
 ```
-mcp__codex__codex:
   config: {"model_reasoning_effort": "high"}
   prompt: |
     TRAINING HEALTH CHECK — need your judgment on ambiguous metrics.

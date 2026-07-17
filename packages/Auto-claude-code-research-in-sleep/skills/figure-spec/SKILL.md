@@ -170,7 +170,6 @@ If issues found, edit the JSON spec (never the generated SVG) and re-render.
 For paper architecture figures, invoke cross-model review:
 
 ```
-mcp__codex__codex:
   model: gpt-5.5
   config: {"model_reasoning_effort": "xhigh"}
   prompt: |

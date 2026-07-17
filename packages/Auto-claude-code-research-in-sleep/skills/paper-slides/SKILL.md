@@ -369,7 +369,6 @@ If page count differs significantly from outline (>2 slides off), investigate.
 Send the slide outline + selected LaTeX frames to GPT-5.5 xhigh:
 
 ```
-mcp__codex__codex:
   config: {"model_reasoning_effort": "xhigh"}
   prompt: |
     Review this [TALK_TYPE] presentation ([TALK_MINUTES] min) for [VENUE].

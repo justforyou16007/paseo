@@ -3,12 +3,12 @@ name: paper-claim-audit
 description: 'Zero-context verification that every number, comparison, and scope claim in the paper matches raw result files. Uses a fresh cross-model reviewer with NO prior context to prevent confirmation bias. Use when user says "审查论文数据", "check paper claims", "verify numbers", "论文数字核对", or before submission to ensure paper-to-evidence fidelity.'
 argument-hint: [paper-directory]
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__wait_for_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent
-# mcp__codex__codex retained only as documented fallback when paseo MCP unavailable
+
 ---
 
 > **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in [](shared-references/paseo-subagent-dispatch.md) (Rule 1: One Agent = One Skill; Rule 4: Paseo MCP Only, Strict). Spawn any sub-skill or sub-phase via `mcp__paseo__create_agent` — do **not** use the host `Skill` / `Agent` / `Task` tools.
 
-> **Paseo substrate.** This skill runs inside a paseo claude sub-agent; its cross-model claim reviewer is a paseo codex sub-agent (fresh). See `shared-references/paseo-reviewer-dispatch.md`. When paseo MCP is unavailable, fall back to `mcp__codex__codex`.
+> **Paseo substrate.** This skill runs inside a paseo claude sub-agent; its cross-model claim reviewer is a paseo codex sub-agent (fresh). See `shared-references/paseo-reviewer-dispatch.md`..
 
 # Paper Claim Audit: Zero-Context Evidence Verification
 
@@ -114,7 +114,6 @@ Any .md file that is an executor-written summary
 Spawn a paseo codex reviewer sub-agent (fresh) per `shared-references/paseo-reviewer-dispatch.md`. Every run is a fresh context — never continue an existing codex agent (no `send_agent_prompt` to a prior reviewer). The `mcp__codex__codex:` block below is the documented fallback, used verbatim when paseo MCP is unavailable:
 
 ```
-mcp__codex__codex:
   model: gpt-5.5
   config: {"model_reasoning_effort": "xhigh"}
   prompt: |

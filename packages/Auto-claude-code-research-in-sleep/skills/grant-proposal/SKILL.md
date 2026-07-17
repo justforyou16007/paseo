@@ -493,7 +493,7 @@ criteria below plus the absolute path to `grant-proposal/GRANT_PROPOSAL.md`,
 then keep the Codex MCP prompt short:
 
 ```
-mcp__codex__codex-reply:
+
   threadId: [from Phase 2]
   config: {"model_reasoning_effort": "xhigh"}
   prompt: |
@@ -536,7 +536,7 @@ absolute path to the current `grant-proposal/GRANT_PROPOSAL.md`, then reuse the
 same short MCP prompt pattern:
 
 ```
-mcp__codex__codex-reply:
+
   threadId: [saved from Round 1]
   config: {"model_reasoning_effort": "xhigh"}
   prompt: |

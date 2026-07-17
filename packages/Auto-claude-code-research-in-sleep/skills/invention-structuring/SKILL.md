@@ -119,7 +119,6 @@ Dependent Claim 5 → alternative implementation of feature A
 Call `REVIEWER_MODEL` via `mcp__codex__codex` with xhigh reasoning:
 
 ```
-mcp__codex__codex:
   config: {"model_reasoning_effort": "xhigh"}
   prompt: |
     You are a patent attorney reviewing an invention disclosure.

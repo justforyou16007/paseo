@@ -539,7 +539,6 @@ Passive voice IS acceptable for: established facts, methods where agent is irrel
 Send the complete draft to GPT-5.5 xhigh:
 
 ```
-mcp__codex__codex:
   model: gpt-5.5
   config: {"model_reasoning_effort": "xhigh"}
   prompt: |

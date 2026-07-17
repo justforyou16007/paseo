@@ -264,7 +264,6 @@ done > /tmp/paper_full_text.txt
 Send the full paper text AND compiled PDF to GPT-5.5 xhigh:
 
 ```
-mcp__codex__codex:
   model: gpt-5.5
   config: {"model_reasoning_effort": "xhigh"}
   prompt: |
@@ -406,7 +405,6 @@ This is advisory only — the inline Step 4.5 check remains the default and cont
 If `REVIEWER_BIAS_GUARD = true` (default), use a **fresh** `mcp__codex__codex` thread for Round 2. Do not reuse the Round 1 threadId for prompting. Save the returned threadId only for recovery bookkeeping.
 
 ```
-mcp__codex__codex:
   model: gpt-5.5
   config: {"model_reasoning_effort": "xhigh"}
   prompt: |

@@ -7,7 +7,7 @@ allowed-tools: WebSearch, WebFetch, Grep, Read, Glob, mcp__paseo__create_agent, 
 
 > **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in [](shared-references/paseo-subagent-dispatch.md) (Rule 1: One Agent = One Skill; Rule 4: Paseo MCP Only, Strict). Spawn any sub-skill or sub-phase via `mcp__paseo__create_agent` — do **not** use the host `Skill` / `Agent` / `Task` tools.
 
-> **Paseo substrate.** This skill runs inside a paseo claude sub-agent; its cross-model novelty reviewer is a paseo codex sub-agent (fresh). See `shared-references/paseo-reviewer-dispatch.md`. When paseo MCP is unavailable, fall back to `mcp__codex__codex`.
+> **Paseo substrate.** This skill runs inside a paseo claude sub-agent; its cross-model novelty reviewer is a paseo codex sub-agent (fresh). See `shared-references/paseo-reviewer-dispatch.md`..
 
 # Novelty Check Skill
 
@@ -67,10 +67,9 @@ When the method description plus the Phase-B paper list is more than a short
 note, avoid pasting it inline into the reviewer prompt. Write a dossier file such as
 `NOVELTY_DOSSIER.md` (or a project-local equivalent) containing the method
 description, core claims, candidate papers, and the exact questions below, then
-send only the file path. When paseo MCP is unavailable, fall back to `mcp__codex__codex`:
+send only the file path..:
 
 ```
-mcp__codex__codex:
   config: {"model_reasoning_effort": "xhigh"}
   prompt: |
     Read the novelty dossier at <absolute path to NOVELTY_DOSSIER.md> and

@@ -165,7 +165,6 @@ If any element lacks support, add the necessary description before proceeding.
 Call `REVIEWER_MODEL` via `mcp__codex__codex` with xhigh reasoning:
 
 ```
-mcp__codex__codex:
   config: {"model_reasoning_effort": "xhigh"}
   prompt: |
     You are a patent examiner reviewing a specification for completeness.

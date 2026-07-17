@@ -331,7 +331,6 @@ For each section, list required citations:
 Send the complete outline to GPT-5.5 xhigh for feedback:
 
 ```
-mcp__codex__codex:
   model: gpt-5.5
   config: {"model_reasoning_effort": "xhigh"}
   prompt: |
