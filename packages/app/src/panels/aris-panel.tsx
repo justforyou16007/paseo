@@ -96,32 +96,34 @@ function ArisPanelContent({
   const cwd = workspace?.workspaceDirectory ?? null;
   const wikiQuery = useArisWiki(serverId, cwd);
 
-  if (
-    reviewQuery.isLoading ||
-    eventsQuery.isLoading ||
-    runsQuery.isLoading ||
-    runQuery.isLoading ||
-    iterationsQuery.isLoading ||
-    wikiQuery.isLoading
-  ) {
+  // Render with whatever data is available. Each child view is responsible
+  // for handling its own loading/error state — the panel-level spinner was
+  // the source of the perpetual "always loading" bug because any single
+  // disabled query would keep the whole panel stuck on the spinner.
+  // We only show a panel-level spinner when NO query has started yet
+  // (workspaceId is empty or client isn't connected at all).
+  const hasAnyWorkspace = !!workspaceId;
+  const noDataYet =
+    !reviewQuery.data && !eventsQuery.data && !wikiQuery.data && runsQuery.runs.length === 0;
+
+  if (!hasAnyWorkspace) {
     return (
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-        <ActivityIndicator />
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <Text style={{ textAlign: "center", color: "#64748b" }}>
+          Open the ARIS Cockpit from a specific workspace to see W1–W6 status and the knowledge
+          graph.
+        </Text>
       </View>
     );
   }
 
-  const error =
-    reviewQuery.error ??
-    eventsQuery.error ??
-    runsQuery.error ??
-    runQuery.error ??
-    iterationsQuery.error ??
-    wikiQuery.error;
-  if (error) {
+  if (
+    noDataYet &&
+    (reviewQuery.isLoading || eventsQuery.isLoading || runsQuery.isLoading || wikiQuery.isLoading)
+  ) {
     return (
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }}>
-        <Text style={{ textAlign: "center", color: "#ef4444" }}>{String(error)}</Text>
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+        <ActivityIndicator />
       </View>
     );
   }

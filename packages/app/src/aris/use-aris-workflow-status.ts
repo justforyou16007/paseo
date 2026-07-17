@@ -66,9 +66,13 @@ export function useArisWorkflowStatus(serverId: string, workspaceId: string) {
     };
   }, [client, isConnected, queryClient, queryKey, serverId, workspaceId]);
 
+  const isQueryEnabled = Boolean(client && isConnected && serverId && workspaceId);
   return {
     data: query.data,
-    isLoading: query.isLoading,
+    // When the query is disabled (no client/connection/workspace), report
+    // isLoading: false so consumers can render with empty data instead of
+    // hanging on a spinner.
+    isLoading: isQueryEnabled && query.isLoading,
     isError: query.isError,
     error: query.error instanceof Error ? query.error.message : null,
   };
