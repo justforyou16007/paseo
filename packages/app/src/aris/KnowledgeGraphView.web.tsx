@@ -15,6 +15,8 @@ import { ARIS_CATEGORICAL_PALETTE } from "./charts/color-palette";
 
 export interface KnowledgeGraphViewProps {
   data: ArisReviewReadResult | null | undefined;
+  /** Knowledge graph derived from research-wiki (papers/ideas/experiments/claims). Preferred over `data.knowledgeGraph` when non-empty. */
+  wikiGraph?: ArisKnowledgeGraph | null;
   width?: number;
   height?: number;
 }
@@ -255,20 +257,29 @@ function buildExplicitNodes(
 
 export function KnowledgeGraphView({
   data,
+  wikiGraph,
   width = GRAPH_WIDTH,
   height = GRAPH_HEIGHT,
 }: KnowledgeGraphViewProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const edges: KnowledgeGraphEdgeInput[] = useMemo(() => {
+    // Prefer research-wiki graph (papers/ideas/experiments/claims/edges) when non-empty.
+    const wikiEdges = buildEdgesFromKnowledgeGraph(wikiGraph ?? null);
+    if (wikiEdges.length > 0) {
+      return wikiEdges;
+    }
     const graphEdges = buildEdgesFromKnowledgeGraph(data?.knowledgeGraph);
     if (graphEdges.length > 0) {
       return graphEdges;
     }
     return buildEdgesFromReviewRounds(data?.reviewState);
-  }, [data]);
+  }, [data, wikiGraph]);
 
-  const explicitNodes = useMemo(() => buildExplicitNodes(data?.knowledgeGraph), [data]);
+  const explicitNodes = useMemo(
+    () => buildExplicitNodes(wikiGraph ?? data?.knowledgeGraph),
+    [data, wikiGraph],
+  );
 
   const layout = useMemo(
     () => buildLayeredKnowledgeGraphLayout({ edges, width, height, nodes: explicitNodes }),

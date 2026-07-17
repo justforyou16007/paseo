@@ -568,11 +568,31 @@ const WORKFLOW_ARTIFACTS: Record<WorkflowStageId, WorkflowArtifactSpec[]> = {
     { path: "idea-stage/IDEA_REPORT.html", kind: "html", purpose: "Rendered idea report" },
   ],
   "W1.5": [
-    { path: "refine-logs/EXPERIMENT_PLAN.md", kind: "markdown", purpose: "Experiment plan" },
-    { path: "refine-logs/EXPERIMENT_TRACKER.md", kind: "markdown", purpose: "Experiment tracker" },
-    { path: "refine-logs/EXPERIMENT_LOG.md", kind: "markdown", purpose: "Experiment log" },
-    { path: "refine-logs/EXPERIMENT_RESULTS.md", kind: "markdown", purpose: "Experiment results" },
-    { path: "refine-logs/FINAL_PROPOSAL.md", kind: "markdown", purpose: "Final proposal" },
+    {
+      path: "idea-stage/refine-logs/EXPERIMENT_PLAN.md",
+      kind: "markdown",
+      purpose: "Experiment plan",
+    },
+    {
+      path: "idea-stage/refine-logs/EXPERIMENT_TRACKER.md",
+      kind: "markdown",
+      purpose: "Experiment tracker",
+    },
+    {
+      path: "idea-stage/refine-logs/EXPERIMENT_LOG.md",
+      kind: "markdown",
+      purpose: "Experiment log",
+    },
+    {
+      path: "idea-stage/refine-logs/EXPERIMENT_RESULTS.md",
+      kind: "markdown",
+      purpose: "Experiment results",
+    },
+    {
+      path: "idea-stage/refine-logs/FINAL_PROPOSAL.md",
+      kind: "markdown",
+      purpose: "Final proposal",
+    },
   ],
   W2: [
     { path: "review-stage/REVIEW_STATE.json", kind: "json", purpose: "Review state" },
@@ -794,12 +814,12 @@ async function checkStageDirectoryDone(
     case "W1":
       return artifactExists(artifacts, "idea-stage/IDEA_REPORT.md");
     case "W1.5": {
-      if (!artifactExists(artifacts, "refine-logs/EXPERIMENT_TRACKER.md")) {
+      if (!artifactExists(artifacts, "idea-stage/refine-logs/EXPERIMENT_TRACKER.md")) {
         return false;
       }
       const scoped = await resolveScopedPath({
         root: cwd,
-        relativePath: "refine-logs/EXPERIMENT_TRACKER.md",
+        relativePath: "idea-stage/refine-logs/EXPERIMENT_TRACKER.md",
       }).catch(() => null);
       if (!scoped) {
         return false;

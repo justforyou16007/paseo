@@ -6,7 +6,9 @@ import { usePaneContext } from "@/panels/pane-context";
 import { isWeb } from "@/constants/platform";
 import { useArisReviewQuery } from "@/aris/use-aris-review-query";
 import { useArisEventsQuery } from "@/aris/use-aris-events-query";
+import { useArisWiki } from "@/aris/use-aris-wiki";
 import { useArisRunsQuery, useArisRunQuery, useArisIterationsQuery } from "@/hooks/use-aris-query";
+import { useWorkspace } from "@/stores/session-store-hooks";
 import { ArisCockpitView } from "@/aris/ArisCockpitView.web";
 
 function useArisPanelDescriptor(target: {
@@ -90,13 +92,17 @@ function ArisPanelContent({
     workspaceId,
     runId: target.runId ?? null,
   });
+  const workspace = useWorkspace(serverId, workspaceId);
+  const cwd = workspace?.workspaceDirectory ?? null;
+  const wikiQuery = useArisWiki(serverId, cwd);
 
   if (
     reviewQuery.isLoading ||
     eventsQuery.isLoading ||
     runsQuery.isLoading ||
     runQuery.isLoading ||
-    iterationsQuery.isLoading
+    iterationsQuery.isLoading ||
+    wikiQuery.isLoading
   ) {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
@@ -110,7 +116,8 @@ function ArisPanelContent({
     eventsQuery.error ??
     runsQuery.error ??
     runQuery.error ??
-    iterationsQuery.error;
+    iterationsQuery.error ??
+    wikiQuery.error;
   if (error) {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }}>
@@ -126,6 +133,7 @@ function ArisPanelContent({
       runs={runsQuery.runs}
       run={runQuery.run}
       iterations={iterationsQuery.iterations}
+      wiki={wikiQuery.data}
       activeView={target.view ?? "cockpit"}
     />
   );
