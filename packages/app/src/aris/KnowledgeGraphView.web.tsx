@@ -334,7 +334,11 @@ export function KnowledgeGraphView({
     [layout.edges, focusSet],
   );
 
-  if (!data) {
+  // Only show the empty state when we have no data sources at all.
+  // Previously this bailed out as soon as `data` (review) was null, which
+  // hid the wiki-derived graph whenever the review query was unloaded.
+  const hasAnyData = data != null || (wikiGraph != null && (wikiGraph.nodes?.length ?? 0) > 0);
+  if (!hasAnyData) {
     return <ChartKitEmpty message="No research graph data available." />;
   }
 
