@@ -33,7 +33,9 @@ export function useArisWiki(serverId: string | null, cwd: string | null): UseAri
 
   return {
     data: query.data ?? null,
-    isLoading: query.isLoading,
+    // When the query is disabled (no cwd yet), report isLoading: false so
+    // consumers can render with empty data instead of hanging on a spinner.
+    isLoading: Boolean(serverId && cwd && client && isConnected) && query.isLoading,
     error: query.error,
   };
 }
