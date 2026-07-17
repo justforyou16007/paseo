@@ -80,26 +80,9 @@ fi
 
 ### 0b. Check ARIS installation
 
-If `.aris/installed-skills.txt` does NOT exist, ARIS skills are not installed.
-Resolve `install_aris.sh`:
-
-```bash
-INSTALLER=""
-[ -n "${ARIS_REPO:-}" ] && [ -f "$ARIS_REPO/tools/install_aris.sh" ] && INSTALLER="$ARIS_REPO/tools/install_aris.sh"
-[ -z "$INSTALLER" ] && [ -n "${CLAUDE_SKILL_DIR:-}" ] && {
-  _ROOT="${CLAUDE_SKILL_DIR%/skills/*}"
-  [ -f "$_ROOT/tools/install_aris.sh" ] && INSTALLER="$_ROOT/tools/install_aris.sh"
-}
-```
-
-If the installer is found, ask the user:
-
-> ARIS skills are not installed in this project. Run install_aris.sh now?
-
-If yes, run: `bash "$INSTALLER" "$(pwd)"`
-
-If the installer is NOT found, warn but continue — the setup can still generate
-config files, they just won't be symlinked into `.claude/skills/`.
+If `.aris/installed-skills.txt` does NOT exist, note that ARIS skills will be
+installed automatically in Phase 7f after all artifacts are generated. No user
+action required at this point — skill registration happens at the end of setup.
 
 ### 0c. Resume detection
 
@@ -480,7 +463,39 @@ If not, append the ARIS entries at the end with a header comment:
 .aris/setup-state.json
 ```
 
-### 7f. Write final setup state
+### 7f. Install ARIS skills into the project
+
+Resolve `install_aris.sh` and run it to register all ARIS skills as
+symlinks in `.claude/skills/`. This step is **not optional** — without
+it, no ARIS slash commands will be available in the project.
+
+```bash
+INSTALLER=""
+if [ -n "${CLAUDE_SKILL_DIR:-}" ]; then
+  _ROOT="${CLAUDE_SKILL_DIR%/skills/*}"
+  [ -f "$_ROOT/tools/install_aris.sh" ] && INSTALLER="$_ROOT/tools/install_aris.sh"
+fi
+if [ -z "$INSTALLER" ] && [ -n "${ARIS_REPO:-}" ]; then
+  [ -f "$ARIS_REPO/tools/install_aris.sh" ] && INSTALLER="$ARIS_REPO/tools/install_aris.sh"
+fi
+if [ -z "$INSTALLER" ] && [ -f .aris/installed-skills.txt ]; then
+  _REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null)
+  [ -n "$_REPO" ] && [ -f "$_REPO/tools/install_aris.sh" ] && INSTALLER="$_REPO/tools/install_aris.sh"
+fi
+```
+
+If `$INSTALLER` is resolved:
+```bash
+bash "$INSTALLER" "$(pwd)" --quiet
+```
+
+If `$INSTALLER` is NOT resolved, print:
+```
+install_aris.sh not found — ARIS skills cannot be registered.
+Set ARIS_REPO or rerun setup after cloning the ARIS repo.
+```
+
+### 7g. Write final setup state
 
 ```json
 {
@@ -492,7 +507,8 @@ If not, append the ARIS entries at the end with a header comment:
     "CLAUDE.md",
     "RESEARCH_BRIEF.md",
     "research-wiki/",
-    ".gitignore"
+    ".gitignore",
+    ".claude/skills/ (ARIS skill symlinks)"
   ],
   "timestamp": "<ISO 8601>"
 }
@@ -515,6 +531,7 @@ Created:
   • RESEARCH_BRIEF.md — research direction brief
   • research-wiki/ — knowledge base (5 subdirs, 5 seed files)
   • .gitignore — updated with ARIS entries
+  • .claude/skills/ — ARIS skill symlinks registered
 
 (zh)
 ✅ 研究项目「{project_name}」初始化成功。
@@ -524,6 +541,7 @@ Created:
   • RESEARCH_BRIEF.md — 研究方向简报
   • research-wiki/ — 知识库（5 个子目录，5 个种子文件）
   • .gitignore — 已添加 ARIS 条目
+  • .claude/skills/ — ARIS 技能符号链接已注册
 
 ⚠️ If ARIS skills were installed or updated during this setup, they won't
    appear until you reload. Run `/reload-skills` or start a new Claude Code session.
