@@ -334,6 +334,11 @@ If "Yes", use AskUserQuestion with 3 questions:
 - Q3 header "Heartbeat", question: "Enable overnight heartbeat for autonomous runs?"
   options: `["Off (default)", "Every 13 minutes"]` + "Other"
 
+- Q4 header "AutoResearch", question: "Enable the auto-research-loop (closed research-iteration driver)? Inserted between W1 and W1.5; loops baseline reproduction → problem diagnosis → hypothesis → experiment → review until metric target is met or iteration budget is exhausted. Requires a `## Metric Target` block in `CLAUDE.md` (added in Phase 7b)."
+  options: `["Off (0 iterations, default — today's flow)", "Up to 3 iterations (quick research push)", "Up to 5 iterations (full closed loop)"]` + "Other"
+
+**After Phase 6:** Save state with `completed_stages: [1,2,3,4,5,6]`. If "AutoResearch" was selected with iterations > 0, also write `answers.auto_research_iterations = <selected number>` and ensure the generated `## ARIS Paseo` block in `CLAUDE.md` includes `auto_research_iterations: <number>`. The `research-pipeline` orchestrator reads this field and conditionally inserts the `research-iteration` stage.
+
 **After Phase 6:** Save state with `completed_stages: [1,2,3,4,5,6]`.
 
 ---

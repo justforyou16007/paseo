@@ -65,6 +65,7 @@ End-to-end autonomous research workflow for: **$ARGUMENTS**
 - **RENDER_HTML = true** — When `true` (default), auto-render `NARRATIVE_REPORT.md` to HTML at Stage 4 completion via `/render-html`. Uses `--no-review` (internal handoff doc to W3, not reviewer-facing — Stage 3 already cross-model-reviewed the claims). Set `false` to skip, or pass `— render html: false`. **Non-blocking**: if `/render-html` fails, log and continue.
 - **RESUMABLE = true** — When `true` (default), the pipeline records per-stage state to `.aris/runs/<run_id>.json` so a crashed/interrupted run can resume via `/research-pipeline — resume <run_id>` instead of restarting. Stage status splits `done` (executor finished writing) from `accepted` (the stage's cross-model gate / deterministic verifier passed); resume re-validates any `done`-but-unaccepted stage. See `shared-references/resumable-runs.md`.
 - **DEBUG = false** — When `true`, pause on any W-agent failure or helper error and wait for the developer to fix the issue before continuing. The orchestrator prints a debug halt message and goes idle; the developer sends a message to resume, "skip" to skip the failed phase, or "abort" to stop. See [`shared-references/debug-mode.md`](../shared-references/debug-mode.md).
+- **AUTO_RESEARCH_ITERATIONS = 0** — When `> 0`, inserts the optional `research-iteration` stage between W1 and W1.5. The stage runs `/auto-research-loop` as a W-agent (one long-lived claude agent looping iterations 1→N internally with a fresh codex reviewer per round) and serves as a closed-loop research driver (baseline reproduction → problem diagnosis → hypothesis → experiment → review). The stage stops on the compound gate: (Type-A: `current_metric >= target_metric * (1 - 0.01)` OR `iteration >= AUTO_RESEARCH_ITERATIONS`) AND (Type-B: codex verdict=stop with `score>=9` AND `metric_progress=met target`). Requires a `## Metric Target` block in `CLAUDE.md` with a `primary: <number> <unit>` line — the loop fails loudly if absent. When `0` (default), the stage is `skipped` and the pipeline short-circuits to today's W1.5-onward flow.
 
 > 💡 Override via argument, e.g., `/research-pipeline "topic" — AUTO_PROCEED: false, human checkpoint: true, difficulty: nightmare, code review: false, base repo: https://github.com/org/project, auto_write: true, venue: NeurIPS`.
 
@@ -74,7 +75,7 @@ The pipeline orchestrates up to four major workflows in sequence, each as a
 paseo claude sub-agent:
 
 ```
-create_agent W1 (idea-discovery) → W1.5 (experiment-bridge) → W2 (auto-review-loop) → W3 (paper-writing, optional)
+create_agent W1 (idea-discovery) → [W1.7 auto-research-loop, optional when AUTO_RESEARCH_ITERATIONS > 0] → W1.5 (experiment-bridge) → W2 (auto-review-loop) → W3 (paper-writing, optional)
 ```
 
 Workflow 3 (paper writing) is optional and controlled by `AUTO_WRITE`. The
@@ -146,12 +147,25 @@ Resolve `run-state.js` via the canonical chain (integration-contract §2):
 
 **Phases**, in order: `idea-discovery, experiment-bridge, auto-review-loop, summary, paper-writing`.
 
+**Optional `research-iteration` stage.** When `AUTO_RESEARCH_ITERATIONS > 0` (set in `CLAUDE.md` `## ARIS Paseo` block or via `research-setup` Phase 6), the orchestrator inserts an additional `research-iteration` phase between `idea-discovery` and `experiment-bridge`. The phase runs `/auto-research-loop` as a W-agent (one long-lived claude agent looping iterations 1→N internally with a fresh codex reviewer per round) and serves as a closed-loop research driver (baseline reproduction → problem diagnosis → hypothesis → experiment → review). When `AUTO_RESEARCH_ITERATIONS = 0` (today's default), the stage is `skipped` and the pipeline short-circuits to the existing W1.5-onward flow. The orchestrator's command at start is:
+
+```bash
+AUTO_RESEARCH_ITERATIONS=$(awk '/^## ARIS Paseo/{flag=1; next} flag && /auto_research_iterations:/{print $2; exit}' CLAUDE.md)
+AUTO_RESEARCH_ITERATIONS=${AUTO_RESEARCH_ITERATIONS:-0}
+if [ "$AUTO_RESEARCH_ITERATIONS" -gt 0 ] 2>/dev/null; then
+  PHASES="idea-discovery,research-iteration,experiment-bridge,auto-review-loop,summary,paper-writing"
+else
+  PHASES="idea-discovery,experiment-bridge,auto-review-loop,summary,paper-writing"
+fi
+run-state.js start "$ROOT" "$RUN_ID" --phases "$PHASES"
+```
+
 - **At start:** if `— resume <run_id>` was passed, run
   `run-state.js resume <root> <run_id>` — it prints the first non-`accepted`
   phase; **begin the pipeline at that stage** (re-dispatch a `running`/`failed`
   stage; **re-audit** a `done`-but-unaccepted stage). Otherwise derive `<run_id>`
   from the direction slug + date and `run-state.js start <root> <run_id> --phases
-"idea-discovery,experiment-bridge,auto-review-loop,summary,paper-writing"`.
+"$PHASES"`.
 - **Per stage:** `set <run_id> <phase> running` on entry; `set <run_id> <phase>
 done --artifact <path>` once the W-agent's receipt reports the artifact.
 - **Re-attach vs recreate on resume:** `mcp__paseo__list_agents` to see whether
@@ -169,6 +183,7 @@ done --artifact <path>` once the W-agent's receipt reports the artifact.
   | phase               | what sets `accepted`                                                                     | record as reviewer                     |
   | ------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------- |
   | `idea-discovery`    | Gate 1 cross-model jury / novelty-check passed (ran inside W1 as codex sub-agents)       | `codex-gpt-5.5` + codex agent-id       |
+  | `research-iteration` (only if `AUTO_RESEARCH_ITERATIONS > 0`) | compound gate fired: (Type-A: `current_metric >= target_metric * (1 - 0.01)` OR `iteration >= MAX_ITERATIONS`) AND (Type-B: codex verdict=stop with `score>=9` AND `metric_progress=met target`); budget-only stop uses the deterministic reviewer | `codex-gpt-5.5` + final codex agent-id (or `deterministic:research-iteration:max-iter-reached` for budget-only) |
   | `experiment-bridge` | experiments actually ran (jobs completed) — deterministic                                | `deterministic:experiment-bridge`      |
   | `auto-review-loop`  | the loop hit its positive STOP (`score>=6 AND verdict∈{ready,almost}` — codex's verdict) | `codex-gpt-5.5` + final codex agent-id |
   | `summary`           | `NARRATIVE_REPORT.md` written (+ rendered if `RENDER_HTML`) — deterministic              | `deterministic:summary`                |

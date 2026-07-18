@@ -284,12 +284,18 @@ the cases in the table, and always carries reviewer-memory semantics — see
 the reviewer doc.
 
 **Never recreate a verdict-bearing loop's claude agent per round.**
-`auto-review-loop` (W2) and `auto-paper-improvement-loop` are ONE paseo
+`auto-review-loop` (W2), `auto-paper-improvement-loop`, and
+`auto-research-loop` (the optional W1.7 stage) are each ONE paseo
 claude agent that loops rounds 1→N internally. The claude agent is created
 once; what changes per round is whether the _codex reviewer_ it dispatches
-is fresh (paper-improvement bias guard) or continued (auto-review-loop r2+).
-This is the fence (`external-cadence.md`) made operational: the loop's
-internal round cadence is owned by one long-lived agent, not re-entered from
+is fresh (paper-improvement bias guard + auto-research-loop's
+`REVIEWER_BIAS_GUARD`) or continued (auto-review-loop r2+).
+`auto-research-loop` always uses a fresh codex sub-agent per round — its
+round cadence is one iteration of the 10-step baseline-review-experiment
+loop, and a continuation reviewer would drift toward confirming its own
+prior direction. This is the fence (`external-cadence.md`) made operational:
+the loop's internal round cadence is owned by one long-lived agent, not
+re-entered from the top on a timer.
 the top on a timer.
 
 ## Parallel fan-out discipline
