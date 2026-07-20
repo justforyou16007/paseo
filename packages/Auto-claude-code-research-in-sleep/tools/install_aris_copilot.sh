@@ -59,7 +59,7 @@ SAFE_NAME_REGEX='^[A-Za-z0-9][A-Za-z0-9._-]*$'
 # Directories to skip when scanning upstream skills/ as installable skills.
 # shared-references is handled separately as a "support" entry.
 # This pattern MUST stay in sync with smart_update_copilot.sh SKIP_DIRS_PATTERN.
-SKIP_DIRS="skills-codex|skills-codex-claude-review|skills-codex-gemini-review|shared-references"
+SKIP_DIRS="shared-references"
 
 PROJECT_PATH=""
 ARIS_REPO_OVERRIDE=""

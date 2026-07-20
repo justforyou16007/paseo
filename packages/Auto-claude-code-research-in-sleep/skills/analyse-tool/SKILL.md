@@ -158,9 +158,9 @@ the loop — the dispatch prompt only needs the task and inputs. The main agent
 never performs the loop steps itself; it only resolves `$ANALYSIS_TOOLS` for its
 own `find` and dispatches.
 
-(Codex CLI mirror: no registered-agent mechanism exists for Codex CLI — it
-keeps the `spawn_agent` + runtime-Read-role-file form; see the
-`skills-codex/analyse-tool` mirror.)
+(Codex CLI does not have a registered-agent mechanism; this skill is
+mainline-only — Claude Code's registered sub-agents are the implementation
+target.)
 
 ## Fan-out (fan-out-pattern.md) — `Agent` grant rationale
 

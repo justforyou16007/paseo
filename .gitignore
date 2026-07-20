@@ -92,3 +92,9 @@ app.json
 
 **/__pycache__/**
 *.pyc
+
+# Playwright
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/

@@ -5,23 +5,12 @@ import { createCli, runCli } from "../lib/cli.js";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const SKILLS_ROOT = path.join(REPO_ROOT, "skills");
-const CODEX_ROOT = path.join(SKILLS_ROOT, "skills-codex");
 const CATALOG = path.join(REPO_ROOT, "docs", "SKILLS_CATALOG.md");
 const README = path.join(REPO_ROOT, "README.md");
 const README_CN = path.join(REPO_ROOT, "README_CN.md");
 const AGENT_GUIDE = path.join(REPO_ROOT, "AGENT_GUIDE.md");
 const ARIS_INTRO = path.join(REPO_ROOT, "docs", "ARIS_INTRO.md");
 const ARIS_INTRO_HTML = path.join(REPO_ROOT, "docs", "ARIS_INTRO.html");
-const CODEX_README = path.join(CODEX_ROOT, "README.md");
-const CODEX_README_CN = path.join(CODEX_ROOT, "README_CN.md");
-const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
-
-const FORBIDDEN_CODEX_REVIEWER_STRINGS = [
-  "mcp__codex__codex",
-  "codex-reply",
-  "reviewer-continuation",
-  "threadId",
-];
 
 const REQUIRED_README_ANCHORS = [
   "contents",
@@ -145,24 +134,11 @@ function requireCount(
 function checkInventory(): string[] {
   const failures: string[] = [];
   const main = skillNames(SKILLS_ROOT);
-  const codex = skillNames(CODEX_ROOT);
   const catalog = catalogNames();
 
-  const missingCodex = [...main].filter((n) => !codex.has(n)).sort();
-  const extraCodex = [...codex].filter((n) => !main.has(n)).sort();
   const missingCatalog = [...main].filter((n) => !catalog.has(n)).sort();
   const extraCatalog = [...catalog].filter((n) => !main.has(n)).sort();
 
-  require_(
-    missingCodex.length === 0,
-    `missing Codex mirrors: ${missingCodex.join(", ")}`,
-    failures,
-  );
-  require_(
-    extraCodex.length === 0,
-    `unexpected Codex-only skills: ${extraCodex.join(", ")}`,
-    failures,
-  );
   require_(
     missingCatalog.length === 0,
     `missing catalog entries: ${missingCatalog.join(", ")}`,
@@ -180,8 +156,6 @@ function checkInventory(): string[] {
   const agentGuide = read(AGENT_GUIDE);
   const arisIntro = read(ARIS_INTRO);
   const arisIntroHtml = read(ARIS_INTRO_HTML);
-  const codexReadme = read(CODEX_README);
-  const codexReadmeCn = read(CODEX_README_CN);
 
   const expectedCount = main.size;
   const countChecks: [string, string, string][] = [
@@ -205,28 +179,9 @@ function checkInventory(): string[] {
     ],
     [ARIS_INTRO_HTML, arisIntroHtml, 'id="the-(?<count>\\d+)-skills"'],
     [ARIS_INTRO_HTML, arisIntroHtml, "一组 (?<count>\\d+) 个可组合的 Claude Code skills"],
-    [CODEX_README, codexReadme, "all `(?<count>\\d+)` mainline skills"],
-    [CODEX_README_CN, codexReadmeCn, "`(?<count>\\d+)`[^\\n]*skill"],
   ];
   for (const [fp, text, pattern] of countChecks) {
     requireCount(fp, text, pattern, expectedCount, failures);
-  }
-
-  for (const skillFile of globSkillMd(CODEX_ROOT)) {
-    const buf = fs.readFileSync(skillFile);
-    if (buf.subarray(0, 3).equals(BOM)) {
-      failures.push(
-        `${path.relative(REPO_ROOT, skillFile)} starts with UTF-8 BOM before frontmatter`,
-      );
-    }
-    const text = read(skillFile);
-    for (const forbidden of FORBIDDEN_CODEX_REVIEWER_STRINGS) {
-      if (text.includes(forbidden)) {
-        failures.push(
-          `${path.relative(REPO_ROOT, skillFile)} contains forbidden reviewer string: ${forbidden}`,
-        );
-      }
-    }
   }
 
   const enAnchors = readmeAnchors(readme);
@@ -290,13 +245,16 @@ function checkInventory(): string[] {
     }
   }
 
-  const watchdogPy = read(path.join(REPO_ROOT, "tools", "watchdog.py"));
+  const watchdogTs = read(path.join(REPO_ROOT, "src", "tools", "watchdog.ts"));
   const extCadence = read(path.join(SKILLS_ROOT, "shared-references", "external-cadence.md"));
-  const toolLoop = /def check_loop\b/.test(watchdogPy) && /==\s*"loop"/.test(watchdogPy);
+  const toolLoop =
+    /function checkLoop\b/.test(watchdogTs) &&
+    /"loop"/.test(watchdogTs) &&
+    /--register/.test(watchdogTs);
   const docLoop = /"type"\s*:\s*"loop"/.test(extCadence);
   require_(
     toolLoop,
-    "tools/watchdog.py must implement the loop-liveness check_loop (A2)",
+    "src/tools/watchdog.ts must implement loop-liveness checkLoop + --register accepting the 'loop' task type (A2)",
     failures,
   );
   require_(
@@ -307,19 +265,19 @@ function checkInventory(): string[] {
 
   const extc = read(path.join(SKILLS_ROOT, "shared-references", "external-cadence.md"));
   const rp = read(path.join(SKILLS_ROOT, "research-pipeline", "SKILL.md"));
-  const toolStall = fs.existsSync(path.join(REPO_ROOT, "tools", "iteration_log.py"));
+  const toolStall = fs.existsSync(path.join(REPO_ROOT, "src", "tools", "iteration-log.ts"));
   const docLadder =
     /forced structural pivot/i.test(extc) &&
     /stale_count`?\s*>=\s*2/.test(extc) &&
     /stale_count`?\s*>=\s*4/.test(extc);
   const wired =
-    rp.includes("iteration_log.py") &&
+    rp.includes("iteration-log.js") &&
     rp.includes("ITER_LOG") &&
     /"\$ITER_LOG"\s+note/.test(rp) &&
     rp.includes("pivot") &&
     rp.includes("structural") &&
     rp.includes("human");
-  require_(toolStall, "tools/iteration_log.py (stall→pivot, B) must exist", failures);
+  require_(toolStall, "src/tools/iteration-log.ts (stall→pivot, B) must exist", failures);
   require_(
     docLadder,
     "external-cadence.md must document the stall ladder with both thresholds (>=2 structural, >=4 human) (B)",
@@ -327,17 +285,17 @@ function checkInventory(): string[] {
   );
   require_(
     wired,
-    "research-pipeline/SKILL.md must actually wire iteration_log.py (resolver + `$ITER_LOG note` + pivot handling) — not just mention it (B)",
+    "research-pipeline/SKILL.md must actually wire iteration-log.js (resolver + `$ITER_LOG note` + pivot handling) — not just mention it (B)",
     failures,
   );
 
-  const rwiki = read(path.join(REPO_ROOT, "tools", "research_wiki.py"));
+  const rwiki = read(path.join(REPO_ROOT, "src", "tools", "research-wiki.ts"));
   const pchk = read(path.join(SKILLS_ROOT, "proof-checker", "SKILL.md"));
-  const toolClaim = /def add_claim\b/.test(rwiki) && /add_parser\("add_claim"/.test(rwiki);
-  const born = /python3\s+"\$WIKI_SCRIPT"\s+add_claim\b/.test(pchk);
+  const toolClaim = /\.command\("add_claim"\)/.test(rwiki) && /function\s+addClaim\b/.test(rwiki);
+  const born = /node\s+"\$WIKI_SCRIPT"\s+add_claim\b/.test(pchk);
   require_(
     toolClaim,
-    "tools/research_wiki.py must implement the add_claim claim-layer writer + its CLI",
+    "src/tools/research-wiki.ts must implement the add_claim claim-layer writer + its CLI",
     failures,
   );
   require_(
@@ -347,11 +305,12 @@ function checkInventory(): string[] {
   );
 
   const icreator = read(path.join(SKILLS_ROOT, "idea-creator", "SKILL.md"));
-  const toolIdea = /def upsert_idea\b/.test(rwiki) && /add_parser\("upsert_idea"/.test(rwiki);
-  const ideaWritten = /python3\s+"\$WIKI_SCRIPT"\s+upsert_idea\b/.test(icreator);
+  const toolIdea =
+    /\.command\("upsert_idea"\)/.test(rwiki) && /function\s+upsertIdea\b/.test(rwiki);
+  const ideaWritten = /node\s+"\$WIKI_SCRIPT"\s+upsert_idea\b/.test(icreator);
   require_(
     toolIdea,
-    "tools/research_wiki.py must implement the upsert_idea idea-layer writer + its CLI",
+    "src/tools/research-wiki.ts must implement the upsert_idea idea-layer writer + its CLI",
     failures,
   );
   require_(
@@ -361,11 +320,12 @@ function checkInventory(): string[] {
   );
 
   const r2c = read(path.join(SKILLS_ROOT, "result-to-claim", "SKILL.md"));
-  const toolExp = /def add_experiment\b/.test(rwiki) && /add_parser\("add_experiment"/.test(rwiki);
-  const expWritten = /python3\s+"\$WIKI_SCRIPT"\s+add_experiment\b/.test(r2c);
+  const toolExp =
+    /\.command\("add_experiment"\)/.test(rwiki) && /function\s+addExperiment\b/.test(rwiki);
+  const expWritten = /node\s+"\$WIKI_SCRIPT"\s+add_experiment\b/.test(r2c);
   require_(
     toolExp,
-    "tools/research_wiki.py must implement the add_experiment experiment-layer writer + its CLI",
+    "src/tools/research-wiki.ts must implement the add_experiment experiment-layer writer + its CLI",
     failures,
   );
   require_(
@@ -392,7 +352,7 @@ function main(): number {
 
 const program = createCli(
   "check-skills-inventory",
-  "Check ARIS skill inventory drift across mainline, Codex mirror, and docs.",
+  "Check ARIS skill inventory drift across mainline skills and docs.",
 );
 program.action(() => {
   process.exit(main());

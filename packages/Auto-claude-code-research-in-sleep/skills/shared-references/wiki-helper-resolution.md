@@ -80,9 +80,6 @@ because it's the most fragile.
   too much path magic, surprising failure modes.
 - ❌ A 4th layer at `~/.local/share/aris/...` or `/usr/local/share/...`
   — no installer precedent in ARIS today.
-- ❌ Adding `~/.codex/skills/research-wiki/research_wiki.py` — that's
-  Codex-side global install, lives in the **Codex** mirror's chain
-  (`skills/skills-codex/...`), not the CC chain.
 
 If a fourth layer is genuinely needed in the future, add an explicit
 env var (`ARIS_WIKI_SCRIPT=<path>`) rather than another implicit

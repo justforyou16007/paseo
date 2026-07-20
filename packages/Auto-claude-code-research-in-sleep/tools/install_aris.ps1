@@ -264,22 +264,6 @@ function New-Config {
             Title = 'ARIS Skill Scope'
         }
     }
-    return [pscustomobject]@{
-        Platform = 'codex'
-        RepoRoot = $RepoRoot
-        SourceRoot = Join-Path $RepoRoot 'skills\skills-codex'
-        SourceRelPrefix = 'skills/skills-codex'
-        TargetRel = '.agents\skills'
-        TargetRelDisplay = '.agents/skills'
-        LegacyNestedRel = '.agents\skills\aris'
-        ManifestName = 'installed-skills-codex.txt'
-        ManifestPrevName = 'installed-skills-codex.txt.prev'
-        LockName = '.install-codex.lock.d'
-        DocName = 'AGENTS.md'
-        BlockBegin = '<!-- ARIS-CODEX:BEGIN -->'
-        BlockEnd = '<!-- ARIS-CODEX:END -->'
-        Title = 'ARIS Codex Skill Scope'
-    }
 }
 
 function Test-SafeName {
@@ -638,7 +622,7 @@ function Remove-ToolsJunction {
     if (-not (Test-LinkItem $item)) { return }
     $currentTarget = Get-LinkTarget $linkPath
     if (-not (Same-Path $currentTarget $expectedTarget)) { return }
-    foreach ($manifestName in @('installed-skills.txt', 'installed-skills-codex.txt')) {
+    foreach ($manifestName in @('installed-skills.txt')) {
         if ($manifestName -eq $CurrentManifestName) { continue }
         $otherManifestPath = Join-Path $ArisDir $manifestName
         if (-not (Test-Path -LiteralPath $otherManifestPath -PathType Leaf)) { continue }

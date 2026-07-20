@@ -26,11 +26,8 @@ ARIS is a research harness: composable Markdown skills that orchestrate the ML r
 | Platform                                                | Skill root                            | Notes                                                           |
 | ------------------------------------------------------- | ------------------------------------- | --------------------------------------------------------------- |
 | Claude Code / Cursor / Trae / Antigravity / Copilot CLI | `skills/<name>/SKILL.md`              | Mainline skills; native `SKILL.md` invocation                   |
-| Codex CLI                                               | `skills/skills-codex/<name>/SKILL.md` | Codex mirror; uses `spawn_agent` instead of `mcp__codex__codex` |
-| Codex + Claude-review                                   | `skills/skills-codex-claude-review/`  | Overlay on top of `skills-codex/`                               |
-| Codex + Gemini-review                                   | `skills/skills-codex-gemini-review/`  | Same pattern, Gemini reviewer                                   |
 
-**Full catalog**: [`docs/SKILLS_CATALOG.md`](docs/SKILLS_CATALOG.md) — **80 skills**, grouped by role.
+**Full catalog**: [`docs/SKILLS_CATALOG.md`](docs/SKILLS_CATALOG.md) — **82 skills**, grouped by role.
 
 Invocation syntax is identical across hosts:
 

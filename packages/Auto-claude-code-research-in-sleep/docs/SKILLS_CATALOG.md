@@ -1,6 +1,6 @@
 # ARIS Skills Catalog
 
-Every skill that ships with ARIS, grouped by role. **80 skills** as of the
+Every skill that ships with ARIS, grouped by role. **82 skills** as of the
 latest update; new skills land via PR and get added to the table below.
 
 - Each `Skill` link goes to the canonical `SKILL.md` (the LLM-readable spec).
@@ -10,11 +10,7 @@ latest update; new skills land via PR and get added to the table below.
   API, Modal account, LaTeX toolchain, etc.). `None` means it works out of
   the box on a standard install.
 
-> **Codex CLI mirror:** every skill below has a parallel implementation
-> under [`skills/skills-codex/`](../skills/skills-codex/) for Codex CLI users.
-> The mirror swaps the Codex-MCP reviewer path for Codex-native
-> `spawn_agent` + `send_input`. SKILL semantics are otherwise identical;
-> the table below tracks the main-tree canonical files.
+> The table below tracks the main-tree canonical files.
 
 ---
 
@@ -38,6 +34,7 @@ End-to-end pipelines that chain many sub-skills. Most users start here.
 | [`/research-refine-pipeline`](../skills/research-refine-pipeline/SKILL.md) | Sub-pipeline used by `/idea-discovery` — refine method + plan experiments in one chain                                                                                                                                               | Codex MCP                           |
 | [`/patent-pipeline`](../skills/patent-pipeline/SKILL.md)                   | Full patent drafting — invention → claims → spec → jurisdiction format (CN / US / EP)                                                                                                                                                | Codex MCP                           |
 | [`/dse-loop`](../skills/dse-loop/SKILL.md)                                 | Autonomous design-space exploration loop for computer architecture / EDA — run → analyze → tune → iterate until objective met                                                                                                        | Domain-specific tools               |
+| [`/auto-research-loop`](../skills/auto-research-loop/SKILL.md)             | Closed-loop research driver — reproduce baseline → review → diagnose → experiment → review → loop until metric target met (insertable as W1–W6 stage when `AUTO_RESEARCH_ITERATIONS > 0`)                                          | Codex MCP, research-wiki            |
 | [`/meta-optimize`](../skills/meta-optimize/SKILL.md)                       | **Workflow M** — analyze ARIS usage logs and propose SKILL.md / prompt / default-parameter improvements (outer-loop self-evolution)                                                                                                  | Codex MCP, hook logging             |
 | [`/meta-apply`](../skills/meta-apply/SKILL.md)                             | **Privileged landing gate** — the only skill allowed to mutate the skill corpus; lands `/meta-optimize` patches the human approved, after a fresh cross-model jury PASS on the staged diff (read-only producer ≠ privileged applier) | Codex MCP, human-in-loop            |
 
@@ -166,6 +163,7 @@ Cross-cutting infrastructure used by other skills or run on demand.
 | [`/overleaf-sync`](../skills/overleaf-sync/SKILL.md)               | Two-way sync between local paper directory and Overleaf project via Overleaf Git bridge (Premium) — `setup` / `pull` (diff protocol) / `push` (confirmation gate) / `status`                                | Overleaf Premium + macOS Keychain        |
 | [`/feishu-notify`](../skills/feishu-notify/SKILL.md)               | Send notifications to Feishu / Lark — push-only (webhook) or interactive (bidirectional) modes. Off by default                                                                                              | Feishu webhook URL                       |
 | [`/interview-cheatsheet`](../skills/interview-cheatsheet/SKILL.md) | Generate long-form Chinese ML / LLM interview-prep cheat sheets with formulas, code, Q&A, review, and HTML output                                                                                           | Codex MCP, Python                        |
+| [`/research-setup`](../skills/research-setup/SKILL.md)           | Interactive Q&A setup wizard for new ARIS research projects — bootstraps CLAUDE.md, RESEARCH_BRIEF.md, research-wiki, and experiment environment; bilingual (en/zh), resumable                                                | None (pure Markdown + TS helpers)       |
 
 ---
 

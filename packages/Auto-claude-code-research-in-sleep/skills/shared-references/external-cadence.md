@@ -243,9 +243,12 @@ A `/loop` or `CronCreate` heartbeat is parasitic on a living session; if it dies
    `last_seen` file) so its mtime advances each tick _before_ any work that might hang.
 2. **Register it with the watchdog** at startup, and **unregister on completion**:
    ```bash
-   python3 tools/watchdog.py --register      '{"name":"<run_id>","type":"loop","state_file":"<the heartbeat file>","stale_after_seconds":21600}'
-   # on completion: python3 tools/watchdog.py --unregister "<run_id>"
+   node "$WATCHDOG" --register      '{"name":"<run_id>","type":"loop","state_file":"<the heartbeat file>","stale_after_seconds":21600}'
+   # on completion: node "$WATCHDOG" --unregister "<run_id>"
    ```
+   where `WATCHDOG` resolves through the canonical chain (integration-contract §2):
+   `[ -f "$WATCHDOG" ] || WATCHDOG="dist/tools/watchdog.js"`
+   `[ -f "$WATCHDOG" ] || WATCHDOG="${ARIS_REPO:-}/dist/tools/watchdog.js"`.
    `stale_after_seconds` is the loop's OWN tolerance — set it to **comfortably exceed
    the longest single iteration/operation** (≈ a few × the tick interval), **never** the
    watchdog poll interval. The watchdog writes **STALE** to `summary.txt` + `alerts.log`

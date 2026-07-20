@@ -77,11 +77,7 @@ function convertFile(src: string, dst: string): boolean {
 
 function findSkills(sourceDir: string): string[] {
   const skills: string[] = [];
-  const excludeDirs = new Set([
-    "skills-codex",
-    "skills-codex-claude-review",
-    "skills-codex-gemini-review",
-  ]);
+  const excludeDirs = new Set<string>();
 
   function walk(dir: string): void {
     if (!fs.existsSync(dir)) return;

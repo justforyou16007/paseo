@@ -70,8 +70,6 @@ For environments where symlinks don't work:
 # Global install
 mkdir -p ~/.copilot/skills
 cp -r ~/aris_repo/skills/* ~/.copilot/skills/
-# Remove Codex-specific mirrors (not needed for Copilot CLI)
-rm -rf ~/.copilot/skills/skills-codex*
 
 # Update later
 bash ~/aris_repo/tools/smart_update_copilot.sh --apply

@@ -39,9 +39,6 @@ def make_minimal_aris_repo(root: Path) -> Path:
     (repo / "skills" / "shared-references").mkdir(parents=True, exist_ok=True)
     (repo / "skills" / "shared-references" / "reviewer-routing.md").write_text("routing\n")
     (repo / "skills" / "shared-references" / "effort-contract.md").write_text("effort\n")
-    # Codex-specific packages (should be EXCLUDED from Copilot install)
-    make_skill(repo / "skills" / "skills-codex" / "alpha", "# codex alpha\n")
-    make_skill(repo / "skills" / "skills-codex-claude-review" / "alpha", "# codex-claude alpha\n")
     # AGENT_GUIDE.md for repo discovery
     (repo / "AGENT_GUIDE.md").write_text("# Agent Guide\n")
     return repo
@@ -114,33 +111,6 @@ def test_install_copilot_creates_github_skills_symlinks(tmp_path: Path) -> None:
     # Verify shared-references is included
     assert (project / ".github" / "skills" / "shared-references").is_symlink()
     assert (project / ".github" / "skills" / "shared-references").resolve() == (repo / "skills" / "shared-references")
-
-    # Verify Codex-specific packages are NOT installed
-    assert not (project / ".github" / "skills" / "skills-codex").exists()
-    assert not (project / ".github" / "skills" / "skills-codex-claude-review").exists()
-
-
-def test_install_copilot_excludes_codex_packages(tmp_path: Path) -> None:
-    """Codex-specific skill mirrors must not appear in Copilot install."""
-    repo = make_minimal_aris_repo(tmp_path)
-    project = tmp_path / "project"
-    project.mkdir()
-
-    run(
-        [
-            "bash",
-            str(INSTALL_SCRIPT),
-            str(project),
-            "--aris-repo",
-            str(repo),
-            "--quiet",
-        ]
-    )
-
-    skills_dir = project / ".github" / "skills"
-    installed_names = [p.name for p in skills_dir.iterdir()]
-    for codex_name in ["skills-codex", "skills-codex-claude-review", "skills-codex-gemini-review"]:
-        assert codex_name not in installed_names
 
 
 def test_install_copilot_reconcile_adds_and_removes(tmp_path: Path) -> None:

@@ -50,11 +50,6 @@ warn() { echo "warning: $*" >&2; }
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BASE_UPSTREAM="$REPO_ROOT/skills"
 
-# Directories to skip when scanning upstream skills/.
-# This pattern MUST stay in sync with install_aris_copilot.sh SKIP_DIRS.
-# shared-references is NOT skipped here -- it's a valid update target for copy installs.
-SKIP_DIRS_PATTERN="^(skills-codex|skills-codex-claude-review|skills-codex-gemini-review)$"
-
 # Baseline checksum file for hash-based customization detection
 BASELINE_FILE_NAME=".aris-copilot-baselines.sha256"
 
@@ -145,11 +140,6 @@ UP_TO_DATE=0
 for d in "$UPSTREAM"/*/; do
     [[ -d "$d" ]] || continue
     name="$(basename "$d")"
-
-    # Skip Codex-specific packages
-    if [[ "$name" =~ $SKIP_DIRS_PATTERN ]]; then
-        continue
-    fi
 
     # Must have SKILL.md or be shared-references
     if [[ ! -f "$d/SKILL.md" && "$name" != "shared-references" ]]; then

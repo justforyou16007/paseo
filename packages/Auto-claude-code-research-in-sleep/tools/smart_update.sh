@@ -254,7 +254,6 @@ declare -a UPSTREAM_NAMES=()
 # Check each upstream skill
 for skill_dir in "$UPSTREAM_DIR"/*/; do
     skill_name=$(basename "$skill_dir")
-    [[ "$skill_name" == "skills-codex" ]] && continue  # skip codex mirror
     [[ "$skill_name" == "shared-references" ]] && continue  # handled separately
 
     UPSTREAM_NAMES+=("$skill_name")

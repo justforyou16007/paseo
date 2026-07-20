@@ -188,9 +188,6 @@ class ChainTest(unittest.TestCase):
         skills_dir = REPO_ROOT / "skills"
         offenders = []
         for path in skills_dir.rglob("SKILL.md"):
-            # Skip Codex mirror — it has its own resolution chain.
-            if "skills-codex" in path.parts:
-                continue
             for lineno, line in enumerate(path.read_text().splitlines(), 1):
                 # Allow `tools/research_wiki.py` in non-bash prose
                 # (the chain itself, doc explanations, etc.) by requiring

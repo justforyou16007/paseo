@@ -20,10 +20,7 @@
 | **方案 C.1**  | Claude / 任意 CC 兼容                           | OpenRouter 固定模型 via `llm-chat`       |       可选        |        否         | [OPENROUTER_GUIDE_CN](docs/OPENROUTER_GUIDE_CN.md)                   |
 | **方案 D**    | Kimi-K2.5 / Qwen3.5+                            | GLM-5 / MiniMax-M3                       |        否         |        否         | [ALI_CODING_PLAN_GUIDE](docs/ALI_CODING_PLAN_GUIDE.md)               |
 | **方案 E** 🆓 | DeepSeek-V3.1 / Qwen3-Coder                     | DeepSeek-R1 / Qwen3-235B                 |        否         |        否         | [MODELSCOPE_GUIDE](docs/MODELSCOPE_GUIDE.md)                         |
-| **方案 F**    | Codex CLI (GPT-5.5)                             | Codex `spawn_agent` (GPT-5.5)            |        否         |        是         | [skills-codex/](skills/skills-codex/)                                |
-| **方案 G** 🆕 | Codex CLI                                       | Claude Code CLI（`claude-review` MCP）   |       否\*        |       否\*        | [CODEX_CLAUDE_REVIEW_GUIDE_CN](docs/CODEX_CLAUDE_REVIEW_GUIDE_CN.md) |
 | **方案 H** 🆕 | Antigravity（Claude Opus 4.6 / Gemini 3.1 Pro） | GPT-5.5（Codex MCP）或 llm-chat          |        否         |       可选        | [ANTIGRAVITY_ADAPTATION_CN](docs/ANTIGRAVITY_ADAPTATION_CN.md)       |
-| **方案 I** 🆕 | Codex CLI                                       | Gemini direct API（`gemini-review` MCP） |        否         |        否         | [CODEX_GEMINI_REVIEW_GUIDE_CN](docs/CODEX_GEMINI_REVIEW_GUIDE_CN.md) |
 
 </details>
 
@@ -34,13 +31,10 @@
 - **方案 B** 或 **方案 E** —— 不用 Claude、不用 OpenAI API（方案 E 通过 ModelScope 免费）。
 - **方案 C** 或 **方案 D** —— OpenAI 兼容 API 自由混搭（方案 D 用阿里一个 Key 跑双端）。
 - **方案 C.1** —— [OpenRouter](docs/OPENROUTER_GUIDE_CN.md) 作为 opt-in 的 `llm-chat` 审稿后端：一个 Key 用多家模型;请固定具体审稿模型,并确保与执行者来自不同模型家族。
-- **方案 G** 或 **方案 I** —— 保留 Codex 作为执行者，只换审稿人（Claude 或 Gemini）。
 - **方案 H** —— 用 Antigravity 作为执行器（Claude Opus 4.6 或 Gemini 3.1 Pro），GPT-5.5 或任意 `llm-chat` 审稿。
 
-\* 方案 G 通常依赖本地 Codex CLI 和 Claude Code CLI 的登录态；不强制要求 API key。
-
 <details>
-<summary><b>展开方案 C/D/E/G/H/I 的提供商细节</b></summary>
+<summary><b>展开方案 C/D/E/H 的提供商细节</b></summary>
 
 **方案 C** 已适配的提供商：GLM（Z.ai）、Kimi（Moonshot）、LongCat（美团）作为执行器；DeepSeek、MiniMax 作为审查器。任何 OpenAI 兼容 API 理论上均可通过通用 [`llm-chat`](mcp-servers/llm-chat/) MCP 服务器接入。
 
@@ -48,11 +42,8 @@
 
 **方案 E** 使用 [ModelScope（魔搭社区）](https://www.modelscope.cn/)——**免费**（2000 次/天），一个 Key，无自动化限制。
 
-**方案 G** 保持 Codex 作为执行者，但把审稿人切换成通过本地 `claude-review` MCP bridge 暴露出来的 Claude Code CLI，并用异步轮询处理长论文 / 长 review prompt。
-
 **方案 H** 使用 [Google Antigravity](https://antigravity.google/) 作为执行器，原生支持 SKILL.md——可选 Claude Opus 4.6（Thinking）或 Gemini 3.1 Pro（high）作为执行模型。
 
-**方案 I** 保持 Codex 作为执行者，只增加一层很薄的 `skills-codex-gemini-review` overlay，并通过本地 `gemini-review` MCP bridge 把 reviewer-aware 预定义 skills 默认接到 direct Gemini API。这是与现有 Codex+Claude 审稿路径最接近的 Gemini 版本，同时 skill 改动最少，而且连 poster PNG 审查也复用了同一个 bridge。免费层可用性、限速和数据处理条款仍以 Google 当前政策为准。
 
 </details>
 

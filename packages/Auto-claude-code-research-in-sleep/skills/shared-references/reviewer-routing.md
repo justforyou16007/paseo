@@ -237,8 +237,6 @@ The following skills are wired for manual review (Claude Code only):
 
 > `/research-lit` supports `oracle-pro` only; manual review is not wired because the skill has no reviewer call blocks.
 
-> **Platform note**: Manual review requires MCP tools (available only in Claude Code). Mirrored skill packs under `skills/skills-codex/` and `skills/skills-codex-*-review/` do NOT include manual-review wiring — they target Codex CLI and other platforms that lack MCP support. Oracle-pro support in those mirrors is unaffected.
-
 ### Nightmare mode (Codex-only)
 
 Manual review supports medium/hard MCP-style review. Codex-exec nightmare mode is Codex-only and must fail closed when reviewer is manual.
@@ -268,8 +266,7 @@ If Codex MCP is broken in your setup, prefer in order:
 
 1. Use the paseo codex agent path (default) — `mcp__paseo__create_agent` with `provider:"codex/gpt-5.5"`, `modeId:"full-access"`, `thinkingOptionId:"xhigh"`.
 2. Fix the MCP registration: `claude mcp add codex -s user -- codex mcp-server`, then `/mcp` in-session to (re)connect.
-3. Codex-CLI-as-executor: use the native mirror pack [`skills/skills-codex/`](../skills-codex/) — designed to run inside Codex CLI without Claude-side MCP.
-4. One-shot `codex exec` only for skills whose review is a single call with no follow-up reply.
+3. One-shot `codex exec` only for skills whose review is a single call with no follow-up reply.
 
 ### Future work
 

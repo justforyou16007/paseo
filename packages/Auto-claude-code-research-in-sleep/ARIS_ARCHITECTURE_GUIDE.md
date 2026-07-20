@@ -271,16 +271,13 @@ project/
 
 ARIS 在以下平台均可运行,核心 skill 不变:
 
-| 平台        | Skill 根目录                  | 评审机制        | 特殊适配          |
-| ----------- | ----------------------------- | --------------- | ----------------- |
-| Claude Code | `skills/<name>/`              | MCP (Codex MCP) | 原生,最成熟       |
-| Codex CLI   | `skills/skills-codex/<name>/` | `spawn_agent`   | 完整镜像          |
-| Cursor      | `skills/<name>/`              | MCP             | `@skills/` 引用   |
-| Trae        | `skills/<name>/`              | MCP             | 自然语言发现      |
-| Antigravity | `skills/<name>/`              | MCP             | `— reviewer: agy` |
-| Copilot CLI | `skills/<name>/`              | MCP             | 无镜像,原生支持   |
-
-> **新功能检查**:如果你的功能涉及平台特定代码,请确认是否需要同时更新 `skills/`(主线路)和 `skills/skills-codex/`(Codex 镜像)。
+| 平台        | Skill 根目录     | 评审机制        | 特殊适配          |
+| ----------- | ---------------- | --------------- | ----------------- |
+| Claude Code | `skills/<name>/` | MCP (Codex MCP) | 原生,最成熟       |
+| Cursor      | `skills/<name>/` | MCP             | `@skills/` 引用   |
+| Trae        | `skills/<name>/` | MCP             | 自然语言发现      |
+| Antigravity | `skills/<name>/` | MCP             | `— reviewer: agy` |
+| Copilot CLI | `skills/<name>/` | MCP             | 无镜像,原生支持   |
 
 ---
 
@@ -310,7 +307,6 @@ ARIS 在以下平台均可运行,核心 skill 不变:
 - [ ] 我的功能是否接受 `— effort:` 和 `— assurance:` 参数?
 - [ ] 我的功能是否输出到正确舞台目录(`idea-stage/`/`refine-logs/`/`review-stage/`/`paper/`)?
 - [ ] 我的功能是否遵循输出版本化(时间戳 + 固定名)?
-- [ ] 我的功能是否需要在多个平台运行?是否需要镜像到 `skills/skills-codex/`?
 - [ ] 我的功能涉及的评审调用是否保存 trace 到 `.aris/traces/`?
 - [ ] 我的功能是否符合 `paseo-subagent-dispatch.md` / `paseo-reviewer-dispatch.md` §"Global Agent Rules" 的 Rule 1–4(Rule 1:一 agent = 一 skill;Rule 2:push 模型父子工作流;Rule 3:内容空白的握手;Rule 4:仅 Paseo MCP)?
 

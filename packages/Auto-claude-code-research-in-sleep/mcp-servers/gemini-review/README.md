@@ -155,9 +155,6 @@ When complete, `review_status` returns the same reviewer payload fields as the s
 
 ## Provenance and References
 
-- Upstream interaction pattern: ARIS `claude-review` bridge and `skills-codex-claude-review` in `Auto-claude-code-research-in-sleep`
-  - <https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/tree/main/mcp-servers/claude-review>
-  - <https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/tree/main/skills/skills-codex-claude-review>
 - Gemini backends used by this bridge:
   - Official Gemini API docs: <https://ai.google.dev/api>
   - Official Gemini CLI: <https://github.com/google-gemini/gemini-cli>

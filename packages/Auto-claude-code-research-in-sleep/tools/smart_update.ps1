@@ -202,7 +202,7 @@ function Compare-SkillDirs {
     # Check each upstream skill
     foreach ($skillDir in Get-ChildItem -Path $SrcDir -Directory) {
         $skillName = $skillDir.Name
-        if ($skillName -eq 'skills-codex' -or $skillName -eq 'shared-references') { continue }
+        if ($skillName -eq 'shared-references') { continue }
 
         [void]$result.UpstreamNames.Add($skillName)
 
