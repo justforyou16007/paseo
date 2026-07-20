@@ -88,17 +88,41 @@ When `DEBUG_MODE=true`, every helper failure triggers the debug halt protocol pe
 
 ### Step 2 — Round type selection
 
-| iteration | Round type | Sub-skill dispatched in Step 3 |
+| iteration | Round type | What Step 3 + Step 4 dispatch |
 |---|---|---|
-| 1 (0-indexed) | baseline reproduction | `/run-experiment` with `idea-stage/IDEA_REPORT.md` as input |
-| 2 (0-indexed) | baseline review + problem diagnosis | `/research-review` on the baseline results + `/result-to-claim` for any claims in `IDEA_REPORT.md` |
-| ≥ 3 (0-indexed) | hypothesis / experiment / review | loop body: `/idea-creator` (multi-branch) → `/run-experiment` for the top idea → `/result-to-claim` |
+| 1 (1-indexed) | baseline reproduction | Step 3 dispatch `/experiment-bridge refine-logs/EXPERIMENT_PLAN.md`. Step 4 records the experiments to research-wiki. |
+| 2 | baseline review + kill-argument attack | Step 3 dispatch `/research-review` + `/kill-argument` on the baseline results. Step 4 derives a mini `EXPERIMENT_PLAN-diag-iter-2.md` from `kill-arg-iter-2.json` `still_unresolved`. |
+| 3+ | hypothesis → experiment → review loop | Step 3 dispatch `/kill-argument` on the previous round's results → derive `EXPERIMENT_PLAN-diag-iter-N.md` → dispatch `/research-review` for convergence → `/experiment-bridge` runs the plan. Step 4 records + re-judges. |
 
-The first iteration is a baseline reproduction (the current "Stage 2: Experiment Bridge" of `research-pipeline`); the second iteration is the baseline review (the current "Stage 3: Auto Review"); iteration 3+ is the new closed-loop body.
+The first iteration is the existing `experiment-bridge` (W1.5 equivalent). From iteration 2 onward, the loop reuses the same plan-driven pipeline: `kill-argument` finds problems, the orchestrator translates them into mini plans, `research-review` converges the plans, and `experiment-bridge` runs the experiments.
 
-### Step 3 — Dispatch sub-skill(s) as a paseo sub-agent
+### Step 3 — Diagnose and dispatch
 
-All sub-skill dispatch follows `shared-references/paseo-subagent-dispatch.md` Rule 1 (one agent = one skill) and Rule 4 (no in-process `Skill` fallbacks). For each sub-skill:
+This step has two parts. Part (a) is "find the problems"; part (b) is "translate them into an EXPERIMENT_PLAN and run it". Both reuse existing skills — no new schema, no new tool.
+
+**Step 3a — Kill-argument attack on the previous round's results** (iteration ≥ 2)
+
+Dispatch `/kill-argument` (Paseo codex sub-agent per `paseo-subagent-dispatch.md`). Inputs: the previous round's `refine-logs/EXPERIMENT_TRACKER.md` + `refine-logs/EXPERIMENT_RESULTS.md` + the latest `research-iteration/auto-research-loop-log.md`. Output: `research-iteration/kill-arg-iter-N.json`:
+```json
+{
+  "kill_arg": "<200-word strongest rejection>",
+  "counter_argument": "<200-word defense>",
+  "still_unresolved": ["issue 1", "issue 2", "issue 3"]
+}
+```
+
+`still_unresolved` is the load-bearing field — the problems this round will design experiments to test.
+
+**Step 3b — Translate problems into a mini plan and run it** (iteration ≥ 2)
+
+For iteration 1, skip 3a/3b and dispatch `/experiment-bridge` directly with the project's existing `refine-logs/EXPERIMENT_PLAN.md` (today's behavior). For iteration ≥ 2:
+
+1. **Orchestrator LLM pass** — read `kill-arg-iter-N.json`'s `still_unresolved`. For each unresolved issue, draft a `claim:diag-iter-N-<idx>` with: failure mode, evidence (cite `EXPERIMENT_TRACKER.md` row ids), root-cause hypothesis, minimal experiment, success threshold.
+2. **Write `refine-logs/EXPERIMENT_PLAN-diag-iter-N.md`** — a plan containing ONLY the diagnostic milestones (no `sanity/baseline/main/ablation` headers — those are for a full run, not for verification experiments). Each milestone has: `id`, `claim_id`, `modification` (text), `metric_to_observe`, `success_threshold`. The format is the same `EXPERIMENT_PLAN.md` schema that `/experiment-bridge` already accepts; we're just making a smaller file.
+3. **Dispatch `/research-review`** on the mini plan. The research-review skill's Step 4 convergence logic ("A concrete experiment plan is established") gives us a cross-model verdict on the plan quality. This is the gate before we burn GPU hours.
+4. **Dispatch `/experiment-bridge "refine-logs/EXPERIMENT_PLAN-diag-iter-N.md"`** to run the diagnostic experiments. `experiment-bridge` will dispatch `/run-experiment` or `/experiment-queue` per its own auto-routing rule. It will write appended rows to `refine-logs/EXPERIMENT_TRACKER.md` and `refine-logs/EXPERIMENT_RESULTS.md`.
+
+All sub-skill dispatches follow `shared-references/paseo-subagent-dispatch.md` Rule 1 (one agent = one skill) and Rule 4 (no in-process `Skill` fallbacks):
 
 ```bash
 PROMPT=$(bash "$RENDER" --phase "<sub-skill>" --run-id "$RUN_ID" --root "$ROOT" \
@@ -110,6 +134,8 @@ Then `mcp__paseo__create_agent` with `notifyOnFinish: true`. The parent reacts t
 When `HUMAN_CHECKPOINT=true`, before dispatching the next round, print the latest iteration's findings (from `LOG_FILE`) and wait for `go` / `skip` / `stop`.
 
 ### Step 4 — Evidence collection + result-to-claim re-judge
+
+For every new experiment row that `experiment-bridge` appended to `EXPERIMENT_TRACKER.md`:
 
 For every new experiment the sub-skill produced:
 
