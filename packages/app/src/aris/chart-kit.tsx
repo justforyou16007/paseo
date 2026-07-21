@@ -1,7 +1,15 @@
 /* eslint-disable jsx-no-new-object-as-prop -- ARIS visualization views use inline styles for rapid prototyping */
-import React from "react";
+import { useMemo } from "react";
 import { View, Text } from "react-native";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { ChartBar } from "lucide-react-native";
 import Svg, { Rect, Path, G, Text as SvgText } from "react-native-svg";
+import type { Theme } from "@/styles/theme";
+
+const ThemedChartBar = withUnistyles(ChartBar);
+const foregroundMutedColorMapping = (theme: Theme) => ({
+  color: theme.colors.foregroundMuted,
+});
 
 export interface ChartKitBarProps {
   data: { label: string; value: number; color?: string }[];
@@ -77,21 +85,21 @@ export interface ChartKitLegendProps {
   items: { label: string; color: string }[];
 }
 
+function ChartKitLegendItem({ item }: { item: { label: string; color: string } }) {
+  const dotStyle = useMemo(() => [styles.legendDot, { backgroundColor: item.color }], [item.color]);
+  return (
+    <View style={styles.legendChip}>
+      <View style={dotStyle} />
+      <Text style={styles.legendLabel}>{item.label}</Text>
+    </View>
+  );
+}
+
 export function ChartKitLegend({ items }: ChartKitLegendProps) {
   return (
-    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12, marginTop: 8 }}>
+    <View style={styles.legendRow}>
       {items.map((item) => (
-        <View key={item.label} style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-          <View
-            style={{
-              width: 10,
-              height: 10,
-              borderRadius: 5,
-              backgroundColor: item.color,
-            }}
-          />
-          <Text style={{ fontSize: 12, color: "#64748b" }}>{item.label}</Text>
-        </View>
+        <ChartKitLegendItem key={item.label} item={item} />
       ))}
     </View>
   );
@@ -99,8 +107,57 @@ export function ChartKitLegend({ items }: ChartKitLegendProps) {
 
 export function ChartKitEmpty({ message }: { message: string }) {
   return (
-    <View style={{ alignItems: "center", justifyContent: "center", padding: 24 }}>
-      <Text style={{ fontSize: 14, color: "#94a3b8", textAlign: "center" }}>{message}</Text>
+    <View style={styles.emptyBox}>
+      <View style={styles.emptyIconWrap}>
+        <ThemedChartBar size={18} strokeWidth={1.75} uniProps={foregroundMutedColorMapping} />
+      </View>
+      <Text style={styles.emptyMessage}>{message}</Text>
     </View>
   );
 }
+
+const styles = StyleSheet.create((theme) => ({
+  legendRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: theme.spacing[2],
+    marginTop: theme.spacing[2],
+  },
+  legendChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1.5],
+  },
+  legendDot: {
+    width: 8,
+    height: 8,
+    borderRadius: theme.borderRadius.full,
+  },
+  legendLabel: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+  },
+  emptyBox: {
+    alignItems: "center",
+    justifyContent: "center",
+    gap: theme.spacing[2],
+    paddingVertical: theme.spacing[6],
+    paddingHorizontal: theme.spacing[6],
+    borderRadius: theme.borderRadius.lg,
+    backgroundColor: theme.colors.surface1,
+  },
+  emptyIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface2,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  emptyMessage: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+    textAlign: "center",
+    maxWidth: 360,
+  },
+}));

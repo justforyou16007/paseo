@@ -2109,6 +2109,14 @@ export const ArisExperimentsReadRequestSchema = z.object({
   experimentId: z.string().optional(),
 });
 
+export const ArisWikiEntityReadRequestSchema = z.object({
+  type: z.literal("aris.wiki.entity.read"),
+  requestId: z.string(),
+  cwd: z.string(),
+  entityType: z.string(),
+  entityId: z.string(),
+});
+
 export const ArisRunsListRequestSchema = z.object({
   type: z.literal("aris.runs.list.request"),
   requestId: z.string(),
@@ -2293,6 +2301,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ArisRunReadRequestSchema,
   ArisIterationsReadRequestSchema,
   ArisWikiReadRequestSchema,
+  ArisWikiEntityReadRequestSchema,
   ArisExperimentsReadRequestSchema,
   ArisReviewReadRequestSchema,
   ArisEventsReadRequestSchema,
@@ -4525,6 +4534,26 @@ export const ArisWikiReadResponseSchema = z.object({
   ]),
 });
 
+export const ArisWikiEntityReadResponseSchema = z.object({
+  type: z.literal("aris.wiki.entity.read.response"),
+  payload: z.discriminatedUnion("ok", [
+    z.object({
+      requestId: z.string(),
+      ok: z.literal(true),
+      content: z.string(),
+      entityType: z.string(),
+      entityId: z.string(),
+    }),
+    z.object({
+      requestId: z.string(),
+      ok: z.literal(false),
+      entityType: z.string(),
+      entityId: z.string(),
+      error: z.string(),
+    }),
+  ]),
+});
+
 export const ArisExperimentsReadResponseSchema = z.object({
   type: z.literal("aris.experiments.read.response"),
   payload: z.discriminatedUnion("ok", [
@@ -4754,6 +4783,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ArisRunReadResponseSchema,
   ArisIterationsReadResponseSchema,
   ArisWikiReadResponseSchema,
+  ArisWikiEntityReadResponseSchema,
   ArisExperimentsReadResponseSchema,
   ArisReviewReadResponseSchema,
   ArisEventsReadResponseSchema,
@@ -4919,6 +4949,8 @@ export type ArisMetricSeries = z.infer<typeof ArisMetricSeriesSchema>;
 export type ArisExperimentRun = z.infer<typeof ArisExperimentRunSchema>;
 export type ArisWikiReadRequest = z.infer<typeof ArisWikiReadRequestSchema>;
 export type ArisWikiReadResponse = z.infer<typeof ArisWikiReadResponseSchema>;
+export type ArisWikiEntityReadRequest = z.infer<typeof ArisWikiEntityReadRequestSchema>;
+export type ArisWikiEntityReadResponse = z.infer<typeof ArisWikiEntityReadResponseSchema>;
 export type ArisExperimentsReadRequest = z.infer<typeof ArisExperimentsReadRequestSchema>;
 export type ArisExperimentsReadResponse = z.infer<typeof ArisExperimentsReadResponseSchema>;
 export type ArisReviewState = z.infer<typeof ArisReviewStateSchema>;

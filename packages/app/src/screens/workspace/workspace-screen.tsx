@@ -357,6 +357,9 @@ function getFallbackTabOptionLabel(
   if (tab.target.kind === "aris-artifact") {
     return `ARIS ${tab.target.stageId}`;
   }
+  if (tab.target.kind === "aris-wiki-entity") {
+    return `${tab.target.entityType} · ${tab.target.entityId}`;
+  }
   return labels.agent;
 }
 
@@ -390,6 +393,9 @@ function getFallbackTabOptionDescription(
   }
   if (tab.target.kind === "aris-artifact") {
     return `ARIS ${tab.target.stageId}`;
+  }
+  if (tab.target.kind === "aris-wiki-entity") {
+    return `ARIS wiki · ${tab.target.entityType}`;
   }
   return tab.target.path;
 }

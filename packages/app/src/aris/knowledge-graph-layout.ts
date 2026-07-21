@@ -45,10 +45,177 @@ export interface KnowledgeGraphLayoutInput {
   nodes?: KnowledgeGraphNodeInput[];
 }
 
+const PAD = 50;
+const REPULSION = 8000;
+const ATTRACTION = 0.004;
+const GROUP_PULL = 0.015;
+const DAMPING = 0.82;
+const ITERATIONS = 200;
+const MIN_DIST = 90;
+
+function seededRandom(seed: number): () => number {
+  let s = seed;
+  return () => {
+    s = (s * 16807 + 0) % 2147483647;
+    return (s - 1) / 2147483646;
+  };
+}
+
+function hashString(str: string): number {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h);
+}
+
+interface SimState {
+  n: number;
+  posX: number[];
+  posY: number[];
+  velX: number[];
+  velY: number[];
+  ids: string[];
+  idIndex: Map<string, number>;
+  groupById: Map<string, string>;
+  width: number;
+  height: number;
+}
+
+function applyRepulsion(state: SimState, fx: Float64Array, fy: Float64Array): void {
+  const { n, posX, posY } = state;
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const dx = posX[i] - posX[j];
+      const dy = posY[i] - posY[j];
+      let dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < MIN_DIST) {
+        dist = MIN_DIST;
+      }
+      const force = REPULSION / (dist * dist);
+      const fdx = (dx / dist) * force;
+      const fdy = (dy / dist) * force;
+      fx[i] += fdx;
+      fy[i] += fdy;
+      fx[j] -= fdx;
+      fy[j] -= fdy;
+    }
+  }
+}
+
+function applyEdgeAttraction(
+  state: SimState,
+  edges: KnowledgeGraphEdgeInput[],
+  fx: Float64Array,
+  fy: Float64Array,
+): void {
+  const { posX, posY, idIndex } = state;
+  for (const edge of edges) {
+    const si = idIndex.get(edge.source);
+    const ti = idIndex.get(edge.target);
+    if (si === undefined || ti === undefined) {
+      continue;
+    }
+    const dx = posX[ti] - posX[si];
+    const dy = posY[ti] - posY[si];
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < 1) {
+      continue;
+    }
+    const force = ATTRACTION * dist;
+    const fdx = (dx / dist) * force;
+    const fdy = (dy / dist) * force;
+    fx[si] += fdx;
+    fy[si] += fdy;
+    fx[ti] -= fdx;
+    fy[ti] -= fdy;
+  }
+}
+
+function applyGroupCohesion(state: SimState, fx: Float64Array, fy: Float64Array): void {
+  const { n, posX, posY, ids, groupById, width, height } = state;
+  const groupCx = new Map<string, number>();
+  const groupCy = new Map<string, number>();
+  const groupCount = new Map<string, number>();
+  for (let i = 0; i < n; i++) {
+    const g = groupById.get(ids[i]) ?? "__none__";
+    groupCx.set(g, (groupCx.get(g) ?? 0) + posX[i]);
+    groupCy.set(g, (groupCy.get(g) ?? 0) + posY[i]);
+    groupCount.set(g, (groupCount.get(g) ?? 0) + 1);
+  }
+  for (const g of groupCx.keys()) {
+    const c = groupCount.get(g) ?? 1;
+    groupCx.set(g, (groupCx.get(g) ?? 0) / c);
+    groupCy.set(g, (groupCy.get(g) ?? 0) / c);
+  }
+  const cx = width / 2;
+  const cy = height / 2;
+  for (let i = 0; i < n; i++) {
+    const g = groupById.get(ids[i]) ?? "__none__";
+    fx[i] += ((groupCx.get(g) ?? cx) - posX[i]) * GROUP_PULL;
+    fy[i] += ((groupCy.get(g) ?? cy) - posY[i]) * GROUP_PULL;
+  }
+}
+
+function integrateForces(state: SimState, fx: Float64Array, fy: Float64Array): void {
+  const { n, posX, posY, velX, velY, width, height } = state;
+  for (let i = 0; i < n; i++) {
+    velX[i] = (velX[i] + fx[i]) * DAMPING;
+    velY[i] = (velY[i] + fy[i]) * DAMPING;
+    posX[i] = Math.max(PAD, Math.min(width - PAD, posX[i] + velX[i]));
+    posY[i] = Math.max(PAD, Math.min(height - PAD, posY[i] + velY[i]));
+  }
+}
+
+function initSimulation(
+  ids: string[],
+  groupById: Map<string, string>,
+  width: number,
+  height: number,
+): SimState {
+  const n = ids.length;
+  const cx = width / 2;
+  const cy = height / 2;
+
+  const groups = new Set<string>();
+  for (const id of ids) {
+    groups.add(groupById.get(id) ?? "__none__");
+  }
+  const groupList = Array.from(groups);
+  const groupAngle = new Map<string, number>();
+  const sectorAngle = (2 * Math.PI) / Math.max(groupList.length, 1);
+  for (let i = 0; i < groupList.length; i++) {
+    groupAngle.set(groupList[i], i * sectorAngle - Math.PI / 2);
+  }
+  const groupRadius = Math.min(width, height) * 0.35;
+
+  const combinedSeed = ids.reduce((acc, id) => acc + hashString(id), 0);
+  const rand = seededRandom(combinedSeed);
+  const posX: number[] = [];
+  const posY: number[] = [];
+  const velX: number[] = [];
+  const velY: number[] = [];
+  const idIndex = new Map<string, number>();
+
+  for (let i = 0; i < n; i++) {
+    idIndex.set(ids[i], i);
+    const g = groupById.get(ids[i]) ?? "__none__";
+    const angle = groupAngle.get(g) ?? 0;
+    const gx = cx + groupRadius * Math.cos(angle);
+    const gy = cy + groupRadius * Math.sin(angle);
+    posX.push(gx + (rand() - 0.5) * groupRadius * 0.8);
+    posY.push(gy + (rand() - 0.5) * groupRadius * 0.8);
+    velX.push(0);
+    velY.push(0);
+  }
+
+  return { n, posX, posY, velX, velY, ids, idIndex, groupById, width, height };
+}
+
 export function buildLayeredKnowledgeGraphLayout(
   input: KnowledgeGraphLayoutInput,
 ): KnowledgeGraphLayout {
-  const { edges, width, height, nodes: explicitNodes } = input;
+  const { edges, nodes: explicitNodes } = input;
 
   const labelById = new Map<string, string>();
   const groupById = new Map<string, string>();
@@ -65,62 +232,33 @@ export function buildLayeredKnowledgeGraphLayout(
     nodeIds.add(edge.target);
   }
 
-  const layers = groupNodesIntoLayers(Array.from(nodeIds), edges);
-  const nodes: KnowledgeGraphNode[] = [];
-  const layerHeight = layers.length > 1 ? height / (layers.length - 1) : height / 2;
-
-  for (let layerIndex = 0; layerIndex < layers.length; layerIndex += 1) {
-    const layer = layers[layerIndex];
-    const layerWidth = layer.length > 1 ? width / (layer.length - 1) : width / 2;
-    for (let nodeIndex = 0; nodeIndex < layer.length; nodeIndex += 1) {
-      const id = layer[nodeIndex];
-      const x = layer.length > 1 ? nodeIndex * layerWidth + 40 : width / 2;
-      const y = layerIndex * layerHeight + 40;
-      nodes.push({
-        id,
-        label: labelById.get(id) ?? id,
-        group: groupById.get(id),
-        x: Math.min(Math.max(x, 40), width - 40),
-        y: Math.min(Math.max(y, 40), height - 40),
-      });
-    }
+  const n = nodeIds.size;
+  if (n === 0) {
+    return { nodes: [], edges, width: input.width, height: input.height };
   }
 
-  return {
-    nodes,
-    edges,
-    width,
-    height,
-  };
-}
+  const width = Math.max(input.width, Math.round(200 * Math.sqrt(n)));
+  const height = Math.max(input.height, Math.round(160 * Math.sqrt(n)));
+  const ids = Array.from(nodeIds);
 
-function groupNodesIntoLayers(nodeIds: string[], edges: KnowledgeGraphEdgeInput[]): string[][] {
-  const remaining = new Set(nodeIds);
-  const inEdges = new Map<string, Set<string>>();
-  for (const edge of edges) {
-    if (!inEdges.has(edge.target)) {
-      inEdges.set(edge.target, new Set());
-    }
-    inEdges.get(edge.target)?.add(edge.source);
+  const state = initSimulation(ids, groupById, width, height);
+
+  for (let iter = 0; iter < ITERATIONS; iter++) {
+    const fx = new Float64Array(n);
+    const fy = new Float64Array(n);
+    applyRepulsion(state, fx, fy);
+    applyEdgeAttraction(state, edges, fx, fy);
+    applyGroupCohesion(state, fx, fy);
+    integrateForces(state, fx, fy);
   }
 
-  const layers: string[][] = [];
-  while (remaining.size > 0) {
-    const layer: string[] = [];
-    for (const node of remaining) {
-      const prerequisites = inEdges.get(node) ?? new Set();
-      const hasUnprocessedPrerequisite = Array.from(prerequisites).some((p) => remaining.has(p));
-      if (!hasUnprocessedPrerequisite) {
-        layer.push(node);
-      }
-    }
-    if (layer.length === 0) {
-      layer.push(remaining.values().next().value as string);
-    }
-    for (const node of layer) {
-      remaining.delete(node);
-    }
-    layers.push(layer);
-  }
-  return layers;
+  const nodes: KnowledgeGraphNode[] = ids.map((id, i) => ({
+    id,
+    label: labelById.get(id) ?? id,
+    group: groupById.get(id),
+    x: Math.round(state.posX[i]),
+    y: Math.round(state.posY[i]),
+  }));
+
+  return { nodes, edges, width, height };
 }

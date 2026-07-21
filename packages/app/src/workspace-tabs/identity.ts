@@ -42,6 +42,9 @@ export function normalizeWorkspaceTabTarget(
   if (value.kind === "aris-artifact") {
     return normalizeArisArtifactTabTarget(value);
   }
+  if (value.kind === "aris-wiki-entity") {
+    return normalizeArisWikiEntityTabTarget(value);
+  }
   return null;
 }
 
@@ -71,6 +74,25 @@ function normalizeArisArtifactTabTarget(
     return null;
   }
   return { kind: "aris-artifact", stageId: value.stageId };
+}
+
+const ARIS_WIKI_ENTITY_TYPES = ["papers", "ideas", "experiments", "claims", "gap"] as const;
+
+function isArisWikiEntityType(value: unknown): value is (typeof ARIS_WIKI_ENTITY_TYPES)[number] {
+  return typeof value === "string" && (ARIS_WIKI_ENTITY_TYPES as readonly string[]).includes(value);
+}
+
+function normalizeArisWikiEntityTabTarget(
+  value: Extract<WorkspaceTabTarget, { kind: "aris-wiki-entity" }>,
+): WorkspaceTabTarget | null {
+  if (!isArisWikiEntityType(value.entityType)) {
+    return null;
+  }
+  const entityId = trimNonEmpty(value.entityId);
+  if (!entityId) {
+    return null;
+  }
+  return { kind: "aris-wiki-entity", entityType: value.entityType, entityId };
 }
 
 export function normalizeWorkspaceDraftTabSetup(
@@ -104,31 +126,55 @@ export function workspaceTabTargetsEqual(
   if (left.kind !== right.kind) {
     return false;
   }
-  if (left.kind === "draft" && right.kind === "draft") {
-    return left.draftId === right.draftId && workspaceDraftTabSetupsEqual(left.setup, right.setup);
+  // After the kind check above, `right` has the same kind as `left`. tsgo
+  // doesn't narrow the second operand through correlation, so we cast.
+  switch (left.kind) {
+    case "draft":
+      return workspaceDraftTabTargetsEqual(
+        left,
+        right as Extract<WorkspaceTabTarget, { kind: "draft" }>,
+      );
+    case "agent":
+      return left.agentId === (right as Extract<WorkspaceTabTarget, { kind: "agent" }>).agentId;
+    case "terminal":
+      return (
+        left.terminalId === (right as Extract<WorkspaceTabTarget, { kind: "terminal" }>).terminalId
+      );
+    case "browser":
+      return (
+        left.browserId === (right as Extract<WorkspaceTabTarget, { kind: "browser" }>).browserId
+      );
+    case "file":
+      return workspaceFileLocationsEqual(
+        left,
+        right as Extract<WorkspaceTabTarget, { kind: "file" }>,
+      );
+    case "setup":
+      return (
+        left.workspaceId === (right as Extract<WorkspaceTabTarget, { kind: "setup" }>).workspaceId
+      );
+    case "aris": {
+      const r = right as Extract<WorkspaceTabTarget, { kind: "aris" }>;
+      return left.runId === r.runId && left.view === r.view;
+    }
+    case "aris-artifact":
+      return (
+        left.stageId === (right as Extract<WorkspaceTabTarget, { kind: "aris-artifact" }>).stageId
+      );
+    case "aris-wiki-entity": {
+      const r = right as Extract<WorkspaceTabTarget, { kind: "aris-wiki-entity" }>;
+      return left.entityType === r.entityType && left.entityId === r.entityId;
+    }
+    default:
+      return false;
   }
-  if (left.kind === "agent" && right.kind === "agent") {
-    return left.agentId === right.agentId;
-  }
-  if (left.kind === "terminal" && right.kind === "terminal") {
-    return left.terminalId === right.terminalId;
-  }
-  if (left.kind === "browser" && right.kind === "browser") {
-    return left.browserId === right.browserId;
-  }
-  if (left.kind === "file" && right.kind === "file") {
-    return workspaceFileLocationsEqual(left, right);
-  }
-  if (left.kind === "setup" && right.kind === "setup") {
-    return left.workspaceId === right.workspaceId;
-  }
-  if (left.kind === "aris" && right.kind === "aris") {
-    return left.runId === right.runId && left.view === right.view;
-  }
-  if (left.kind === "aris-artifact" && right.kind === "aris-artifact") {
-    return left.stageId === right.stageId;
-  }
-  return false;
+}
+
+function workspaceDraftTabTargetsEqual(
+  left: Extract<WorkspaceTabTarget, { kind: "draft" }>,
+  right: Extract<WorkspaceTabTarget, { kind: "draft" }>,
+): boolean {
+  return left.draftId === right.draftId && workspaceDraftTabSetupsEqual(left.setup, right.setup);
 }
 
 function workspaceDraftTabSetupsEqual(
@@ -186,6 +232,9 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
   }
   if (target.kind === "aris-artifact") {
     return `aris-artifact_${target.stageId}`;
+  }
+  if (target.kind === "aris-wiki-entity") {
+    return `aris-wiki-entity_${target.entityType}_${target.entityId}`;
   }
   return `file_${target.path}`;
 }

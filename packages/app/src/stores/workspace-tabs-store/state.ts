@@ -24,7 +24,12 @@ export type WorkspaceTabTarget =
   | WorkspaceFileTabTarget
   | { kind: "setup"; workspaceId: string }
   | { kind: "aris"; runId?: string; view?: "cockpit" | "graph" | "review" }
-  | { kind: "aris-artifact"; stageId: "W1" | "W1.5" | "W2" | "W3" | "W4" | "W5" | "W6" };
+  | { kind: "aris-artifact"; stageId: "W1" | "W1.5" | "W2" | "W3" | "W4" | "W5" | "W6" }
+  | {
+      kind: "aris-wiki-entity";
+      entityType: "papers" | "ideas" | "experiments" | "claims" | "gap";
+      entityId: string;
+    };
 
 export interface WorkspaceTab {
   tabId: string;
@@ -499,44 +504,110 @@ function extractMigrationRawSources(persistedState: unknown): MigrationRawSource
 
 function coerceWorkspaceTabTarget(raw: Record<string, unknown>): WorkspaceTabTarget | null {
   const kind = typeof raw.kind === "string" ? raw.kind : null;
-  if (kind === "draft" && typeof raw.draftId === "string") {
-    const setup = normalizeWorkspaceDraftTabSetup(raw.setup);
-    return normalizeWorkspaceTabTarget({
-      kind: "draft",
-      draftId: raw.draftId,
-      ...(setup ? { setup } : {}),
-    });
+  switch (kind) {
+    case "draft":
+      return coerceDraftTabTarget(raw);
+    case "agent":
+      return coerceAgentTabTarget(raw);
+    case "terminal":
+      return coerceTerminalTabTarget(raw);
+    case "browser":
+      return coerceBrowserTabTarget(raw);
+    case "file":
+      return coerceFileTabTarget(raw);
+    case "setup":
+      return coerceSetupTabTarget(raw);
+    case "aris":
+      return coerceArisTabTarget(raw);
+    case "aris-artifact":
+      return coerceArisArtifactTabTarget(raw);
+    case "aris-wiki-entity":
+      return coerceArisWikiEntityTabTarget(raw);
+    default:
+      return null;
   }
-  if (kind === "agent" && typeof raw.agentId === "string") {
-    return normalizeWorkspaceTabTarget({ kind: "agent", agentId: raw.agentId });
+}
+
+function coerceDraftTabTarget(raw: Record<string, unknown>): WorkspaceTabTarget | null {
+  if (typeof raw.draftId !== "string") {
+    return null;
   }
-  if (kind === "terminal" && typeof raw.terminalId === "string") {
-    return normalizeWorkspaceTabTarget({ kind: "terminal", terminalId: raw.terminalId });
+  const setup = normalizeWorkspaceDraftTabSetup(raw.setup);
+  return normalizeWorkspaceTabTarget({
+    kind: "draft",
+    draftId: raw.draftId,
+    ...(setup ? { setup } : {}),
+  });
+}
+
+function coerceAgentTabTarget(raw: Record<string, unknown>): WorkspaceTabTarget | null {
+  if (typeof raw.agentId !== "string") {
+    return null;
   }
-  if (kind === "browser" && typeof raw.browserId === "string") {
-    return normalizeWorkspaceTabTarget({ kind: "browser", browserId: raw.browserId });
+  return normalizeWorkspaceTabTarget({ kind: "agent", agentId: raw.agentId });
+}
+
+function coerceTerminalTabTarget(raw: Record<string, unknown>): WorkspaceTabTarget | null {
+  if (typeof raw.terminalId !== "string") {
+    return null;
   }
-  if (kind === "file" && typeof raw.path === "string") {
-    return normalizeWorkspaceTabTarget({
-      kind: "file",
-      path: raw.path,
-      lineStart: typeof raw.lineStart === "number" ? raw.lineStart : undefined,
-      lineEnd: typeof raw.lineEnd === "number" ? raw.lineEnd : undefined,
-    });
+  return normalizeWorkspaceTabTarget({ kind: "terminal", terminalId: raw.terminalId });
+}
+
+function coerceBrowserTabTarget(raw: Record<string, unknown>): WorkspaceTabTarget | null {
+  if (typeof raw.browserId !== "string") {
+    return null;
   }
-  if (kind === "setup" && typeof raw.workspaceId === "string") {
-    return normalizeWorkspaceTabTarget({ kind: "setup", workspaceId: raw.workspaceId });
+  return normalizeWorkspaceTabTarget({ kind: "browser", browserId: raw.browserId });
+}
+
+function coerceFileTabTarget(raw: Record<string, unknown>): WorkspaceTabTarget | null {
+  if (typeof raw.path !== "string") {
+    return null;
   }
-  if (kind === "aris") {
-    return coerceArisTabTarget(raw);
+  return normalizeWorkspaceTabTarget({
+    kind: "file",
+    path: raw.path,
+    lineStart: typeof raw.lineStart === "number" ? raw.lineStart : undefined,
+    lineEnd: typeof raw.lineEnd === "number" ? raw.lineEnd : undefined,
+  });
+}
+
+function coerceSetupTabTarget(raw: Record<string, unknown>): WorkspaceTabTarget | null {
+  if (typeof raw.workspaceId !== "string") {
+    return null;
   }
-  if (kind === "aris-artifact" && typeof raw.stageId === "string") {
-    return normalizeWorkspaceTabTarget({
-      kind: "aris-artifact",
-      stageId: raw.stageId as Extract<WorkspaceTabTarget, { kind: "aris-artifact" }>["stageId"],
-    });
+  return normalizeWorkspaceTabTarget({ kind: "setup", workspaceId: raw.workspaceId });
+}
+
+function coerceArisArtifactTabTarget(raw: Record<string, unknown>): WorkspaceTabTarget | null {
+  if (typeof raw.stageId !== "string") {
+    return null;
   }
-  return null;
+  return normalizeWorkspaceTabTarget({
+    kind: "aris-artifact",
+    stageId: raw.stageId as Extract<WorkspaceTabTarget, { kind: "aris-artifact" }>["stageId"],
+  });
+}
+
+const ARIS_WIKI_ENTITY_DIR_TYPES = ["papers", "ideas", "experiments", "claims", "gap"] as const;
+
+function coerceArisWikiEntityTabTarget(raw: Record<string, unknown>): WorkspaceTabTarget | null {
+  if (typeof raw.entityId !== "string") {
+    return null;
+  }
+  const entityType = raw.entityType;
+  if (typeof entityType !== "string") {
+    return null;
+  }
+  if (!(ARIS_WIKI_ENTITY_DIR_TYPES as readonly string[]).includes(entityType)) {
+    return null;
+  }
+  return normalizeWorkspaceTabTarget({
+    kind: "aris-wiki-entity",
+    entityType: entityType as (typeof ARIS_WIKI_ENTITY_DIR_TYPES)[number],
+    entityId: raw.entityId,
+  });
 }
 
 function coerceArisTabTarget(raw: Record<string, unknown>): WorkspaceTabTarget | null {

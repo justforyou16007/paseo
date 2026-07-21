@@ -1663,6 +1663,8 @@ export class Session {
         return this.arisSession.handleIterationsReadRequest(msg);
       case "aris.wiki.read":
         return this.arisSession.handleWikiReadRequest(msg);
+      case "aris.wiki.entity.read":
+        return this.arisSession.handleWikiEntityReadRequest(msg);
       case "aris.experiments.read":
         return this.arisSession.handleExperimentsReadRequest(msg);
       case "aris.review.read":

@@ -1,7 +1,8 @@
 /* eslint-disable jsx-no-new-object-as-prop -- ARIS visualization views use inline styles for rapid prototyping */
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { View, Text, ScrollView } from "react-native";
+import { Pressable, View, Text } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
 import Svg, { Circle, Line, Polygon, Rect, G, Text as SvgText } from "react-native-svg";
 import type { ArisKnowledgeGraph, ArisReviewState } from "@getpaseo/protocol/messages";
 import type { ArisReviewReadResult } from "./use-aris-review-query";
@@ -11,35 +12,43 @@ import {
   type KnowledgeGraphNodeInput,
 } from "./knowledge-graph-layout";
 import { ChartKitEmpty } from "./chart-kit";
-import { ARIS_CATEGORICAL_PALETTE } from "./charts/color-palette";
+import {
+  ARIS_KNOWLEDGE_GRAPH_NODE_COLORS,
+  ARIS_KNOWLEDGE_GRAPH_EDGE_COLORS,
+  isArisKnowledgeGraphRelation,
+  getArisNodeKindColor,
+  getArisEdgeRelationColor,
+  ARIS_NEUTRAL_NODE_COLOR,
+} from "./charts/color-palette";
 
 export interface KnowledgeGraphViewProps {
   data: ArisReviewReadResult | null | undefined;
-  /** Knowledge graph derived from research-wiki (papers/ideas/experiments/claims). Preferred over `data.knowledgeGraph` when non-empty. */
   wikiGraph?: ArisKnowledgeGraph | null;
   width?: number;
   height?: number;
+  onOpenDetail?: (entityId: string, entityType: GraphNodeType) => void;
 }
 
 const GRAPH_WIDTH = 700;
-const GRAPH_HEIGHT = 360;
+const GRAPH_HEIGHT = 400;
+const CANVAS_VIEW_HEIGHT = 460;
 const DEFAULT_EDGE_STROKE = "#94a3b8";
 const DEFAULT_EDGE_WIDTH = 1.5;
 const FOCUS_FADE_OPACITY = 0.3;
+const NODE_LONG_PRESS_MS = 400;
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 3;
+const ZOOM_STEP = 0.08;
+
+const INK = {
+  ringDefault: "rgba(255,255,255,0.8)",
+  ringSelected: "#0f172a",
+  labelOnColor: "#ffffff",
+} as const;
 
 type ArisKnowledgeGraphEdge = NonNullable<ArisKnowledgeGraph["edges"]>[number];
 
-// ---------------------------------------------------------------------------
-// Reusable canvas
-//
-// `KnowledgeGraphCanvas` is a presentational SVG renderer: it draws edges and
-// nodes (with per-node fill/opacity/selection and per-edge stroke/width) and
-// forwards clicks. All idea-evolution logic (status colors, BFS highlight,
-// time-window dimming) lives in the parent, which computes the final opacity
-// per node/edge and hands the canvas a flat list to render.
-// ---------------------------------------------------------------------------
-
-export type GraphNodeType = "idea" | "experiment" | "claim" | "paper" | "default";
+export type GraphNodeType = "idea" | "experiment" | "claim" | "paper" | "gap" | "default";
 
 export interface GraphCanvasNode {
   id: string;
@@ -55,6 +64,7 @@ export interface GraphCanvasNode {
 export interface GraphCanvasEdge {
   source: string;
   target: string;
+  relation?: string;
   stroke?: string;
   strokeWidth?: number;
   opacity?: number;
@@ -66,6 +76,7 @@ export interface KnowledgeGraphCanvasProps {
   width: number;
   height: number;
   onSelectNode?: (id: string) => void;
+  onOpenNode?: (id: string) => void;
 }
 
 function truncateLabel(label: string, max: number): string {
@@ -75,15 +86,17 @@ function truncateLabel(label: string, max: number): string {
 function nodeRadius(type: GraphNodeType): number {
   switch (type) {
     case "idea":
-      return 20;
+      return 40;
     case "experiment":
-      return 18;
+      return 38;
     case "claim":
-      return 16;
+      return 34;
     case "paper":
-      return 13;
+      return 30;
+    case "gap":
+      return 24;
     default:
-      return 18;
+      return 34;
   }
 }
 
@@ -93,25 +106,112 @@ function graphNodeTypeFromGroup(group: string | undefined): GraphNodeType {
     case "experiment":
     case "claim":
     case "paper":
+    case "gap":
       return group;
     default:
       return "default";
   }
 }
 
+// ---------------------------------------------------------------------------
+// Node view (with press/long-press interaction)
+// ---------------------------------------------------------------------------
+
 interface NodeViewProps {
   node: GraphCanvasNode;
+  zoom: number;
   onSelect: ((id: string) => void) | undefined;
+  onOpen: ((id: string) => void) | undefined;
+  onDrag: ((id: string, x: number, y: number) => void) | undefined;
 }
 
-const GraphCanvasNodeView = memo(function GraphCanvasNodeView({ node, onSelect }: NodeViewProps) {
-  const handlePress = useCallback(() => {
-    onSelect?.(node.id);
-  }, [node.id, onSelect]);
+const DRAG_THRESHOLD = 5;
+
+const GraphCanvasNodeView = memo(function GraphCanvasNodeView({
+  node,
+  zoom,
+  onSelect,
+  onOpen,
+  onDrag,
+}: NodeViewProps) {
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isHovered, setIsHovered] = useState(false);
+  const isDragging = useRef(false);
+  const isPointerDown = useRef(false);
+  const dragStart = useRef({ x: 0, y: 0, nodeX: 0, nodeY: 0 });
+
+  const clearLongPressTimer = useCallback(() => {
+    if (longPressTimerRef.current !== null) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }, []);
+
+  const handlePressIn = useCallback(
+    (e: unknown) => {
+      const evt = e as { stopPropagation?: () => void; clientX: number; clientY: number };
+      evt.stopPropagation?.();
+      isPointerDown.current = true;
+      isDragging.current = false;
+      dragStart.current = { x: evt.clientX, y: evt.clientY, nodeX: node.x, nodeY: node.y };
+      clearLongPressTimer();
+      longPressTimerRef.current = setTimeout(() => {
+        longPressTimerRef.current = null;
+        if (!isDragging.current) {
+          onSelect?.(node.id);
+        }
+      }, NODE_LONG_PRESS_MS);
+    },
+    [clearLongPressTimer, node.id, node.x, node.y, onSelect],
+  );
+
+  const handlePointerMove = useCallback(
+    (e: unknown) => {
+      if (!isPointerDown.current) {
+        return;
+      }
+      const evt = e as { clientX: number; clientY: number };
+      const dx = evt.clientX - dragStart.current.x;
+      const dy = evt.clientY - dragStart.current.y;
+      if (!isDragging.current && Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) {
+        isDragging.current = true;
+        clearLongPressTimer();
+      }
+      if (isDragging.current) {
+        const z = zoom || 1;
+        onDrag?.(node.id, dragStart.current.nodeX + dx / z, dragStart.current.nodeY + dy / z);
+      }
+    },
+    [clearLongPressTimer, node.id, zoom, onDrag],
+  );
+
+  const handlePressOut = useCallback(() => {
+    isPointerDown.current = false;
+    if (isDragging.current) {
+      isDragging.current = false;
+      return;
+    }
+    if (longPressTimerRef.current === null) {
+      return;
+    }
+    clearLongPressTimer();
+    onOpen?.(node.id);
+  }, [clearLongPressTimer, node.id, onOpen]);
+
+  const handlePointerEnter = useCallback(() => setIsHovered(true), []);
+  const handlePointerLeave = useCallback(() => {
+    setIsHovered(false);
+    if (isDragging.current) {
+      isDragging.current = false;
+      isPointerDown.current = false;
+    }
+  }, []);
 
   const radius = nodeRadius(node.type);
-  const label = truncateLabel(node.label, 8);
-  const ringStroke = node.selected ? "#0f172a" : "#ffffff";
+  const maxChars = node.type === "gap" ? 8 : Math.max(8, Math.floor(radius / 3));
+  const label = truncateLabel(node.label, maxChars);
+  const glowing = node.selected || isHovered;
+  const ringStroke = node.selected ? INK.ringSelected : INK.ringDefault;
   const ringWidth = node.selected ? 3 : 1.5;
 
   let shape: ReactNode;
@@ -123,7 +223,7 @@ const GraphCanvasNodeView = memo(function GraphCanvasNodeView({ node, onSelect }
           y={node.y - radius}
           width={radius * 2}
           height={radius * 2}
-          rx={6}
+          rx={7}
           fill={node.fill}
           stroke={ringStroke}
           strokeWidth={ringWidth}
@@ -142,6 +242,19 @@ const GraphCanvasNodeView = memo(function GraphCanvasNodeView({ node, onSelect }
       );
       break;
     }
+    case "gap":
+      shape = (
+        <Circle
+          cx={node.x}
+          cy={node.y}
+          r={radius}
+          fill="none"
+          stroke={node.fill}
+          strokeWidth={2}
+          strokeDasharray="4 3"
+        />
+      );
+      break;
     default:
       shape = (
         <Circle
@@ -156,13 +269,26 @@ const GraphCanvasNodeView = memo(function GraphCanvasNodeView({ node, onSelect }
   }
 
   return (
-    <G onPress={handlePress} opacity={node.opacity ?? 1}>
+    <G
+      {...({
+        onPointerDown: handlePressIn,
+        onPointerMove: handlePointerMove,
+        onPointerUp: handlePressOut,
+        onPointerEnter: handlePointerEnter,
+        onPointerLeave: handlePointerLeave,
+        style: { cursor: isDragging.current ? "grabbing" : "pointer" },
+      } as Record<string, unknown>)}
+      opacity={node.opacity ?? 1}
+    >
+      {glowing ? (
+        <Circle cx={node.x} cy={node.y} r={radius + 5} fill={node.fill} opacity={0.2} />
+      ) : null}
       {shape}
       <SvgText
         x={node.x}
-        y={node.y + 3}
-        fontSize={9}
-        fill="#ffffff"
+        y={node.y + 4}
+        fontSize={node.type === "gap" ? 10 : 11}
+        fill={node.type === "gap" ? node.fill : INK.labelOnColor}
         textAnchor="middle"
         fontWeight="600"
       >
@@ -172,12 +298,262 @@ const GraphCanvasNodeView = memo(function GraphCanvasNodeView({ node, onSelect }
   );
 });
 
+// ---------------------------------------------------------------------------
+// Group labels (large faint text behind each cluster)
+// ---------------------------------------------------------------------------
+
+interface GroupCentroid {
+  group: string;
+  cx: number;
+  cy: number;
+  label: string;
+}
+
+const GROUP_LABEL_MAP: Record<string, string> = {
+  paper: "Papers",
+  idea: "Ideas",
+  experiment: "Experiments",
+  claim: "Claims",
+  gap: "Gaps",
+};
+
+function computeGroupCentroids(nodes: GraphCanvasNode[]): GroupCentroid[] {
+  const sums = new Map<string, { sx: number; sy: number; n: number }>();
+  for (const node of nodes) {
+    const g = node.type === "default" ? "__none__" : node.type;
+    const entry = sums.get(g) ?? { sx: 0, sy: 0, n: 0 };
+    entry.sx += node.x;
+    entry.sy += node.y;
+    entry.n += 1;
+    sums.set(g, entry);
+  }
+  const result: GroupCentroid[] = [];
+  for (const [group, { sx, sy, n }] of sums) {
+    if (group === "__none__" || n < 1) {
+      continue;
+    }
+    result.push({
+      group,
+      cx: sx / n,
+      cy: sy / n,
+      label: GROUP_LABEL_MAP[group] ?? group,
+    });
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Pannable/zoomable canvas
+// ---------------------------------------------------------------------------
+
+function PannableCanvas({
+  nodes,
+  edges,
+  onSelectNode,
+  onOpenNode,
+}: {
+  nodes: GraphCanvasNode[];
+  edges: GraphCanvasEdge[];
+  onSelectNode?: (id: string) => void;
+  onOpenNode?: (id: string) => void;
+}) {
+  const [panX, setPanX] = useState(0);
+  const [panY, setPanY] = useState(0);
+  const [zoom, setZoom] = useState(1);
+  const [dragPositions, setDragPositions] = useState<Map<string, { x: number; y: number }>>(
+    () => new Map(),
+  );
+  const isPanning = useRef(false);
+  const lastPointer = useRef({ x: 0, y: 0 });
+
+  // Merge layout positions with any drag overrides.
+  const displayNodes = useMemo(() => {
+    if (dragPositions.size === 0) {
+      return nodes;
+    }
+    return nodes.map((node) => {
+      const override = dragPositions.get(node.id);
+      if (!override) {
+        return node;
+      }
+      return { ...node, x: override.x, y: override.y };
+    });
+  }, [nodes, dragPositions]);
+
+  const positions = useMemo(
+    () => new Map(displayNodes.map((node) => [node.id, node])),
+    [displayNodes],
+  );
+  const groupCentroids = useMemo(() => computeGroupCentroids(displayNodes), [displayNodes]);
+
+  const handleDragNode = useCallback((id: string, x: number, y: number) => {
+    setDragPositions((prev) => {
+      const next = new Map(prev);
+      next.set(id, { x: Math.round(x), y: Math.round(y) });
+      return next;
+    });
+  }, []);
+
+  const handlePointerDown = useCallback((e: unknown) => {
+    const evt = e as {
+      clientX: number;
+      clientY: number;
+      currentTarget?: { setPointerCapture?: (id: number) => void };
+      pointerId?: number;
+    };
+    isPanning.current = true;
+    lastPointer.current = { x: evt.clientX, y: evt.clientY };
+    if (evt.currentTarget?.setPointerCapture && typeof evt.pointerId === "number") {
+      evt.currentTarget.setPointerCapture(evt.pointerId);
+    }
+  }, []);
+
+  const handlePointerMove = useCallback((e: unknown) => {
+    if (!isPanning.current) {
+      return;
+    }
+    const evt = e as { clientX: number; clientY: number };
+    const dx = evt.clientX - lastPointer.current.x;
+    const dy = evt.clientY - lastPointer.current.y;
+    lastPointer.current = { x: evt.clientX, y: evt.clientY };
+    setPanX((prev) => prev + dx);
+    setPanY((prev) => prev + dy);
+  }, []);
+
+  const handlePointerUp = useCallback(() => {
+    isPanning.current = false;
+  }, []);
+
+  const handleWheel = useCallback((e: unknown) => {
+    const evt = e as { deltaY: number; preventDefault?: () => void };
+    evt.preventDefault?.();
+    const direction = evt.deltaY < 0 ? 1 : -1;
+    setZoom((prev) => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, prev + direction * ZOOM_STEP)));
+  }, []);
+
+  const handleReset = useCallback(() => {
+    setPanX(0);
+    setPanY(0);
+    setZoom(1);
+    setDragPositions(new Map());
+  }, []);
+
+  const transform = `translate(${panX}, ${panY}) scale(${zoom})`;
+
+  return (
+    <View style={styles.canvasContainer}>
+      <View
+        style={styles.canvasViewport}
+        {...({ onWheel: handleWheel } as Record<string, unknown>)}
+      >
+        <Svg
+          width="100%"
+          height={CANVAS_VIEW_HEIGHT}
+          {...({
+            onPointerDown: handlePointerDown,
+            onPointerMove: handlePointerMove,
+            onPointerUp: handlePointerUp,
+            style: { cursor: isPanning.current ? "grabbing" : "grab" },
+          } as Record<string, unknown>)}
+        >
+          <G transform={transform}>
+            {/* Group region labels */}
+            {groupCentroids.map((gc) => (
+              <SvgText
+                key={`group-${gc.group}`}
+                x={gc.cx}
+                y={gc.cy + 4}
+                fontSize={18}
+                fontWeight="700"
+                fill={getArisNodeKindColor(gc.group)}
+                textAnchor="middle"
+                opacity={0.12}
+              >
+                {gc.label.toUpperCase()}
+              </SvgText>
+            ))}
+
+            {/* Edges */}
+            {edges.map((edge) => {
+              const source = positions.get(edge.source);
+              const target = positions.get(edge.target);
+              if (!source || !target) {
+                return null;
+              }
+              const midX = (source.x + target.x) / 2;
+              const midY = (source.y + target.y) / 2;
+              const relationLabel = edge.relation ?? "";
+              const pillWidth = Math.max(52, relationLabel.length * 6.2 + 18);
+              return (
+                <G key={`${edge.source}->${edge.target}`}>
+                  <Line
+                    x1={source.x}
+                    y1={source.y}
+                    x2={target.x}
+                    y2={target.y}
+                    stroke={edge.stroke ?? DEFAULT_EDGE_STROKE}
+                    strokeWidth={edge.strokeWidth ?? DEFAULT_EDGE_WIDTH}
+                    opacity={edge.opacity ?? 1}
+                  />
+                  {edge.relation && isArisKnowledgeGraphRelation(edge.relation) ? (
+                    <G>
+                      <Rect
+                        x={midX - pillWidth / 2}
+                        y={midY - 9}
+                        width={pillWidth}
+                        height={18}
+                        rx={9}
+                        fill={edge.stroke ?? DEFAULT_EDGE_STROKE}
+                        opacity={(edge.opacity ?? 1) * 0.18}
+                      />
+                      <SvgText
+                        x={midX}
+                        y={midY + 3.5}
+                        fontSize={9}
+                        fill={edge.stroke ?? DEFAULT_EDGE_STROKE}
+                        textAnchor="middle"
+                        fontWeight="600"
+                      >
+                        {edge.relation}
+                      </SvgText>
+                    </G>
+                  ) : null}
+                </G>
+              );
+            })}
+
+            {/* Nodes */}
+            {displayNodes.map((node) => (
+              <GraphCanvasNodeView
+                key={node.id}
+                node={node}
+                zoom={zoom}
+                onSelect={onSelectNode}
+                onOpen={onOpenNode}
+                onDrag={handleDragNode}
+              />
+            ))}
+          </G>
+        </Svg>
+      </View>
+      <View style={styles.canvasToolbar}>
+        <Pressable onPress={handleReset} style={styles.resetButton}>
+          <Text style={styles.resetButtonText}>Reset view</Text>
+        </Pressable>
+        <Text style={styles.zoomLabel}>{Math.round(zoom * 100)}%</Text>
+      </View>
+    </View>
+  );
+}
+
+// Exported for use by IdeaEvolutionView which renders a standalone canvas.
 export function KnowledgeGraphCanvas({
   nodes,
   edges,
   width,
   height,
   onSelectNode,
+  onOpenNode,
 }: KnowledgeGraphCanvasProps) {
   const positions = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
 
@@ -190,27 +566,35 @@ export function KnowledgeGraphCanvas({
           return null;
         }
         return (
-          <Line
-            key={`${edge.source}->${edge.target}`}
-            x1={source.x}
-            y1={source.y}
-            x2={target.x}
-            y2={target.y}
-            stroke={edge.stroke ?? DEFAULT_EDGE_STROKE}
-            strokeWidth={edge.strokeWidth ?? DEFAULT_EDGE_WIDTH}
-            opacity={edge.opacity ?? 1}
-          />
+          <G key={`e-${edge.source}->${edge.target}`}>
+            <Line
+              x1={source.x}
+              y1={source.y}
+              x2={target.x}
+              y2={target.y}
+              stroke={edge.stroke ?? DEFAULT_EDGE_STROKE}
+              strokeWidth={edge.strokeWidth ?? DEFAULT_EDGE_WIDTH}
+              opacity={edge.opacity ?? 1}
+            />
+          </G>
         );
       })}
       {nodes.map((node) => (
-        <GraphCanvasNodeView key={node.id} node={node} onSelect={onSelectNode} />
+        <GraphCanvasNodeView
+          key={node.id}
+          node={node}
+          zoom={1}
+          onSelect={onSelectNode}
+          onOpen={onOpenNode}
+          onDrag={undefined}
+        />
       ))}
     </Svg>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Review-state knowledge graph view (existing API, now with click-to-focus)
+// Main KnowledgeGraphView
 // ---------------------------------------------------------------------------
 
 function buildEdgesFromKnowledgeGraph(
@@ -260,11 +644,11 @@ export function KnowledgeGraphView({
   wikiGraph,
   width = GRAPH_WIDTH,
   height = GRAPH_HEIGHT,
+  onOpenDetail,
 }: KnowledgeGraphViewProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const edges: KnowledgeGraphEdgeInput[] = useMemo(() => {
-    // Prefer research-wiki graph (papers/ideas/experiments/claims/edges) when non-empty.
     const wikiEdges = buildEdgesFromKnowledgeGraph(wikiGraph ?? null);
     if (wikiEdges.length > 0) {
       return wikiEdges;
@@ -306,9 +690,22 @@ export function KnowledgeGraphView({
     setSelectedId((prev) => (prev === id ? null : id));
   }, []);
 
+  const handleOpen = useCallback(
+    (id: string) => {
+      setSelectedId(null);
+      const node = layout.nodes.find((item) => item.id === id);
+      if (!node) {
+        return;
+      }
+      const nodeType = graphNodeTypeFromGroup(node.group);
+      onOpenDetail?.(id, nodeType);
+    },
+    [layout.nodes, onOpenDetail],
+  );
+
   const canvasNodes: GraphCanvasNode[] = useMemo(
     () =>
-      layout.nodes.map((node, index) => {
+      layout.nodes.map((node) => {
         const inFocus = !focusSet || focusSet.has(node.id);
         return {
           id: node.id,
@@ -316,7 +713,7 @@ export function KnowledgeGraphView({
           type: graphNodeTypeFromGroup(node.group),
           x: node.x,
           y: node.y,
-          fill: ARIS_CATEGORICAL_PALETTE[index % ARIS_CATEGORICAL_PALETTE.length] ?? "#3b82f6",
+          fill: getArisNodeKindColor(node.group),
           opacity: inFocus ? 1 : FOCUS_FADE_OPACITY,
           selected: node.id === selectedId,
         };
@@ -329,14 +726,40 @@ export function KnowledgeGraphView({
       layout.edges.map((edge) => ({
         source: edge.source,
         target: edge.target,
+        relation: edge.relation,
+        stroke: getArisEdgeRelationColor(edge.relation),
+        strokeWidth: 2,
         opacity: !focusSet || (focusSet.has(edge.source) && focusSet.has(edge.target)) ? 1 : 0.2,
       })),
     [layout.edges, focusSet],
   );
 
-  // Only show the empty state when we have no data sources at all.
-  // Previously this bailed out as soon as `data` (review) was null, which
-  // hid the wiki-derived graph whenever the review query was unloaded.
+  const visibleNodeKinds = useMemo(() => {
+    const kinds = new Set<keyof typeof ARIS_KNOWLEDGE_GRAPH_NODE_COLORS>();
+    for (const node of layout.nodes) {
+      if (
+        node.group === "paper" ||
+        node.group === "idea" ||
+        node.group === "experiment" ||
+        node.group === "claim" ||
+        node.group === "gap"
+      ) {
+        kinds.add(node.group);
+      }
+    }
+    return kinds;
+  }, [layout.nodes]);
+
+  const visibleRelations = useMemo(() => {
+    const relations = new Set<string>();
+    for (const edge of layout.edges) {
+      if (edge.relation && isArisKnowledgeGraphRelation(edge.relation)) {
+        relations.add(edge.relation);
+      }
+    }
+    return relations;
+  }, [layout.edges]);
+
   const hasAnyData = data != null || (wikiGraph != null && (wikiGraph.nodes?.length ?? 0) > 0);
   if (!hasAnyData) {
     return <ChartKitEmpty message="No research graph data available." />;
@@ -347,21 +770,230 @@ export function KnowledgeGraphView({
   }
 
   return (
-    <ScrollView horizontal contentContainerStyle={{ padding: 16 }}>
-      <View style={{ gap: 12 }}>
-        <Text style={{ fontSize: 18, fontWeight: "600" }}>Research Knowledge Graph</Text>
-        <KnowledgeGraphCanvas
+    <View style={styles.card}>
+      <View style={styles.cardContent}>
+        <Text style={styles.heading}>Research Knowledge Graph</Text>
+        <PannableCanvas
           nodes={canvasNodes}
           edges={canvasEdges}
-          width={width}
-          height={height}
           onSelectNode={handleSelect}
+          onOpenNode={onOpenDetail ? handleOpen : undefined}
         />
-        <Text style={{ fontSize: 12, color: "#64748b" }}>
-          {layout.nodes.length} nodes · {layout.edges.length} edges
-          {selectedId ? " · click a node to focus its neighbors" : ""}
+        <View style={styles.legendRow}>
+          <NodeLegend visibleKinds={visibleNodeKinds} />
+          <EdgeLegend visibleRelations={visibleRelations} />
+        </View>
+        <Text style={styles.summary}>
+          {layout.nodes.length} nodes, {layout.edges.length} edges
         </Text>
       </View>
-    </ScrollView>
+    </View>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Legends
+// ---------------------------------------------------------------------------
+
+const NODE_KIND_LABELS: Record<keyof typeof ARIS_KNOWLEDGE_GRAPH_NODE_COLORS, string> = {
+  paper: "Paper",
+  idea: "Idea",
+  experiment: "Experiment",
+  claim: "Claim",
+  gap: "Gap",
+};
+
+const NODE_KIND_SHAPES: Record<
+  keyof typeof ARIS_KNOWLEDGE_GRAPH_NODE_COLORS,
+  "circle" | "rect" | "diamond" | "dashed-circle"
+> = {
+  paper: "circle",
+  idea: "circle",
+  experiment: "rect",
+  claim: "diamond",
+  gap: "dashed-circle",
+};
+
+function NodeLegend({
+  visibleKinds,
+}: {
+  visibleKinds: Set<keyof typeof ARIS_KNOWLEDGE_GRAPH_NODE_COLORS>;
+}) {
+  if (visibleKinds.size === 0) {
+    return null;
+  }
+  return (
+    <View style={styles.legendGroup}>
+      {Array.from(visibleKinds).map((kind) => (
+        <View key={kind} style={styles.legendItem}>
+          <NodeLegendSwatch kind={kind} />
+          <Text style={styles.legendLabel}>{NODE_KIND_LABELS[kind]}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function NodeLegendSwatch({ kind }: { kind: keyof typeof ARIS_KNOWLEDGE_GRAPH_NODE_COLORS }) {
+  const color = ARIS_KNOWLEDGE_GRAPH_NODE_COLORS[kind];
+  return (
+    <Svg width={16} height={16}>
+      {renderLegendShape(NODE_KIND_SHAPES[kind], color, 8)}
+    </Svg>
+  );
+}
+
+function renderLegendShape(
+  shape: "circle" | "rect" | "diamond" | "dashed-circle",
+  color: string,
+  center: number,
+): ReactNode {
+  switch (shape) {
+    case "rect":
+      return (
+        <Rect
+          x={center - 6}
+          y={center - 6}
+          width={12}
+          height={12}
+          rx={3}
+          fill={color}
+          stroke={INK.ringDefault}
+          strokeWidth={1.5}
+        />
+      );
+    case "diamond": {
+      const points = [
+        `${center},${center - 6}`,
+        `${center + 6},${center}`,
+        `${center},${center + 6}`,
+        `${center - 6},${center}`,
+      ].join(" ");
+      return <Polygon points={points} fill={color} stroke={INK.ringDefault} strokeWidth={1.5} />;
+    }
+    case "dashed-circle":
+      return (
+        <Circle
+          cx={center}
+          cy={center}
+          r={5.5}
+          fill="none"
+          stroke={color}
+          strokeWidth={1.5}
+          strokeDasharray="3 2"
+        />
+      );
+    default:
+      return (
+        <Circle
+          cx={center}
+          cy={center}
+          r={5.5}
+          fill={color}
+          stroke={INK.ringDefault}
+          strokeWidth={1.5}
+        />
+      );
+  }
+}
+
+function EdgeLegendChip({ relation, color }: { relation: string; color: string }) {
+  const lineStyle = useMemo(() => [styles.legendLine, { backgroundColor: color }], [color]);
+  return (
+    <View style={styles.legendItem}>
+      <View style={lineStyle} />
+      <Text style={styles.legendLabel}>{relation}</Text>
+    </View>
+  );
+}
+
+function EdgeLegend({ visibleRelations }: { visibleRelations: Set<string> }) {
+  if (visibleRelations.size === 0) {
+    return null;
+  }
+  return (
+    <View style={styles.legendGroup}>
+      {Array.from(visibleRelations).map((relation) => {
+        const color = isArisKnowledgeGraphRelation(relation)
+          ? ARIS_KNOWLEDGE_GRAPH_EDGE_COLORS[relation]
+          : ARIS_NEUTRAL_NODE_COLOR;
+        return <EdgeLegendChip key={relation} relation={relation} color={color} />;
+      })}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create((theme) => ({
+  card: {
+    backgroundColor: theme.colors.surface1,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.xl,
+    overflow: "hidden",
+  },
+  cardContent: {
+    padding: theme.spacing[4],
+    gap: theme.spacing[3],
+  },
+  heading: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+    color: theme.colors.foreground,
+  },
+  canvasContainer: {
+    gap: theme.spacing[1],
+  },
+  canvasViewport: {
+    borderRadius: theme.borderRadius.lg,
+    overflow: "hidden",
+    backgroundColor: theme.colors.surface0,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+  },
+  canvasToolbar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  resetButton: {
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: 2,
+    borderRadius: theme.borderRadius.base,
+  },
+  resetButtonText: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+  },
+  zoomLabel: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+  },
+  legendRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: theme.spacing[4],
+  },
+  legendGroup: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: theme.spacing[3],
+  },
+  legendItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1.5],
+  },
+  legendLine: {
+    width: 12,
+    height: 2,
+    borderRadius: theme.borderRadius.full,
+  },
+  legendLabel: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+  },
+  summary: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+  },
+}));

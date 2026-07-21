@@ -1,4 +1,13 @@
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, rmSync, symlinkSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readlinkSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -60,7 +69,9 @@ if (existsSync("patches") && installedPatchPrefixes.length > 0) {
 // Makes /research-setup available in any workspace so users can bootstrap
 // ARIS in new projects without first installing ARIS skills locally.
 
-const arisSkillSource = resolve("packages/Auto-claude-code-research-in-sleep/skills/research-setup");
+const arisSkillSource = resolve(
+  "packages/Auto-claude-code-research-in-sleep/skills/research-setup",
+);
 const globalSkillsDir = join(homedir(), ".claude", "skills");
 const globalSkillLink = join(globalSkillsDir, "research-setup");
 

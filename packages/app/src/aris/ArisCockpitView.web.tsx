@@ -1,5 +1,7 @@
 /* eslint-disable jsx-no-new-object-as-prop -- ARIS visualization views use inline styles for rapid prototyping */
+import { useCallback, useMemo } from "react";
 import { ScrollView, Text, View } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
 import type {
   ArisIteration,
   ArisRunState,
@@ -11,9 +13,21 @@ import type { ArisReviewReadResult } from "./use-aris-review-query";
 import type { ArisEventsReadResult } from "./use-aris-events-query";
 import type { ArisWikiData } from "./types";
 import { ReviewView } from "./ReviewView.web";
-import { KnowledgeGraphView } from "./KnowledgeGraphView.web";
+import { KnowledgeGraphView, type GraphNodeType } from "./KnowledgeGraphView.web";
 import { WorkflowGraphView } from "./views/WorkflowGraphView.web";
 import { ChartKitEmpty } from "./chart-kit";
+import { ARIS_KNOWLEDGE_GRAPH_NODE_COLORS } from "./charts/color-palette";
+import { usePaneContext } from "@/panels/pane-context";
+
+import type { ArisWikiEntityType } from "./use-aris-wiki-entity";
+
+const NODE_KIND_TO_ENTITY_DIR: Record<Exclude<GraphNodeType, "default">, ArisWikiEntityType> = {
+  paper: "papers",
+  idea: "ideas",
+  experiment: "experiments",
+  claim: "claims",
+  gap: "gap",
+};
 
 export interface ArisCockpitViewProps {
   review: ArisReviewReadResult | null | undefined;
@@ -52,30 +66,81 @@ function buildKnowledgeGraphFromWiki(wiki: ArisWikiData | null | undefined): Ari
     target: edge.target,
     relation: edge.relation,
   }));
+
+  // Materialize gap nodes from edge endpoints (e.g. "gap:G1").
+  const nodeIds = new Set(nodes.map((n) => n.id));
+  for (const edge of edges) {
+    for (const endpoint of [edge.source, edge.target]) {
+      if (endpoint.startsWith("gap:") && !nodeIds.has(endpoint)) {
+        nodeIds.add(endpoint);
+        const gapLabel = endpoint.replace("gap:", "Gap ");
+        nodes.push({ id: endpoint, label: gapLabel, group: "gap" });
+      }
+    }
+  }
+
   return { nodes, edges };
 }
 
 export function ArisCockpitView({ review, wiki, activeView = "cockpit" }: ArisCockpitViewProps) {
+  const { openTab } = usePaneContext();
   const wikiGraph = buildKnowledgeGraphFromWiki(wiki);
 
+  const handleOpenDetail = useCallback(
+    (entityId: string, entityType: GraphNodeType) => {
+      if (entityType === "default") {
+        return;
+      }
+      if (entityType === "gap") {
+        openTab({
+          kind: "aris-wiki-entity",
+          entityType: "gap",
+          entityId: "gap_map",
+        });
+        return;
+      }
+      openTab({
+        kind: "aris-wiki-entity",
+        entityType: NODE_KIND_TO_ENTITY_DIR[entityType],
+        entityId,
+      });
+    },
+    [openTab],
+  );
+
   if (activeView === "graph") {
-    return <KnowledgeGraphView data={review ?? null} wikiGraph={wikiGraph} />;
+    return (
+      <KnowledgeGraphView
+        data={review ?? null}
+        wikiGraph={wikiGraph}
+        onOpenDetail={handleOpenDetail}
+      />
+    );
   }
   if (activeView === "review") {
     return <ReviewView data={review} />;
   }
 
-  return <ArisCockpitBody review={review} wikiGraph={wikiGraph} wiki={wiki} />;
+  return (
+    <ArisCockpitBody
+      review={review}
+      wikiGraph={wikiGraph}
+      wiki={wiki}
+      onOpenDetail={handleOpenDetail}
+    />
+  );
 }
 
 function ArisCockpitBody({
   review,
   wikiGraph,
   wiki,
+  onOpenDetail,
 }: {
   review: ArisReviewReadResult | null | undefined;
   wikiGraph: ArisKnowledgeGraph;
   wiki: ArisWikiData | null | undefined;
+  onOpenDetail: (entityId: string, entityType: GraphNodeType) => void;
 }) {
   const hasWiki =
     (wiki?.papers?.length ?? 0) +
@@ -84,13 +149,29 @@ function ArisCockpitBody({
       (wiki?.claims?.length ?? 0) >
     0;
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 24 }}>
-      <CockpitHeader wiki={wiki} hasWiki={hasWiki} />
-      <WorkflowGraphView />
-      <KnowledgeGraphSection review={review} wikiGraph={wikiGraph} hasWiki={hasWiki} />
-    </ScrollView>
+    <View style={styles.screen}>
+      <ScrollView contentContainerStyle={styles.content}>
+        <CockpitHeader wiki={wiki} hasWiki={hasWiki} />
+        <WorkflowGraphView />
+        <KnowledgeGraphSection
+          review={review}
+          wikiGraph={wikiGraph}
+          hasWiki={hasWiki}
+          onOpenDetail={onOpenDetail}
+        />
+      </ScrollView>
+    </View>
   );
 }
+
+type WikiStatKind = "papers" | "ideas" | "experiments" | "claims";
+
+const WIKI_STAT_KINDS: { key: WikiStatKind; label: string; color: string }[] = [
+  { key: "papers", label: "papers", color: ARIS_KNOWLEDGE_GRAPH_NODE_COLORS.paper },
+  { key: "ideas", label: "ideas", color: ARIS_KNOWLEDGE_GRAPH_NODE_COLORS.idea },
+  { key: "experiments", label: "experiments", color: ARIS_KNOWLEDGE_GRAPH_NODE_COLORS.experiment },
+  { key: "claims", label: "claims", color: ARIS_KNOWLEDGE_GRAPH_NODE_COLORS.claim },
+];
 
 function CockpitHeader({
   wiki,
@@ -99,22 +180,44 @@ function CockpitHeader({
   wiki: ArisWikiData | null | undefined;
   hasWiki: boolean;
 }) {
-  const papers = wiki?.papers?.length ?? 0;
-  const ideas = wiki?.ideas?.length ?? 0;
-  const experiments = wiki?.experiments?.length ?? 0;
-  const claims = wiki?.claims?.length ?? 0;
+  const counts = {
+    papers: wiki?.papers?.length ?? 0,
+    ideas: wiki?.ideas?.length ?? 0,
+    experiments: wiki?.experiments?.length ?? 0,
+    claims: wiki?.claims?.length ?? 0,
+  };
+  const total = counts.papers + counts.ideas + counts.experiments + counts.claims;
   return (
-    <View style={{ gap: 8 }}>
-      <Text style={{ fontSize: 22, fontWeight: "700" }}>ARIS Cockpit</Text>
-      <Text style={{ fontSize: 14, color: "#64748b" }}>
-        W1–W6 workflow status and research knowledge graph.
-      </Text>
+    <View style={styles.header}>
+      <View style={styles.headerTop}>
+        <Text style={styles.title}>ARIS Cockpit</Text>
+        {hasWiki ? <Text style={styles.headerCount}>{total} entities</Text> : null}
+      </View>
       {hasWiki ? (
-        <Text style={{ fontSize: 12, color: "#64748b" }}>
-          research-wiki: {papers} papers · {ideas} ideas · {experiments} experiments · {claims}{" "}
-          claims
-        </Text>
+        <View style={styles.statRow}>
+          {WIKI_STAT_KINDS.map((kind) => (
+            <StatMetric
+              key={kind.key}
+              label={kind.label}
+              count={counts[kind.key]}
+              color={kind.color}
+            />
+          ))}
+        </View>
       ) : null}
+    </View>
+  );
+}
+
+function StatMetric({ label, count, color }: { label: string; count: number; color: string }) {
+  const dotStyle = useMemo(() => [styles.statDot, { backgroundColor: color }], [color]);
+  return (
+    <View style={styles.statMetric}>
+      <View style={styles.statMetricRow}>
+        <View style={dotStyle} />
+        <Text style={styles.statCount}>{count}</Text>
+      </View>
+      <Text style={styles.statLabel}>{label}</Text>
     </View>
   );
 }
@@ -123,19 +226,82 @@ function KnowledgeGraphSection({
   review,
   wikiGraph,
   hasWiki,
+  onOpenDetail,
 }: {
   review: ArisReviewReadResult | null | undefined;
   wikiGraph: ArisKnowledgeGraph;
   hasWiki: boolean;
+  onOpenDetail: (entityId: string, entityType: GraphNodeType) => void;
 }) {
   return (
-    <View style={{ gap: 12 }}>
-      <Text style={{ fontSize: 16, fontWeight: "600" }}>Knowledge Graph</Text>
+    <View style={styles.section}>
       {hasWiki ? (
-        <KnowledgeGraphView data={review ?? null} wikiGraph={wikiGraph} />
+        <KnowledgeGraphView
+          data={review ?? null}
+          wikiGraph={wikiGraph}
+          onOpenDetail={onOpenDetail}
+        />
       ) : (
         <ChartKitEmpty message="Research-wiki is empty for this run. Run /idea-discovery, /research-lit, or /run-experiment to populate the knowledge graph." />
       )}
     </View>
   );
 }
+
+const styles = StyleSheet.create((theme) => ({
+  screen: {
+    flex: 1,
+    backgroundColor: theme.colors.surface0,
+  },
+  content: {
+    padding: theme.spacing[6],
+    gap: theme.spacing[8],
+  },
+  header: {
+    gap: theme.spacing[3],
+  },
+  headerTop: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+  },
+  title: {
+    fontSize: theme.fontSize.lg,
+    fontWeight: theme.fontWeight.medium,
+    color: theme.colors.foreground,
+  },
+  headerCount: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+  },
+  statRow: {
+    flexDirection: "row",
+    gap: theme.spacing[6],
+  },
+  statMetric: {
+    gap: theme.spacing[0],
+  },
+  statMetricRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1.5],
+  },
+  statDot: {
+    width: 6,
+    height: 6,
+    borderRadius: theme.borderRadius.full,
+  },
+  statCount: {
+    fontSize: theme.fontSize.lg,
+    fontWeight: theme.fontWeight.normal,
+    color: theme.colors.foreground,
+  },
+  statLabel: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+    marginLeft: 14,
+  },
+  section: {
+    gap: theme.spacing[3],
+  },
+}));

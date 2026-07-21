@@ -91,6 +91,7 @@ import type {
   ArisRunReadResponse,
   ArisIterationsReadResponse,
   ArisWikiReadResponse,
+  ArisWikiEntityReadResponse,
   ArisExperimentsReadResponse,
   ArisWorkflowStatusReadResponse,
 } from "@getpaseo/protocol/messages";
@@ -393,6 +394,7 @@ type WriteProjectConfigPayload = Extract<
   { type: "write_project_config_response" }
 >["payload"];
 type ArisWikiReadPayload = ArisWikiReadResponse["payload"];
+type ArisWikiEntityReadPayload = ArisWikiEntityReadResponse["payload"];
 type ArisExperimentsReadPayload = ArisExperimentsReadResponse["payload"];
 type ArisWorkflowStatusReadPayload = ArisWorkflowStatusReadResponse["payload"];
 type ListCommandsPayload = ListCommandsResponse["payload"];
@@ -4023,6 +4025,24 @@ export class DaemonClient {
         cwd,
       },
       responseType: "aris.wiki.read.response",
+    });
+  }
+
+  async readArisWikiEntity(
+    cwd: string,
+    entityType: string,
+    entityId: string,
+    requestId?: string,
+  ): Promise<ArisWikiEntityReadPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "aris.wiki.entity.read",
+        cwd,
+        entityType,
+        entityId,
+      },
+      responseType: "aris.wiki.entity.read.response",
     });
   }
 

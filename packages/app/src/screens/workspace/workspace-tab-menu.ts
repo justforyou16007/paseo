@@ -146,6 +146,9 @@ function getCloseButtonTestId(tab: WorkspaceTabDescriptor): string {
   if (tab.target.kind === "aris-artifact") {
     return `workspace-aris-artifact-close-${tab.target.stageId}`;
   }
+  if (tab.target.kind === "aris-wiki-entity") {
+    return `workspace-aris-wiki-entity-close-${tab.target.entityType}-${encodeFilePathForPathSegment(tab.target.entityId)}`;
+  }
   return `workspace-file-close-${encodeFilePathForPathSegment(tab.target.path)}`;
 }
 

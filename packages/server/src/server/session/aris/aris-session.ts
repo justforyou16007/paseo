@@ -14,6 +14,7 @@ import type {
   ArisRunReadResponse,
   ArisRunsListRequest,
   ArisRunsListResponse,
+  ArisWikiEntityReadRequest,
   ArisWikiReadRequest,
   ArisWorkflowStatusReadRequest,
   ArisWorkflowStatusReadResponse,
@@ -244,6 +245,61 @@ export class ArisSession {
     }
   }
 
+  // Wave 4: read a single research-wiki entity (paper / idea / experiment /
+  // claim) for the click-to-detail panel. Resolves the workspace, then
+  // reads `research-wiki/{entityType}/{entityId}.md` and returns the raw
+  // content. The entityId is the on-disk `node_id` from frontmatter (e.g.
+  // `idea:gbdt-cost-sensitive-threshold`); the file's basename matches the
+  // slug after the colon, so we strip the type prefix before reading.
+  async handleWikiEntityReadRequest(msg: ArisWikiEntityReadRequest): Promise<void> {
+    const { cwd: workspaceCwd, requestId, entityType, entityId } = msg;
+    const cwd = workspaceCwd.trim();
+    if (!cwd) {
+      this.emitWikiEntityError(requestId, entityType, entityId, "cwd is required");
+      return;
+    }
+
+    const normalizedEntityType = entityType.trim();
+    const normalizedEntityId = entityId.trim();
+    if (!normalizedEntityType) {
+      this.emitWikiEntityError(requestId, entityType, entityId, "entityType is required");
+      return;
+    }
+    if (!normalizedEntityId) {
+      this.emitWikiEntityError(requestId, entityType, entityId, "entityId is required");
+      return;
+    }
+
+    try {
+      const root = await this.resolveWorkspaceRoot(cwd);
+      const slug = normalizedEntityId.includes(":")
+        ? normalizedEntityId.split(":").slice(1).join(":")
+        : normalizedEntityId;
+      const relativePath =
+        normalizedEntityType === "gap"
+          ? "research-wiki/gap_map.md"
+          : `research-wiki/${normalizedEntityType}/${slug}.md`;
+      const filePath = await resolveScopedPath({ root, relativePath });
+      const content = await this.readTextFile(filePath.resolvedPath);
+      this.host.emit({
+        type: "aris.wiki.entity.read.response",
+        payload: {
+          requestId,
+          ok: true,
+          content,
+          entityType: normalizedEntityType,
+          entityId: normalizedEntityId,
+        },
+      });
+    } catch (error) {
+      this.logger.warn(
+        { err: error, cwd, requestId, entityType, entityId },
+        "Failed to read ARIS wiki entity",
+      );
+      this.emitWikiEntityError(requestId, entityType, entityId, getErrorMessage(error));
+    }
+  }
+
   // ── Wave 3: review/events RPCs (aris-readers / watcher) ──
 
   async handleReviewReadRequest(msg: ArisReviewReadRequest): Promise<void> {
@@ -426,6 +482,24 @@ export class ArisSession {
     });
   }
 
+  private emitWikiEntityError(
+    requestId: string,
+    entityType: string,
+    entityId: string,
+    error: string,
+  ): void {
+    this.host.emit({
+      type: "aris.wiki.entity.read.response",
+      payload: {
+        requestId,
+        ok: false,
+        entityType,
+        entityId,
+        error,
+      },
+    });
+  }
+
   // ── File readers ──
 
   private async readWiki(cwd: string): Promise<WikiData> {
@@ -509,7 +583,14 @@ export class ArisSession {
           return null;
         }
         const partial = parseMarkdownFile(content);
-        return Object.assign(partial, { id: path.basename(name, ".md") });
+        // Prefer the on-disk `node_id` from YAML frontmatter (e.g.
+        // `node_id: idea:gbdt-cost-sensitive-threshold`) so node ids match
+        // edge endpoints in `graph/edges.jsonl`. Fall back to the file
+        // basename only when the frontmatter omits `node_id`.
+        const frontmatterId = toStringOrNull(partial.frontmatter.node_id);
+        return Object.assign(partial, {
+          id: frontmatterId ?? path.basename(name, ".md"),
+        });
       }),
     );
 
@@ -536,18 +617,25 @@ export class ArisSession {
       }
       try {
         const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-        if (
-          typeof parsed.source === "string" &&
-          typeof parsed.target === "string" &&
-          typeof parsed.relation === "string"
-        ) {
-          edges.push({
-            source: parsed.source,
-            target: parsed.target,
-            relation: parsed.relation,
-            strength: typeof parsed.strength === "number" ? parsed.strength : null,
-          });
+        // Accept BOTH the on-disk schema (`from` / `to` / `type` /
+        // `evidence` / `added`) emitted by the research-wiki tool and the
+        // wire-format keys (`source` / `target` / `relation` / `strength`).
+        // Normalize into the wire shape so the renderer doesn't have to know
+        // about either variant. `strength` falls back to `evidence` when
+        // present so callers can encode relationship strength either way.
+        const source = pickString(parsed.source) ?? pickString(parsed.from);
+        const target = pickString(parsed.target) ?? pickString(parsed.to);
+        const relation = pickString(parsed.relation) ?? pickString(parsed.type);
+        if (!source || !target || !relation) {
+          continue;
         }
+        const strength = typeof parsed.strength === "number" ? parsed.strength : null;
+        edges.push({
+          source,
+          target,
+          relation,
+          strength,
+        });
       } catch {
         // Skip malformed JSONL lines.
       }
@@ -790,6 +878,10 @@ function toString(value: unknown): string | undefined {
     return value;
   }
   return undefined;
+}
+
+function pickString(value: unknown): string | null {
+  return toString(value) ?? null;
 }
 
 function toStringOrNull(value: unknown): string | null {

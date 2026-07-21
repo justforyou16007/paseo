@@ -102,3 +102,67 @@ export const ARIS_WORKFLOW_STAGE_COLORS: Record<string, string> = {
 export function getArisWorkflowStageColor(status: string): string {
   return ARIS_WORKFLOW_STAGE_COLORS[status] ?? ARIS_NEUTRAL_NODE_COLOR;
 }
+
+/**
+ * Knowledge-graph node colors per entity kind. Reuses the existing palette
+ * family so the graph reads as part of the same system: paper is a muted
+ * slate (background domain), idea is the active blue (the moving piece),
+ * experiment is amber (in-flight), claim is green (verified).
+ */
+export const ARIS_KNOWLEDGE_GRAPH_NODE_COLORS = {
+  paper: "#64748b", // slate-500 - background domain
+  idea: "#3b82f6", // blue-500 - active
+  experiment: "#f59e0b", // amber-500 - in-flight
+  claim: "#22c55e", // green-500 - verified
+  gap: "#94a3b8", // slate-400 - secondary entity
+} as const;
+
+export type ArisKnowledgeGraphNodeKind = keyof typeof ARIS_KNOWLEDGE_GRAPH_NODE_COLORS;
+
+export function getArisNodeKindColor(group: string | undefined): string {
+  if (
+    group === "paper" ||
+    group === "idea" ||
+    group === "experiment" ||
+    group === "claim" ||
+    group === "gap"
+  ) {
+    return ARIS_KNOWLEDGE_GRAPH_NODE_COLORS[group];
+  }
+  return ARIS_NEUTRAL_NODE_COLOR;
+}
+
+/**
+ * Knowledge-graph edge colors per typed relationship, matching the
+ * research-wiki SKILL spec. Reuses the existing palette family for cohesion.
+ */
+export const ARIS_KNOWLEDGE_GRAPH_EDGE_COLORS = {
+  extends: "#6366f1", // indigo-500 - builds on prior
+  contradicts: "#ef4444", // red-500 - disagrees
+  addresses_gap: "#a855f7", // purple-500 - gap targeting
+  inspired_by: "#06b6d4", // cyan-500 - idea source
+  tested_by: "#3b82f6", // blue-500 - tested in
+  supports: "#22c55e", // green-500 - confirms
+  invalidates: "#f97316", // orange-500 - disproves
+  supersedes: "#f59e0b", // amber-500 - replaces
+} as const;
+
+export type ArisKnowledgeGraphRelation = keyof typeof ARIS_KNOWLEDGE_GRAPH_EDGE_COLORS;
+
+export const ARIS_KNOWLEDGE_GRAPH_RELATIONS = Object.keys(
+  ARIS_KNOWLEDGE_GRAPH_EDGE_COLORS,
+) as ArisKnowledgeGraphRelation[];
+
+export function isArisKnowledgeGraphRelation(value: unknown): value is ArisKnowledgeGraphRelation {
+  return (
+    typeof value === "string" &&
+    (ARIS_KNOWLEDGE_GRAPH_RELATIONS as readonly string[]).includes(value)
+  );
+}
+
+export function getArisEdgeRelationColor(relation: string | undefined): string {
+  if (isArisKnowledgeGraphRelation(relation)) {
+    return ARIS_KNOWLEDGE_GRAPH_EDGE_COLORS[relation];
+  }
+  return ARIS_NEUTRAL_NODE_COLOR;
+}
