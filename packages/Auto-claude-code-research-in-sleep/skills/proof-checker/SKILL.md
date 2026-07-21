@@ -486,7 +486,7 @@ After all fixes, verify the proof as a whole:
 
 For any fix that resolved a FATAL or CRITICAL issue, submit the **fixed section alone** (without showing the previous critique) to a **fresh reviewer thread** using the selected backend. Do NOT use a reply tool — this step must be blind.
 
-_For codex:_ spawn a paseo codex reviewer sub-agent (fresh) per `shared-references/paseo-reviewer-dispatch.md` (a brand-new agent — do NOT continue the round-1 agent; the blind review must have no memory of the original critique). The `mcp__codex__codex:` block below is the documented fallback when paseo MCP is unavailable.
+_For codex:_ spawn a paseo codex reviewer sub-agent (fresh) per `shared-references/paseo-reviewer-dispatch.md` (a brand-new agent — do NOT continue the round-1 agent; the blind review must have no memory of the original critique).
 _For manual:_ start a fresh `mcp__manual_review__review` thread.
 
 The blind review prompt:

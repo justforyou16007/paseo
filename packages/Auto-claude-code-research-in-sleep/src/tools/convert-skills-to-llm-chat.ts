@@ -4,8 +4,8 @@ import path from "path";
 import { createCli, runCli } from "../lib/cli.js";
 
 const REPLACEMENTS_TEXT: [string, string][] = [
-  ["mcp__codex__codex-reply", "mcp__llm-chat__chat"],
-  ["mcp__codex__codex", "mcp__llm-chat__chat"],
+  ["mcp__paseo__send_agent_prompt", "mcp__llm-chat__chat"],
+  ["mcp__paseo__create_agent", "mcp__llm-chat__chat"],
   ["via GPT-5.5 xhigh review", "via llm-chat MCP review"],
   ["GPT-5.5 xhigh", "LLM reviewer"],
   ["secondary Codex agent", "LLM reviewer via llm-chat MCP"],
@@ -93,10 +93,13 @@ function findSkills(sourceDir: string): string[] {
         if (parts.some((p) => excludeDirs.has(p))) continue;
 
         const content = fs.readFileSync(fullPath, "utf-8");
-        if (content.includes("mcp__llm-chat__chat") && !content.includes("mcp__codex__codex")) {
+        if (
+          content.includes("mcp__llm-chat__chat") &&
+          !content.includes("mcp__paseo__create_agent")
+        ) {
           continue;
         }
-        if (!content.includes("mcp__codex__codex")) continue;
+        if (!content.includes("mcp__paseo__create_agent")) continue;
 
         skills.push(fullPath);
       }

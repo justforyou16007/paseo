@@ -37,8 +37,12 @@ Cross-model adversarial collaboration only works if the reviewer forms its own a
 ## Correct pattern
 
 ```
-mcp__codex__codex:
-  prompt: |
+mcp__paseo__create_agent:
+  provider: "codex/gpt-5.5"
+  settings:
+    modeId: "full-access"
+    thinkingOptionId: "xhigh"
+  initialPrompt: |
     Review the following research project as a senior ML reviewer.
 
     Files to read:
@@ -54,8 +58,9 @@ mcp__codex__codex:
 ## Incorrect pattern
 
 ```
-mcp__codex__codex:
-  prompt: |
+mcp__paseo__create_agent:
+  provider: "codex/gpt-5.5"
+  initialPrompt: |
     The main contribution is a new loss function that improves by 15%.
     However, I noticed the ablation is incomplete.
     Here's my summary of the key results: [...]
@@ -73,7 +78,7 @@ This protocol applies to ALL cross-model review calls in ARIS:
 - `/paper-figure` — figure quality review
 - `/rebuttal` — stress test
 - `/meta-optimize` — patch review
-- Any skill that sends artifacts to `mcp__codex__codex` or `mcp__codex__codex-reply`
+- Any skill that sends artifacts to the cross-model reviewer via paseo codex sub-agent
 
 > **Scope expansion**: This document is now a **specialization** of
 > [`paseo-reviewer-dispatch.md`](paseo-reviewer-dispatch.md) §"Rule 3 —
@@ -86,4 +91,4 @@ This protocol applies to ALL cross-model review calls in ARIS:
 
 ## Exception
 
-Multi-round review within the SAME thread (`codex-reply`) may reference the reviewer's own previous feedback to check resolution — but still must not include executor interpretations of that feedback.
+Multi-round review within the SAME reviewer agent (continuation via `send_agent_prompt`) may reference the reviewer's own previous feedback to check resolution — but still must not include executor interpretations of that feedback.

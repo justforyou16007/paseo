@@ -67,14 +67,13 @@ grandchild archives cascade with the child).
 
 Agent lifecycle is **exclusively** managed by Paseo MCP — the 33 tools
 listed at `mcp__paseo__*` (see `paseo-tools.ts` in `packages/server`).
-The host `Skill` / `Task` / `Agent` tools and the legacy `mcp__codex__codex`
-/ `mcp__codex__codex-reply` are **forbidden** in ARIS workflows.
+The host `Skill` / `Task` / `Agent` tools are **forbidden** in ARIS workflows.
 
 **Strict mode**: if `mcp__paseo__list_agents` is unavailable at
 orchestrator startup, the run is **blocked** (`run_state.py` writes
 `status=BLOCKED` for the current phase) — it does **not** fall back to
-in-process `Skill` + `mcp__codex__codex`. The run stops and the user is
-asked to start the Paseo daemon.
+in-process `Skill` tool. The run stops and the user is asked to start
+the Paseo daemon.
 
 The only MCP exception is `mcp__manual_review__*`, used for the
 `— reviewer: manual` option (human-in-browser; cannot be a real agent).
@@ -182,8 +181,6 @@ foundation everything below rests on:
 - **`create_agent` = fresh context; `send_agent_prompt` to the SAME agent =
   continuation.** A paseo agent holds its own conversation thread. First
   prompt opens it; subsequent prompts to the same `agentId` continue it.
-  This is the exact analog of `mcp__codex__codex` (fresh) vs
-  `codex-reply` (continuation).
 - **`relationship: {kind: "subagent"}` cascade-archives.** A subagent is
   owned by its parent; archiving the parent archives its children. Use
   `subagent` for every workflow child (W-agents, sub-skills, reviewers) so
@@ -250,7 +247,7 @@ Run context (this run, do not re-derive):
 Operating rules (non-negotiable):
   1. Resolve every helper via integration-contract.md §2 (.aris/tools → tools → $ARIS_REPO/tools). Never hardcode a path.
   2. Write artifacts to the standard stage dir for this phase (per the SKILL's output protocol). Do NOT write elsewhere.
-  3. When you need the GPT-5.5 reviewer, spawn/continue a paseo codex sub-agent per paseo-reviewer-dispatch.md (NOT mcp__codex__codex).
+  3. When you need the GPT-5.5 reviewer, spawn/continue a paseo codex sub-agent per paseo-reviewer-dispatch.md.
   4. Do NOT call run_state.py accept. You may `set done --artifact <path>`; acceptance is the orchestrator's job (acceptance-gate.md).
   5. On completion, write the receipt file below and stop. Do not call accept, do not start the next phase.
 
@@ -271,10 +268,10 @@ the receipt's `artifact_path` for `set done` and its own gate result for
 A parent agent continues a child in exactly two ways, mirroring today's two
 codex call types:
 
-| Today                                     | After migration                           | Used by                                                                                                                               |
-| ----------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `mcp__codex__codex` (fresh thread)        | **create a NEW paseo child agent**        | every sub-skill dispatch; every fresh-reviewer round (bias guard); every audit layer                                                  |
-| `mcp__codex__codex-reply` (same threadId) | **`send_agent_prompt` to the SAME agent** | multi-round reviewer continuation (`auto-review-loop` round 2+); `idea-creator` devil's-advocate triage; `research-review` follow-ups |
+| Action                                          | Used by                                                                                                                               |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| **`create_agent`** (fresh context)              | every sub-skill dispatch; every fresh-reviewer round (bias guard); every audit layer                                                  |
+| **`send_agent_prompt`** (continuation, same id) | multi-round reviewer continuation (`auto-review-loop` round 2+); `idea-creator` devil's-advocate triage; `research-review` follow-ups |
 
 **For executor sub-agents, the default is fresh.** A sub-skill like
 `/research-lit` or `/proof-checker` is dispatched as a new child each time

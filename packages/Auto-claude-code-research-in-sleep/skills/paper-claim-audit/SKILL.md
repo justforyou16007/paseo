@@ -111,7 +111,7 @@ Any .md file that is an executor-written summary
 
 ### Step 2: Fresh Reviewer Audit (GPT-5.5 — fresh, no continuation)
 
-Spawn a paseo codex reviewer sub-agent (fresh) per `shared-references/paseo-reviewer-dispatch.md`. Every run is a fresh context — never continue an existing codex agent (no `send_agent_prompt` to a prior reviewer). The `mcp__codex__codex:` block below is the documented fallback, used verbatim when paseo MCP is unavailable:
+Spawn a paseo codex reviewer sub-agent (fresh) per `shared-references/paseo-reviewer-dispatch.md`. Every run is a fresh context — never continue an existing codex agent (no `send_agent_prompt` to a prior reviewer).
 
 ```
   model: gpt-5.5

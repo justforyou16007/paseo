@@ -116,7 +116,7 @@ data = {
     'call_number': ${CALL_NUM},
     'purpose': '${PURPOSE}',
     'timestamp': '${TIMESTAMP}',
-    'tool': 'mcp__codex__codex',
+    'tool': 'mcp__paseo__create_agent',
     'model': '${MODEL}',
     'prompt': sys.stdin.read()
 }
@@ -133,7 +133,7 @@ data = {
     'call_number': ${CALL_NUM},
     'purpose': '${PURPOSE}',
     'timestamp': '${TIMESTAMP}',
-    'tool': 'mcp__codex__codex',
+    'tool': 'mcp__paseo__create_agent',
     'model': '${MODEL}',
     'prompt_length': ${#PROMPT},
     'response_length': ${#RESPONSE}

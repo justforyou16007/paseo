@@ -14,7 +14,7 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, WebSearch, WebFetch, mcp_
 > itself. Each W1–W6 workflow runs as a **paseo claude sub-agent**
 > (`paseo-subagent-dispatch.md`); each cross-model reviewer runs as a **paseo
 > codex sub-agent** (`paseo-reviewer-dispatch.md`). The old single-session flow
-> (synchronous `Skill`-tool calls + `mcp__codex__codex` MCP) is recoverable via
+> (synchronous `Skill`-tool calls + paseo codex sub-agent) is recoverable via
 > git history and remains the graceful-degradation fallback when paseo MCP is
 > unavailable. Full mapping: [`docs/PASEO_MIGRATION.md`](../../docs/PASEO_MIGRATION.md).
 >
@@ -102,8 +102,8 @@ gate, and calls `run-state.js accept`.
    paseo tool) is available.
    - **Available** → use the paseo dispatch path below.
    - **Unavailable** → log `WARN: paseo MCP unavailable; using in-process
-Skill + mcp__codex__codex fallback`. Use today's synchronous `Skill`-tool +
-     `mcp__codex__codex` path. The verdict, audit chain, and acceptance gate are
+Skill + paseo codex reviewer dispatch`. Use today's synchronous `Skill`-tool +
+     paseo codex reviewer path. The verdict, audit chain, and acceptance gate are
      **identical** on either path — only the dispatch substrate changes
      (`paseo-subagent-dispatch.md` §"Auto-skip"). Skip step 2 (no config.json
      needed for the fallback path).

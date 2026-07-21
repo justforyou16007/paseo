@@ -397,7 +397,7 @@ Send the slide outline + selected LaTeX frames to GPT-5.5 xhigh:
 
 Apply fixes. Recompile if LaTeX was changed.
 
-> ⚠️ If `mcp__codex__codex` is not available (no OpenAI API key), skip external review and proceed to Phase 6. Note the skip in `SLIDES_STATE.json`.
+> ⚠️ If the paseo codex reviewer is not available, skip external review and proceed to Phase 6. Note the skip in `SLIDES_STATE.json`.
 
 Save review to `slides/SLIDES_REVIEW.md`.
 

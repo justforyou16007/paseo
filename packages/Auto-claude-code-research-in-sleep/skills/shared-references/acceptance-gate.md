@@ -133,8 +133,8 @@ When you author or review a "keep working until X" skill:
    exactly the place where a cheap deterministic check beats a vibe.
 
 4. **For every Type-B gate:** route it to a cross-model verdict per
-   `reviewer-routing.md` (default `mcp__codex__codex` at
-   `reasoning_effort: xhigh`; `oracle-pro` on request; `manual` only if
+   `reviewer-routing.md` (default: paseo codex sub-agent at `xhigh` per
+   `paseo-reviewer-dispatch.md`; `oracle-pro` on request; `manual` only if
    the routed model is verifiably non-Claude and recorded — otherwise it
    is same-family self-acquittal in disguise). Pass file paths, not
    summaries (`reviewer-independence.md`).

@@ -38,7 +38,7 @@ manually) — do not run `/slides-polish` for that.
 
 - **REVIEWER_MODEL = `gpt-5.5`** — Codex MCP model for per-page review. xhigh reasoning is non-negotiable (see `../shared-references/effort-contract.md`). `gpt-5.4` is acceptable when the user has no `gpt-5.5` access; `gpt-5.5` is preferred for visual nuance.
 - **REVIEWER_REASONING = `xhigh`** — Hard invariant; the effort knob does **not** change this.
-- **CONTEXT_POLICY = `fresh`** — Each per-page review uses a **fresh** Codex thread (`mcp__codex__codex`, never `codex-reply`). See `../shared-references/reviewer-independence.md`. This prevents the reviewer from anchoring on prior fixes.
+- **CONTEXT_POLICY = `fresh`** — Each per-page review uses a **fresh** paseo codex sub-agent (`mcp__paseo__create_agent`, never continue an existing agent). See `../shared-references/reviewer-independence.md`. This prevents the reviewer from anchoring on prior fixes.
 - **REFERENCE_VISUAL** — Path to a PDF the user wants the polished deck to **align with** in visual weight (typography proportion, color discipline, callout density). Required input. If polishing PPTX only, the **Beamer compile of the same talk** is the ideal reference. If no reference exists yet, ask the user; do not silently default to "Why-RF" or any preset.
 - **STYLE_PRESET = `generic`** — Default style anchor. Other options: `why-rf` (academic-minimalist, derived from a 2025 academic talk), `neurips`, `icml`, `iclr`, `cvpr`. Presets influence color discipline + element library; the **reference PDF is the visual ground truth**, not the preset.
 - **PPTX_SCALE_HINT = `1.6×`** — Heuristic multiplier from Beamer point sizes to PPTX point sizes for matched visual weight on 13.33"×7.5" PowerPoint at 16:9. Range 1.5-1.8×. The actual scale is **always** validated by visual review, never blindly applied.
@@ -60,7 +60,7 @@ auto-install. Required:
 - **PDF inspection**: `pdfinfo` and either `pdftoppm` (poppler, preferred) or `mutool draw` (mupdf) for rendering slides to PNG. Required so the per-page Codex call sees actual slide pixels, not text extraction alone. Render command: `pdftoppm -r 150 -png <pdf> <out-stem>` (or `mutool draw -o <out-stem>-%d.png -r 150 <pdf>`).
 - **PPTX → PDF rendering**: `soffice` (LibreOffice headless) preferred; otherwise the user must export PDF manually from PowerPoint/Keynote.
 - **LaTeX** (Beamer side only): `xelatex` (CJK) or `pdflatex`, plus `latexmk` for clean recompiles. The Beamer fix patterns in Phase 2 may require these LaTeX packages: `microtype` (letter-spacing in section labels), `array` (raggedright p-columns), `tcolorbox` (banners and callouts), `ctex` or `xeCJK` (CJK), `tikz` + `tikz-cd` (diagrams).
-- **Codex MCP**: `mcp__codex__codex` must be available (the user must be signed in to Codex MCP). The skill aborts at Phase 0 if Codex MCP cannot be reached.
+- **Codex MCP**: Paseo codex sub-agent must be available (the user must have Paseo MCP wired). The skill aborts at Phase 0 if Paseo MCP cannot be reached.
 
 Fallback rules:
 
@@ -530,7 +530,7 @@ Both the triage pass and the per-slide passes are traced.
 - Runs **after** `/paper-slides` (or any externally generated deck).
 - Compatible with `/paper-poster-html` workflow (same color discipline) but
   different output cadence.
-- Uses the same `mcp__codex__codex` MCP infrastructure as
+- Uses the same paseo codex sub-agent infrastructure (`mcp__paseo__create_agent`) as
   `/auto-paper-improvement-loop`, `/research-review`, etc.
 - Does **not** call or compose with `/paper-slides` content phases — strict
   separation.

@@ -32,7 +32,7 @@ Unlike `/auto-review-loop` (which iterates on **research** — running experimen
 
 - **MAX_ROUNDS = 2** — Two rounds of review→fix→recompile. Empirically, Round 1 catches structural issues (4→6/10), Round 2 catches remaining presentation issues (6→7/10). Diminishing returns beyond 2 rounds for writing-only improvements.
 - **REVIEWER_MODEL = `gpt-5.5`** — Model used via Codex MCP for paper review.
-- **REVIEWER_BIAS_GUARD = true** — When `true`, every review round uses a fresh `mcp__codex__codex` thread with no prior review context. Never use `mcp__codex__codex-reply` for review rounds. Set to `false` only for deliberate debugging of the legacy behavior. **Empirical evidence:** running the same paper with `codex-reply` + "since last round we did X" prompts inflated scores from real 3/10 → fake 8/10 across multiple rounds; switching to fresh threads recovered the true 3/10 assessment.
+- **REVIEWER_BIAS_GUARD = true** — When `true`, every review round uses a fresh paseo codex sub-agent via `mcp__paseo__create_agent` with no prior review context. Never continue an existing reviewer agent via `mcp__paseo__send_agent_prompt` for review rounds. Set to `false` only for deliberate debugging of the legacy behavior. **Empirical evidence:** running the same paper with continued reviewer context + "since last round we did X" prompts inflated scores from real 3/10 → fake 8/10 across multiple rounds; switching to fresh agents recovered the true 3/10 assessment.
 - **REVIEW_LOG = `PAPER_IMPROVEMENT_LOG.md`** — Cumulative log of all rounds, stored in paper directory.
 - **HUMAN_CHECKPOINT = false** — When `true`, pause after each round's review and present score + weaknesses to the user. The user can approve fixes, provide custom modification instructions, skip specific fixes, or stop early. When `false` (default), runs fully autonomously.
 - **EDIT_WHITELIST = `null`** — Optional path to a YAML/JSON whitelist file constraining which paths and operations the fix-implementation step may touch. When `null` (default), all edits proceed unconstrained. When set via `— edit-whitelist <path>` (also accepts `— edit_whitelist <path>`), the loop loads the file at startup and consults it before each edit; rejected edits are logged to `PAPER_IMPROVEMENT_LOG.md` rather than silently dropped. See "Optional: Edit Whitelist" below.
@@ -216,8 +216,8 @@ The reviewer must be context-naive on every round. Prior-round summaries, fix li
 
 Rules:
 
-- Every round starts with `mcp__codex__codex`, not `mcp__codex__codex-reply`.
-- Never pass a prior threadId into the next review prompt.
+- Every round starts with a fresh paseo codex sub-agent (`mcp__paseo__create_agent`), not a continuation of an existing one (`mcp__paseo__send_agent_prompt`).
+- Never pass a prior agentId into the next review prompt.
 - Never include "since last round", "we fixed", "after applying", or any fix summary in the reviewer prompt.
 - The only acceptable evidence of improvement is the current `.tex` source and compiled PDF.
 - If a fix cannot be observed in the files, the reviewer should not be told it happened.
@@ -402,7 +402,7 @@ This is advisory only — the inline Step 4.5 check remains the default and cont
 
 ### Step 5: Round 2 Review
 
-If `REVIEWER_BIAS_GUARD = true` (default), use a **fresh** `mcp__codex__codex` thread for Round 2. Do not reuse the Round 1 threadId for prompting. Save the returned threadId only for recovery bookkeeping.
+If `REVIEWER_BIAS_GUARD = true` (default), use a **fresh** paseo codex sub-agent via `mcp__paseo__create_agent` for Round 2. Do not reuse the Round 1 agentId for prompting. Save the returned agentId only for recovery bookkeeping.
 
 ```
   model: gpt-5.5
@@ -439,7 +439,7 @@ If `REVIEWER_BIAS_GUARD = true` (default), use a **fresh** `mcp__codex__codex` t
     self-containedness, notation consistency, and visual presentation quality.
 ```
 
-If `REVIEWER_BIAS_GUARD = false` (legacy debugging only), use `mcp__codex__codex-reply` with the saved threadId; this is **not** the recommended path.
+If `REVIEWER_BIAS_GUARD = false` (legacy debugging only), continue the existing reviewer agent via `mcp__paseo__send_agent_prompt` with the saved agentId; this is **not** the recommended path.
 
 ### Step 5.5: Kill Argument Exercise (theory / scope-heavy papers only)
 
@@ -650,7 +650,7 @@ paper/
 
 - **Preserve all PDF versions** — user needs to compare progression
 - **Save FULL raw review text** — do not summarize or truncate GPT-5.5 responses
-- **Reviewer independence (Round 2+)**: when `REVIEWER_BIAS_GUARD = true` (default), use a **fresh** `mcp__codex__codex` thread for every review round; never use `mcp__codex__codex-reply` and never include "since last round" / fix summaries in the prompt. See the Reviewer Independence Protocol section above.
+- **Reviewer independence (Round 2+)**: when `REVIEWER_BIAS_GUARD = true` (default), use a **fresh** paseo codex sub-agent via `mcp__paseo__create_agent` for every review round; never continue an existing reviewer agent via `mcp__paseo__send_agent_prompt` and never include "since last round" / fix summaries in the prompt. See the Reviewer Independence Protocol section above.
 - **Always recompile after fixes** — verify 0 errors before proceeding
 - **Do not fabricate experimental results** — synthetic validation must describe methodology, not invent numbers
 - **Respect the paper's claims** — soften overclaims rather than adding unsupported new claims
@@ -672,4 +672,4 @@ Based on end-to-end testing on a real theory-paper run:
 
 ## Review Tracing
 
-After each `mcp__codex__codex` or `mcp__codex__codex-reply` reviewer call, save the trace following `shared-references/review-tracing.md` (Policy C — forensic; never silently skip). Use `save_trace.sh` (resolved per the chain in `shared-references/integration-contract.md` §2) or write files directly to `.aris/traces/<skill>/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).
+After each paseo codex sub-agent reviewer call (`mcp__paseo__create_agent` or `mcp__paseo__send_agent_prompt`), save the trace following `shared-references/review-tracing.md` (Policy C — forensic; never silently skip). Use `save_trace.sh` (resolved per the chain in `shared-references/integration-contract.md` §2) or write files directly to `.aris/traces/<skill>/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).

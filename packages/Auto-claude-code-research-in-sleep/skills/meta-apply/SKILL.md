@@ -35,7 +35,7 @@ never silently apply:
 
 1. **The human named THIS patch.** Apply only patches the user listed (`/meta-apply 1,3`
    or `all`); default to applying nothing.
-2. **Fresh cross-model jury PASS, obtained now.** Run `mcp__codex__codex` (fresh thread,
+2. **Fresh cross-model jury PASS, obtained now.** Spawn a fresh paseo codex reviewer sub-agent per `paseo-reviewer-dispatch.md` (
    NOT codex-reply; `model: gpt-5.5`, `reasoning: xhigh`, `sandbox: read-only`,
    paths-only per [`reviewer-independence.md`](../shared-references/reviewer-independence.md))
    on the staged `.diff` + its target. Ask: _does this change improve the harness without

@@ -1,11 +1,9 @@
 # Paseo Reviewer Dispatch
 
 The cross-model reviewer in ARIS is a **GPT-5.5** verdict rendered against a
-**Claude** executor's work. Today this is `mcp__codex__codex` (fresh thread
-per round) or `mcp__codex__codex-reply` (continuation, same `threadId`).
-After the paseo migration, the reviewer is a **paseo codex sub-agent** —
+**Claude** executor's work. The reviewer is a **paseo codex sub-agent** —
 spawned by the Claude executor (a workflow agent or a leaf verdict skill
-running inside one), not called through codex MCP.
+running inside one), not called through an in-process MCP tool.
 
 This document is the **single place** that maps today's codex-MCP reviewer
 discipline to paseo agent semantics. It is the jury half of the migration;
@@ -77,8 +75,7 @@ interpretation of that feedback (the same exclusion that
 
 See [`paseo-subagent-dispatch.md`](paseo-subagent-dispatch.md)
 §"Rule 4". The reviewer is a Paseo agent (`provider: "codex/gpt-5.5"`
-via `create_agent`); it MUST NOT be called via legacy
-`mcp__codex__codex` or `mcp__codex__codex-reply`. The only allowed
+via `create_agent`); it MUST NOT be called via legacy MCP tools. The only allowed
 MCP exception is `mcp__manual_review__*` for `— reviewer: manual`.
 
 #### Rule 4a — Creator Owns Lifecycle (reviewer view; sub-rule of Rule 4)
@@ -149,13 +146,13 @@ Read from `third_parties/paseo/` (untouched):
 
 - **A codex agent holds `currentThreadId`.** First prompt calls `thread/start`
   (fresh thread); subsequent `send_agent_prompt` to the same agent reuse
-  `currentThreadId` (continuation). So: **`create_agent` ≡ a fresh
-  `mcp__codex__codex` thread; `send_agent_prompt` to the same agent ≡
-  `codex-reply`.** The mapping is exact.
+  `currentThreadId` (continuation). So: **`create_agent` = fresh review;
+  `send_agent_prompt` to the same agent = continuation review.** The mapping
+  is exact.
 - **The codex child is self-contained.** It runs Codex CLI with native tools
   (shell, apply_patch, web_search) + only the paseo MCP server injected. It
-  does NOT recursively call `mcp__codex__codex` — that is the whole point of
-  replacing codex MCP with a paseo codex agent.
+  does NOT recursively spawn sub-agents — that is the whole point of
+  having a dedicated paseo codex agent.
 - **Cross-provider spawn REQUIRES explicit `settings.modeId`.** Without it,
   the spawn throws "cannot inherit mode" (`create-agent-mode.ts`). This is
   the single most common reviewer-spawn bug.
@@ -332,10 +329,8 @@ fi
 
 The trace's `meta.json` `thread_id` field therefore holds a paseo codex
 agent-id; the `request.json` `tool` field is now `paseo:create_agent` (fresh)
-or `paseo:send_agent_prompt` (continuation) instead of `mcp__codex__codex`
-/ `mcp__codex__codex-reply`. `save_trace.sh` itself is not modified — it
-treats `--thread-id` as an opaque string. This is documented in
-[`review-tracing.md`](review-tracing.md).
+or `paseo:send_agent_prompt` (continuation). `save_trace.sh` itself is not modified — it
+treats `--thread-id` as an opaque string.
 
 ## Persisting the handle (state-schema adaptation, helpers UNCHANGED)
 

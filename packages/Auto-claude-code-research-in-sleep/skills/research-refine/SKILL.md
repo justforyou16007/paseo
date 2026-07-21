@@ -772,7 +772,7 @@ Suggested next step: /experiment-plan
 - **Review the mechanism, not the parts count.** A long module list is not novelty.
 - **Pushback is encouraged.** If reviewer feedback causes drift or unnecessary complexity, argue back with evidence.
 - **ALWAYS use `config: {"model_reasoning_effort": "xhigh"}`** for all Codex review calls.
-- **Save `threadId` from Phase 2** and use `mcp__codex__codex-reply` for later rounds.
+- **Save the agent-id from Phase 2** and continue the same paseo codex reviewer agent via `send_agent_prompt` for later rounds.
 - **Do not fabricate results.** Only describe expected evidence and planned experiments.
 - **Be specific about compute and data assumptions.** Vague "we'll train a model" is not enough.
 - **Document everything.** Save every raw review, every anchor check, every simplicity check, and every major method change.

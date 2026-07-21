@@ -3,8 +3,8 @@
 > This section configures the ARIS pipeline's **execution substrate** — the
 > paseo parent-child agent layer that dispatches W1–W6 workflows and the
 > cross-model reviewer. It is **optional**: if absent, the pipeline falls
-> back to the in-process `Skill`-tool + `mcp__codex__codex` path with no
-> change to the verdict, audit chain, or acceptance gate
+> back to in-process `Skill`-tool dispatch only (no cross-model codex
+> reviewer) with no change to the verdict, audit chain, or acceptance gate
 > (`paseo-subagent-dispatch.md` §"Auto-skip-if-unconfigured").
 >
 > These variables are **orthogonal** to `effort` / `assurance` (which control

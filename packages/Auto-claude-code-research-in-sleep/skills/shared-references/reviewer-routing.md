@@ -4,9 +4,8 @@
 
 All review calls use the **codex** reviewer (model `gpt-5.5`,
 `reasoning_effort: xhigh`). The **default backend** is now a **paseo codex
-sub-agent** (per [`paseo-reviewer-dispatch.md`](paseo-reviewer-dispatch.md)) —
-the cross-model reviewer is a real paseo agent, not an `mcp__codex__codex` MCP
-tool call. Paseo MCP is required. The host raises a fatal error if `mcp__paseo__list_agents` is unavailable — see `paseo-subagent-dispatch.md` (strict mode).
+sub-agent** (per [`paseo-reviewer-dispatch.md`](paseo-reviewer-dispatch.md)).
+Paseo MCP is required. The host raises a fatal error if `mcp__paseo__list_agents` is unavailable — see `paseo-subagent-dispatch.md` (strict mode).
 
 This is the default for ALL skills. No parameter, no config, no effort level changes this.
 
@@ -50,21 +49,22 @@ When the user explicitly passes `— reviewer: oracle-pro`, route the review thr
 Parse $ARGUMENTS for `— reviewer:` directive.
 
 If not specified OR `— reviewer: codex`:
-    → Use mcp__codex__codex with reasoning_effort: xhigh
-    → This is the DEFAULT. No change from current behavior.
+    → Spawn a paseo codex sub-agent per paseo-reviewer-dispatch.md
+      (provider: codex/gpt-5.5, modeId: full-access, thinkingOptionId: xhigh)
+    → This is the DEFAULT. Paseo MCP is required; run BLOCKS if unavailable.
 
 If `— reviewer: oracle-pro`:
     → Check if mcp__oracle__consult tool is available
     → If available:
         Use mcp__oracle__consult with:
           model: "gpt-5.5-pro"
-          prompt: [same prompt you would send to Codex]
+          prompt: [same prompt you would send to the codex reviewer]
           files: [file paths for reviewer to read directly]
         Note: Oracle may use API mode (fast, needs OPENAI_API_KEY)
               or browser mode (slow ~1-2 min, needs Chrome + ChatGPT login)
     → If NOT available:
         Print: "⚠️ Oracle MCP not installed. Falling back to Codex xhigh."
-        Use mcp__codex__codex as normal.
+        Spawn a paseo codex sub-agent per paseo-reviewer-dispatch.md.
 ```
 
 ### Invariants
@@ -145,7 +145,7 @@ If `— reviewer: agy`:
           mcp__gemini_review__review_start + mcp__gemini_review__review_status (async).
     → If NOT available:
         Print: "⚠️ gemini-review (agy) MCP not configured. Falling back to Codex xhigh."
-        Use mcp__codex__codex as normal.
+        Spawn a paseo codex sub-agent per paseo-reviewer-dispatch.md.
 ```
 
 ### Invariants
@@ -247,13 +247,13 @@ If manual-review MCP is not installed, `— reviewer: manual` prints install ins
 
 ### `codex exec` CLI is NOT an equivalent Codex backend
 
-The mainline reviewer contract is now a **paseo codex sub-agent** (per
-[`paseo-reviewer-dispatch.md`](paseo-reviewer-dispatch.md)), with
-`mcp__codex__codex` + `mcp__codex__codex-reply` as the fallback when paseo MCP
-is unavailable. Both the paseo agent and the MCP fallback rely on **thread
-continuity** (e.g. `/idea-creator` Phase 4 runs its devil's-advocate triage as
-a same-thread continuation — `send_agent_prompt` to the same agent, or
-`codex-reply`), structured returns, and saved `threadId`/agent-id traces.
+The mainline reviewer contract is a **paseo codex sub-agent** (per
+[`paseo-reviewer-dispatch.md`](paseo-reviewer-dispatch.md)). Paseo MCP is
+required; the run BLOCKS if unavailable. Both the paseo agent path and
+alternate MCP backends rely on **thread continuity** (e.g. `/idea-creator`
+Phase 4 runs its devil's-advocate triage as a same-thread continuation —
+`send_agent_prompt` to the same agent), structured returns, and saved
+`threadId`/agent-id traces.
 `codex exec --ephemeral` is a stateless one-shot — fine for a single
 self-contained review, but NOT a drop-in replacement: hand-rewriting every
 call to `codex exec` silently loses reply continuity and tends to mangle

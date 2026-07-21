@@ -277,7 +277,7 @@ Run all lints:
 
 ### Phase 6: External Reviewer Stress Test
 
-Use the selected backend. The base round spawns a fresh paseo codex reviewer sub-agent (fresh) per `shared-references/paseo-reviewer-dispatch.md`; the `mcp__codex__codex` form below is the codex sub-agent prompt (per `paseo-reviewer-dispatch.md`). _For codex:_
+Use the selected backend. The base round spawns a fresh paseo codex reviewer sub-agent per `shared-references/paseo-reviewer-dispatch.md`. _For codex:_
 
 ```
   config: {"model_reasoning_effort": "xhigh"}
@@ -341,7 +341,7 @@ When new reviewer comments arrive:
 3. Draft **delta reply only** (not full rewrite)
 4. Update `rebuttal/REVISION_PLAN.md` in place — add any new checklist items introduced by the follow-up, tick off items the author has already completed, and keep existing items' status current
 5. Re-run safety lints
-6. Continue the same paseo codex reviewer sub-agent via `send_agent_prompt` per `paseo-reviewer-dispatch.md` if continuity is useful (the codex-reply analog; `mcp__codex__codex-reply` is the codex sub-agent form)
+6. Continue the same paseo codex reviewer sub-agent via `send_agent_prompt` per `paseo-reviewer-dispatch.md` if continuity is useful.
 7. Rules: escalate technically not rhetorically; concede if reviewer is correct; stop arguing if reviewer is immovable and no new evidence exists
 
 ### Phase 9: Render HTML view (auto, when `RENDER_HTML = true`, default)

@@ -88,7 +88,7 @@ If a compiled PDF is missing, the skill should still run on .tex source alone, b
 
 ### Step 2: Attack memo (Thread 1, fresh codex)
 
-Spawn a paseo codex reviewer sub-agent (FRESH — no continuation between Thread 1 and Thread 2) per `shared-references/paseo-reviewer-dispatch.md`. The `mcp__codex__codex:` block below is the documented fallback when paseo MCP is unavailable:
+Spawn a paseo codex reviewer sub-agent (FRESH — no continuation between Thread 1 and Thread 2) per `shared-references/paseo-reviewer-dispatch.md`. Paseo MCP is required; the run BLOCKS if unavailable:
 
 ```
   model: gpt-5.5
@@ -185,7 +185,7 @@ ids. The committed attack memo, not the six probes, is what Step 3 consumes.
 
 ### Step 3: Adjudication memo (Thread 2, fresh codex with attack + paper)
 
-Spawn a second paseo codex reviewer sub-agent (FRESH — no continuation between Thread 1 and Thread 2; Thread 2 is a NEW fresh agent, NOT a `send_agent_prompt` continuation of Thread 1 — the independence is the point), per `shared-references/paseo-reviewer-dispatch.md`. The `mcp__codex__codex:` block below is the documented fallback when paseo MCP is unavailable:
+Spawn a second paseo codex reviewer sub-agent (FRESH — no continuation between Thread 1 and Thread 2; Thread 2 is a NEW fresh agent, NOT a `mcp__paseo__send_agent_prompt` continuation of Thread 1 — the independence is the point), per `shared-references/paseo-reviewer-dispatch.md`. Paseo MCP is required; the run BLOCKS if unavailable:
 
 ```
   model: gpt-5.5
@@ -366,7 +366,7 @@ paper after running the audit.
 | `NOT_APPLICABLE` | `headline_unstable`                        | Title or abstract changed within the last 2 commits — re-run after headline stabilizes                     |
 | `BLOCKED`        | `paper_compile_failed`                     | Compiled PDF missing AND `main.tex` does not compile clean — adjudication needs source fidelity            |
 | `BLOCKED`        | `source_files_missing`                     | `main.tex` not found, or no `sec/*.tex` files                                                              |
-| `ERROR`          | `codex_api_error`                          | `mcp__codex__codex` call failed                                                                            |
+| `ERROR`          | `codex_api_error`                          | Paseo codex sub-agent call failed                                                                          |
 | `ERROR`          | `decomposition_parse_failed`               | Adjudicator thread did not return parseable per-point structure                                            |
 | `ERROR`          | `trace_save_failed`                        | Trace directory write failed                                                                               |
 

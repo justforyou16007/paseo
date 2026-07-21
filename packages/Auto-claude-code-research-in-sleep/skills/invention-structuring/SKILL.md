@@ -116,7 +116,7 @@ Dependent Claim 5 → alternative implementation of feature A
 
 ### Step 6: Cross-Model Validation
 
-Call `REVIEWER_MODEL` via `mcp__codex__codex` with xhigh reasoning:
+Call `REVIEWER_MODEL` via a fresh paseo codex reviewer sub-agent per `paseo-reviewer-dispatch.md` with xhigh reasoning:
 
 ```
   config: {"model_reasoning_effort": "xhigh"}
@@ -201,4 +201,4 @@ Write `patent/INVENTION_DISCLOSURE.md`:
 - The core inventive concept must be the minimum set of features for patentability.
 - Supporting features should be independently valuable -- each should provide a meaningful technical benefit even if other supporting features are removed.
 - Never invent embodiments that do not correspond to the actual invention or user-provided materials.
-- If `mcp__codex__codex` is not available, skip cross-model validation and note it in the output.
+- If the paseo codex reviewer is not available, skip cross-model validation and note it in the output.

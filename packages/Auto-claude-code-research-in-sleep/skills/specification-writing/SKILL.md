@@ -162,7 +162,7 @@ If any element lacks support, add the necessary description before proceeding.
 
 ### Step 10: Cross-Model Review
 
-Call `REVIEWER_MODEL` via `mcp__codex__codex` with xhigh reasoning:
+Call `REVIEWER_MODEL` via a fresh paseo codex reviewer sub-agent per `paseo-reviewer-dispatch.md` with xhigh reasoning:
 
 ```
   config: {"model_reasoning_effort": "xhigh"}
@@ -219,4 +219,4 @@ Summary file: `patent/specification/SPECIFICATION_INDEX.md` with:
 - Background section describes specific deficiencies, not general "need for improvement."
 - Multiple embodiments strengthen the specification but are not always required.
 - Large file handling: if a Write operation fails, retry with Bash `cat <<'EOF'` heredoc.
-- If `mcp__codex__codex` is not available, skip cross-model review and note it in the output.
+- If the paseo codex reviewer is not available, skip cross-model review and note it in the output.

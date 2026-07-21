@@ -45,7 +45,7 @@ Before calling the external reviewer, compile a comprehensive briefing:
 
 ### Step 2: Round 1 — Full Examiner Review
 
-Send to `REVIEWER_MODEL` via `mcp__codex__codex` with xhigh reasoning:
+Send to `REVIEWER_MODEL` via a fresh paseo codex reviewer sub-agent per `paseo-reviewer-dispatch.md` with xhigh reasoning:
 
 ```
   config: {"model_reasoning_effort": "xhigh"}
@@ -129,7 +129,7 @@ For each fix:
 
 ### Step 4: Round 2 — Follow-Up Review
 
-Use `mcp__codex__codex` with the threadId from Round 1:
+Continue the same paseo codex reviewer agent via `send_agent_prompt` (using the agent-id from Round 1):
 
 ```
   threadId: [from Round 1]

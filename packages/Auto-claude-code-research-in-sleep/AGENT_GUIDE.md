@@ -101,7 +101,7 @@ Hard constraints on W5: no new experiments, no bib edits, no framework changes, 
 
 ## Assurance & Audit Chain
 
-ARIS gates submission via a 5-layer cross-model audit chain. Each layer is invoked by a different skill, all use **fresh codex reviewer sub-agents** (paseo; or fresh `mcp__codex__codex` threads as fallback — never `codex-reply` for these audits):
+ARIS gates submission via a 5-layer cross-model audit chain. Each layer is invoked by a different skill, all use **fresh paseo codex sub-agents** (`mcp__paseo__create_agent` — never `send_agent_prompt` for these audits):
 
 | Layer | Skill                | Asks                                                                                    | Verdict file                           |
 | :---: | -------------------- | --------------------------------------------------------------------------------------- | -------------------------------------- |
@@ -127,7 +127,7 @@ At `assurance: submission`, Phase 6 of `/paper-writing` runs `tools/verify_paper
                         [--review | --no-review]
 ```
 
-- `academic` template (linear long-form with sticky TOC): **review by default** — fresh `mcp__codex__codex` thread audits render fidelity / safety / structure (NOT claim truthfulness; that's owned by `/paper-claim-audit` etc.)
+- `academic` template (linear long-form with sticky TOC): **review by default** — fresh paseo codex sub-agent (`mcp__paseo__create_agent`) audits render fidelity / safety / structure (NOT claim truthfulness; that's owned by `/paper-claim-audit` etc.)
 - `dashboard` template (grid cockpit): no review by default; pass `--review` to force
 - Outputs: `<file>.html` + `<file>.review.json` sidecar + trace at `.aris/traces/render-html/<date>_run<NN>/`
 - Do NOT hand-edit the generated HTML — edit the source, re-render

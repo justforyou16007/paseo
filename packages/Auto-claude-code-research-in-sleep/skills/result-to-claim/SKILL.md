@@ -115,7 +115,7 @@ gate DRIVES, it does not ACQUIT).
 
 ### Step 2: Codex Judgment
 
-Spawn a paseo codex reviewer sub-agent (fresh) per `shared-references/paseo-reviewer-dispatch.md` to evaluate the results objectively. Round 1 is fresh; any follow-up (re-judge after supplementary experiments) continues the same paseo codex reviewer sub-agent (`send_agent_prompt`) per `paseo-reviewer-dispatch.md` (same agent-id; the persisted `threadId` field name is unchanged but now holds that codex agent-id). The `mcp__codex__codex:` block below is the documented fallback shape:
+Spawn a paseo codex reviewer sub-agent (fresh) per `shared-references/paseo-reviewer-dispatch.md` to evaluate the results objectively. Round 1 is fresh; any follow-up (re-judge after supplementary experiments) continues the same paseo codex reviewer sub-agent (`send_agent_prompt`) per `paseo-reviewer-dispatch.md` (same agent-id; the persisted `threadId` field name is unchanged but now holds that codex agent-id).
 
 ```
   config: {"model_reasoning_effort": "xhigh"}
@@ -306,4 +306,4 @@ if research-wiki/ exists:
 
 ## Review Tracing
 
-After each paseo codex reviewer sub-agent call (fresh `mcp__paseo__create_agent`, continuation `mcp__paseo__send_agent_prompt`; `mcp__codex__codex`/`codex-reply` as documented fallback), save the trace following `shared-references/review-tracing.md` (Policy C — forensic; never silently skip). Use `save_trace.sh` (resolved per the chain in `shared-references/integration-contract.md` §2) or write files directly to `.aris/traces/<skill>/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).
+After each paseo codex reviewer sub-agent call (fresh `create_agent`, continuation `send_agent_prompt`), save the trace following `shared-references/review-tracing.md` (Policy C — forensic; never silently skip). Use `save_trace.sh` (resolved per the chain in `shared-references/integration-contract.md` §2) or write files directly to `.aris/traces/<skill>/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).

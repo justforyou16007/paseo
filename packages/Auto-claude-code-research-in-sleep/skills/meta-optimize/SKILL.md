@@ -284,7 +284,7 @@ The log at `.aris/meta/events.jsonl` contains JSONL records with these shapes:
 ```jsonl
 {"ts":"...","session":"...","event":"skill_invoke","skill":"auto-review-loop","args":"difficulty: hard"}
 {"ts":"...","session":"...","event":"PostToolUse","tool":"Bash","input_summary":"pdflatex main.tex"}
-{"ts":"...","session":"...","event":"codex_call","tool":"mcp__codex__codex","input_summary":"review..."}
+{"ts":"...","session":"...","event":"codex_call","tool":"mcp__paseo__create_agent","input_summary":"review..."}
 {"ts":"...","session":"...","event":"tool_failure","tool":"Bash","input_summary":"python train.py"}
 {"ts":"...","session":"...","event":"slash_command","command":"/auto-review-loop","args":""}
 {"ts":"...","session":"...","event":"user_prompt","prompt_preview":"change difficulty to hard"}
@@ -324,4 +324,4 @@ Inspired by [Meta-Harness](https://arxiv.org/abs/2603.28052) (Lee et al., 2026) 
 
 ## Review Tracing
 
-After each `mcp__codex__codex` or `mcp__codex__codex-reply` reviewer call, save the trace following `shared-references/review-tracing.md` (Policy C — forensic; never silently skip). Use `save_trace.sh` (resolved per the chain in `shared-references/integration-contract.md` §2) or write files directly to `.aris/traces/<skill>/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).
+After each paseo codex sub-agent reviewer call (`mcp__paseo__create_agent` or `mcp__paseo__send_agent_prompt`), save the trace following `shared-references/review-tracing.md` (Policy C — forensic; never silently skip). Use `save_trace.sh` (resolved per the chain in `shared-references/integration-contract.md` §2) or write files directly to `.aris/traces/<skill>/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).

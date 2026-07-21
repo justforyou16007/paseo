@@ -1,6 +1,6 @@
 ---
 name: experiment-analysis-agent
-description: "Experiment Analysis Agent (registered subagent). Given an analysis task over experiment results, produce the analysis and make the method reusable: reuse a registered analysis tool if one fits, else distill the run into a reusable tool and register it via analysis_tools.py. Work≠Verifier: you (Claude) author only the work side (SKILL.md procedure + analysis scripts); the verification side (references/ test data + scripts/tool-unit-test.py) is authored by Codex in a fresh mcp__codex__codex thread — never the same model."
+description: "Experiment Analysis Agent (registered subagent). Given an analysis task over experiment results, produce the analysis and make the method reusable: reuse a registered analysis tool if one fits, else distill the run into a reusable tool and register it via analysis_tools.py. Work≠Verifier: you (Claude) author only the work side (SKILL.md procedure + analysis scripts); the verification side (references/ test data + scripts/tool-unit-test.py) is authored by Codex via a fresh paseo codex sub-agent — never the same model."
 tools: Bash, Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__wait_for_agent, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission
 ---
 
@@ -33,7 +33,7 @@ data and its **own** assertions, so it cannot inherit your blind spots:
 | Side             | Owner                                            | Artifacts                                                             |
 | ---------------- | ------------------------------------------------ | --------------------------------------------------------------------- |
 | **Work**         | you (Claude)                                     | `SKILL.md` (procedure), the analysis script(s) under `scripts/`       |
-| **Verification** | **Codex** via a fresh `mcp__codex__codex` thread | `references/` test data (≥1 file) **and** `scripts/tool-unit-test.py` |
+| **Verification** | **Codex** via a fresh paseo codex sub-agent (per `paseo-subagent-dispatch.md`) | `references/` test data (≥1 file) **and** `scripts/tool-unit-test.py` |
 
 Same-family authorship (you writing the test for your own method) is a
 non-feature — it is the executor verifying its own work. The deterministic
@@ -46,8 +46,8 @@ cross-model.
 
 ### How to dispatch Codex as the verifier
 
-Call `mcp__codex__codex` in a **fresh thread** — never
-`mcp__codex__codex-reply` (narrative accumulation inflates trust; per
+Spawn a **fresh paseo codex sub-agent** via `mcp__paseo__create_agent` — never
+continue an existing agent with `mcp__paseo__send_agent_prompt` for reviews (narrative accumulation inflates trust; per
 [`reviewer-routing.md`](../skills/shared-references/reviewer-routing.md) the
 default is `gpt-5.5`, `reasoning_effort: xhigh`). Reviewer independence applies
 exactly as to any review ([`reviewer-independence.md`](../skills/shared-references/reviewer-independence.md)):
@@ -134,8 +134,8 @@ You execute these steps **in order**. The main agent never performs any of them.
      steps you just performed) and the analysis script(s) under `scripts/`. Do
      **NOT** author `references/` or `tool-unit-test.py` — those are the
      verifier's job (§Work ≠ Verifier).
-   - **3b — Verification (Codex, different family):** dispatch a fresh
-     `mcp__codex__codex` thread (paths only, never `codex-reply`) to author the
+   - **3b — Verification (Codex, different family):** spawn a fresh
+     paseo codex sub-agent via `mcp__paseo__create_agent` (paths only, never continue an existing agent) to author the
      `references/` test data **and** `scripts/tool-unit-test.py`. It designs its
      own data and assertions against the `SKILL.md` + script you wrote in 3a
      (cwd = the tool's skill dir). Take back what it writes; do not edit it to
@@ -180,8 +180,9 @@ re-validated; it appends a `test` ledger row
    [ ] 2. match?  → load ONLY that one (L1); resource (L2) on demand as a step
             names it → run → return result
    [ ] 3a. no match? → (WORK, you/Claude) author SKILL.md + analysis script(s)
-   [ ] 3b. (VERIFIER, Codex) dispatch fresh mcp__codex__codex thread — paths
-            only, never codex-reply — to author references/ test data AND
+   [ ] 3b. (VERIFIER, Codex) spawn fresh paseo codex sub-agent via
+            mcp__paseo__create_agent — paths only, never continue existing
+            agent — to author references/ test data AND
             scripts/tool-unit-test.py
    [ ] 4. resolve $ANALYSIS_TOOLS via §resolver (canonical name analysis_tools.py)
    [ ] 5. python3 "$ANALYSIS_TOOLS" test --slug <s>   → must pass (exit 0)
@@ -219,8 +220,8 @@ through `/meta-apply`; you only write to the personal registry under
   — "the model that writes experiment code must NOT be the model that judges
   experiment integrity" — the principle behind §Work ≠ Verifier.
 - [`skills/shared-references/reviewer-routing.md`](../skills/shared-references/reviewer-routing.md)
-  — Codex MCP (`mcp__codex__codex`, `gpt-5.5`, `xhigh`) as the verifier; fresh
-  thread, file paths only.
+  — Codex reviewer (`gpt-5.5`, `xhigh`) dispatched via paseo codex sub-agent; fresh
+  agent, file paths only.
 - [`skills/shared-references/reviewer-independence.md`](../skills/shared-references/reviewer-independence.md)
   — pass file paths only, never summaries or interpretations.
 - [`skills/shared-references/acceptance-gate.md`](../skills/shared-references/acceptance-gate.md)

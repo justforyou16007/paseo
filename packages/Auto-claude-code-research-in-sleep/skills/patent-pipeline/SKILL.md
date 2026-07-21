@@ -332,7 +332,7 @@ This compiles the application into the target jurisdiction format(s).
 - Large file handling: if a Write operation fails, retry with Bash `cat <<'EOF'` heredoc.
 - Never include experimental results or empirical evaluations in the specification.
 - Consistent terminology is mandatory -- same word for the same concept throughout.
-- If `mcp__codex__codex` is not available (no OpenAI API key), skip external cross-model review and note it in the output. The pipeline must not fail due to missing reviewer access.
+- If the paseo codex reviewer is not available, skip external cross-model review and note it in the output. The pipeline must not fail due to missing reviewer access.
 
 ## Composing with Other Workflows
 

@@ -10,7 +10,7 @@ Save full prompt/response pairs for every cross-model reviewer call, enabling:
 
 ## When to Trace
 
-After **every** cross-model reviewer call that serves a reviewer/critique function — whether the reviewer is a **paseo codex sub-agent** (`create_agent` fresh / `send_agent_prompt` continuation, per [`paseo-reviewer-dispatch.md`](paseo-reviewer-dispatch.md)) or the `mcp__codex__codex` / `mcp__codex__codex-reply` fallback. This includes review scoring, experiment auditing, claim verification, idea critique, and patch gating.
+After **every** cross-model reviewer call that serves a reviewer/critique function — the reviewer is a **paseo codex sub-agent** (`create_agent` fresh / `send_agent_prompt` continuation, per [`paseo-reviewer-dispatch.md`](paseo-reviewer-dispatch.md)). This includes review scoring, experiment auditing, claim verification, idea critique, and patch gating.
 
 Do NOT trace: purely informational LLM calls (e.g., `codex exec` for code generation that is not a review).
 
@@ -18,11 +18,8 @@ Do NOT trace: purely informational LLM calls (e.g., `codex exec` for code genera
 > `--thread-id` holds the **paseo codex agent-id** (returned by `create_agent`
 > or read from `REVIEW_STATE.json`'s `threadId` field, which now holds an
 > agent-id). The trace's `request.json` `tool` field is `paseo:create_agent`
-> (fresh) or `paseo:send_agent_prompt` (continuation) instead of
-> `mcp__codex__codex` / `mcp__codex__codex-reply`. `save_trace.sh` treats
-> `--thread-id` as an opaque string, so the helper needs no change; only the
-> value's meaning shifts from a codex-MCP thread id to a paseo codex agent-id
-> (both are durable handles to the reviewer's conversation thread).
+> (fresh) or `paseo:send_agent_prompt` (continuation). `save_trace.sh` treats
+> `--thread-id` as an opaque string, so the helper needs no change.
 
 ## Trace Directory
 
@@ -110,7 +107,7 @@ when the helper is unreachable — the trace is forensic evidence, so
   "call_number": 1,
   "purpose": "round-1-review",
   "timestamp": "2026-04-15T14:31:00+08:00",
-  "tool": "mcp__codex__codex",
+  "tool": "paseo:create_agent",
   "model": "gpt-5.5",
   "config": { "model_reasoning_effort": "xhigh" },
   "files_referenced": ["paper/sections/3_method.tex", "results/table1.csv"],

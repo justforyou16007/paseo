@@ -65,7 +65,7 @@ paper (.tex / PDF) ──► content plan + claim→evidence audit (codex, fresh
   If the directory is missing the build is stale: run `npm run build` in the ARIS repo
   (Policy A — the gates ARE the skill; never improvise replacements).
 - **REVIEWER_MODEL** = `gpt-5.5`, reasoning `xhigh`, **fresh thread per review call**
-  (`mcp__codex__codex`, never `codex-reply` across review boundaries).
+  (fresh paseo codex reviewer sub-agent per `paseo-reviewer-dispatch.md`, never continue a prior agent across review boundaries).
 - **CANVAS** — from the venue's official spec, looked up live in Phase 0. Never assume.
   (Known anchor: ICLR 2026 main = 185×90 cm landscape per its official printing
   service; ICML/NeurIPS commonly 60×36 in landscape; workshop posters often 61×91 cm

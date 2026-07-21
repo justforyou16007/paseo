@@ -140,7 +140,7 @@ If any element lacks specification support, add it to the specification requirem
 
 ### Step 5: Cross-Model Examiner Review
 
-Call `REVIEWER_MODEL` via `mcp__codex__codex` with xhigh reasoning:
+Call `REVIEWER_MODEL` via a paseo codex sub-agent (`mcp__paseo__create_agent`) with xhigh reasoning:
 
 ```
   config: {"model_reasoning_effort": "xhigh"}
@@ -179,7 +179,7 @@ If the examiner review identifies issues:
 1. Address all CRITICAL issues (anticipation, obviousness, indefiniteness)
 2. Address MAJOR issues (scope too narrow, missing support, weak fallbacks)
 3. Consider MINOR issues (antecedent basis, formatting)
-4. Re-submit to examiner for round 2 (use `mcp__codex__codex` with threadId)
+4. Re-submit to examiner for round 2 (continue the same paseo codex reviewer agent via `mcp__paseo__send_agent_prompt`)
 5. Repeat up to `MAX_CLAIM_REVISION_ROUNDS` times
 
 ### Step 7: Output
@@ -236,4 +236,4 @@ Write `patent/CLAIMS.md`:
 - Never include result-to-be-achieved language in claims ("configured to achieve high accuracy").
 - Never fabricate claim language -- every element must come from the actual invention.
 - If drafting for ALL jurisdictions, produce separate claim sets for CN, US, and EP.
-- If `mcp__codex__codex` is not available, skip cross-model examiner review and note it in the output.
+- If Paseo codex sub-agent is not available, skip cross-model examiner review and note it in the output.

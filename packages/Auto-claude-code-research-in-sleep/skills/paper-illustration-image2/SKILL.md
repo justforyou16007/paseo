@@ -68,7 +68,7 @@ and a **local Codex app-server MCP bridge** as the raster renderer.
 ## Constants
 
 - **RENDERER = `codex-image2`** — Native image generation bridge exposed through local Codex app-server
-- **OPTIONAL_TEXT_CRITIC = `mcp__codex__codex`** — Optional text-only second opinion for layout/style checks
+- **OPTIONAL_TEXT_CRITIC = paseo codex sub-agent** — Optional text-only second opinion for layout/style checks (via `mcp__paseo__create_agent`)
 - **MAX_ITERATIONS = 5** — Maximum refinement rounds
 - **TARGET_SCORE = 9** — Minimum acceptable score (1-10)
 - **OUTPUT_DIR = `figures/ai_generated/`** — Output directory
@@ -239,7 +239,7 @@ layout plan:
 - relative module prominence
 - arrow routing and likely collision points
 
-If `mcp__codex__codex` is available, you may ask it for a short second-opinion
+If a paseo codex sub-agent is available, you may ask it for a short second-opinion
 layout critique here, but Claude should still complete this step even without
 Codex.
 
@@ -261,7 +261,7 @@ before rendering:
 - the figure will read clearly in grayscale / print
 - no glow, rainbow gradient, or slide-deck decoration slips in
 
-If `mcp__codex__codex` is available, you may ask it for a short text-only
+If a paseo codex sub-agent is available, you may ask it for a short text-only
 style audit, but do not block on it.
 
 ## Step 4: Generate Through the Bridge

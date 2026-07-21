@@ -52,7 +52,7 @@ When calling the reviewer, branch on REVIEWER_BACKEND:
 Round 1 (fresh): spawn a paseo codex reviewer sub-agent (fresh) per `shared-references/paseo-reviewer-dispatch.md`; persist its agent-id to `REVIEW_STATE.json`'s `threadId` field.
 Round 2+ (continuation): continue the SAME paseo codex reviewer sub-agent via `send_agent_prompt` per `paseo-reviewer-dispatch.md` (the codex-reply analog — the reviewer checks resolution against its OWN prior critique).
 `threadId` now holds the paseo codex agent-id (field name unchanged, semantics identical — it is the continuation handle); the Debate rebuttal step is likewise a continuation.
-When paseo MCP is unavailable, fall back to `mcp__codex__codex` (fresh) / `mcp__codex__codex-reply` (continuation) per `reviewer-routing.md`.
+Paseo MCP is required for reviewer dispatch; the run BLOCKS if unavailable.
 
 **If REVIEWER_BACKEND = `manual`:**
 Use `mcp__manual_review__review` for new review threads with:
@@ -138,7 +138,7 @@ the developer to send a message before continuing.
 
 ##### Medium (default) — MCP Review
 
-Send comprehensive context to the external reviewer using the selected backend. Dispatch per the Reviewer Calling Convention above — round 1 spawns a fresh paseo codex reviewer sub-agent, round 2+ continues it via `send_agent_prompt`; the `mcp__codex__codex` form below is the codex sub-agent prompt (per `paseo-reviewer-dispatch.md`).
+Send comprehensive context to the external reviewer using the selected backend. Dispatch per the Reviewer Calling Convention above — round 1 spawns a fresh paseo codex reviewer sub-agent via `mcp__paseo__create_agent`, round 2+ continues it via `mcp__paseo__send_agent_prompt` (per `paseo-reviewer-dispatch.md`).
 
 _For codex backend:_
 
@@ -166,7 +166,7 @@ _For codex backend:_
 
 _For manual backend:_ use `mcp__manual_review__review` with the `prompt` text above and `config: {"model_reasoning_effort": "xhigh"}`. Save the returned `threadId`.
 
-If this is round 2+, continue the SAME paseo codex reviewer sub-agent via `send_agent_prompt` (the codex-reply analog) per `paseo-reviewer-dispatch.md`, or `mcp__manual_review__review_reply` (manual) with the saved threadId. (`mcp__codex__codex-reply` is the codex sub-agent form.)
+If this is round 2+, continue the SAME paseo codex reviewer sub-agent via `mcp__paseo__send_agent_prompt` per `paseo-reviewer-dispatch.md`, or `mcp__manual_review__review_reply` (manual) with the saved threadId.
 
 ##### Hard — MCP Review + Reviewer Memory
 
@@ -313,7 +313,7 @@ Send the executor's rebuttal back to the reviewer for a ruling:
 
 _Hard mode — continue the SAME reviewer (continuation, reviewer memory) for the rebuttal step per the Reviewer Calling Convention:_
 
-_For codex:_ continue the paseo codex reviewer sub-agent via `send_agent_prompt` to its persisted agent-id (`threadId`) — the reviewer rules on the rebuttal against its OWN prior critique (`mcp__codex__codex-reply` below is the codex sub-agent form):
+_For codex:_ continue the paseo codex reviewer sub-agent via `mcp__paseo__send_agent_prompt` to its persisted agent-id (`threadId`) — the reviewer rules on the rebuttal against its OWN prior critique:
 
 ```
 
@@ -534,10 +534,10 @@ When loop ends (positive assessment or max rounds):
 
 ## Prompt Template for Round 2+
 
-Use the selected backend. _For codex:_ continue the SAME paseo codex reviewer sub-agent via `send_agent_prompt` to the saved `threadId` (paseo codex agent-id) per `paseo-reviewer-dispatch.md` — the codex-reply analog; the reviewer checks resolution against its OWN prior critique. (`mcp__codex__codex-reply` is the codex sub-agent form.) _For manual:_ `mcp__manual_review__review_reply` with the saved threadId.
+Use the selected backend. _For codex:_ continue the SAME paseo codex reviewer sub-agent via `mcp__paseo__send_agent_prompt` to the saved `threadId` (paseo codex agent-id) per `paseo-reviewer-dispatch.md`; the reviewer checks resolution against its OWN prior critique. _For manual:_ `mcp__manual_review__review_reply` with the saved threadId.
 
 ```
-[For codex:] mcp__codex__codex-reply:
+[For codex:] mcp__paseo__send_agent_prompt:
   threadId: [saved from round 1]
   config: {"model_reasoning_effort": "xhigh"}
   prompt: |

@@ -56,8 +56,8 @@ if event_name in ("PostToolUse", "PostToolUseFailure"):
         record["input_summary"] = tool_input.get("command", "")[:200]
     elif tool_name in ("Edit", "Write", "Read"):
         record["input_summary"] = tool_input.get("file_path", "")
-    elif tool_name.startswith("mcp__codex__"):
-        record["event"] = "codex_call"
+    elif tool_name.startswith("mcp__paseo__"):
+        record["event"] = "paseo_agent_call"
         record["input_summary"] = tool_input.get("prompt", "")[:150]
 
 elif event_name == "UserPromptSubmit":

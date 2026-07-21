@@ -482,7 +482,7 @@ Invoke `/research-review` on the complete draft for grant-type-specific evaluati
 - Provides ranked action items for improvement
 - All feedback saved to `grant-proposal/GRANT_REVIEW.md`
 
-> ⚠️ **Codex MCP fallback**: If `mcp__codex__codex` is not available (no OpenAI API key), skip external review. Note "External review skipped — no Codex MCP available. Consider running `/auto-review-loop-llm` separately." in GRANT_REVIEW.md. The proposal is still usable without external review.
+> **Codex MCP fallback**: If Paseo codex sub-agent is not available (no Paseo MCP wired), skip external review. Note "External review skipped — no Paseo MCP available. Consider running `/auto-review-loop-llm` separately." in GRANT_REVIEW.md. The proposal is still usable without external review.
 
 If `/research-review` is invoked (preferred), it handles the Codex call internally. If calling Codex directly (e.g., to maintain thread context from Phase 2):
 
@@ -572,7 +572,7 @@ Parse reviewer feedback into severity levels:
 - **MAJOR** — significant weaknesses. Fix before submission.
 - **MINOR** — suggestions for improvement. Fix if time allows.
 
-Implement CRITICAL and MAJOR fixes. If MAX_REVIEW_ROUNDS > 1, re-submit for another round via `mcp__codex__codex-reply`.
+Implement CRITICAL and MAJOR fixes. If MAX_REVIEW_ROUNDS > 1, re-submit for another round by continuing the same paseo codex reviewer agent via `mcp__paseo__send_agent_prompt`.
 
 #### 5.2 Generate Output
 

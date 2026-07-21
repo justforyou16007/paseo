@@ -79,7 +79,7 @@ Format as a matrix:
 
 ### Step 4: Cross-Model Examiner Verification
 
-Call `REVIEWER_MODEL` via `mcp__codex__codex` with xhigh reasoning:
+Call `REVIEWER_MODEL` via a fresh paseo codex reviewer sub-agent per `paseo-reviewer-dispatch.md` with xhigh reasoning:
 
 ```
   config: {"model_reasoning_effort": "xhigh"}
@@ -161,4 +161,4 @@ Write `patent/NOVELTY_ASSESSMENT.md`:
 - Obviousness requires BOTH: (1) a combination of references AND (2) a motivation to combine them.
 - Never assume the invention is patentable just because no identical patent exists.
 - The assessment is advisory only -- actual prosecution may reveal different prior art.
-- If `mcp__codex__codex` is not available, skip cross-model examiner review and note it in the output.
+- If the paseo codex reviewer is not available, skip cross-model examiner review and note it in the output.
