@@ -223,10 +223,99 @@ If "Yes", use AskUserQuestion with 4 questions:
   - `"Modal"` — description: "Serverless GPU, auto scale-to-zero"
   - `"Local GPU"` — description: "GPU on this machine"
 
-(The user can select "Other" to type e.g. "No GPU / decide later")
+(The user can select "Other" to type e.g. "No GPU / decide later" or a custom backend name like "slurm", "k8s")
 
 If "Other" contains "no gpu", "none", "later", "decide later", "没有", "暂不配置":
 set `answers.gpu_type = "none"`, skip Batch 2, move to Phase 5.
+
+If "Other" and NOT a skip keyword (user typed a backend name or description):
+
+1. Extract the backend name from the user's input (first word, lowercase, e.g. "slurm cluster" → "slurm").
+2. Read `$ARIS_ROOT/src/tools/experiment-env/parse-env.ts` and extract the `ENV_TYPES` array to get currently registered backends.
+3. **If the name matches an existing ENV_TYPE** (e.g. user typed "docker" which is already registered): set `answers.gpu_type` to that name, proceed to Batch 2 with the dynamic backend branch.
+4. **If the name is NOT in ENV_TYPES** → this is an unregistered backend. Proceed to **Phase 4x: Scaffold New Backend** below.
+
+### Phase 4x: Scaffold New Backend (inline add-compute-backend)
+
+This phase triggers ONLY when the user selected "Other" in Batch 1 and the backend name is not in `ENV_TYPES`. It scaffolds the new backend in the ARIS repo so that the experiment environment system recognizes it.
+
+> **Note:** This phase modifies ARIS repo source files at `$ARIS_ROOT`, NOT the project directory. The ARIS repo path is resolved in Phase 0a via `$CLAUDE_SKILL_DIR` or `$ARIS_REPO`. Skill installation to the project happens later in Phase 7f.
+
+**4x-1. Confirm intent** (AskUserQuestion):
+- header: "New Backend" / "新后端"
+- question (en): "Backend '<name>' is not registered in ARIS. Add it now? This will scaffold the backend code in the ARIS repo."
+  (zh): "后端 '<name>' 尚未在 ARIS 中注册。是否现在添加？这将在 ARIS 仓库中生成后端代码。"
+- options: `["Yes, scaffold it now", "No, skip GPU setup"]`
+
+If "No": set `answers.gpu_type = "none"`, skip to Phase 5.
+
+**4x-2. Collect backend identity** (AskUserQuestion, 3 questions):
+
+- Q1 header "Category" / "类别", question: "What kind of compute backend is this?"
+  options: `["SSH-based", "CLI-based", "Container-based", "API-based"]`
+  (SSH → reference `remote-env.ts`; CLI → `modal-env.ts`; Container → `docker-env.ts`; API → `remote-env.ts`)
+
+- Q2 header "Prerequisites" / "前置依赖", question: "What CLI tools must be installed? (e.g. sbatch, kubectl)"
+  options: `["None"]`
+
+- Q3 header "Description" / "描述", question: "One-line description of this backend?"
+  options: provide a sensible suggestion based on the name (e.g. "slurm" → `"Slurm HPC cluster job scheduler"`)
+
+**4x-3. Collect configuration schema** (AskUserQuestion, 4 questions):
+
+- Q1 header "Required" / "必填字段", question: "Required config fields? One per line: `name: type` (types: string, number, boolean, list, dict)"
+  options: category-appropriate example as first option (SSH → `"ssh_alias: string, code_dir: string"`; CLI → `"gpu_type: string"`; Container → `"image: string"`; API → `"api_key: string, endpoint: string"`)
+
+- Q2 header "Optional" / "可选字段", question: "Optional fields? `name: type = default`"
+  options: `["None beyond the basics"]`
+
+- Q3 header "WandB", question: "Support W&B experiment tracking?"
+  options: `["Yes", "No"]`
+
+- Q4 header "Cleanup" / "自动清理", question: "Support automatic resource cleanup?"
+  options: `["Yes", "No"]`
+
+**4x-4. Collect deployment mechanism** (AskUserQuestion, 4 questions):
+
+- Q1 header "Submit" / "提交", question: "How are jobs submitted?"
+  options: `["SSH + screen", "CLI command", "REST API", "Docker run"]`
+
+- Q2 header "Sync" / "同步", question: "How is code transferred?"
+  options: `["rsync over SSH", "git push/pull", "Shared filesystem", "Container copy"]`
+
+- Q3 header "Monitor" / "监控", question: "How to check if a job is running?"
+  options: `["SSH process check", "CLI status command", "API polling", "Log file tail"]`
+
+- Q4 header "Results" / "结果", question: "How are results collected?"
+  options: `["rsync from remote", "CLI download", "Shared filesystem", "API download"]`
+
+**4x-5. Generate code (6 touch points):**
+
+Execute the 6 touch points described in `skills/add-compute-backend/SKILL.md` Phase 4, using `$ARIS_ROOT` as the root path. All variables (`name`, `pascal_name`, `kebab_name`, `class_name`, fields, mechanisms) come from 4x-2 through 4x-4. In summary:
+
+1. **Create** `$ARIS_ROOT/src/tools/experiment-env/<kebab-name>-env.ts` — backend class extending `EnvBackend` with 7 lifecycle methods.
+2. **Edit** `$ARIS_ROOT/src/tools/experiment-env/env-backend.ts` — add lazy import + registry entry in `create()`.
+3. **Edit** `$ARIS_ROOT/src/tools/experiment-env/parse-env.ts` — add to `ENV_TYPES` + `ENV_SCHEMAS`.
+4. **Edit** `$ARIS_ROOT/templates/CLAUDE_MD_TEMPLATE.md` — add commented config template block.
+5. **Edit** `$ARIS_ROOT/tests/experiment_env/test_backends.py` — add factory + deploy test.
+6. **Edit** `$ARIS_ROOT/tests/experiment_env/test_parse_env.py` — add schema test.
+
+**4x-6. Build & verify:**
+
+```bash
+cd "$ARIS_ROOT" && npx tsc --noEmit --project tsconfig.json 2>&1 | head -50
+cd "$ARIS_ROOT" && npm run build 2>&1 | tail -20
+cd "$ARIS_ROOT" && npm run format:files -- \
+  src/tools/experiment-env/<file_name> \
+  src/tools/experiment-env/env-backend.ts \
+  src/tools/experiment-env/parse-env.ts
+```
+
+If typecheck or build fails, read the error, fix the generated files, and retry (up to 3 attempts).
+
+**4x-7. Return to normal flow:**
+
+Set `answers.gpu_type = "<name>"` (the newly registered backend). Continue to Batch 2 — the dynamic backend branch will ask configuration questions based on the freshly registered schema.
 
 ### Batch 2: Type-specific follow-ups
 
@@ -269,6 +358,23 @@ Use AskUserQuestion with 2 questions:
   options: `["ml (default)"]` + "Other"
 - Q2 header "Device", question: "Compute device?"
   options: `["CUDA (auto-detect)", "MPS (Apple Silicon)"]` + "Other"
+
+**If custom backend** (answers.gpu_type is not one of: remote, vast, modal, local):
+
+This branch handles both pre-existing registered backends (e.g. "docker") and backends just scaffolded via Phase 4x. It dynamically reads the schema from `parse-env.ts` and asks questions for each field.
+
+1. Read `$ARIS_ROOT/src/tools/experiment-env/parse-env.ts` and extract the `ENV_SCHEMAS` block for `answers.gpu_type`.
+2. Collect the field list: separate into required fields and optional fields.
+3. For each batch of up to 4 fields, use AskUserQuestion:
+   - Required fields: question asks for the value, no default offered.
+   - Optional fields: first option is the default value (e.g. `"16g (default)"` for `shm_size`), plus "Other" for custom input.
+4. Store all answers in `answers.env_config.<field_name>`.
+
+Example for a backend with fields `partition: string (required)`, `num_nodes: number = 1`:
+- Q1 header "partition", question: "Cluster partition name?"
+  options: "Other" (free text, required)
+- Q2 header "num_nodes", question: "Number of nodes? (default: 1)"
+  options: `["1 (default)"]` + "Other"
 
 **After Phase 4:** Save state with `completed_stages: [1,2,3,4]`.
 
@@ -365,7 +471,7 @@ Copy the template and fill in:
 - Fill `## Project Constraints` with `answers.constraints` (or leave placeholder if "No specific constraints")
 - Fill `## Non-Goals` with `answers.non_goals` (or leave placeholder if "None")
 - Fill `## Compute Budget` with `answers.compute_budget`
-- In `## Experiment Environment`: uncomment the block matching `answers.gpu_type` and fill in the fields from answers. Leave other blocks commented.
+- In `## Experiment Environment`: uncomment the block matching `answers.gpu_type` and fill in the fields from answers. Leave other blocks commented. For custom backends (not remote/vast/modal/local): read the template block for `answers.gpu_type` from `CLAUDE_MD_TEMPLATE.md` (added during Phase 4x or already present for pre-existing backends like docker), uncomment it, and fill in field values from `answers.env_config.*`.
 - If `answers.paseo_configured == true`: append the Paseo section from `$TEMPLATES_DIR/CLAUDE_MD_PASEO_SECTION.md` with values filled in. Otherwise leave the Paseo section with defaults or commented.
 
 **If `CLAUDE.md` DOES exist:**
