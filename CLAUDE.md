@@ -160,9 +160,3 @@ The app runs on iOS, Android, web (browser), and web (Electron desktop). Code is
 ## Debugging
 
 Find the complete daemon logs and traces in the $PASEO_HOME/daemon.log
-
-## Agent Validation
-
-Sub-Agent Generation Principle: Whoever creates a new Agent is responsible for archiving the corresponding Agent.
-When you need to complete a coding task, you must use paseo mcp generate a claude sub-Worker Agent in a new worktree. After completion, the sub-Agent must use codex/glm-5.2 to create a verification Agent to review and validate the sub-Worker Agent's work. Upon successful validation, each party shall archive the Agent they are responsible for.
-When your test objectives involve frontend content, you are required to use Playwright MCP for frontend operation validation.

@@ -21,8 +21,17 @@ describe("daemon browser tools config", () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   });
 
-  test("defaults browser tools off when config is absent", async () => {
+  test("defaults browser tools on when config is absent", async () => {
     const home = await createPaseoHome({ version: 1 });
+
+    expect(loadConfig(home, { env: {} }).browserToolsEnabled).toBe(true);
+  });
+
+  test("loads browser tools opt-out from persisted daemon config", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      daemon: { browserTools: { enabled: false } },
+    });
 
     expect(loadConfig(home, { env: {} }).browserToolsEnabled).toBe(false);
   });
@@ -34,5 +43,20 @@ describe("daemon browser tools config", () => {
     });
 
     expect(loadConfig(home, { env: {} }).browserToolsEnabled).toBe(true);
+  });
+
+  test("defaults Paseo tools injection on when config is absent", async () => {
+    const home = await createPaseoHome({ version: 1 });
+
+    expect(loadConfig(home, { env: {} }).mcpInjectIntoAgents).toBe(true);
+  });
+
+  test("loads Paseo tools opt-out from persisted daemon config", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      daemon: { mcp: { injectIntoAgents: false } },
+    });
+
+    expect(loadConfig(home, { env: {} }).mcpInjectIntoAgents).toBe(false);
   });
 });
