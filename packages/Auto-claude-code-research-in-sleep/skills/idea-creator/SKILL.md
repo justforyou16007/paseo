@@ -214,7 +214,7 @@ mcp__paseo__create_agent:
   title:        "idea-creator :: Phase-2 :: <run_id>"
   provider:     "<executor_provider>"      # claude/sonnet-4-6 (same as parent)
   settings:
-    modeId:           "auto"
+    modeId:           "bypassPermissions"
     thinkingOptionId: "xhigh"              # deep reasoning for idea generation
   initialPrompt: |
     Read the idea-generation bundle at <absolute path to

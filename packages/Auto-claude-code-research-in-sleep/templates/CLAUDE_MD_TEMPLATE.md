@@ -82,7 +82,7 @@ last_updated: "" # YYYY-MM-DD HH:mm — auto-updated by skills on every output w
 ```yaml
 orchestrator_provider: claude/sonnet-4-6
 executor_provider: claude/sonnet-4-6
-executor_mode: auto
+executor_mode: bypassPermissions
 reviewer_provider: codex/gpt-5.5
 reviewer_mode: full-access
 reviewer_thinking: xhigh

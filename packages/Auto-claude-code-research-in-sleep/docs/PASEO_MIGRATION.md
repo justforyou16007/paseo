@@ -142,7 +142,7 @@ fresh resume recreates the reviewer.
 ## Target architecture (3-level agent tree)
 
 ```
-User session invokes /research-pipeline "topic"   ← this session IS the orchestrator (provider: claude)
+User session invokes /research-pipeline "topic"   ← this session IS the orchestrator (provider: claude; default child mode: bypassPermissions)
 │
 ├── run_state.py resume|start  ;  reads CLAUDE.md ## ARIS Paseo
 ├── create_heartbeat (self-target, cron=heartbeat_cron)   ← overnight Type-A nudge only
@@ -171,8 +171,10 @@ same pattern.
 
 **Every** agent uses `workspace:{kind:"current"}` (shared project dir → all
 artifacts + `.aris/runs/` + `.aris/traces/` land together) and
-`relationship:{kind:"subagent"}` (cascade-archive). `notifyOnFinish:true`
-(default); the parent does NOT `wait_for_agent` on notify agents.
+`relationship:{kind:"subagent"}` (cascade-archive). Claude executor agents
+default to `modeId:"bypassPermissions"`; codex reviewer agents default to
+`modeId:"full-access"`. `notifyOnFinish:true` (default); the parent does NOT
+`wait_for_agent` on notify agents.
 
 ## Resume model
 

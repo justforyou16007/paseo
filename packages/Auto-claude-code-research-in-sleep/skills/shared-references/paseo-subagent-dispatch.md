@@ -219,7 +219,7 @@ mcp__paseo__create_agent:
   title:        "<skill> :: <phase> :: <run_id>"
   provider:     "<executor_provider>"      # default claude/sonnet-4-6
   settings:
-    modeId:           "<executor_mode>"   # default "auto"
+    modeId:           "<executor_mode>"   # default "bypassPermissions"
     thinkingOptionId: "<executor_thinking>"  # model default; "xhigh" only when the skill demands
   initialPrompt: |
     <rendered prompt — see contract below>
@@ -352,12 +352,12 @@ grandchildren the child had spawned.
 
 `executor_mode` (CLAUDE.md `## ARIS Paseo`) selects the child's autonomy:
 
-- `auto` (default) — workspace-write, on-request approvals. The parent
-  handles the child's permission requests via `list_pending_permissions`
-  - `respond_to_permission`, OR the human approves interactively.
-- `bypassPermissions` — overnight autonomy. No approval round-trips; the
+- `bypassPermissions` (default) — overnight autonomy. No approval round-trips; the
   child runs unattended. Use this for overnight pipelines where no human
   is watching.
+- `auto` — workspace-write, on-request approvals. The parent
+  handles the child's permission requests via `list_pending_permissions`
+  - `respond_to_permission`, OR the human approves interactively.
 - `plan` — read-only planning; never for a workflow phase that must write
   artifacts.
 

@@ -95,7 +95,7 @@ claude_md="$root/CLAUDE.md"
 # Defaults (match templates/CLAUDE_MD_PASEO_SECTION.md).
 orchestrator_provider="claude/sonnet-4-6"
 executor_provider="claude/sonnet-4-6"
-executor_mode="auto"
+executor_mode="bypassPermissions"
 executor_thinking=""
 reviewer_provider="codex/gpt-5.5"
 reviewer_mode="full-access"
