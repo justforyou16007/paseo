@@ -4,6 +4,12 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PATH="$SCRIPT_DIR/../node_modules/.bin:$PATH"
 
+# Ensure the current node's bin directory is in PATH (for claude, etc.)
+NODE_BIN_DIR="$(dirname "$(command -v node)")"
+if [ -n "$NODE_BIN_DIR" ] && [ -d "$NODE_BIN_DIR" ]; then
+  export PATH="$NODE_BIN_DIR:$PATH"
+fi
+
 source "$SCRIPT_DIR/dev-home.sh"
 
 export PASEO_LISTEN="${PASEO_LISTEN:-127.0.0.1:6768}"
