@@ -11,6 +11,12 @@ import fs from "fs";
 import path from "path";
 import { execFileSync } from "child_process";
 import { createCli, runCli } from "../lib/cli.js";
+import {
+  loadEarlyStopConfig,
+  parseTrainingLog,
+  checkEarlyStopConditions,
+  type EarlyStopResult,
+} from "./watchdog-early-stop.js";
 
 const DEFAULT_BASE = "/tmp/aris-watchdog";
 const DEFAULT_INTERVAL = 60;
@@ -38,6 +44,9 @@ interface TaskDef {
   stale_after_seconds?: number;
   registered_at?: string;
   registered_epoch?: number;
+  early_stop_config_path?: string;
+  log_file?: string;
+  project_root?: string;
 }
 
 interface StatusData {
@@ -51,6 +60,8 @@ interface StatusData {
   gpu_util?: Record<string, number> | number[];
   age_s?: number;
   stale_after?: number;
+  reason?: string;
+  details?: Record<string, unknown>;
 }
 
 function getPaths(baseDir: string): Paths {
@@ -422,6 +433,22 @@ function checkLoop(task: TaskDef, statusDir: string): StatusData {
     // not a terminal state we can read → fall through to mtime liveness
   }
 
+  // Early stop check
+  if (task.project_root && task.early_stop_config_path) {
+    const earlyStopResult = checkEarlyStop(task);
+    if (earlyStopResult.should_stop) {
+      return writeStatus(statusFile, {
+        status: "EARLY_STOP",
+        task: name,
+        type: "loop",
+        reason: earlyStopResult.reason,
+        details: earlyStopResult.details,
+        msg: `Early stop triggered: ${earlyStopResult.reason}`,
+        ts: now,
+      });
+    }
+  }
+
   const mtime = fs.statSync(stateFile).mtimeMs / 1000;
   const age = Math.floor(Date.now() / 1000 - mtime);
 
@@ -445,6 +472,43 @@ function checkLoop(task: TaskDef, statusDir: string): StatusData {
     stale_after: staleAfter,
     ts: now,
   });
+}
+
+function checkEarlyStop(task: TaskDef): EarlyStopResult {
+  const config = loadEarlyStopConfig(task.project_root!);
+  if (!config || !config.enabled) {
+    return { should_stop: false };
+  }
+
+  const logPath = task.log_file || inferLogPath(task.state_file);
+  if (!logPath || !fs.existsSync(logPath)) {
+    return { should_stop: false };
+  }
+
+  const metrics = parseTrainingLog(logPath, 100);
+  const startTime = (task.registered_epoch ?? 0) * 1000;
+
+  return checkEarlyStopConditions(config, metrics, startTime);
+}
+
+function inferLogPath(stateFile?: string): string | null {
+  if (!stateFile) return null;
+
+  const dir = path.dirname(stateFile);
+  const candidates = [
+    path.join(dir, "training.log"),
+    path.join(dir, "train.log"),
+    path.join(dir, "../logs/training.log"),
+    path.join(dir, "../training.log"),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 // ── Summary ──────────────────────────────────────────────────────
@@ -474,6 +538,7 @@ function writeSummary(statusDir: string): string {
       else if (status === "STALE" || status === "MISSING") extra = ` ${d.msg ?? ""}`;
       else if (status === "PENDING") extra = " (awaiting first state write)";
       else if (status === "COMPLETED") extra = " ✓";
+      else if (status === "EARLY_STOP") extra = ` ⏹️  ${(d as any).reason ?? ""}`;
       lines.push(`${name}(${typ}): ${status}${extra}`);
     } catch {
       continue;

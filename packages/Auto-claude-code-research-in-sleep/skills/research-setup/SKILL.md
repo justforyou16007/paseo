@@ -380,6 +380,82 @@ Example for a backend with fields `partition: string (required)`, `num_nodes: nu
 
 ---
 
+## Phase 4.5: Early Stop Configuration
+
+**Question 1 (gate):**
+- **header**: "Early Stop" / "提前停止"
+- **question** (en): "Enable automatic early stopping for experiments?"
+  (zh): "是否启用实验自动提前停止？"
+- **options**: `["No (manual monitoring)", "Yes, configure conditions"]`
+
+If "No": set `answers.early_stop_enabled = false`, skip to Phase 5.
+
+If "Yes, configure conditions":
+
+**Batch 1 (4 questions):**
+
+- Q1 header "Max Time" / "最长时间", question: "Maximum training time before stopping?"
+  (zh): "训练的最长时间（超时停止）？"
+  options: `["1 week", "3 days", "1 day", "12 hours"]` + "Other"
+
+- Q2 header "Convergence" / "收敛", question: "Stop on loss convergence (plateau)?"
+  (zh): "当损失收敛（不再下降）时停止？"
+  options: `["Yes", "No"]`
+
+- Q3 header "Divergence" / "发散", question: "Stop on loss divergence (increasing loss)?"
+  (zh): "当损失发散（持续上升）时停止？"
+  options: `["Yes", "No"]`
+
+- Q4 header "Entropy" / "熵崩溃", question: "For RL experiments, stop on entropy collapse?"
+  (zh): "对于强化学习实验，当熵崩溃时停止？"
+  options: `["No (not an RL project)", "Yes"]` + "Other"
+
+**Batch 2 (follow-up questions based on answers):**
+
+If Q2 (Convergence) was "Yes":
+- Q5 header "Patience" / "耐心值", question: "Patience (epochs without improvement before stopping)?"
+  (zh): "耐心值（多少轮没有改进后停止）？"
+  options: `["3", "5", "10"]` + "Other"
+
+If Q4 (Entropy) was "Yes":
+- Q6 header "Threshold" / "阈值", question: "Entropy threshold?"
+  (zh): "熵阈值？"
+  options: `["< 0.01", "< 0.001"]` + "Other"
+
+**Batch 3 (1 question):**
+
+- Q7 header "Check Interval" / "检查间隔", question: "How often should watchdog check logs?"
+  (zh): "Watchdog 多久检查一次日志？"
+  options: `["5 minutes", "10 minutes", "30 minutes"]` + "Other"
+
+**Store configuration in `answers.early_stop`:**
+
+Parse the answers and construct:
+```json
+{
+  "enabled": true,
+  "max_training_time_hours": <parsed from Q1>,
+  "check_interval_seconds": <parsed from Q7>,
+  "convergence": {
+    "enabled": <Q2 === "Yes">,
+    "patience": <Q5 value or 3>,
+    "min_delta": 0.001
+  },
+  "divergence": {
+    "enabled": <Q3 === "Yes">,
+    "threshold_multiplier": 2.0
+  },
+  "entropy_collapse": {
+    "enabled": <Q4 === "Yes">,
+    "threshold": <Q6 value or 0.01>
+  }
+}
+```
+
+**After Phase 4.5:** Save state with `completed_stages: [1,2,3,4,4.5]`.
+
+---
+
 ## Phase 5: Research Goals
 
 Use AskUserQuestion with up to 4 questions (max 4 per batch):
@@ -415,7 +491,7 @@ Use AskUserQuestion with up to 4 questions (max 4 per batch):
   (zh): "有什么明确不想做的事情？"
   options: `["None"]` + "Other"
 
-**After Phase 5:** Save state with `completed_stages: [1,2,3,4,5]`.
+**After Phase 5:** Save state with `completed_stages: [1,2,3,4,4.5,5]`.
 
 ---
 
@@ -443,9 +519,7 @@ If "Yes", use AskUserQuestion with 3 questions:
 - Q4 header "AutoResearch", question: "Enable the auto-research-loop (closed research-iteration driver)? Inserted between W1 and W1.5; loops baseline reproduction → problem diagnosis → hypothesis → experiment → review until metric target is met or iteration budget is exhausted. Requires a `## Metric Target` block in `CLAUDE.md` (added in Phase 7b)."
   options: `["Off (0 iterations, default — today's flow)", "Up to 3 iterations (quick research push)", "Up to 5 iterations (full closed loop)"]` + "Other"
 
-**After Phase 6:** Save state with `completed_stages: [1,2,3,4,5,6]`. If "AutoResearch" was selected with iterations > 0, also write `answers.auto_research_iterations = <selected number>` and ensure the generated `## ARIS Paseo` block in `CLAUDE.md` includes `auto_research_iterations: <number>`. The `research-pipeline` orchestrator reads this field and conditionally inserts the `research-iteration` stage.
-
-**After Phase 6:** Save state with `completed_stages: [1,2,3,4,5,6]`.
+**After Phase 6:** Save state with `completed_stages: [1,2,3,4,4.5,5,6]`. If "AutoResearch" was selected with iterations > 0, also write `answers.auto_research_iterations = <selected number>` and ensure the generated `## ARIS Paseo` block in `CLAUDE.md` includes `auto_research_iterations: <number>`. The `research-pipeline` orchestrator reads this field and conditionally inserts the `research-iteration` stage.
 
 ---
 
@@ -472,6 +546,7 @@ Copy the template and fill in:
 - Fill `## Non-Goals` with `answers.non_goals` (or leave placeholder if "None")
 - Fill `## Compute Budget` with `answers.compute_budget`
 - In `## Experiment Environment`: uncomment the block matching `answers.gpu_type` and fill in the fields from answers. Leave other blocks commented. For custom backends (not remote/vast/modal/local): read the template block for `answers.gpu_type` from `CLAUDE_MD_TEMPLATE.md` (added during Phase 4x or already present for pre-existing backends like docker), uncomment it, and fill in field values from `answers.env_config.*`.
+- In `## Early Stop Configuration`: if `answers.early_stop_enabled == true`, uncomment the block and fill in values from `answers.early_stop`. Otherwise leave it commented.
 - If `answers.paseo_configured == true`: append the Paseo section from `$TEMPLATES_DIR/CLAUDE_MD_PASEO_SECTION.md` with values filled in. Otherwise leave the Paseo section with defaults or commented.
 
 **If `CLAUDE.md` DOES exist:**
@@ -481,8 +556,10 @@ Merge strategy — preserve all existing content:
 3. If `## Pipeline Status` does NOT exist, insert the filled Pipeline Status block after the first H1
 4. If `## Experiment Environment` section exists, update it with the new config
 5. If `## Experiment Environment` does NOT exist, insert the filled block
-6. Same for `## Project Constraints`, `## Non-Goals`, `## Compute Budget`
-7. If `## ARIS Paseo` does NOT exist and `answers.paseo_configured == true`, append it
+6. If `## Early Stop Configuration` section exists and `answers.early_stop_enabled == true`, update it with the new config
+7. If `## Early Stop Configuration` does NOT exist and `answers.early_stop_enabled == true`, insert the filled block
+8. Same for `## Project Constraints`, `## Non-Goals`, `## Compute Budget`
+9. If `## ARIS Paseo` does NOT exist and `answers.paseo_configured == true`, append it
 
 Write the result to `CLAUDE.md`.
 
@@ -612,7 +689,7 @@ Set ARIS_REPO or rerun setup after cloning the ARIS repo.
 {
   "version": 1,
   "completed": true,
-  "completed_stages": [1, 2, 3, 4, 5, 6],
+  "completed_stages": [1, 2, 3, 4, 4.5, 5, 6],
   "answers": { ... },
   "artifacts": [
     "CLAUDE.md",

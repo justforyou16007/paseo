@@ -223,6 +223,7 @@ export function validate(
     schema_version: SCHEMA_VERSION,
     env_type: envType,
     warnings,
+    early_stop: cand.early_stop ?? null,
     ...canonicalEnvs,
   };
 

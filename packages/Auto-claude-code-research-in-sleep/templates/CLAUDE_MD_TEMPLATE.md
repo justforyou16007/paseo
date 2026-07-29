@@ -71,6 +71,24 @@ last_updated: "" # YYYY-MM-DD HH:mm — auto-updated by skills on every output w
 - device: cuda             # or "mps"; auto-detected if omitted
 -->
 
+## Early Stop Configuration
+
+> Optional. Watchdog will monitor training logs and stop experiments when conditions are met.
+> Uncomment and configure if you enabled early stopping during setup.
+
+<!-- Early Stop
+- enabled: true
+- max_training_time_hours: 168        # Stop after 1 week
+- check_interval_seconds: 300         # Check logs every 5 minutes
+- convergence_enabled: true
+- convergence_patience: 3             # Epochs without improvement
+- convergence_min_delta: 0.001        # Minimum change to count as improvement
+- divergence_enabled: true
+- divergence_threshold_multiplier: 2.0  # Stop if loss > 2x initial
+- entropy_collapse_enabled: false
+- entropy_threshold: 0.01             # For RL experiments
+-->
+
 ## ARIS Paseo
 
 > Optional. Controls the paseo parent-child agent execution substrate. If
