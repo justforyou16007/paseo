@@ -224,6 +224,7 @@ export function validate(
     env_type: envType,
     warnings,
     early_stop: cand.early_stop ?? null,
+    adaptive_scaling: cand.adaptive_scaling ?? null,
     ...canonicalEnvs,
   };
 

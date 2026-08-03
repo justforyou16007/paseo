@@ -89,6 +89,19 @@ last_updated: "" # YYYY-MM-DD HH:mm — auto-updated by skills on every output w
 - entropy_threshold: 0.01             # For RL experiments
 -->
 
+## Adaptive Scaling
+
+> Optional. Experiment queue dynamically selects batch size from GPU memory headroom
+> and assigns multiple GPUs when idle. Use ${BATCH_SIZE}, ${GPU_LIST}, ${NUM_GPUS}
+> in job commands to opt-in.
+
+<!-- Adaptive Scaling
+- enabled: true
+- mem_sample_window_seconds: 300    # Rolling window for GPU memory averaging
+- batch_size_target_mem_pct: 80     # Target GPU memory utilization (%)
+- batch_size_oom_reduction: 0.5     # Multiplier applied on OOM retry (e.g., 0.5 = halve)
+-->
+
 ## ARIS Paseo
 
 > Optional. Controls the paseo parent-child agent execution substrate. If

@@ -228,4 +228,12 @@ def main():
       note: "modal is serverless — no instance to destroy",
     };
   }
+
+  sampleGpuMemory(_gpus?: number[]): Record<string, unknown> {
+    return {
+      ok: false,
+      samples: [],
+      error: "modal is serverless — GPU memory cannot be sampled directly",
+    };
+  }
 }

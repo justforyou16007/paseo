@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { EnvBackend, EnvError, runShell, shellQuote } from "./env-backend.js";
+import { EnvBackend, EnvError, parseSmiSamples, runShell, shellQuote } from "./env-backend.js";
 
 const VAST_STATE = "vast-instances.json";
 const DEFAULT_IMAGE = "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-devel";
@@ -443,5 +443,20 @@ export class VastEnv extends EnvBackend {
     inst.status = "destroyed";
     this._upsertInstance(inst);
     return { status: "destroyed", instance_id: instanceId };
+  }
+
+  sampleGpuMemory(gpus?: number[]): Record<string, unknown> {
+    let host: string, port: number, user: string;
+    try {
+      [host, port, user] = this._resolveSsh();
+    } catch {
+      return { ok: false, samples: [], error: "no vast instance available to SSH into" };
+    }
+    const cmd = `ssh -p ${port} ${shellQuote(`${user}@${host}`)} "nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv,noheader,nounits"`;
+    if (this.dryRun) return this._announce("sampleGpuMemory", cmd);
+    const { stdout, returncode } = runShell(cmd);
+    if (returncode !== 0)
+      return { ok: false, samples: [], error: "nvidia-smi unreachable on vast instance" };
+    return { ok: true, samples: parseSmiSamples(stdout, gpus) };
   }
 }

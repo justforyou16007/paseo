@@ -1,5 +1,5 @@
 import fs from "fs";
-import { EnvBackend, EnvError, runShell, shellQuote } from "./env-backend.js";
+import { EnvBackend, EnvError, parseSmiSamples, runShell, shellQuote } from "./env-backend.js";
 
 const GPU_FREE_THRESHOLD_MIB = 500;
 
@@ -160,5 +160,17 @@ export class LocalEnv extends EnvBackend {
   destroy(): Record<string, unknown> {
     if (this.dryRun) return this._announce("destroy", "(local no-op)");
     return { status: "destroyed" };
+  }
+
+  sampleGpuMemory(gpus?: number[]): Record<string, unknown> {
+    const device = this._device();
+    if (device !== "cuda")
+      return { ok: false, samples: [], error: `device=${device}, no GPU sampling` };
+    const cmd =
+      "nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv,noheader,nounits";
+    if (this.dryRun) return this._announce("sampleGpuMemory", cmd);
+    const { stdout, returncode } = runShell(cmd);
+    if (returncode !== 0) return { ok: false, samples: [], error: "nvidia-smi unavailable" };
+    return { ok: true, samples: parseSmiSamples(stdout, gpus) };
   }
 }

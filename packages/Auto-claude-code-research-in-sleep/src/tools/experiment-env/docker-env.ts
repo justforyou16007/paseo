@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { EnvBackend, EnvError, runShell, shellQuote } from "./env-backend.js";
+import { EnvBackend, EnvError, parseSmiSamples, runShell, shellQuote } from "./env-backend.js";
 
 const STATE_FILE = "docker-state.json";
 
@@ -279,5 +279,23 @@ export class DockerEnv extends EnvBackend {
       container_removed: removed,
       auto_remove: autoRemove,
     };
+  }
+
+  sampleGpuMemory(gpus?: number[]): Record<string, unknown> {
+    const state = this._loadState();
+    const containerName = (state.container_name as string) || this._containerName();
+    const nvsmiQuery =
+      "nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv,noheader,nounits";
+    const containerCmd = `docker exec ${shellQuote(containerName)} ${nvsmiQuery}`;
+    if (this.dryRun) return this._announce("sampleGpuMemory", containerCmd);
+
+    const { stdout, returncode } = runShell(containerCmd);
+    if (returncode === 0) return { ok: true, samples: parseSmiSamples(stdout, gpus) };
+
+    // Fallback: query host GPU directly
+    const { stdout: localOut, returncode: localRc } = runShell(nvsmiQuery);
+    if (localRc !== 0)
+      return { ok: false, samples: [], error: "nvidia-smi unavailable in container or on host" };
+    return { ok: true, samples: parseSmiSamples(localOut, gpus) };
   }
 }

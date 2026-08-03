@@ -104,4 +104,23 @@ export abstract class EnvBackend {
   abstract monitor(handle: Record<string, unknown>): Record<string, unknown>;
   abstract collectResults(): Record<string, unknown>;
   abstract destroy(): Record<string, unknown>;
+
+  // Returns { ok: boolean, samples: GpuSample[], error?: string }
+  // GpuSample = { gpu_index, used_mib, total_mib, ts }
+  abstract sampleGpuMemory(gpus?: number[]): Record<string, unknown>;
+}
+
+export function parseSmiSamples(stdout: string, gpus?: number[]): Record<string, unknown>[] {
+  const samples: Record<string, unknown>[] = [];
+  for (const line of stdout.trim().split("\n")) {
+    const parts = line.split(",").map((p) => p.trim());
+    if (parts.length < 3) continue;
+    const idx = parseInt(parts[0], 10);
+    const used = parseInt(parts[1], 10);
+    const total = parseInt(parts[2], 10);
+    if (isNaN(idx) || isNaN(used) || isNaN(total)) continue;
+    if (gpus && !gpus.includes(idx)) continue;
+    samples.push({ gpu_index: idx, used_mib: used, total_mib: total, ts: Date.now() });
+  }
+  return samples;
 }

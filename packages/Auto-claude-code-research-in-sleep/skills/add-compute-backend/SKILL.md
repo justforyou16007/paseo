@@ -148,6 +148,27 @@ If WandB = "Yes", append: `wandb: boolean = false`, `wandb_project: string = nul
 
 If auto-cleanup = "Yes", append: `auto_destroy: boolean = false`.
 
+### Batch 2 (2 questions) — GPU capacity and node count:
+
+**Q5** — header: "GPU Memory", question: "How much GPU memory per device? (used as a hint for adaptive batch sizing; enter 0 to auto-detect via nvidia-smi)"
+- options:
+  - `"0 (auto-detect)"` — description: "Query nvidia-smi at runtime — works for SSH/local/docker backends"
+  - `"40960"` — description: "40 GB (e.g., A100-40GB, RTX 3090)"
+  - `"81920"` — description: "80 GB (e.g., A100-80GB, H100 SXM)"
+  - `"24576"` — description: "24 GB (e.g., RTX 4090)"
+
+Add field: `gpu_memory_mib: number = 0` (optional, default 0 = auto-detect).
+
+**Q6** — header: "Node Count", question: "How many compute nodes/machines are available in this environment?"
+- options:
+  - `"1"` — description: "Single machine"
+  - `"2-8"` — description: "Small cluster"
+  - `"> 8"` — description: "Large cluster"
+
+Add field: `num_nodes: number = 1` (optional).
+
+If category is "SSH-based" or "CLI-based" (cluster scheduler like Slurm), also add field: `gpus_per_node: number = 1` (optional).
+
 ---
 
 ## Phase 3: Collect Deployment Mechanism
