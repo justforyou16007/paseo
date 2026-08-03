@@ -61,7 +61,7 @@ import {
 import { ForegroundRunState, type ForegroundTurnWaiter } from "./foreground-run-state.js";
 import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
-import { isSystemInjectedEnvelope } from "./agent-prompt.js";
+import { isSystemInjectedEnvelope, startAgentRun } from "./agent-prompt.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
 import type { PaseoToolCatalogFactory } from "./tools/types.js";
@@ -525,6 +525,7 @@ export class AgentManager {
   private readonly durableTimelineStore?: AgentTimelineStore;
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly backgroundTasks = new Set<Promise<void>>();
+  private readonly autoCompactInFlight = new Set<string>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
@@ -3193,11 +3194,41 @@ export class AgentManager {
     );
     agent.lastUsage = event.usage;
     agent.lastError = undefined;
+
+    if (this.autoCompactInFlight.has(agent.id)) {
+      this.autoCompactInFlight.delete(agent.id);
+    } else if (isForegroundEvent) {
+      this.maybeAutoCompact(agent);
+    }
+
     if (!isForegroundEvent && agent.lifecycle !== "idle" && !agent.pendingReplacement) {
       (agent as ActiveManagedAgent).lifecycle = "idle";
       this.emitState(agent);
     }
     void this.refreshRuntimeInfo(agent);
+  }
+
+  private maybeAutoCompact(agent: ActiveManagedAgent): void {
+    const usage = agent.lastUsage;
+    if (!usage?.contextWindowMaxTokens || !usage?.contextWindowUsedTokens) return;
+
+    const utilization = usage.contextWindowUsedTokens / usage.contextWindowMaxTokens;
+    if (utilization < 0.7) return;
+
+    this.autoCompactInFlight.add(agent.id);
+
+    this.logger.info(
+      {
+        agentId: agent.id,
+        provider: agent.provider,
+        utilization: Math.round(utilization * 100),
+        usedTokens: usage.contextWindowUsedTokens,
+        maxTokens: usage.contextWindowMaxTokens,
+      },
+      "auto-compact: context usage >= 70%, sending /compact",
+    );
+
+    startAgentRun(this, agent.id, "/compact", this.logger);
   }
 
   private async onStreamTurnFailed(params: {
@@ -3208,6 +3239,7 @@ export class AgentManager {
     options: { fromHistory?: boolean } | undefined;
   }): Promise<void> {
     const { agent, event, eventTurnId, isForegroundEvent, options } = params;
+    this.autoCompactInFlight.delete(agent.id);
     this.logger.warn(
       {
         agentId: agent.id,
@@ -3251,6 +3283,7 @@ export class AgentManager {
       | undefined;
   }): void {
     const { agent, event, eventTurnId, isForegroundEvent, options } = params;
+    this.autoCompactInFlight.delete(agent.id);
     this.logger.trace(
       {
         agentId: agent.id,
