@@ -733,9 +733,12 @@ Created:
 
 ⚠️ If ARIS skills were installed or updated during this setup, they won't
    appear until you reload. Run `/reload-skills` or start a new Claude Code session.
+   After reloading, please also run `/clear` to free up context window space
+   before starting research work.
 
    如果此次设置安装或更新了 ARIS 技能，需要重新加载才能使用。
    请运行 `/reload-skills` 或启动新的 Claude Code 会话。
+   重新加载后，请运行 `/clear` 来释放上下文窗口空间，再开始研究工作。
 ```
 
 Then suggest next steps based on work type:
