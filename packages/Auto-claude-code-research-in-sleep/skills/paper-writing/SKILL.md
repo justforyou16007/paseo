@@ -33,24 +33,9 @@ In this hybrid pack, the pipeline itself is unchanged, but `paper-plan` and `pap
 - **AUTO_PROCEED = true** — Auto-continue between phases. Set `false` to pause and wait for user approval after each phase.
 - **HUMAN_CHECKPOINT = false** — When `true`, the improvement loop (Phase 5) pauses after each round's review to let you see the score and provide custom modification instructions. When `false` (default), the loop runs fully autonomously. Passed through to `/auto-paper-improvement-loop`.
 - **ILLUSTRATION = `figurespec`** — Architecture/illustration generator for Phase 2b: `figurespec` (default, deterministic JSON→SVG via `/figure-spec`, best for architecture/workflow/topology), `gemini` (AI-generated via `/paper-illustration`, best for qualitative method illustrations; needs `GEMINI_API_KEY`), `codex-image2` (AI-generated via `/paper-illustration-image2` through the local Codex native image bridge — no external API key, uses your ChatGPT Plus/Pro quota; experimental), `mermaid` (Mermaid syntax via `/mermaid-diagram`, free, best for flowcharts), or `false` (skip Phase 2b, manual only).
-- **DEBUG = false** — When `true`, pause on any helper failure and wait for the developer to fix the issue before continuing. See [`shared-references/debug-mode.md`](../shared-references/debug-mode.md).
 
 > Override inline: `/paper-writing "NARRATIVE_REPORT.md" — venue: NeurIPS, illustration: gemini, human checkpoint: true`
 > IEEE example: `/paper-writing "NARRATIVE_REPORT.md" — venue: IEEE_JOURNAL`
-
-## Setup: Debug mode detection
-
-```bash
-DEBUG_MODE=false
-case "$ARGUMENTS" in
-  *debug:\ true*|*debug:true*|*--debug*) DEBUG_MODE=true ;;
-esac
-```
-
-When `DEBUG_MODE=true`, every helper failure triggers the debug halt
-protocol ([`shared-references/debug-mode.md`](../shared-references/debug-mode.md)):
-print a structured error, write `.aris/debug-halt.json`, and wait for
-the developer to send a message before continuing.
 
 ## Inputs
 

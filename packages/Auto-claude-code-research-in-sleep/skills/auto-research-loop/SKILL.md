@@ -47,9 +47,8 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent,
 - **LOG_FILE = `research-iteration/auto-research-loop-log.md`** — Cumulative per-iteration narrative (added each round).
 - **REPORT_FILE = `research-iteration/auto-research-loop-report.md`** — Final report (last iteration's summary + trajectory + artifacts).
 - **HUMAN_CHECKPOINT = false** — Set to `true` to pause at the end of each iteration for user review.
-- **DEBUG = false** — When `true`, pause on any helper failure per `shared-references/debug-mode.md`.
 
-> 💡 Override via argument, e.g., `/auto-research-loop "iteration 2 of 3" — auto research iterations: 5, debug: true`.
+> 💡 Override via argument, e.g., `/auto-research-loop "iteration 2 of 3" — auto research iterations: 5`.
 
 ## Inputs (read at startup)
 
@@ -72,12 +71,6 @@ This is ONE iteration. The skill calls Step 1 at startup and after every round. 
 ```bash
 cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
 
-# Parse debug mode
-DEBUG_MODE=false
-case "$ARGUMENTS" in
-  *debug:\ true*|*debug:true*|*--debug*) DEBUG_MODE=true ;;
-esac
-
 # Resolve ARIS_REPO
 if [ -f .aris/installed-skills.txt ]; then
     ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
@@ -93,8 +86,6 @@ ITERATION=0
 [ -f "$STATE" ] && ITERATION=$(grep -oE '"iteration": *[0-9]+' "$STATE" | tail -1 | grep -oE '[0-9]+')
 ITERATION=$((ITERATION + 1))
 ```
-
-When `DEBUG_MODE=true`, every helper failure triggers the debug halt protocol per `shared-references/debug-mode.md`.
 
 ### Step 2 — Round type selection
 
@@ -432,4 +423,3 @@ When `MAX_ITERATIONS = 0` (today's default), the stage is `skipped` and the pipe
 - `skills/shared-references/integration-contract.md` — helper resolution chain.
 - `skills/shared-references/review-tracing.md` — `save_trace.sh` (Policy C forensic).
 - `skills/shared-references/acceptance-gate.md` — Type-A vs Type-B gate classification.
-- `skills/shared-references/debug-mode.md` — `DEBUG=true` halt protocol.
