@@ -7,18 +7,28 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent,
 
 # Auto Research Loop: closed research-iteration driver
 
-> **Paseo substrate.** This workflow runs as ONE long-lived paseo claude agent looping iterations 1→N internally; every iteration dispatches a fresh codex sub-agent as the cross-model reviewer (per `shared-references/paseo-reviewer-dispatch.md`). Sub-skill dispatch (`/run-experiment`, `/research-review`, `/idea-creator`, `/result-to-claim`) is also via paseo child agents. The fence (`shared-references/external-cadence.md`) forbids wrapping this skill in `/loop` / `CronCreate` / `create_heartbeat`. The single-agent loop owns internal cadence; the heartbeat (Type-A only) may nudge stalled sub-phases but never recreates this skill.
+> **Paseo substrate.** This workflow runs as ONE long-lived paseo claude agent looping iterations 1→N internally. The parent agent **schedules only** — it dispatches sub-agents, reads their receipt files, runs canonical bookkeeping helpers with values taken verbatim from those receipts, and evaluates the deterministic stop arithmetic. It performs **no analysis, no drafting, and no judgment of its own**. Every iteration dispatches a fresh codex sub-agent as the cross-model reviewer (per `shared-references/paseo-reviewer-dispatch.md`). Sub-skill dispatch (`/run-experiment`, `/research-review`, `/idea-creator`, `/result-to-claim`, `/experiment-env-configuration`) is also via paseo child agents. The fence (`shared-references/external-cadence.md`) forbids wrapping this skill in `/loop` / `CronCreate` / `create_heartbeat`. The single-agent loop owns internal cadence; the heartbeat (Type-A only) may nudge stalled sub-phases but never recreates this skill.
+
+> **Division of labour (non-negotiable).** See "Critical Rule 11".
+>
+> | The parent MAY | The parent MUST NOT |
+> |---|---|
+> | `create_agent` / `wait_for_agent` / `archive_agent` | Read experiment logs to form an opinion |
+> | Read a receipt JSON and extract its fields | Draft a gap, claim, hypothesis, or experiment plan |
+> | Run `research-wiki.js` / `run-state.js` / `iteration-log.js` with receipt values verbatim | Summarize, interpret, or narrate results |
+> | Evaluate the Type-A stop arithmetic (numeric comparisons) | Decide whether a result is "good enough" |
+> | Append the log line assembled from receipt fields | Compose the log's analytical content |
 
 > **The 10 phases per iteration, in order:**
-> 1. baseline reproduction (`/run-experiment` for the original method)
+> 1. baseline reproduction (`/experiment-bridge`), then freeze the environment into a reusable project skill (`/experiment-env-configuration`)
 > 2. auto-review baseline (`/research-review` of the baseline)
-> 3. identify baseline problems (reviewer-issued, recorded as claims)
-> 4. run experiments to prove/disprove problems (`/run-experiment` or `/experiment-queue` for multi-seed)
-> 5. propose solution ideas — multi-branch (`/idea-creator`)
-> 6. record ideas (`research-wiki.js upsert_idea`)
+> 3. identify baseline problems (reviewer-issued, **recorded as gaps** in `research-wiki/gap_map.md`)
+> 4. run experiments to prove/disprove the gaps (`/run-experiment` or `/experiment-queue` for multi-seed)
+> 5. propose solution ideas — multi-branch (`/idea-creator`), each targeting a gap id
+> 6. record ideas (`research-wiki.js upsert_idea --target-gaps`)
 > 7. run experiments for the top surviving idea (`/run-experiment`)
-> 8. auto-review that idea (`/result-to-claim` on each new claim)
-> 9. identify new problems (reviewer-issued)
+> 8. auto-review that idea (`/result-to-claim` on each new claim, `--addresses` the gap it closes)
+> 9. identify new gaps (reviewer-issued)
 > 10. loop back to step 4
 >
 > Stop when the **compound gate** fires: (Type-A: `current_metric >= target_metric` OR `iteration >= MAX_ITERATIONS`) AND (Type-B: fresh codex verdict=`stop` with `score >= 9` AND `metric_progress=met target`).
@@ -88,39 +98,100 @@ When `DEBUG_MODE=true`, every helper failure triggers the debug halt protocol pe
 
 ### Step 2 — Round type selection
 
+This is a table lookup on `ITERATION`, not a judgment. The parent selects the row and dispatches; it does not decide what the round should contain.
+
 | iteration | Round type | What Step 3 + Step 4 dispatch |
 |---|---|---|
-| 1 (1-indexed) | baseline reproduction | Step 3 dispatch `/experiment-bridge refine-logs/EXPERIMENT_PLAN.md`. Step 4 records the experiments to research-wiki. |
-| 2 | baseline review + kill-argument attack | Step 3 dispatch `/research-review` + `/kill-argument` on the baseline results. Step 4 derives a mini `EXPERIMENT_PLAN-diag-iter-2.md` from `kill-arg-iter-2.json` `still_unresolved`. |
-| 3+ | hypothesis → experiment → review loop | Step 3 dispatch `/kill-argument` on the previous round's results → derive `EXPERIMENT_PLAN-diag-iter-N.md` → dispatch `/research-review` for convergence → `/experiment-bridge` runs the plan. Step 4 records + re-judges. |
+| 1 (1-indexed) | baseline reproduction + environment freeze | Step 3 dispatches `/experiment-bridge refine-logs/EXPERIMENT_PLAN.md`, then `/experiment-env-configuration — non-interactive` to freeze the verified environment into `.claude/skills/run-<project>-experiment/`. Step 4 records the experiments to research-wiki. |
+| 2 | baseline review + kill-argument attack | Step 3 dispatches `/kill-argument — gap-output: research-wiki/gap_map.md` on the baseline results to find problems and record them as gaps, then `/research-review` on the generated plan. Step 4 records the claims. |
+| 3+ | hypothesis → experiment → review loop | Step 3 dispatches `/kill-argument — gap-output: research-wiki/gap_map.md` on the previous round's results, then `/research-review` for convergence → `/experiment-bridge` runs the plan. Step 4 records + re-judges. |
 
-The first iteration is the existing `experiment-bridge` (W1.5 equivalent). From iteration 2 onward, the loop reuses the same plan-driven pipeline: `kill-argument` finds problems, the orchestrator translates them into mini plans, `research-review` converges the plans, and `experiment-bridge` runs the experiments.
+The first iteration is the existing `experiment-bridge` (W1.5 equivalent) plus the environment freeze. From iteration 2 onward, the loop reuses the same pipeline: `/kill-argument` identifies problems, records them **directly** as gaps in `gap_map.md`, and produces a diagnostic experiment plan — all in one skill invocation. `/research-review` converges the plan, then `/experiment-bridge` runs the experiments.
 
 ### Step 3 — Diagnose and dispatch
 
-This step has two parts. Part (a) is "find the problems"; part (b) is "translate them into an EXPERIMENT_PLAN and run it". Both reuse existing skills — no new schema, no new tool.
+Two parts for iteration ≥ 2. Part (a) dispatches `/kill-argument` which finds problems, records them as gaps, and produces a diagnostic experiment plan — all inside one sub-agent. Part (b) — iteration 1 only — freezes the environment. **Every part is a dispatched sub-agent.** The parent's entire role in this step is: render the prompt, create the agent, wait, read the receipt.
 
-**Step 3a — Kill-argument attack on the previous round's results** (iteration ≥ 2)
+**Step 3a — Kill-argument with gap output** (iteration ≥ 2)
 
-Dispatch `/kill-argument` (Paseo codex sub-agent per `paseo-subagent-dispatch.md`). Inputs: the previous round's `refine-logs/EXPERIMENT_TRACKER.md` + `refine-logs/EXPERIMENT_RESULTS.md` + the latest `research-iteration/auto-research-loop-log.md`. Output: `research-iteration/kill-arg-iter-N.json`:
+For iteration 1, skip 3a and dispatch `/experiment-bridge` directly with the project's existing `refine-logs/EXPERIMENT_PLAN.md` (today's behavior), then run Step 3b. For iteration ≥ 2:
+
+Dispatch `/kill-argument` as a paseo sub-agent (Rule 1, Rule 4) with these additional arguments:
+
+```
+/kill-argument refine-logs/ — gap-output: research-wiki/gap_map.md — plan-output: refine-logs/EXPERIMENT_PLAN-diag-iter-<N>.md — render html: false
+```
+
+The skill targets the experiment results (not a paper) and is invoked with:
+
+- `— gap-output: research-wiki/gap_map.md` — instructs kill-argument to append its `still_unresolved` findings as gap entries to `gap_map.md`, using the established format (`## G<n> — <label>`, Status/Sub-direction/Why it matters/What would close it). Kill-argument already has the structured data for each field:
+  - Gap title = `decomposed_points[i].label`
+  - Why it matters = `decomposed_points[i].attack_claim` + `evidence`
+  - What would close it = `decomposed_points[i].recommended_fix`
+  - Status = `open (iteration <N>, kill-argument)`
+- `— plan-output: refine-logs/EXPERIMENT_PLAN-diag-iter-<N>.md` — instructs kill-argument to also produce the diagnostic experiment plan for the identified gaps. Each milestone maps to one gap: `id`, `gap_id` (the `G<n>`), `modification`, `metric_to_observe`, `success_threshold`. The format matches the `EXPERIMENT_PLAN.md` schema that `/experiment-bridge` already accepts.
+- `— render html: false` — skip the HTML render step (no paper directory context here).
+
+**Why kill-argument does this directly:** Kill-argument already performs the adversarial analysis, already knows what's `still_unresolved`, and already has the structured per-point data (label, evidence, severity, recommended fix). Having a separate sub-agent re-read that output and "creatively interpret" it into gaps is both wasteful and a potential distortion layer. The skill that finds the problems is the right skill to state them as gaps — no middleman.
+
+The parent passes input paths only — it does not read experiment logs or form opinions about what the problems are. After the sub-agent finishes:
+
+Receipt: `.aris/runs/<run_id>.research-iteration.iter-<N>.kill-arg-gaps.done.json` with:
 ```json
 {
-  "kill_arg": "<200-word strongest rejection>",
-  "counter_argument": "<200-word defense>",
-  "still_unresolved": ["issue 1", "issue 2", "issue 3"]
+  "phase": "kill-arg-gaps",
+  "iteration": <N>,
+  "kill_arg_path": "research-iteration/KILL_ARGUMENT.json",
+  "gap_ids": ["G7", "G8"],
+  "gap_titles": ["<label for G7>", "<label for G8>"],
+  "plan_path": "<abs path to EXPERIMENT_PLAN-diag-iter-N.md>",
+  "milestone_count": <int>,
+  "overall_verdict": "PASS|WARN|FAIL",
+  "completed_at": "<ISO-8601>"
 }
 ```
 
-`still_unresolved` is the load-bearing field — the problems this round will design experiments to test.
+The parent reads this receipt (file-paths-only), then:
 
-**Step 3b — Translate problems into a mini plan and run it** (iteration ≥ 2)
+1. If `overall_verdict == "PASS"` (defense survives — no `still_unresolved`): no gaps to address, skip to Step 5 (stop evaluation). This is a natural convergence signal.
+2. Otherwise: dispatch `/research-review` on `plan_path` for convergence checking, then `/experiment-bridge "<plan_path>"` to run the diagnostic experiments.
 
-For iteration 1, skip 3a/3b and dispatch `/experiment-bridge` directly with the project's existing `refine-logs/EXPERIMENT_PLAN.md` (today's behavior). For iteration ≥ 2:
+**Step 3b — Freeze the experiment environment** (iteration 1 only)
 
-1. **Orchestrator LLM pass** — read `kill-arg-iter-N.json`'s `still_unresolved`. For each unresolved issue, draft a `claim:diag-iter-N-<idx>` with: failure mode, evidence (cite `EXPERIMENT_TRACKER.md` row ids), root-cause hypothesis, minimal experiment, success threshold.
-2. **Write `refine-logs/EXPERIMENT_PLAN-diag-iter-N.md`** — a plan containing ONLY the diagnostic milestones (no `sanity/baseline/main/ablation` headers — those are for a full run, not for verification experiments). Each milestone has: `id`, `claim_id`, `modification` (text), `metric_to_observe`, `success_threshold`. The format is the same `EXPERIMENT_PLAN.md` schema that `/experiment-bridge` already accepts; we're just making a smaller file.
-3. **Dispatch `/research-review`** on the mini plan. The research-review skill's Step 4 convergence logic ("A concrete experiment plan is established") gives us a cross-model verdict on the plan quality. This is the gate before we burn GPU hours.
-4. **Dispatch `/experiment-bridge "refine-logs/EXPERIMENT_PLAN-diag-iter-N.md"`** to run the diagnostic experiments. `experiment-bridge` will dispatch `/run-experiment` or `/experiment-queue` per its own auto-routing rule. It will write appended rows to `refine-logs/EXPERIMENT_TRACKER.md` and `refine-logs/EXPERIMENT_RESULTS.md`.
+Immediately after baseline reproduction succeeds — and only then, because a
+verified baseline is the proof that the environment actually works — dispatch
+`/experiment-env-configuration — non-interactive` as a paseo claude sub-agent.
+
+That skill records the whole prepare → run → feedback loop as a reusable
+project-local skill at `.claude/skills/run-<project>-experiment/`:
+
+- **preparation** — where experiment code must live (local or a remote path) and
+  how it gets there; which dependency environment runs it and the command that
+  proves the environment is usable
+- **run** — the single command/CLI that launches one experiment
+- **feedback** — the error channel (how a failure is detected and where the log
+  is), the result channel (which file holds the metrics and which key is primary),
+  and the analysis channel (which skill or script interprets them, and where the
+  artifact lands)
+
+It is **idempotent**: if `.claude/skills/run-<project>-experiment/SKILL.md` already
+exists it verifies and returns `already_configured` without re-asking anything.
+So iterations 2..N cost nothing here, and every later stage runs
+`/run-<project>-experiment <exp_name>` instead of re-deriving how this project's
+experiments work. That re-derivation — rediscovering the conda hook, the sync
+path, the metric key — is the single largest source of wasted rounds in a long
+loop.
+
+Receipt: `.aris/runs/<run_id>.research-iteration.iter-1.env-config.done.json` with
+`{ "status": "complete|already_configured|incomplete|audit_failed", "skill_dir": "<path>", "missing_keys": [...], "audit_verdict": "<pass|warn|fail|null>" }`.
+On `incomplete`, log the missing keys and continue the loop with the built-in
+backend — do not block the research loop on environment polish.
+On `audit_failed`, the configuration was plausible but the cross-model reviewer
+flagged trustworthiness issues (see `ENV_CONFIG_AUDIT.md` in the audit dir).
+Continue the loop with the built-in backend; a future `/experiment-env-configuration
+— reconfigure` or manual fix + re-audit is the resolution path. The research loop
+never blocks on an audit failure — it still works, it just loses the convenience
+of the frozen skill for this iteration.
 
 All sub-skill dispatches follow `shared-references/paseo-subagent-dispatch.md` Rule 1 (one agent = one skill) and Rule 4 (no in-process `Skill` fallbacks):
 
@@ -129,15 +200,15 @@ PROMPT=$(bash "$RENDER" --phase "<sub-skill>" --run-id "$RUN_ID" --root "$ROOT" 
          --skill skills/<sub-skill>/SKILL.md --extra "<iteration-specific context>")
 ```
 
-Then `mcp__paseo__create_agent` with `notifyOnFinish: true`. The parent reacts to the child's `notifyOnFinish` by reading the receipt file `.aris/runs/<run_id>.research-iteration.iter-<N>.<sub>.done.json` — not by polling `get_agent_status` (per Rule 2).
+Then `mcp__paseo__create_agent` with `notifyOnFinish: true`. The parent reacts to the child's `notifyOnFinish` by reading the receipt file `.aris/runs/<run_id>.research-iteration.iter-<N>.<sub>.done.json` — not by polling `get_agent_status` (per Rule 2). Archive each child once its receipt is read (用完即 archive).
 
 When `HUMAN_CHECKPOINT=true`, before dispatching the next round, print the latest iteration's findings (from `LOG_FILE`) and wait for `go` / `skip` / `stop`.
 
 ### Step 4 — Evidence collection + result-to-claim re-judge
 
-For every new experiment row that `experiment-bridge` appended to `EXPERIMENT_TRACKER.md`:
+This step is **pure bookkeeping**. Every value below comes verbatim from a receipt file. The parent does not read experiment logs, does not decide whether a claim holds, and does not compose any of the text it writes.
 
-For every new experiment the sub-skill produced:
+For every new experiment row that `experiment-bridge` appended to `EXPERIMENT_TRACKER.md` — the ids and paths come from the `experiment-bridge` receipt's `experiments[]` array:
 
 ```bash
 $ARIS_REPO/dist/tools/research-wiki.js add_experiment research-wiki/ \
@@ -155,6 +226,7 @@ For every claim touched by the iteration, dispatch `/result-to-claim` as a fresh
 {
   "claim_id": "claim:<id>",
   "claim_supported": "yes|partial|no",
+  "addresses_gaps": ["G7"],
   "what_results_support": ["exp:<id1>", "exp:<id2>"],
   "what_results_dont_support": [],
   "missing_evidence": ["..."],
@@ -165,7 +237,28 @@ For every claim touched by the iteration, dispatch `/result-to-claim` as a fresh
 }
 ```
 
-Record each verdict via `research-wiki.js add_claim` (for new claims) or `add_edge --relation supports|invalidates` (for claim↔experiment links).
+The parent records each verdict — again, verbatim, no interpretation:
+
+```bash
+# New claim, wired to the gap it addresses (the addresses_gap edge is emitted by add_claim)
+$ARIS_REPO/dist/tools/research-wiki.js add_claim research-wiki/ \
+  --id "<claim_id>" --statement "<statement from receipt>" \
+  --addresses "<comma-joined addresses_gaps from receipt>"
+
+# Claim ↔ experiment links
+$ARIS_REPO/dist/tools/research-wiki.js add_edge research-wiki/ \
+  --from "<claim_id>" --to "<exp:id>" --type supports|invalidates \
+  --evidence "<from receipt>"
+```
+
+**Gap closure.** When a verdict has `claim_supported: "yes"` and a non-empty
+`addresses_gaps`, the gap it names is answered. Dispatch a one-shot sub-agent to
+edit that gap's `**Status**:` line in `research-wiki/gap_map.md` to
+`closed (claim:<id>, iteration <N>)`. Gap entries are never deleted — the closed
+entry plus its `addresses_gap` edge is the audit trail showing which experiment
+answered which open question. `claim_supported: "no"` sets the status to
+`refuted`, which is equally informative and prevents a later round from
+re-proposing the same dead direction.
 
 ### Step 5 — Cross-model review (the codex reviewer sub-agent)
 
@@ -208,13 +301,17 @@ After the reviewer returns, run `save_trace.sh` (resolved via the integration-co
 
 ### Step 6 — Update state
 
+Bookkeeping only. Every interpolated value below is a field read out of a receipt or review JSON — the parent transcribes, it does not compose. In particular `<verdict>`, `<score>`, `<metric progress>`, and `<next direction>` are read from `auto-research-loop-review.round-<N>.json`; the parent never writes its own assessment into the log.
+
 ```bash
-# Per-iteration log
+# Per-iteration log — a transcription of receipt fields, not a narrative
 echo "$(printf '\n## Iteration %s (%s)\n\n' "$ITERATION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)")" >> research-iteration/auto-research-loop-log.md
 echo "Round type: <type>" >> research-iteration/auto-research-loop-log.md
 echo "Reviewer verdict: <verdict> (score: <n>/10)" >> research-iteration/auto-research-loop-log.md
 echo "Metric progress: <from review>" >> research-iteration/auto-research-loop-log.md
 echo "Next direction: <from review>" >> research-iteration/auto-research-loop-log.md
+echo "Gaps opened: <gap_ids from kill-arg-gaps receipt>" >> research-iteration/auto-research-loop-log.md
+echo "Gaps closed: <gap ids whose status flipped in Step 4>" >> research-iteration/auto-research-loop-log.md
 
 # Stall detection (Type-A fire-control only — never a quality verdict)
 N_NEW=$(<research-wiki/research-wiki-stats.json jq '.new_findings_this_round' 2>/dev/null || echo 0)
@@ -230,6 +327,8 @@ cat > research-iteration/auto-research-loop-state.json <<EOF
   "last_verdict": "<verdict>",
   "last_direction": "<from review>",
   "top_idea": "<top_idea_id>",
+  "open_gaps": [<gap ids still status=open>],
+  "experiment_skill": "<skill_dir from the iter-1 env-config receipt, or null>",
   "current_metric": $CURRENT_METRIC,
   "target_metric": $TARGET_METRIC,
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -303,12 +402,15 @@ When `MAX_ITERATIONS = 0` (today's default), the stage is `skipped` and the pipe
 2. **Reviewer freshness** — `REVIEWER_BIAS_GUARD=true`. Every round creates a fresh codex sub-agent. Round N's review does NOT see round N-1's review (opposite of `auto-review-loop`'s continuation).
 3. **Type-B only on judgment** — the codex reviewer NEVER judges "good enough". It emits `improve` / `pivot` / `stop` + a `metric_progress` field. The parent reads the actual numeric metric (Type-A) to decide stop.
 4. **Self-acquittal tripwire** — `run-state.js accept` with `reviewer` starting with `claude*` emits a stderr warning. Never accept on a Claude reviewer; require `codex-gpt-5.5` (or `deterministic:` for the budget-exhausted case). The strict-mode rule (`paseo-subagent-dispatch.md` Rule 4) forbids in-process codex fallbacks; paseo MCP is required.
-5. **Canonical writes only** — every claim, idea, experiment, edge goes through `research-wiki.js {add_claim, upsert_idea, add_experiment, add_edge}`. NO freehand markdown in `research-wiki/`. Same invariant as `idea-creator` Phase 7.
+5. **Canonical writes only** — every claim, idea, experiment, edge goes through `research-wiki.js {add_claim, upsert_idea, add_experiment, add_edge}`. NO freehand markdown in `research-wiki/`. Same invariant as `idea-creator` Phase 7. **`gap_map.md` is the one documented exception** — there is no `add_gap` subcommand, so gaps are appended as markdown in the established format by `/kill-argument` (Step 4.5, `— gap-output`), exactly as `/idea-discovery` and `/wiki-enrich` do. Everything that *references* a gap still goes through the helper (`add_claim --addresses`, `upsert_idea --target-gaps`, `add_edge --type addresses_gap`).
 6. **No in-process `Skill` tool calls** — dispatch sub-skills via `mcp__paseo__create_agent`. The strict-mode rule (Rule 4) forbids in-process execution.
 7. **Compound gate decomposition** — the stop check must be SPLIT. Type-A part (metric, max-iter, pivot-count) is owner-self-judgeable. Type-B part (verdict=stop with metric-progress=met target) MUST come from a codex sub-agent. Never conflate; never let a Type-A-only stop pass a Type-B acquittal.
 8. **Patience enforcement** — if `consecutive_pivot_verdicts >= PATIENCE` (2), force `verdict=stop` to prevent infinite direction-churn. This is a Type-A fire-control — no quality judgment.
 9. **24h stale-state recovery** — on startup, if `auto-research-loop-state.json` exists AND `timestamp` is within 24h, resume from `iteration+1`. Otherwise, fresh start.
 10. **Helper resolution** — every helper (`research-wiki.js`, `iteration-log.js`, `run-state.js`, `save_trace.sh`) resolved via the canonical chain from `shared-references/integration-contract.md` §2: `.aris/dist/tools/<helper>` → `dist/tools/<helper>` → `$ARIS_REPO/dist/tools/<helper>`. Variant A (hard-fail) for the wiki itself; Variant B (warn-and-skip) for callers of optional helpers.
+11. **The parent schedules; sub-agents work.** The parent agent's permitted actions are exhaustively: dispatch (`create_agent`), wait (`wait_for_agent` / `notifyOnFinish`), read a receipt JSON, run a canonical helper with receipt values **transcribed verbatim**, evaluate the Type-A numeric arithmetic, and archive a finished child. Anything requiring a judgment or a sentence of original prose — deciding what the problems are, writing an experiment plan, summarizing results, deciding a claim holds, composing the log's analytical content — is a sub-agent's job and MUST be dispatched. Concretely: Step 3a's gap identification and plan authoring is `/kill-argument` (one skill, one agent); Step 4's claim verdicts are `/result-to-claim` codex sub-agents; Step 5's assessment is the fresh codex reviewer. If the parent finds itself about to read an experiment log or write an original sentence, it is violating this rule — dispatch instead. The reason is not tidiness: a parent that forms its own opinion becomes a second, unaudited reviewer whose reasoning never appears in any receipt or trace, which defeats the cross-model acquittal design in Rules 2–4 and 7.
+12. **Gaps for open questions, claims for evidenced assertions.** A kill-argument's `still_unresolved` entries are unanswered by construction, so they are recorded as **gaps** in `research-wiki/gap_map.md` — never as claims. Claims arrive later, from `/result-to-claim`, with `--addresses G<n>` pointing back at the gap the experiment closed. Recording an unresolved problem as a claim asserts something no experiment has shown and pollutes the claim graph with unfalsified statements.
+13. **Environment configured once, replayed forever.** Iteration 1 dispatches `/experiment-env-configuration — non-interactive` after the baseline reproduces, freezing preparation/run/feedback into `.claude/skills/run-<project>-experiment/`. It is idempotent, so iterations 2..N are free. Later stages invoke the generated skill; they do not re-derive the sync path, conda hook, or metric key. That skill gates its own output on a cross-model `/experiment-audit` verdict (its Phase 5.5), so a frozen environment that exists has been reviewed by a different model family — the loop inherits that guarantee without doing anything. If it returns `incomplete` or `audit_failed`, log the reason and continue with the built-in backend — the research loop never blocks on environment polish, and it never overrides the audit's refusal either.
 
 ## External dependencies (reused, not modified)
 
@@ -318,6 +420,8 @@ When `MAX_ITERATIONS = 0` (today's default), the stage is `skipped` and the pipe
 - `src/tools/provenance.ts` — `stamp` after every codex round (cross-family integrity check).
 - `src/lib/cli.ts` / `src/lib/run.ts` — `createCli` / `runCli` / `run` (the `run` helper swallows non-zero exit; check `exitCode` in the caller).
 - `skills/result-to-claim/SKILL.md` — dispatched as a sub-agent for every claim judgement. 5-step contract: collect evidence → deterministic pre-check → codex judgment → integrity attach → route.
+- `skills/kill-argument/SKILL.md` — dispatched in Step 3a (iteration ≥ 2) with `— gap-output` and `— plan-output` to find baseline problems, record them as gaps, and produce the diagnostic experiment plan. One skill, one agent — no separate gap-drafting intermediary.
+- `skills/experiment-env-configuration/SKILL.md` — dispatched once in iteration 1 (`— non-interactive`) to freeze prepare/run/feedback into `.claude/skills/run-<project>-experiment/`. Idempotent; returns `already_configured` on later rounds.
 - `skills/run-experiment/SKILL.md` — dispatched for baseline + idea experiment runs.
 - `skills/experiment-queue/SKILL.md` — dispatched for multi-seed / multi-config batches.
 - `skills/research-review/SKILL.md` — dispatched for baseline review + cross-model judgment on each iteration.

@@ -4,7 +4,7 @@ project_root	/home/liu/paseo
 generated	2026-08-03T07:53:37Z
 kind	name	source_rel	target_rel	mode
 skill	ablation-planner	skills/ablation-planner	.claude/skills/ablation-planner	symlink
-skill	add-compute-backend	skills/add-compute-backend	.claude/skills/add-compute-backend	symlink
+skill	experiment-env-configuration	skills/experiment-env-configuration	.claude/skills/experiment-env-configuration	symlink
 skill	alphaxiv	skills/alphaxiv	.claude/skills/alphaxiv	symlink
 skill	analyse-tool	skills/analyse-tool	.claude/skills/analyse-tool	symlink
 skill	analyze-results	skills/analyze-results	.claude/skills/analyze-results	symlink

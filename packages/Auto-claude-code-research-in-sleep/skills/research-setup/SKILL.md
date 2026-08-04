@@ -233,89 +233,45 @@ If "Other" and NOT a skip keyword (user typed a backend name or description):
 1. Extract the backend name from the user's input (first word, lowercase, e.g. "slurm cluster" → "slurm").
 2. Read `$ARIS_ROOT/src/tools/experiment-env/parse-env.ts` and extract the `ENV_TYPES` array to get currently registered backends.
 3. **If the name matches an existing ENV_TYPE** (e.g. user typed "docker" which is already registered): set `answers.gpu_type` to that name, proceed to Batch 2 with the dynamic backend branch.
-4. **If the name is NOT in ENV_TYPES** → this is an unregistered backend. Proceed to **Phase 4x: Scaffold New Backend** below.
+4. **If the name is NOT in ENV_TYPES** → this is an environment no built-in backend covers. Proceed to **Phase 4x: Custom Environment** below.
 
-### Phase 4x: Scaffold New Backend (inline add-compute-backend)
+### Phase 4x: Custom Environment (delegate to `/experiment-env-configuration`)
 
-This phase triggers ONLY when the user selected "Other" in Batch 1 and the backend name is not in `ENV_TYPES`. It scaffolds the new backend in the ARIS repo so that the experiment environment system recognizes it.
+This phase triggers ONLY when the user selected "Other" in Batch 1 and the backend name is not in `ENV_TYPES`.
 
-> **Note:** This phase modifies ARIS repo source files at `$ARIS_ROOT`, NOT the project directory. The ARIS repo path is resolved in Phase 0a via `$CLAUDE_SKILL_DIR` or `$ARIS_REPO`. Skill installation to the project happens later in Phase 7f.
+> **Note:** This phase writes ONLY into the project directory
+> (`.claude/skills/run-<project>-experiment/`). It does not modify ARIS repo
+> source. An earlier version of this phase scaffolded a TypeScript `EnvBackend`
+> subclass into `$ARIS_ROOT/src/tools/experiment-env/` and required a rebuild —
+> that coupled each project's environment to an ARIS source edit. The
+> environment is project data, so it now lives with the project.
 
 **4x-1. Confirm intent** (AskUserQuestion):
-- header: "New Backend" / "新后端"
-- question (en): "Backend '<name>' is not registered in ARIS. Add it now? This will scaffold the backend code in the ARIS repo."
-  (zh): "后端 '<name>' 尚未在 ARIS 中注册。是否现在添加？这将在 ARIS 仓库中生成后端代码。"
-- options: `["Yes, scaffold it now", "No, skip GPU setup"]`
+- header: "New Environment" / "新环境"
+- question (en): "No built-in backend covers '<name>'. Configure it now? This creates a reusable experiment skill in this project."
+  (zh): "内置后端不支持 '<name>'。是否现在配置？这将在本项目中生成可复用的实验 skill。"
+- options: `["Yes, configure it now", "No, skip GPU setup"]`
 
 If "No": set `answers.gpu_type = "none"`, skip to Phase 5.
 
-**4x-2. Collect backend identity** (AskUserQuestion, 3 questions):
+**4x-2. Delegate.** Invoke `/experiment-env-configuration` for this project. That
+skill owns the full question set — experiment-file placement, dependency
+environment, run command, and the three feedback channels (error / result /
+analysis) — and emits:
 
-- Q1 header "Category" / "类别", question: "What kind of compute backend is this?"
-  options: `["SSH-based", "CLI-based", "Container-based", "API-based"]`
-  (SSH → reference `remote-env.ts`; CLI → `modal-env.ts`; Container → `docker-env.ts`; API → `remote-env.ts`)
+- `.claude/skills/run-<project>-experiment/SKILL.md` — the replayable procedure
+- `.claude/skills/run-<project>-experiment/env.json` — the frozen answers
+- `.claude/skills/run-<project>-experiment/scripts/{prepare,run,collect,analyze}.sh`
 
-- Q2 header "Prerequisites" / "前置依赖", question: "What CLI tools must be installed? (e.g. sbatch, kubectl)"
-  options: `["None"]`
+Do not re-ask any of those questions here; a second copy of the question set is
+how the two flows drift apart.
 
-- Q3 header "Description" / "描述", question: "One-line description of this backend?"
-  options: provide a sensible suggestion based on the name (e.g. "slurm" → `"Slurm HPC cluster job scheduler"`)
+**4x-3. Return to normal flow:**
 
-**4x-3. Collect configuration schema** (AskUserQuestion, 4 questions):
-
-- Q1 header "Required" / "必填字段", question: "Required config fields? One per line: `name: type` (types: string, number, boolean, list, dict)"
-  options: category-appropriate example as first option (SSH → `"ssh_alias: string, code_dir: string"`; CLI → `"gpu_type: string"`; Container → `"image: string"`; API → `"api_key: string, endpoint: string"`)
-
-- Q2 header "Optional" / "可选字段", question: "Optional fields? `name: type = default`"
-  options: `["None beyond the basics"]`
-
-- Q3 header "WandB", question: "Support W&B experiment tracking?"
-  options: `["Yes", "No"]`
-
-- Q4 header "Cleanup" / "自动清理", question: "Support automatic resource cleanup?"
-  options: `["Yes", "No"]`
-
-**4x-4. Collect deployment mechanism** (AskUserQuestion, 4 questions):
-
-- Q1 header "Submit" / "提交", question: "How are jobs submitted?"
-  options: `["SSH + screen", "CLI command", "REST API", "Docker run"]`
-
-- Q2 header "Sync" / "同步", question: "How is code transferred?"
-  options: `["rsync over SSH", "git push/pull", "Shared filesystem", "Container copy"]`
-
-- Q3 header "Monitor" / "监控", question: "How to check if a job is running?"
-  options: `["SSH process check", "CLI status command", "API polling", "Log file tail"]`
-
-- Q4 header "Results" / "结果", question: "How are results collected?"
-  options: `["rsync from remote", "CLI download", "Shared filesystem", "API download"]`
-
-**4x-5. Generate code (6 touch points):**
-
-Execute the 6 touch points described in `skills/add-compute-backend/SKILL.md` Phase 4, using `$ARIS_ROOT` as the root path. All variables (`name`, `pascal_name`, `kebab_name`, `class_name`, fields, mechanisms) come from 4x-2 through 4x-4. In summary:
-
-1. **Create** `$ARIS_ROOT/src/tools/experiment-env/<kebab-name>-env.ts` — backend class extending `EnvBackend` with 7 lifecycle methods.
-2. **Edit** `$ARIS_ROOT/src/tools/experiment-env/env-backend.ts` — add lazy import + registry entry in `create()`.
-3. **Edit** `$ARIS_ROOT/src/tools/experiment-env/parse-env.ts` — add to `ENV_TYPES` + `ENV_SCHEMAS`.
-4. **Edit** `$ARIS_ROOT/templates/CLAUDE_MD_TEMPLATE.md` — add commented config template block.
-5. **Edit** `$ARIS_ROOT/tests/experiment_env/test_backends.py` — add factory + deploy test.
-6. **Edit** `$ARIS_ROOT/tests/experiment_env/test_parse_env.py` — add schema test.
-
-**4x-6. Build & verify:**
-
-```bash
-cd "$ARIS_ROOT" && npx tsc --noEmit --project tsconfig.json 2>&1 | head -50
-cd "$ARIS_ROOT" && npm run build 2>&1 | tail -20
-cd "$ARIS_ROOT" && npm run format:files -- \
-  src/tools/experiment-env/<file_name> \
-  src/tools/experiment-env/env-backend.ts \
-  src/tools/experiment-env/parse-env.ts
-```
-
-If typecheck or build fails, read the error, fix the generated files, and retry (up to 3 attempts).
-
-**4x-7. Return to normal flow:**
-
-Set `answers.gpu_type = "<name>"` (the newly registered backend). Continue to Batch 2 — the dynamic backend branch will ask configuration questions based on the freshly registered schema.
+Set `answers.gpu_type = "custom"` and record
+`answers.experiment_skill = "run-<project>-experiment"` in `.aris/setup-state.json`.
+Skip Batch 2 — the generated skill already holds the configuration that Batch 2
+would collect.
 
 ### Batch 2: Type-specific follow-ups
 

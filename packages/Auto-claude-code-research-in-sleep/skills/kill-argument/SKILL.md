@@ -1,7 +1,7 @@
 ---
 name: kill-argument
-description: 'Two-thread adversarial review: a fresh reviewer constructs the strongest 200-word rejection memo, then a second fresh reviewer defends the paper point-by-point and surfaces still-unresolved critical issues. Use when user says "kill argument", "adversarial review", "hostile review", "rebuttal preparation", "reviewer-2 simulation", or before submitting a theory paper that has already passed standard review rounds.'
-argument-hint: [paper-directory]
+description: 'Two-thread adversarial review: a fresh reviewer constructs the strongest 200-word rejection memo, then a second fresh reviewer defends the paper point-by-point and surfaces still-unresolved critical issues. Optionally records unresolved findings as research-wiki gaps and emits a diagnostic experiment plan (`— gap-output` / `— plan-output`), which is how `/auto-research-loop` turns an attack into the next round of experiments. Use when user says "kill argument", "adversarial review", "hostile review", "rebuttal preparation", "reviewer-2 simulation", or before submitting a theory paper that has already passed standard review rounds.'
+argument-hint: "[paper-or-results-directory] [— gap-output: <gap_map.md>] [— plan-output: <plan.md>] [— render html: false]"
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__wait_for_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent
 ---
 
@@ -377,6 +377,82 @@ The verdict is computed from the per-point counts; do NOT let the
 defense thread output the top-level verdict directly (that would let
 it self-grade). The skill code does the verdict mapping.
 
+### Step 4.5: Emit gaps and diagnostic plan (only when `— gap-output` / `— plan-output` given)
+
+Skip this step entirely when neither argument is present — the default
+direct-invocation behavior is detect-only and writes nothing outside the
+audit artifacts.
+
+This step exists because the skill that *finds* the problems is the right skill
+to *state* them. Every field below is already present in `decomposed_points[]`;
+this is a mechanical projection of data this skill already produced, not a fresh
+interpretation. Routing it through a second agent would add a distortion layer
+between the adversarial finding and its record.
+
+**When `— gap-output: <path>` is given** — for each `decomposed_points[i]` whose
+`verdict == "still_unresolved"`, append one gap to `<path>`:
+
+1. **Allocate ids.** Scan the file for existing `## G<n>` headings; the first new
+   id is `max(n) + 1`. Ids are sequential and never reused. A gap later shown to
+   be wrong is marked `**Status**: refuted` — never deleted.
+2. **Append**, in the format `/idea-discovery` and `/wiki-enrich` already use:
+   ```markdown
+   ## G<n> — <decomposed_points[i].label>
+   **Status**: open (<source context, e.g. "iteration 3, kill-argument">)
+   **Sub-direction**: <the research sub-direction this sits in>
+   **Why it matters**: <decomposed_points[i].attack_claim>, evidenced by <decomposed_points[i].evidence>
+   **What would close it**: <decomposed_points[i].recommended_fix>
+   **Severity**: <decomposed_points[i].severity_if_unresolved>
+   ```
+
+`still_unresolved` points are **gaps, not claims** — by construction the paper or
+results have no effective answer to them, so they are open questions. A claim
+asserts something evidence supports; recording an unanswered attack as a claim
+would assert what no experiment has shown. Claims arrive later, from
+`/result-to-claim --addresses G<n>`, once an experiment closes the gap.
+
+Points classified `answered_by_current_text` or `partially_answered` do **not**
+become gaps. A partial answer is a weakness to note in the report, not an open
+research question.
+
+**When `— plan-output: <path>` is given** — write an `EXPERIMENT_PLAN`-schema file
+containing one milestone per gap just emitted (the same schema `/experiment-bridge`
+accepts, without the `sanity/baseline/main/ablation` section headers — these are
+diagnostic experiments, not a full run):
+
+```markdown
+## <milestone id>
+**gap_id**: G<n>
+**modification**: <the minimal change that tests this gap>
+**metric_to_observe**: <the metric that would move if the gap is real>
+**success_threshold**: <the value that closes or refutes the gap>
+```
+
+Derive each milestone from the gap's `recommended_fix`. If a `still_unresolved`
+point is not empirically testable (a framing or writing-level objection), emit
+the gap but **skip** its milestone, and note the omission in `KILL_ARGUMENT.md`
+under `## Recommendation`. Do not invent an experiment to fill the slot.
+
+**Receipt.** When invoked with either argument (i.e. by a dispatching parent),
+write `.aris/runs/<run_id>.kill-argument.done.json`:
+
+```json
+{
+  "phase": "kill-argument",
+  "kill_arg_path": "<path to KILL_ARGUMENT.json>",
+  "gap_ids": ["G7", "G8"],
+  "gap_titles": ["<label for G7>", "<label for G8>"],
+  "plan_path": "<path or null>",
+  "milestone_count": <int>,
+  "overall_verdict": "PASS|WARN|FAIL",
+  "completed_at": "<ISO-8601>"
+}
+```
+
+On `PASS` (`still_unresolved == 0`) there are no gaps: write the receipt with
+empty `gap_ids`, `plan_path: null`, and `milestone_count: 0`. Do not create an
+empty plan file — a dispatching parent reads `PASS` as "nothing to diagnose".
+
 ### Step 5: Print summary
 
 To the user:
@@ -409,6 +485,9 @@ To the user:
 - `.aris/traces/kill-argument/<date>_runNN/` — per-thread codex traces (Attack memo + Adjudication memo)
 - Optional: applied fixes if user explicitly requests; default is **detect-only, do not auto-modify**.
 - `<paper-dir>/KILL_ARGUMENT.html` (when `RENDER_HTML = true`, default) — single-file HTML view auto-rendered via `/render-html "<paper-dir>/KILL_ARGUMENT.md" --json "<paper-dir>/KILL_ARGUMENT.json"`. Full review gate applies. The `.review.json` sidecar carries the render-fidelity verdict. **Non-blocking**: if `/render-html` fails (helper missing, Codex MCP unavailable, file write error), log the failure and treat the skill as complete — the HTML view is a convenience, not a prerequisite for the kill-argument verdict.
+- (when `— gap-output` given) Gap entries appended to `<gap_map.md>`.
+- (when `— plan-output` given) `<plan.md>` — diagnostic experiment plan.
+- (when either `— gap-output` or `— plan-output` given) `.aris/runs/<run_id>.kill-argument.done.json` — receipt for dispatching parents.
 
 ## Key Rules
 
@@ -419,6 +498,8 @@ To the user:
 - **Author-chosen positions** (e.g., deliberate title scope, deliberate omission of qualifier): mark `partially_answered` with note that the position is intentional, AND say whether the position is sustainable under the attack. Don't auto-grade as `answered_by_current_text` just because it's intentional.
 - **Verdict is computed by the skill, not by the adjudicator.** The Codex thread emits per-point classifications; the skill code maps those to one of the 6 audit verdicts via the table in Step 4. Never let the adjudicator self-grade the top-level verdict.
 - **Detect-only by direct invocation; can be invoked by `/auto-paper-improvement-loop` Step 5.5 which then merges unresolved findings into its fix list.** When a user runs `/kill-argument paper/` directly, the output is informational and the human decides whether to act. When the skill is invoked from inside the auto-improvement loop, the loop reads `KILL_ARGUMENT.json`, deduplicates against its existing weakness list, and feeds novel `still_unresolved` points into Step 6 fixes — `/kill-argument` itself never edits paper files.
+- **Gap output is a projection, not interpretation.** Step 4.5 is mechanical: it reads `decomposed_points[i]` fields already produced by the adjudicator and writes them as gap entries. It does not re-analyze, re-phrase, or add judgment beyond what the adjudicator already provided. The gap's "Why it matters" IS the `attack_claim`; its "What would close it" IS the `recommended_fix`. If those are bad, the adjudicator needs to be better — do not compensate in the projection layer.
+- **Only `still_unresolved` → gaps.** `partially_answered` and `answered_by_current_text` do NOT become gaps. A partial answer is a weakness noted in the report, not an open research question requiring experiments.
 
 ## When NOT to Use
 
