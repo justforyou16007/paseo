@@ -172,9 +172,18 @@ curl -s "${LLM_BASE_URL}/chat/completions" \
 
 Priority: metric additions > reframing > new experiments
 
+> When `run-<project>-experiment` skill exists, use its atomic interface instead of manual SSH:
+> 1. `sh .claude/skills/run-<project>-experiment/scripts/prepare.sh` — sync code
+> 2. `sh .claude/skills/run-<project>-experiment/scripts/run.sh <exp_name> --args "..."` — launch
+> Otherwise fall back to manual SSH + screen.
+
 #### Phase D: Wait for Results
 
 Monitor remote experiments
+
+> When the `run-<project>-experiment` skill exists, poll via:
+> `sh .claude/skills/run-<project>-experiment/scripts/monitor.sh <exp_name>`
+> Read `status` from the JSON output. Collect results via `collect.sh`.
 
 #### Phase E: Document Round
 

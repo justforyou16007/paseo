@@ -57,7 +57,7 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent,
 3. **`refine-logs/EXPERIMENT_RESULTS.md`** — existing experiment results.
 4. **`refine-logs/EXPERIMENT_TRACKER.md`** — current experiment status.
 5. **`research-wiki/index.md`** and `research-wiki/graph/edges.jsonl` — canonical state of ideas/claims/experiments/edges.
-6. **`.aris/setup-state.json`** — the project's `research-setup` answers (e.g. `gpu_type`, `paseo_configured`).
+6. **`.aris/setup-state.json`** — the project's `research-setup` answers (e.g. `gpu_type`, `paseo_configured`). Note: `gpu_type` is now transcribed from `.aris/experiment-env.json` by `/research-setup` Phase 7.5 rather than from the setup wizard's own type question; the read contract here is unchanged — this skill still reads `gpu_type` from `setup-state.json`.
 7. **`.aris/runs/<run_id>.json`** — the orchestrator's per-phase run-state (read `phase=research-iteration` row).
 
 If `CLAUDE.md` is missing the `## Metric Target` block, abort with: `ERROR: auto-research-loop requires `## Metric Target` in CLAUDE.md. Add a `primary: <number> <unit>` line under that header.`

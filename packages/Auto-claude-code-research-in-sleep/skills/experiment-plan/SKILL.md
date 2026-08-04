@@ -48,6 +48,19 @@ Extract:
 
 If these files do not exist, derive the same information from the user's prompt.
 
+### Phase 0.5: Hardware Awareness (when available)
+
+If `.claude/skills/run-<project>-experiment/scripts/info.sh` exists, read it:
+
+```bash
+ENV_INFO=$(sh .claude/skills/run-<project>-experiment/scripts/info.sh 2>/dev/null) || true
+```
+
+When available, use `hardware.gpu_type`, `hardware.gpu_count`, `hardware.device`,
+and `compute_budget` from the JSON output to fill the plan's "Compute and Data
+Budget" section with verified estimates. When the skill is absent, derive from
+CLAUDE.md prose as before but mark as "unverified estimate".
+
 ### Phase 1: Freeze the Paper Claims
 
 Before proposing experiments, write down the claims that must be defended.

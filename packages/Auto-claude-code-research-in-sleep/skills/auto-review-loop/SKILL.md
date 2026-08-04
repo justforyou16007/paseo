@@ -405,6 +405,11 @@ For each action item (highest priority first):
 3. **Analysis**: Run evaluation, collect results, update figures/tables
 4. **Documentation**: Update project notes and review document
 
+> When `run-<project>-experiment` skill exists, use its atomic interface instead of manual SSH:
+> 1. `sh .claude/skills/run-<project>-experiment/scripts/prepare.sh` — sync code
+> 2. `sh .claude/skills/run-<project>-experiment/scripts/run.sh <exp_name> --args "..."` — launch
+> Otherwise fall back to manual SSH + screen.
+
 Prioritization rules:
 
 - Skip fixes requiring excessive compute (flag for manual follow-up)
@@ -418,6 +423,11 @@ If experiments were launched:
 
 - Monitor remote sessions for completion
 - Collect results from output files and logs
+
+> When the `run-<project>-experiment` skill exists, poll via:
+> `sh .claude/skills/run-<project>-experiment/scripts/monitor.sh <exp_name>`
+> Read `status` from the JSON output. Collect results via `collect.sh`.
+
 - **Training quality check** — if W&B is configured, dispatch a paseo claude sub-agent for `/training-check` per `shared-references/paseo-subagent-dispatch.md` (Paseo claude sub-agent per `paseo-subagent-dispatch.md`) to verify training was healthy (no NaN, no divergence, no plateau). If W&B not available, skip silently. Flag any quality issues in the next review round.
 
 #### Phase E: Document Round

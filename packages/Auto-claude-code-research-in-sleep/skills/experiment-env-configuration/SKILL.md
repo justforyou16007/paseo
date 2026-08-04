@@ -46,10 +46,13 @@ Phase 0    Pre-flight: resolve roots, detect existing config, decide interactive
 Phase 1    Experiment preparation — files (where the code must live, how it gets there)
 Phase 2    Experiment preparation — environment (which dependency env, how it is verified)
 Phase 3    Run — the single command/CLI that executes an experiment
+Phase 3.5  [interactive only] Establish runnable baseline (mock if no evidence exists)
 Phase 4    Feedback — error channel, result channel, analysis channel
+Phase 4.5  Transport config — write .aris/experiment-env.json (internal) + CLAUDE.md env block
 Phase 5    Emit the project-local skill bundle (SKILL.md + scripts/ + env.json) — DRAFT only
 Phase 5.5  Trustworthiness audit (DRIVE/ACQUIT gate, cross-model, /experiment-audit)
 Phase 6    Promote: verify dry-runs + audit verdict → finalize status, print summary
+Phase 6.5  Save exploration to references/index.md for future reuse
 ```
 
 **What gets written (all inside the PROJECT, never the ARIS repo):**
@@ -62,10 +65,14 @@ Phase 6    Promote: verify dry-runs + audit verdict → finalize status, print s
 | 4 | `.claude/skills/run-<project>-experiment/scripts/collect.sh` | Pull back logs + results |
 | 5 | `.claude/skills/run-<project>-experiment/scripts/analyze.sh` | Produce the analysis artifact |
 | 6 | `.claude/skills/run-<project>-experiment/env.json` | Frozen answers (the config of record) |
+| 6.1 | `.claude/skills/run-<project>-experiment/scripts/monitor.sh` | Poll running job status: returns JSON with status/GPU/logs/W&B |
+| 6.2 | `.claude/skills/run-<project>-experiment/scripts/info.sh` | Dump environment metadata: hardware, error patterns, W&B, connection |
+| 6.3 | `.claude/skills/run-<project>-experiment/scripts/teardown.sh` | Release environment resources (destroy instances, stop containers) |
+| 6.4 | `.claude/skills/run-<project>-experiment/handles/` | Per-experiment handle JSON files (replaces /tmp/handle.json) |
 | 7 | `.aris/env-config/<project>/ENV_CONFIG_AUDIT.md` | Cross-model audit report (Phase 5.5) |
 | 8 | `.aris/env-config/<project>/ENV_CONFIG_AUDIT.json` | Machine-readable verdict — the gate reads this |
 
-Rows 1–6 are written to a **staging directory first** and only moved into
+Rows 1–6.4 are written to a **staging directory first** and only moved into
 `.claude/skills/` after the Phase 5.5 audit returns a passing verdict. Nothing
 becomes an invocable skill on the strength of this skill's own say-so.
 
@@ -225,6 +232,51 @@ per-run values, e.g.:
 
 ---
 
+## Phase 3.5: Establish a Runnable Baseline (interactive only)
+
+**Trigger:** Phase 3 Q1 found no evidence of a previously executed command —
+`refine-logs/EXPERIMENT_TRACKER.md` has no success rows, `.aris/runs/*.json`
+is empty, and the project has no recognizable training entry point.
+
+**Skip entirely in `— non-interactive` mode.** `/auto-research-loop` only calls
+this skill after baseline reproduction succeeds — manufacturing mock evidence
+for a project that already has real evidence would be dishonest.
+
+1. Generate `.aris/env-config/<project>/mock/smoke_baseline.py` — minimal but
+   **real**: import the framework per `preparation.environment`, allocate a
+   tensor on the selected device, run ~10 steps on synthetic data, write
+   `{"<primary_metric_key>": <float>, "steps": 10}` to
+   `results/<exp_name>.json`, print a completion marker, `exit 0`.
+
+2. Execute end-to-end through the draft bundle's scripts (not dry-run):
+   `prepare.sh` → `run.sh smoke` → `collect.sh smoke`.
+
+3. On success: record evidence at
+   `.aris/env-config/<project>/mock/SMOKE_RESULT.json` + `smoke.log`, and
+   append a `mock-baseline` row to `refine-logs/EXPERIMENT_TRACKER.md`.
+
+4. On failure: fix the **configuration** (not the mock), up to
+   `MAX_VERIFY_RETRIES` = 3 times. Persistent failure means the environment
+   genuinely doesn't work → `status: "incomplete"` + hard stop with the real
+   error message.
+
+Record in `env.json`:
+
+```json
+"baseline": {
+  "kind": "mock|reproduced",
+  "script": ".aris/env-config/<project>/mock/smoke_baseline.py",
+  "evidence": ".aris/env-config/<project>/mock/SMOKE_RESULT.json",
+  "verified_at": "<ISO-8601>"
+}
+```
+
+When `baseline.kind == "mock"`, the generated skill accepts `— entry-point: <path>`
+to override the default entry point. Dry-runs substitute the mock, so Phase 6's
+"no unsubstituted `{{placeholder}}`" rule needs no carve-out.
+
+---
+
 ## Phase 4: Feedback — the Three Channels
 
 This is the part previous flows left implicit. An experiment is not "done" when
@@ -285,6 +337,35 @@ writes fresh analysis code, and it writes it into the generated skill's
 
 ---
 
+## Phase 4.5: Transport Config (internal)
+
+All four Q&A phases are now complete. Assemble the canonical JSON and write the
+**internal** transport-layer artifacts. These are implementation details consumed
+by the generated scripts — downstream skills do NOT read them directly.
+
+1. **`.aris/experiment-env.json`** — assemble from `preparation.files`,
+   `preparation.environment`, `run`, and `feedback`. Field names must match
+   `src/tools/experiment-env/parse-env.ts` `ENV_SCHEMAS`. When the answers match
+   a registered `ENV_TYPE` (`local|remote|vast|modal|docker`), validate via:
+   ```bash
+   echo '<candidate-json>' | node "$ENV_HELPER" parse --json - --source CLAUDE.md
+   ```
+   When no registered type fits, write directly with `env_type: "custom"` (the
+   `validate()` function rejects unknown types, so skip `parse`).
+
+2. **`CLAUDE.md` `## Experiment Environment`** — if the section exists, replace
+   it in place. If absent, insert after `## Compute Budget`. If `CLAUDE.md`
+   itself is absent, skip and log (in the `/research-setup` flow it will already
+   exist from Phase 7b).
+
+3. **Consult references** — check `$REF_DIR/index.md` for entries matching the
+   current environment's location + dependency type. If a match exists, read the
+   reference file and use it to seed script templates and known workarounds.
+   If no `$REF_DIR` or no match, proceed from scratch — references are an
+   accelerator, not a requirement.
+
+---
+
 ## Phase 5: Emit the Project-Local Skill Bundle (DRAFT)
 
 Everything below is written under `$STAGING_DIR` = `.aris/env-config/<project>/draft/`
@@ -328,7 +409,7 @@ than silently authoritative.
 call `env-helper.js` and inherit its retry/sync behavior. When it is `custom`,
 the scripts issue the commands directly. **No ARIS source file is edited either way.**
 
-### 5b. The four scripts
+### 5b. The seven scripts
 
 Each is POSIX `sh`, `set -eu`, reads `env.json` via `jq`, and accepts
 `--dry-run` (print the command, execute nothing). All four must be executable
@@ -342,13 +423,89 @@ means do not proceed to `run.sh`.
 `run.template` and launch. Prints the resolved command before executing so the
 log records exactly what ran.
 
+`run.sh` saves the running experiment's handle to `handles/<exp_name>.json`
+(replacing the previous convention of `/tmp/handle.json`):
+```json
+{ "exp_name": "...", "pid_or_session": "...", "launched_at": "<ISO-8601>" }
+```
+
 **`collect.sh <exp_name>`** — pull back `feedback.error.log_path` and
 `feedback.result.path_template`; grep the log for `failure_patterns`; print a
 verdict line: `RESULT ok <primary_metric>=<value>` or `RESULT failed <first matching pattern>`.
 
+`collect.sh` also writes the enriched receipt to
+`.aris/runs/<run_id>.experiment.<exp_name>.done.json`:
+
+```json
+{
+  "exp_name": "...",
+  "status": "ok|failed",
+  "primary_metric": null,
+  "metrics": {},
+  "result_path": "...",
+  "log_path": "...",
+  "analysis_path": "...",
+  "failure_reason": null,
+  "failure_patterns_matched": [],
+  "gpu_usage": { "memory_used_mib": 0, "utilization_pct": 0 },
+  "wandb": null,
+  "handle": "handles/<exp>.json",
+  "elapsed_seconds": 0,
+  "completed_at": "<ISO-8601>"
+}
+```
+
+This receipt replaces multiple formerly separate data sources: env-helper
+monitor output, SSH W&B queries, CLAUDE.md parsing, and hardcoded error
+patterns — all in one file that downstream skills can read directly.
+
 **`analyze.sh`** — per `feedback.analysis.mode`: dispatch the ARIS skill, call
 the project script, or run the generated analysis; write to
 `feedback.analysis.output_path`.
+
+**`monitor.sh <exp_name>`** — check status of a running experiment. Reads the
+handle from `handles/<exp_name>.json`, queries the backend (screen session /
+process / modal app / local pid), and outputs a **single JSON object** to stdout:
+
+```json
+{
+  "status": "running|done|failed|unknown",
+  "exit_code": null,
+  "gpu_usage": { "memory_used_mib": 0, "utilization_pct": 0 },
+  "tail": ["<last 20 log lines>"],
+  "elapsed_seconds": 0,
+  "wandb": { "run_id": "...", "url": "...", "project": "...", "entity": "..." }
+}
+```
+
+This replaces the pattern where `/monitor-experiment` called `env-helper.js
+monitor` directly and pulled W&B metrics via raw SSH Python snippets. The W&B
+query is done internally using `wandb` config from `env.json`.
+
+**`info.sh`** — dump environment metadata as a **single JSON object** to stdout.
+Downstream skills call this instead of reading `.aris/experiment-env.json` directly:
+
+```json
+{
+  "project": "<project>",
+  "hardware": { "gpu_type": "...", "gpu_count": 0, "device": "cuda|mps|cpu", "gpu_free_threshold_mib": 500 },
+  "compute_budget": "...",
+  "error_patterns": ["Traceback", "CUDA out of memory", "Killed", "RuntimeError", "No such file"],
+  "wandb": { "enabled": false, "project": "...", "entity": "..." },
+  "paths": { "remote_path": "...", "result_dir": "results/", "log_dir": "logs/" },
+  "connection": { "ssh_alias": "...", "conda_env": "...", "conda_hook": "...", "transfer": "rsync|git|shared|cli-upload" },
+  "backend_hint": "local|remote|vast|modal|docker|custom"
+}
+```
+
+`/experiment-plan` reads `hardware` for compute estimates; `/experiment-bridge`
+reads `error_patterns` (replacing hardcoded OOM/CUDA patterns) and `wandb`;
+`/experiment-queue` reads `connection` to populate manifest fields.
+
+**`teardown.sh [--force]`** — release environment resources. For `vast`:
+destroy the instance; for `modal`: stop the app; for `docker`: stop and remove
+the container; for `remote`/`local`: no-op (or kill stale screen sessions with
+`--force`). Exit 0 on success, 1 on failure.
 
 ### 5c. `SKILL.md` — the replayable procedure
 
@@ -432,9 +589,16 @@ mcp__paseo__create_agent
     G. Command provenance — does run.template correspond to a command that
        demonstrably ran during baseline reproduction (cite the EXPERIMENT_TRACKER
        row or log), or was it synthesized? FAIL if synthesized with no evidence.
+       When `baseline.kind == "mock"` (recorded in env.json), the mock's
+       SMOKE_RESULT.json and smoke.log count as execution evidence — the mock
+       was generated by this skill and executed end-to-end through the real
+       environment. A command with zero execution evidence still FAILs.
     H. Metric key agreement — does feedback.result.primary_metric_key exist in a
        real result artifact AND match CLAUDE.md ## Metric Target? FAIL on mismatch:
        every downstream stop check silently compares nothing.
+       When CLAUDE.md has no `## Metric Target` (new project), downgrade to
+       WARN but still require `primary_metric_key` to exist in the smoke run's
+       output artifact. FAIL only when `## Metric Target` exists and disagrees.
     I. Failure detectability — would feedback.error.failure_patterns actually fire
        on the crash modes this project exhibits? FAIL if a crash would be
        indistinguishable from "still running".
@@ -614,6 +778,30 @@ The project-local experiment skill was not created. Fix the items above, then:
 
 ---
 
+## Phase 6.5: Save Exploration to References
+
+**Only runs when Phase 6 promotes successfully** (status = `complete`).
+
+1. Extract environment summary from the promoted `env.json`: location,
+   dependency type, transfer method, launch mode, GPU selection, and any
+   gotchas encountered during configuration.
+
+2. Write (or update) `$REF_DIR/<project-slug>-env.md` with the summary,
+   key configuration values (activation, verify_cmd, run template, result
+   path, primary metric), gotchas/workarounds, and script references.
+
+3. Update `$REF_DIR/index.md` — append a row to the Entries table with the
+   project name, location, dependency type, transfer method, reference file
+   path, and date.
+
+If `$REF_DIR` does not exist, create it. If `index.md` does not exist, create
+it with the standard header and an empty table.
+
+**References are an accelerator, not a requirement.** The skill runs correctly
+without them; they reduce exploration time for similar environments.
+
+---
+
 ## Constants
 
 - **SKILL_DIR_TEMPLATE** = `.claude/skills/run-<project>-experiment`
@@ -625,6 +813,9 @@ The project-local experiment skill was not created. Fix the items above, then:
 - **MAX_VERIFY_RETRIES** = 3
 - **MAX_AUDIT_ROUNDS** = 2
 - **REVIEWER_BACKEND** = `codex` (override with `— reviewer: oracle-pro|manual`)
+- **REF_DIR_TEMPLATE** = `$CLAUDE_SKILL_DIR/references` → `.claude/skills/experiment-env-configuration/references` → `$ARIS_REPO/skills/experiment-env-configuration/references`
+- **MOCK_DIR_TEMPLATE** = `.aris/env-config/<project>/mock`
+- **HANDLE_DIR** = `handles/` (inside the generated skill directory)
 
 ## Critical Rules
 
@@ -659,6 +850,19 @@ The project-local experiment skill was not created. Fix the items above, then:
     "never blocks" contract is untouched; the block is implemented here, in the
     caller. Do not edit `/experiment-audit` to halt pipelines — other flows
     depend on it continuing.
+12. **Downstream skills use the 7-script interface, not internal files.**
+    `.aris/experiment-env.json` and `env-helper.js` are internal implementation
+    details of the generated scripts. Downstream skills (`/monitor-experiment`,
+    `/experiment-queue`, `/experiment-bridge`, `/auto-review-loop`,
+    `/experiment-plan`, `/ablation-planner`) call the scripts (`prepare.sh`,
+    `run.sh`, `collect.sh`, `analyze.sh`, `monitor.sh`, `info.sh`,
+    `teardown.sh`) and read the structured JSON output — never the internals.
+13. **References are an accelerator, not a requirement.** The skill runs
+    correctly without `references/index.md`. It creates the directory and
+    index on first successful configuration.
+14. **A mock baseline is not a guess.** It is generated by this skill, executed
+    end-to-end in the real environment, and verified with real output. Freezing
+    a command that was never executed — in any mode — is still forbidden (Rule 3).
 
 ## External dependencies (reused, not modified)
 
@@ -678,3 +882,5 @@ The project-local experiment skill was not created. Fix the items above, then:
 - `skills/shared-references/integration-contract.md` §2 — helper resolution chain.
 - `skills/shared-references/paseo-subagent-dispatch.md` — Rule 1 (one agent = one
   skill), Rule 3 (file-paths-only receipts), Rule 4 (Paseo MCP only).
+- `references/index.md` — experience cache; written after successful
+  configuration, read at Phase 4.5 to seed similar environments.

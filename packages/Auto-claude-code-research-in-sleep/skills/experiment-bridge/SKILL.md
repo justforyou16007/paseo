@@ -175,6 +175,10 @@ If sanity fails → **auto-debug before giving up** (max 3 attempts):
    - FileNotFoundError → fix path or download data
    - CUDA error → check GPU availability, reduce model size
    - NaN/divergence → reduce learning rate, check data preprocessing
+
+   > When `run-<project>-experiment` exists, read error patterns from:
+   > `sh .claude/skills/run-<project>-experiment/scripts/info.sh | jq -r '.error_patterns[]'`
+   > Otherwise fall back to these defaults.
 3. **Fix and re-run** — apply the fix, re-run sanity
 4. **Attempt 2+ still failing? → Call in Codex rescue** (if Codex plugin installed):
    Before the next retry, dispatch a paseo claude sub-agent for `/codex:rescue` per `shared-references/paseo-subagent-dispatch.md` (Paseo claude sub-agent per `paseo-subagent-dispatch.md`) to get a second opinion on the root cause. The rescue sub-agent is a claude child that may itself spawn a codex reviewer; it independently reads the code and error logs — it may spot issues Claude missed (wrong tensor shapes, subtle import shadowing, config mismatches, etc.). Apply its suggested fix, then re-run.
@@ -230,6 +234,10 @@ As experiments complete:
 
 1. **Parse output files** (JSON/CSV/logs) for key metrics
 2. **Training quality check** — if W&B data is available (CLAUDE.md has `wandb: true` and `wandb_project`), dispatch a paseo claude sub-agent for `/training-check` per `shared-references/paseo-subagent-dispatch.md` (Paseo claude sub-agent per `paseo-subagent-dispatch.md`) to detect NaN, loss divergence, plateaus, or overfitting. If W&B is not configured, skip silently.
+
+   > When `run-<project>-experiment` exists, check W&B from:
+   > `sh .claude/skills/run-<project>-experiment/scripts/info.sh | jq '.wandb.enabled'`
+   > Otherwise fall back to reading CLAUDE.md `wandb: true`.
 3. **Update `refine-logs/EXPERIMENT_TRACKER.md`** — fill in Status and Notes columns
 4. **Check success criteria** from EXPERIMENT_PLAN.md — did each experiment meet its bar?
 5. **Write initial results summary:**

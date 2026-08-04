@@ -53,29 +53,32 @@ All of these are pure engineering friction that can be orchestrated.
 
 ### Job Manifest
 
-> **Environment config source:** the manifest's `ssh` (alias), `conda`/`conda_hook`, and `cwd` should be filled from `.aris/experiment-env.json` (the `remote` block produced by `env-helper.js parse` from CLAUDE.md/AGENTS.md). Before launching the queue, ensure the host is prepared via the `experiment-env` helper:
+> **Environment config source:** The manifest's `ssh`, `conda`/`conda_hook`,
+> and `cwd` fields are populated from the generated experiment skill's
+> `info.sh` output. Host preparation uses `prepare.sh`:
 >
 > ```bash
-> # --- resolve experiment-env helper (multi-owner, Layer 2 canonical) ---
-> ENV_HELPER=""
-> if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
->     ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
-> fi
-> ENV_HELPER=".aris/dist/tools/experiment-env/env-helper.js"
-> [ -f "$ENV_HELPER" ] || ENV_HELPER="dist/tools/experiment-env/env-helper.js"
-> [ -f "$ENV_HELPER" ] || { [ -n "${ARIS_REPO:-}" ] && ENV_HELPER="$ARIS_REPO/dist/tools/experiment-env/env-helper.js"; }
-> [ -f "$ENV_HELPER" ] || ENV_HELPER=""
-> [ -z "$ENV_HELPER" ] && { echo "ERROR: experiment-env helper not found (Layer 1-3)" >&2; exit 1; }
-> ENV_CONFIG=".aris/experiment-env.json"
-> # Prepare the host ONCE (provision + preflight + sync); queue_manager then
-> # batch-schedules N jobs on this already-ready host — no per-job provision/destroy.
-> node "$ENV_HELPER" provision --env-config "$ENV_CONFIG"
-> node "$ENV_HELPER" preflight --env-config "$ENV_CONFIG"
-> node "$ENV_HELPER" sync --env-config "$ENV_CONFIG" --src ./src
-> # Read ssh alias / conda_hook / conda_env / code_dir from $ENV_CONFIG into the manifest below.
+> # --- resolve the project-level experiment skill ---
+> PROJECT=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')
+> SKILL_DIR=".claude/skills/run-${PROJECT}-experiment"
+> [ -d "$SKILL_DIR/scripts" ] || { echo "ERROR: experiment skill not found — run /experiment-env-configuration first" >&2; exit 1; }
+>
+> # Read connection details from the atomic interface
+> ENV_INFO=$(sh "$SKILL_DIR/scripts/info.sh")
+> SSH_ALIAS=$(echo "$ENV_INFO" | jq -r '.connection.ssh_alias')
+> CONDA_ENV=$(echo "$ENV_INFO" | jq -r '.connection.conda_env')
+> CONDA_HOOK=$(echo "$ENV_INFO" | jq -r '.connection.conda_hook')
+> REMOTE_PATH=$(echo "$ENV_INFO" | jq -r '.paths.remote_path')
+> GPU_FREE_THRESHOLD=$(echo "$ENV_INFO" | jq -r '.hardware.gpu_free_threshold_mib // 500')
+>
+> # Prepare the host ONCE (replaces provision + preflight + sync)
+> sh "$SKILL_DIR/scripts/prepare.sh"
 > ```
 >
-> `queue-manager.js` itself is unchanged — it runs on the remote host and batch-schedules jobs. The `experiment-env` helper runs locally and prepares the host; they are complementary (single-env control vs batch scheduling).
+> `queue-manager.js` itself is unchanged — it runs on the remote host and
+> batch-schedules jobs. The experiment skill's `prepare.sh` runs locally and
+> prepares the host; they are complementary (single-env control vs batch
+> scheduling).
 
 A manifest lists jobs with explicit state:
 

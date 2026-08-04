@@ -20,46 +20,37 @@ Monitor: $ARGUMENTS
 
 ## Workflow
 
-> **Environment queries are delegated to the `experiment-env` helper** (`tools/experiment-env/env-helper.js`). Resolve it once, then `monitor`/`collect` handle all four env types (remote screen, vast instance, modal app, local pid) uniformly. The `handle` saved by `/run-experiment` Step 4 drives these calls.
+> **Environment queries are delegated to the generated project-level experiment skill** (`.claude/skills/run-<project>-experiment/scripts/`). The `monitor.sh` and `collect.sh` scripts handle all env types (remote screen, vast instance, modal app, local pid) uniformly, including W&B metric retrieval. Run `/experiment-env-configuration` first to generate the skill.
 
 ```bash
-# --- resolve experiment-env helper (multi-owner, Layer 2 canonical) ---
-ENV_HELPER=""
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
-fi
-ENV_HELPER=".aris/dist/tools/experiment-env/env-helper.js"
-[ -f "$ENV_HELPER" ] || ENV_HELPER="dist/tools/experiment-env/env-helper.js"
-[ -f "$ENV_HELPER" ] || { [ -n "${ARIS_REPO:-}" ] && ENV_HELPER="$ARIS_REPO/dist/tools/experiment-env/env-helper.js"; }
-[ -f "$ENV_HELPER" ] || ENV_HELPER=""
-[ -z "$ENV_HELPER" ] && { echo "ERROR: experiment-env helper not found (Layer 1-3)" >&2; exit 1; }
-ENV_CONFIG=".aris/experiment-env.json"
-# handle.json was saved by /run-experiment Step 4 (deploy). If absent, the
-# agent reconstructs it from the env config + experiment name.
-HANDLE="${HANDLE:-/tmp/handle.json}"
+# --- resolve the project-level experiment skill ---
+PROJECT=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')
+SKILL_DIR=".claude/skills/run-${PROJECT}-experiment"
+[ -d "$SKILL_DIR/scripts" ] || { echo "ERROR: experiment skill not found at $SKILL_DIR — run /experiment-env-configuration first" >&2; exit 1; }
+
+# Handle is now stored per-experiment in the skill directory
+HANDLE_DIR="$SKILL_DIR/handles"
 ```
 
 ### Step 1: Check What's Running
 
 ```bash
-node "$ENV_HELPER" monitor --env-config "$ENV_CONFIG" --handle "$HANDLE"
+sh "$SKILL_DIR/scripts/monitor.sh" "$EXP_NAME"
 ```
 
-Returns `{status: running|done|failed|unknown, gpu_usage?, tail, exit_code?}`. The backend queries the right surface per env_type:
-
-- **remote/vast**: `ssh ... "screen -ls"` (+ `vastai show instances` for vast, reading `vast-instances.json`)
-- **modal**: `modal app list` + `modal app logs <app>` (apps auto-terminate when done — absent from list = finished)
-- **local**: `kill -0 <pid>` + log tail
+Returns a JSON object with `status` (`running|done|failed|unknown`), `gpu_usage`, `tail`, `exit_code`, `elapsed_seconds`, and `wandb` fields. The script handles all env types internally — no per-env branching needed.
 
 ### Step 2: Collect Output
 
-For each running job, the `monitor` `tail` field already carries the last screen/log lines (backend does `screen -X hardcopy` / log tail internally). If you need a larger window, re-run with the backend's log path.
+For each running job, the `monitor.sh` output JSON's `tail` field already carries the last screen/log lines. If you need a larger window, re-run with the skill's log path.
 
 ### Step 3: Check for JSON Result Files
 
 ```bash
-node "$ENV_HELPER" collect --env-config "$ENV_CONFIG"   # downloads results + logs to ./results/ ./logs/
+sh "$SKILL_DIR/scripts/collect.sh" "$EXP_NAME"   # downloads results + logs to ./results/ ./logs/
 ```
+
+The receipt JSON at `.aris/runs/<run_id>.experiment.<exp>.done.json` contains all fields: `status`, `primary_metric`, `metrics`, `gpu_usage`, `wandb`, `failure_patterns_matched`, `elapsed_seconds`.
 
 Then read the collected JSON locally:
 
@@ -68,41 +59,13 @@ ls -lt ./results/*.json 2>/dev/null | head -20
 cat ./results/<latest>.json
 ```
 
-### Step 3.5: Pull W&B Metrics (when `wandb: true` in CLAUDE.md)
+### Step 3.5: W&B Metrics (when `wandb: true` in CLAUDE.md)
 
-**Skip this step entirely if `wandb` is not set or is `false` in CLAUDE.md.** (Read `wandb`/`wandb_project`/`wandb_entity` from `$ENV_CONFIG`.)
+**Skip this step entirely if `wandb` is not set or is `false` in CLAUDE.md.**
 
-Pull training curves and metrics from Weights & Biases via Python API:
+W&B data is now available directly in the `monitor.sh` output JSON's `wandb` field — no separate SSH call or raw Python snippet needed. The `wandb` object includes recent training metrics, run state, and a dashboard link.
 
-```bash
-# List recent runs in the project
-ssh <server> "python3 -c \"
-import wandb
-api = wandb.Api()
-runs = api.runs('<entity>/<project>', per_page=10)
-for r in runs:
-    print(f'{r.id}  {r.state}  {r.name}  {r.summary.get(\"eval/loss\", \"N/A\")}')
-\""
-
-# Pull specific metrics from a run (last 50 steps)
-ssh <server> "python3 -c \"
-import wandb, json
-api = wandb.Api()
-run = api.run('<entity>/<project>/<run_id>')
-history = list(run.scan_history(keys=['train/loss', 'eval/loss', 'eval/ppl', 'train/lr'], page_size=50))
-print(json.dumps(history[-10:], indent=2))
-\""
-
-# Pull run summary (final metrics)
-ssh <server> "python3 -c \"
-import wandb, json
-api = wandb.Api()
-run = api.run('<entity>/<project>/<run_id>')
-print(json.dumps(dict(run.summary), indent=2, default=str))
-\""
-```
-
-**What to extract:**
+**What to extract from the `wandb` field:**
 
 - **Training loss curve** — is it converging? diverging? plateauing?
 - **Eval metrics** — loss, PPL, accuracy at latest checkpoint
@@ -110,11 +73,7 @@ print(json.dumps(dict(run.summary), indent=2, default=str))
 - **GPU memory** — any OOM risk?
 - **Run status** — running / finished / crashed?
 
-**W&B dashboard link** (include in summary for user):
-
-```
-https://wandb.ai/<entity>/<project>/runs/<run_id>
-```
+Include the W&B dashboard link (from the `wandb.url` field) in the summary for the user.
 
 > This gives the auto-review-loop richer signal than just screen output — training dynamics, loss curves, and metric trends over time.
 

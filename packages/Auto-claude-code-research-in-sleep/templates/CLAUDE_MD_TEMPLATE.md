@@ -31,8 +31,8 @@ last_updated: "" # YYYY-MM-DD HH:mm — auto-updated by skills on every output w
 ## Experiment Environment
 
 > Required for any GPU experiment. Uncomment **one** block and fill it in.
-> The `experiment_env` helper (`tools/experiment_env/env_helper.py`) parses this
-> into `.aris/experiment-env.json`; see `tools/experiment_env/README.md` for the
+> The `experiment_env` helper (`src/tools/experiment-env/env-helper.ts`) parses this
+> into `.aris/experiment-env.json`; see `src/tools/experiment-env/README.md` for the
 > full field reference. Field names here are the canonical ones the validator
 > expects — the agent translates any drift (e.g. `Conda env:` → `conda_env`).
 
@@ -69,6 +69,19 @@ last_updated: "" # YYYY-MM-DD HH:mm — auto-updated by skills on every output w
 - gpu: local
 - conda_env: ml
 - device: cuda             # or "mps"; auto-detected if omitted
+-->
+
+<!-- Docker (containerized)
+- gpu: docker
+- image: python:3.11
+- dockerfile:                  # optional: path to Dockerfile
+- gpus: all
+- shm_size: 16g
+- work_dir: /workspace
+- results_dir: /results
+- runtime:                     # optional: nvidia
+- network:                     # optional: host
+- auto_remove: true
 -->
 
 ## Early Stop Configuration

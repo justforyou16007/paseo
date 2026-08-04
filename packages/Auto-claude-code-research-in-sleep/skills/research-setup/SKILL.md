@@ -1,8 +1,8 @@
 ---
 name: research-setup
-description: 'Interactive Q&A setup wizard for new ARIS research projects. Bootstraps CLAUDE.md, RESEARCH_BRIEF.md, research-wiki, and experiment environment from user answers. Resumable, bilingual (en/zh), smart defaults. Use when user says "研究项目初始化", "setup project", "初始化研究项目", "research setup", "new project", "配置项目", or wants to configure a new ARIS research workspace.'
+description: 'Interactive Q&A setup wizard for new ARIS research projects. Bootstraps CLAUDE.md, RESEARCH_BRIEF.md, and research-wiki from user answers; experiment environment configuration is delegated to /experiment-env-configuration. Resumable, bilingual (en/zh), smart defaults. Use when user says "研究项目初始化", "setup project", "初始化研究项目", "research setup", "new project", "配置项目", or wants to configure a new ARIS research workspace.'
 argument-hint: "[project-name] [— language: en|zh]"
-allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, AskUserQuestion
+allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, AskUserQuestion, Skill
 ---
 
 # Research Project Setup Wizard
@@ -19,10 +19,12 @@ Phase 0  Pre-flight & resume detection
 Phase 1  Project basics (name, language)
 Phase 2  Research background (field, sub-area, problem)
 Phase 3  Prior work & baselines (papers, experiments, results)  [skippable]
-Phase 4  Compute environment (GPU setup)
+Phase 4  Experiment environment (delegated to /experiment-env-configuration)
+Phase 4.5  Early stop configuration
 Phase 5  Research goals (budget, timeline, venue, constraints)
 Phase 6  Paseo substrate config (multi-agent orchestration)     [skippable]
 Phase 7  Artifact generation (CLAUDE.md, RESEARCH_BRIEF.md, research-wiki, .gitignore)
+Phase 7.5  Experiment environment configuration (in-session /experiment-env-configuration)
 Phase 8  Summary & next steps
 ```
 
@@ -209,128 +211,13 @@ If "Yes", use AskUserQuestion with 4 questions:
 
 ---
 
-## Phase 4: Compute Environment
+## Phase 4: Experiment Environment (delegated)
 
-### Batch 1: GPU type selection
+This phase asks **no questions**. Environment configuration is owned exclusively
+by `/experiment-env-configuration`, invoked in Phase 7.5 (after CLAUDE.md exists).
 
-**Question:**
-- **header**: "GPU" / "算力"
-- **question** (en): "What GPU setup will you use for experiments?"
-  (zh): "你将使用什么 GPU 环境来运行实验？"
-- **options**:
-  - `"Remote server (SSH)"` — description: "Pre-configured machine you SSH into"
-  - `"Vast.ai"` — description: "On-demand GPU rental"
-  - `"Modal"` — description: "Serverless GPU, auto scale-to-zero"
-  - `"Local GPU"` — description: "GPU on this machine"
-
-(The user can select "Other" to type e.g. "No GPU / decide later" or a custom backend name like "slurm", "k8s")
-
-If "Other" contains "no gpu", "none", "later", "decide later", "没有", "暂不配置":
-set `answers.gpu_type = "none"`, skip Batch 2, move to Phase 5.
-
-If "Other" and NOT a skip keyword (user typed a backend name or description):
-
-1. Extract the backend name from the user's input (first word, lowercase, e.g. "slurm cluster" → "slurm").
-2. Read `$ARIS_ROOT/src/tools/experiment-env/parse-env.ts` and extract the `ENV_TYPES` array to get currently registered backends.
-3. **If the name matches an existing ENV_TYPE** (e.g. user typed "docker" which is already registered): set `answers.gpu_type` to that name, proceed to Batch 2 with the dynamic backend branch.
-4. **If the name is NOT in ENV_TYPES** → this is an environment no built-in backend covers. Proceed to **Phase 4x: Custom Environment** below.
-
-### Phase 4x: Custom Environment (delegate to `/experiment-env-configuration`)
-
-This phase triggers ONLY when the user selected "Other" in Batch 1 and the backend name is not in `ENV_TYPES`.
-
-> **Note:** This phase writes ONLY into the project directory
-> (`.claude/skills/run-<project>-experiment/`). It does not modify ARIS repo
-> source. An earlier version of this phase scaffolded a TypeScript `EnvBackend`
-> subclass into `$ARIS_ROOT/src/tools/experiment-env/` and required a rebuild —
-> that coupled each project's environment to an ARIS source edit. The
-> environment is project data, so it now lives with the project.
-
-**4x-1. Confirm intent** (AskUserQuestion):
-- header: "New Environment" / "新环境"
-- question (en): "No built-in backend covers '<name>'. Configure it now? This creates a reusable experiment skill in this project."
-  (zh): "内置后端不支持 '<name>'。是否现在配置？这将在本项目中生成可复用的实验 skill。"
-- options: `["Yes, configure it now", "No, skip GPU setup"]`
-
-If "No": set `answers.gpu_type = "none"`, skip to Phase 5.
-
-**4x-2. Delegate.** Invoke `/experiment-env-configuration` for this project. That
-skill owns the full question set — experiment-file placement, dependency
-environment, run command, and the three feedback channels (error / result /
-analysis) — and emits:
-
-- `.claude/skills/run-<project>-experiment/SKILL.md` — the replayable procedure
-- `.claude/skills/run-<project>-experiment/env.json` — the frozen answers
-- `.claude/skills/run-<project>-experiment/scripts/{prepare,run,collect,analyze}.sh`
-
-Do not re-ask any of those questions here; a second copy of the question set is
-how the two flows drift apart.
-
-**4x-3. Return to normal flow:**
-
-Set `answers.gpu_type = "custom"` and record
-`answers.experiment_skill = "run-<project>-experiment"` in `.aris/setup-state.json`.
-Skip Batch 2 — the generated skill already holds the configuration that Batch 2
-would collect.
-
-### Batch 2: Type-specific follow-ups
-
-**If Remote:**
-Use AskUserQuestion with up to 4 questions:
-
-- Q1 header "SSH", question: "SSH alias or hostname for your GPU server?"
-  options: free text ("Other")
-- Q2 header "Conda", question: "Conda environment name? (default: research)"
-  options: `["research (default)"]` + "Other"
-- Q3 header "Code dir", question: "Remote code directory? (default: ~/experiments/)"
-  options: `["~/experiments/ (default)"]` + "Other"
-- Q4 header "WandB", question: "Use Weights & Biases for experiment tracking?"
-  options: `["No", "Yes"]`
-
-If WandB = "Yes", ask one more AskUserQuestion:
-- Q5 header "WandB", question: "WandB project name?"
-  options: `["<project-name> (default)"]` + "Other"
-
-**If Vast.ai:**
-Use AskUserQuestion with 2 questions:
-
-- Q1 header "Budget", question: "Max budget per session in USD? (default: $5.00)"
-  options: `["$5.00 (default)", "$10.00", "$20.00"]` + "Other"
-- Q2 header "Image", question: "Docker image? (default: pytorch/pytorch:2.1.0-cuda12.1-cudnn8-devel)"
-  options: `["pytorch/pytorch:2.1.0-cuda12.1-cudnn8-devel (default)"]` + "Other"
-
-**If Modal:**
-Use AskUserQuestion with 2 questions:
-
-- Q1 header "GPU Type", question: "Modal GPU type? (default: A100-80GB)"
-  options: `["A100-80GB (default)", "A100-40GB", "H100", "T4"]` + "Other"
-- Q2 header "Timeout", question: "Job timeout in hours? (default: 6)"
-  options: `["6 hours (default)", "12 hours", "24 hours"]` + "Other"
-
-**If Local:**
-Use AskUserQuestion with 2 questions:
-
-- Q1 header "Conda", question: "Conda environment name? (default: ml)"
-  options: `["ml (default)"]` + "Other"
-- Q2 header "Device", question: "Compute device?"
-  options: `["CUDA (auto-detect)", "MPS (Apple Silicon)"]` + "Other"
-
-**If custom backend** (answers.gpu_type is not one of: remote, vast, modal, local):
-
-This branch handles both pre-existing registered backends (e.g. "docker") and backends just scaffolded via Phase 4x. It dynamically reads the schema from `parse-env.ts` and asks questions for each field.
-
-1. Read `$ARIS_ROOT/src/tools/experiment-env/parse-env.ts` and extract the `ENV_SCHEMAS` block for `answers.gpu_type`.
-2. Collect the field list: separate into required fields and optional fields.
-3. For each batch of up to 4 fields, use AskUserQuestion:
-   - Required fields: question asks for the value, no default offered.
-   - Optional fields: first option is the default value (e.g. `"16g (default)"` for `shm_size`), plus "Other" for custom input.
-4. Store all answers in `answers.env_config.<field_name>`.
-
-Example for a backend with fields `partition: string (required)`, `num_nodes: number = 1`:
-- Q1 header "partition", question: "Cluster partition name?"
-  options: "Other" (free text, required)
-- Q2 header "num_nodes", question: "Number of nodes? (default: 1)"
-  options: `["1 (default)"]` + "Other"
+Save state with `completed_stages` including `4`. Do not write `answers.gpu_type`
+here — it is transcribed from `.aris/experiment-env.json` after Phase 7.5.
 
 **After Phase 4:** Save state with `completed_stages: [1,2,3,4]`.
 
@@ -501,7 +388,8 @@ Copy the template and fill in:
 - Fill `## Project Constraints` with `answers.constraints` (or leave placeholder if "No specific constraints")
 - Fill `## Non-Goals` with `answers.non_goals` (or leave placeholder if "None")
 - Fill `## Compute Budget` with `answers.compute_budget`
-- In `## Experiment Environment`: uncomment the block matching `answers.gpu_type` and fill in the fields from answers. Leave other blocks commented. For custom backends (not remote/vast/modal/local): read the template block for `answers.gpu_type` from `CLAUDE_MD_TEMPLATE.md` (added during Phase 4x or already present for pre-existing backends like docker), uncomment it, and fill in field values from `answers.env_config.*`.
+- `## Experiment Environment` — leave the template's commented blocks as-is.
+  Phase 7.5 owns this section via `/experiment-env-configuration`.
 - In `## Early Stop Configuration`: if `answers.early_stop_enabled == true`, uncomment the block and fill in values from `answers.early_stop`. Otherwise leave it commented.
 - If `answers.paseo_configured == true`: append the Paseo section from `$TEMPLATES_DIR/CLAUDE_MD_PASEO_SECTION.md` with values filled in. Otherwise leave the Paseo section with defaults or commented.
 
@@ -510,12 +398,12 @@ Merge strategy — preserve all existing content:
 1. If `<!-- ARIS:BEGIN -->` block exists, preserve it
 2. If `## Pipeline Status` section exists, update the `language:` field only
 3. If `## Pipeline Status` does NOT exist, insert the filled Pipeline Status block after the first H1
-4. If `## Experiment Environment` section exists, update it with the new config
-5. If `## Experiment Environment` does NOT exist, insert the filled block
-6. If `## Early Stop Configuration` section exists and `answers.early_stop_enabled == true`, update it with the new config
-7. If `## Early Stop Configuration` does NOT exist and `answers.early_stop_enabled == true`, insert the filled block
-8. Same for `## Project Constraints`, `## Non-Goals`, `## Compute Budget`
-9. If `## ARIS Paseo` does NOT exist and `answers.paseo_configured == true`, append it
+4. If `## Experiment Environment` section exists, leave it unchanged. If absent,
+   insert the template's fully-commented block.
+5. If `## Early Stop Configuration` section exists and `answers.early_stop_enabled == true`, update it with the new config
+6. If `## Early Stop Configuration` does NOT exist and `answers.early_stop_enabled == true`, insert the filled block
+7. Same for `## Project Constraints`, `## Non-Goals`, `## Compute Budget`
+8. If `## ARIS Paseo` does NOT exist and `answers.paseo_configured == true`, append it
 
 Write the result to `CLAUDE.md`.
 
@@ -637,6 +525,31 @@ Note the install is one-shot: a project that already has
 pick up new upstream skills), delete `.aris/installed-skills.txt` and
 `.claude/skills/`, then re-add the project.
 
+### Phase 7.5: Experiment Environment Configuration (delegated)
+
+After CLAUDE.md exists, unconditionally invoke `/experiment-env-configuration`
+**in the current session** (not via a paseo sub-agent — the skill has 15
+`AskUserQuestion` calls and the user is in this interactive flow):
+
+```
+Skill: experiment-env-configuration
+Args: — project: <project_name>
+```
+
+After it completes, transcribe results (do NOT judge them):
+
+1. Read `.aris/experiment-env.json` → set `answers.gpu_type` to the `env_type`
+   value (preserves `auto-research-loop/SKILL.md:60` and
+   `experiment-env-configuration/SKILL.md:111` read contracts).
+2. Read `.claude/skills/run-<project>-experiment/env.json` → set
+   `answers.experiment_skill = "run-<project>-experiment"` and
+   `answers.env_config_status` to the `status` field (`complete` /
+   `audit_failed` / `incomplete` / `already_configured`).
+
+If configuration did not succeed (`incomplete` / `audit_failed` / user abort):
+set `answers.gpu_type = "none"`, print the draft and audit report paths, and
+**continue to Phase 7g/8 — do not block setup**.
+
 ### 7g. Write final setup state
 
 ```json
@@ -650,7 +563,9 @@ pick up new upstream skills), delete `.aris/installed-skills.txt` and
     "RESEARCH_BRIEF.md",
     "research-wiki/",
     ".gitignore",
-    ".claude/skills/ (ARIS skills)"
+    ".claude/skills/ (ARIS skills)",
+    ".aris/experiment-env.json (when env config succeeded)",
+    ".claude/skills/run-<project>-experiment/ (when env config status = complete)"
   ],
   "timestamp": "<ISO 8601>"
 }
@@ -669,7 +584,7 @@ Print a summary of what was created:
 ✅ Research project "{project_name}" initialized successfully.
 
 Created:
-  • CLAUDE.md — project dashboard (language: {language}, GPU: {gpu_type})
+  • CLAUDE.md — project dashboard (language: {language}, Environment: {answers.gpu_type} (configured by /experiment-env-configuration) or "not configured")
   • RESEARCH_BRIEF.md — research direction brief
   • research-wiki/ — knowledge base (5 subdirs, 5 seed files)
   • .gitignore — updated with ARIS entries
@@ -679,7 +594,7 @@ Created:
 ✅ 研究项目「{project_name}」初始化成功。
 
 已创建：
-  • CLAUDE.md — 项目仪表盘（语言：{language}，GPU：{gpu_type}）
+  • CLAUDE.md — 项目仪表盘（语言：{language}，环境：{answers.gpu_type}（由 /experiment-env-configuration 配置）或「未配置」）
   • RESEARCH_BRIEF.md — 研究方向简报
   • research-wiki/ — 知识库（5 个子目录，5 个种子文件）
   • .gitignore — 已添加 ARIS 条目
@@ -743,3 +658,7 @@ Suggested next steps:
 
 7. **Wiki helper optional.** If `research-wiki.js` cannot be resolved, fall back to manual
    directory creation. Never block on a missing helper for an optional artifact.
+
+8. **Environment configuration goes exclusively through `/experiment-env-configuration`.**
+   This skill never asks about backend types, never writes `## Experiment Environment`
+   field values, and never calls `env-helper.js`. The delegation happens in Phase 7.5.

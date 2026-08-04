@@ -31,7 +31,24 @@ ENV_CONFIG=".aris/experiment-env.json"
 
 ### Step 1: Parse Environment Config
 
-Read the project's `CLAUDE.md` (or `AGENTS.md` if no `CLAUDE.md`), find the `## Remote Server` / `## Vast.ai` / `## Modal` / `## Local Environment` section, and translate it into a **canonical candidate JSON** (field names: `env_type`, `ssh_alias`, `conda_hook`, `conda_env`, `code_dir`, `code_sync`, `instance_id`, `auto_destroy`, `image`, `modal_gpu`, `modal_timeout`, `modal_volume`, `modal_app_file`, `modal_secrets`, … — see `tools/experiment-env/README.md` for the alias→canonical table). Then validate + write it:
+**Priority path: use the generated experiment skill when available.**
+
+```bash
+PROJECT=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')
+SKILL_DIR=".claude/skills/run-${PROJECT}-experiment"
+if [ -d "$SKILL_DIR/scripts" ] && jq -e '.status == "complete"' "$SKILL_DIR/env.json" >/dev/null 2>&1; then
+  # Use the atomic interface — skip all CLAUDE.md parsing and env-helper.js
+  sh "$SKILL_DIR/scripts/prepare.sh"
+  sh "$SKILL_DIR/scripts/run.sh" "$EXP_NAME" --args "$ARGS"
+  # Continue to Step 5 (Verify Launch) using monitor.sh
+fi
+```
+
+When the skill exists and `env.json.status == "complete"`, use its scripts
+directly. **Fall back to the legacy path below** only when the skill is absent
+(backward compatibility for unconfigured projects).
+
+Read the project's `CLAUDE.md` (or `AGENTS.md` if no `CLAUDE.md`), find the `## Remote Server` / `## Vast.ai` / `## Modal` / `## Local Environment` / `## Experiment Environment` section, and translate it into a **canonical candidate JSON** (field names: `env_type`, `ssh_alias`, `conda_hook`, `conda_env`, `code_dir`, `code_sync`, `instance_id`, `auto_destroy`, `image`, `modal_gpu`, `modal_timeout`, `modal_volume`, `modal_app_file`, `modal_secrets`, ... -- see `tools/experiment-env/README.md` for the alias→canonical table). Then validate + write it:
 
 ```bash
 echo '<candidate-json>' | node "$ENV_HELPER" parse --json - --source CLAUDE.md
