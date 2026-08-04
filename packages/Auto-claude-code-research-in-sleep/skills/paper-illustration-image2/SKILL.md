@@ -101,7 +101,7 @@ and a **local Codex app-server MCP bridge** as the raster renderer.
   fi
   [ -z "$IMAGE2_HELPER" ] && {
     echo "ERROR: paper-illustration-image2.js not resolved (layer 0: \$CLAUDE_SKILL_DIR dist/; layers 1-3: .aris/dist/, dist/, \$ARIS_REPO/dist/)." >&2
-    echo "       /paper-illustration-image2 cannot proceed. Fix: run npm run build in ARIS repo, or rerun install_aris.sh." >&2
+    echo "       /paper-illustration-image2 cannot proceed. Fix: run npm run build in the ARIS repo." >&2
     exit 1
   }
   ```

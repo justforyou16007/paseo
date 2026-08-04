@@ -73,16 +73,16 @@ if [ -n "${CLAUDE_SKILL_DIR:-}" ]; then
 fi
 [ -z "$TEMPLATES_DIR" ] && [ -n "${ARIS_REPO:-}" ] && [ -d "$ARIS_REPO/templates" ] && TEMPLATES_DIR="$ARIS_REPO/templates"
 [ -z "$TEMPLATES_DIR" ] && {
-  echo "ERROR: ARIS templates directory not found. Ensure ARIS is installed (install_aris.sh) or set ARIS_REPO." >&2
+  echo "ERROR: ARIS templates directory not found. Ensure ARIS is installed or set ARIS_REPO." >&2
   exit 1
 }
 ```
 
 ### 0b. Check ARIS installation
 
-If `.aris/installed-skills.txt` does NOT exist, note that ARIS skills will be
-installed automatically in Phase 7f after all artifacts are generated. No user
-action required at this point — skill registration happens at the end of setup.
+If `.aris/installed-skills.txt` does NOT exist, ARIS was not installed into
+this project. Setup can still generate every artifact; note it and carry on —
+Phase 7f re-checks and tells the user how to trigger the install.
 
 ### 0c. Resume detection
 
@@ -607,37 +607,35 @@ If not, append the ARIS entries at the end with a header comment:
 .aris/setup-state.json
 ```
 
-### 7f. Install ARIS skills into the project
+### 7f. Verify ARIS skills are installed
 
-Resolve `install_aris.sh` and run it to register all ARIS skills as
-symlinks in `.claude/skills/`. This step is **not optional** — without
-it, no ARIS slash commands will be available in the project.
+Paseo installs ARIS into a project automatically when the project is
+added or a workspace is opened: it copies `skills/` into
+`.claude/skills/`, `agents/` into `.claude/agents/`, `tools/` into
+`.aris/tools/`, and writes the `.aris/installed-skills.txt` manifest.
+There is nothing to run here — only confirm it happened, because
+without it no ARIS slash command is available in the project.
 
 ```bash
-INSTALLER=""
-if [ -n "${CLAUDE_SKILL_DIR:-}" ]; then
-  _ROOT="${CLAUDE_SKILL_DIR%/skills/*}"
-  [ -f "$_ROOT/tools/install_aris.sh" ] && INSTALLER="$_ROOT/tools/install_aris.sh"
-fi
-if [ -z "$INSTALLER" ] && [ -n "${ARIS_REPO:-}" ]; then
-  [ -f "$ARIS_REPO/tools/install_aris.sh" ] && INSTALLER="$ARIS_REPO/tools/install_aris.sh"
-fi
-if [ -z "$INSTALLER" ] && [ -f .aris/installed-skills.txt ]; then
-  _REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null)
-  [ -n "$_REPO" ] && [ -f "$_REPO/tools/install_aris.sh" ] && INSTALLER="$_REPO/tools/install_aris.sh"
+if [ -f .aris/installed-skills.txt ] && [ -d .claude/skills ]; then
+  echo "ARIS skills installed: $(ls .claude/skills | wc -l) entries"
+else
+  echo "MISSING"
 fi
 ```
 
-If `$INSTALLER` is resolved:
-```bash
-bash "$INSTALLER" "$(pwd)" --quiet
+If it printed `MISSING`, tell the user:
+
+```
+ARIS skills are not installed in this project, so ARIS slash commands
+will not be available. Paseo installs them when the project is added —
+re-add the project in Paseo, or open it as a workspace, to trigger it.
 ```
 
-If `$INSTALLER` is NOT resolved, print:
-```
-install_aris.sh not found — ARIS skills cannot be registered.
-Set ARIS_REPO or rerun setup after cloning the ARIS repo.
-```
+Note the install is one-shot: a project that already has
+`.aris/installed-skills.txt` is skipped. To force a reinstall (e.g. to
+pick up new upstream skills), delete `.aris/installed-skills.txt` and
+`.claude/skills/`, then re-add the project.
 
 ### 7g. Write final setup state
 
@@ -652,7 +650,7 @@ Set ARIS_REPO or rerun setup after cloning the ARIS repo.
     "RESEARCH_BRIEF.md",
     "research-wiki/",
     ".gitignore",
-    ".claude/skills/ (ARIS skill symlinks)"
+    ".claude/skills/ (ARIS skills)"
   ],
   "timestamp": "<ISO 8601>"
 }
@@ -675,7 +673,7 @@ Created:
   • RESEARCH_BRIEF.md — research direction brief
   • research-wiki/ — knowledge base (5 subdirs, 5 seed files)
   • .gitignore — updated with ARIS entries
-  • .claude/skills/ — ARIS skill symlinks registered
+  • .claude/skills/ — ARIS skills installed
 
 (zh)
 ✅ 研究项目「{project_name}」初始化成功。

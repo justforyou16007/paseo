@@ -67,7 +67,7 @@ STYLE_HELPER=".aris/dist/tools/extract-paper-style.js"
 [ -f "$STYLE_HELPER" ] || { [ -n "${ARIS_REPO:-}" ] && STYLE_HELPER="$ARIS_REPO/dist/tools/extract-paper-style.js"; }
 [ -f "$STYLE_HELPER" ] || {
   echo "ERROR: extract-paper-style.js not resolved at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
-  echo "       Fix: rerun bash tools/install_aris.sh, export ARIS_REPO, or copy the helper to tools/." >&2
+  echo "       Fix: export ARIS_REPO, or copy the helper to tools/." >&2
   echo "       --style-ref cannot be satisfied; aborting." >&2
   exit 1
 }
@@ -581,7 +581,7 @@ skipping audits while claiming to have run them.
 ```
 
 > The resolver in "Running the verifier" below tries
-> `.aris/tools/verify_paper_audits.sh` (created by `install_aris.sh`),
+> `.aris/tools/verify_paper_audits.sh` (placed by the ARIS install),
 > then `tools/verify_paper_audits.sh` (in-repo run), then
 > `$ARIS_REPO/tools/verify_paper_audits.sh` (env-var-set path). The
 > chain always tries layers 1 → 2 → 3 in order; setting
@@ -637,7 +637,7 @@ AUDIT_VERIFIER=".aris/tools/verify_paper_audits.sh"
 [ -f "$AUDIT_VERIFIER" ] || {
   echo "ERROR: verify_paper_audits.sh not resolved at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
   echo "       assurance=submission requires the verifier; aborting Final Report." >&2
-  echo "       Fix: rerun bash tools/install_aris.sh, export ARIS_REPO, or copy the helper to tools/." >&2
+  echo "       Fix: export ARIS_REPO, or copy the helper to tools/." >&2
   exit 1
 }
 

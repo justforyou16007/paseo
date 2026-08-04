@@ -364,10 +364,10 @@ i.e. whose prose instructs the parent to spawn N Paseo sub-agents via
 The host `Agent` tool is **forbidden** in ARIS workflows per Global
 Rule 4. A skill that previously granted `Agent` for the legacy Tier-2
 form MUST be migrated to the Paseo primitive. As of this rewrite the
-four fan-out skills (`idea-creator`, `research-lit`, `proof-checker`,
-`analyse-tool`) all already have `mcp__paseo__create_agent` in their
-`allowed-tools`; the legacy `Agent` grant becomes a no-op and is being
-removed (see follow-up commit).
+three fan-out skills (`idea-creator`, `research-lit`, `proof-checker`)
+all already have `mcp__paseo__create_agent` in their `allowed-tools`;
+the legacy `Agent` grant becomes a no-op and is being removed (see
+follow-up commit).
 
 **Re-granting rule.** A skill that adds genuine fan-out introduces
 `mcp__paseo__create_agent` to its `allowed-tools` **in the same change

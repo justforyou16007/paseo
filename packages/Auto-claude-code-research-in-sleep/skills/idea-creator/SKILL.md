@@ -72,7 +72,7 @@ WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
   echo "WARN: research-wiki.js not found at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
   echo "      The idea-creation primary output (idea ranking) will still be produced." >&2
   echo "      Wiki integration (load query_pack, write idea pages, add edges, rebuild query_pack) will be skipped." >&2
-  echo "      Fix: rerun 'bash tools/install_aris.sh', export ARIS_REPO, or 'cp <ARIS-repo>/dist/tools/research-wiki.js tools/'." >&2
+  echo "      Fix: export ARIS_REPO, or 'cp <ARIS-repo>/dist/tools/research-wiki.js tools/'." >&2
   WIKI_SCRIPT=""
 }
 ```
@@ -444,7 +444,7 @@ index + query_pack in a single call. **Default skip-on-exist**: a re-ideation
 run records NEW ideas without clobbering an existing idea whose `outcome`
 `/result-to-claim` may already have enriched. If `$WIKI_SCRIPT` is empty
 (helper unreachable) the ideas are **NOT** recorded and a single WARN prints
-(fix: `bash tools/install_aris.sh` or `export ARIS_REPO`).
+(fix: `export ARIS_REPO`).
 
 ```
 if research-wiki/ exists AND [ -n "$WIKI_SCRIPT" ]:
@@ -461,7 +461,7 @@ if research-wiki/ exists AND [ -n "$WIKI_SCRIPT" ]:
           || echo "WARN: upsert_idea failed for <id> (continuing; audit/report unaffected)" >&2
     node "$WIKI_SCRIPT" log research-wiki/ "idea-creator wrote N ideas (M recommended, K eliminated)"
 elif research-wiki/ exists AND [ -z "$WIKI_SCRIPT" ]:
-    echo "WARN: ideas NOT recorded — research-wiki.js unreachable (see Phase 0). Fix: bash tools/install_aris.sh or export ARIS_REPO." >&2
+    echo "WARN: ideas NOT recorded — research-wiki.js unreachable (see Phase 0). Fix: export ARIS_REPO." >&2
 ```
 
 ## Output Protocols

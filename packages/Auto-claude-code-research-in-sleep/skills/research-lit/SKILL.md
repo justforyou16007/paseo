@@ -539,7 +539,7 @@ if [ -n "$VERIFY_PAPERS" ]; then
   fi
 else
   echo "WARN: verify-papers.js not resolved at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
-  echo "      Fix: rerun bash tools/install_aris.sh, export ARIS_REPO, or copy the helper to tools/." >&2
+  echo "      Fix: export ARIS_REPO, or copy the helper to tools/." >&2
 fi
 if [ "$verify_ok" = "false" ]; then
   if ! command -v node >/dev/null 2>&1; then
@@ -690,7 +690,7 @@ WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
 [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
 [ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/dist/tools/research-wiki.js"; }
 [ -f "$WIKI_SCRIPT" ] || {
-  echo "WARN: research-wiki.js not found; literature synthesis will be reported but wiki ingest will be skipped. Fix: bash tools/install_aris.sh, export ARIS_REPO, or cp <ARIS-repo>/dist/tools/research-wiki.js tools/." >&2
+  echo "WARN: research-wiki.js not found; literature synthesis will be reported but wiki ingest will be skipped. Fix: export ARIS_REPO, or cp <ARIS-repo>/dist/tools/research-wiki.js tools/." >&2
   WIKI_SCRIPT=""
 }
 ```

@@ -50,7 +50,7 @@ STYLE_HELPER=".aris/dist/tools/extract-paper-style.js"
 [ -f "$STYLE_HELPER" ] || { [ -n "${ARIS_REPO:-}" ] && STYLE_HELPER="$ARIS_REPO/dist/tools/extract-paper-style.js"; }
 [ -f "$STYLE_HELPER" ] || {
   echo "ERROR: extract-paper-style.js not resolved at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
-  echo "       Fix: rerun bash tools/install_aris.sh, export ARIS_REPO, or copy the helper to tools/." >&2
+  echo "       Fix: export ARIS_REPO, or copy the helper to tools/." >&2
   echo "       --style-ref cannot be satisfied; aborting." >&2
   exit 1
 }

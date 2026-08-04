@@ -184,7 +184,7 @@ if [ -d research-wiki/ ]; then
   [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
   [ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/dist/tools/research-wiki.js"; }
   [ -f "$WIKI_SCRIPT" ] || {
-    echo "WARN: research-wiki.js not found; semantic-scholar results delivered, wiki ingest skipped. Fix: bash tools/install_aris.sh, export ARIS_REPO, or cp <ARIS-repo>/dist/tools/research-wiki.js tools/." >&2
+    echo "WARN: research-wiki.js not found; semantic-scholar results delivered, wiki ingest skipped. Fix: export ARIS_REPO, or cp <ARIS-repo>/dist/tools/research-wiki.js tools/." >&2
     WIKI_SCRIPT=""
   }
   [ -n "$WIKI_SCRIPT" ] && for each paper in results:

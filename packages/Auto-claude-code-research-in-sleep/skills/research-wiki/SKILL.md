@@ -85,8 +85,8 @@ All wiki operations except plain directory bootstrap go through a single
 canonical helper, `dist/tools/research-wiki.js`. Skills that touch the wiki
 must resolve `$WIKI_SCRIPT` via the chain below — never hard-code
 `node dist/tools/research-wiki.js …`. Hard-coding silently fails when
-the project does not have `tools/` on disk (the post-`install_aris.sh`
-default), which is exactly the failure mode that left a real user's
+the project does not have `tools/` on disk (the normal state — an ARIS
+install puts helpers in `.aris/`), which is exactly the failure mode that left a real user's
 `research-wiki/` empty for a week.
 
 ```bash
@@ -98,9 +98,8 @@ WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
 [ -f "$WIKI_SCRIPT" ] || {
   echo "ERROR: research-wiki.js not found at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
   echo "       Fix one of:" >&2
-  echo "         1. rerun 'bash tools/install_aris.sh' from the ARIS repo (creates .aris/tools symlink)" >&2
-  echo "         2. export ARIS_REPO=<path-to-ARIS-repo>" >&2
-  echo "         3. cp <ARIS-repo>/dist/tools/research-wiki.js tools/" >&2
+  echo "         1. export ARIS_REPO=<path-to-ARIS-repo>" >&2
+  echo "         2. cp <ARIS-repo>/dist/tools/research-wiki.js tools/" >&2
   exit 1
 }
 ```
@@ -340,7 +339,7 @@ if research-wiki/ exists AND $WIKI_SCRIPT resolved (chain at top of this SKILL):
                 --evidence "..."
     log "research-lit ingested N papers"
 elif research-wiki/ exists but $WIKI_SCRIPT did not resolve:
-    warn "wiki update skipped — research-wiki.js unreachable; rerun install_aris.sh"
+    warn "wiki update skipped — research-wiki.js unreachable; set ARIS_REPO"
 ```
 
 Each paper-reading skill ships its own Step "Update Research Wiki (if

@@ -86,14 +86,23 @@ cd /path/to/aris_repo
 pip3 install -r mcp-servers/llm-chat/requirements.txt
 ```
 
-### Step 3: Install ARIS Skills with the Standard Installer
+### Step 3: Install ARIS Skills
+
+Paseo installs ARIS into a project automatically when you add the
+project: it copies `skills/` into `.claude/skills/`, `tools/` into
+`.aris/tools/`, and writes the `.aris/installed-skills.txt` manifest
+that skills read `repo_root` from. Nothing to run.
+
+Without Paseo, copy the skills in by hand and point `ARIS_REPO` at the
+checkout so the `dist/tools/` helper chain still resolves:
 
 ```bash
-# Standard ARIS install: points symlinks from a target project into this ARIS repo.
-bash /path/to/aris_repo/tools/install_aris.sh /path/to/your-project
+mkdir -p /path/to/your-project/.claude/skills
+cp -r /path/to/aris_repo/skills/* /path/to/your-project/.claude/skills/
+export ARIS_REPO=/path/to/aris_repo
 ```
 
-Do not pass `$PWD` from inside the ARIS repo itself. The installer should target your paper or experiment project, not the ARIS checkout. It manages per-skill symlinks, the installed-skill manifest, the `.aris/tools/` helper chain, and reconcile/uninstall/migration paths.
+Target your paper or experiment project, not the ARIS checkout itself.
 
 ### Step 4: Deploy the llm-chat MCP Server
 
@@ -102,7 +111,7 @@ mkdir -p ~/.claude/mcp-servers/llm-chat
 cp mcp-servers/llm-chat/server.py ~/.claude/mcp-servers/llm-chat/server.py
 ```
 
-This manual copy is only for the MCP server, which `install_aris.sh` does not manage. Do not copy `skills/*` by hand.
+This manual copy is only for the MCP server, which the ARIS install does not manage.
 
 ### Step 5: Configure `~/.claude/settings.json`
 

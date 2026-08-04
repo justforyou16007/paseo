@@ -326,9 +326,11 @@ ARIS（**A**utonomous **R**esearch via Adversarial **M**ulti-Agent Collaboration
 # 1. Clone ARIS to a stable location (once)
 git clone https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep.git ~/aris_repo
 
-# 2. Attach to a project (creates project-local symlinks)
+# 2. Attach to a project — Paseo installs ARIS automatically when you add
+#    the project. Without Paseo, copy the skills in by hand:
 cd ~/your-paper-project
-bash ~/aris_repo/tools/install_aris.sh
+mkdir -p .claude/skills && cp -r ~/aris_repo/skills/* .claude/skills/
+export ARIS_REPO=~/aris_repo
 
 # 3. Configure the GPT-5.5 reviewer (Codex MCP)
 npm install -g @openai/codex

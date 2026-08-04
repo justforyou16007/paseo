@@ -65,47 +65,52 @@ touch CLAUDE.md
 ```
 
 - `git init` — 部分技能需要 git 来定位项目根目录
-- `CLAUDE.md` — Claude Code 的项目配置文件，安装脚本会向其中写入 ARIS 信息
+- `CLAUDE.md` — Claude Code 的项目配置文件，在其中描述项目与 GPU 服务器信息
 
 ## 第三步：安装 Skills
 
-通过符号链接将 ARIS skill 安装到项目中（推荐的项目级安装方式）：
+**Paseo 会自动安装 ARIS。** 在 Paseo 中添加项目时，daemon 会自动把
+skill 包复制进去，无需运行任何安装脚本：
+
+```
+.claude/skills/<skill>        ← ~/aris_repo/skills/<skill> 的副本
+.claude/agents/<agent>.md     ← ~/aris_repo/agents/<agent>.md 的副本
+.aris/tools/                  ← ~/aris_repo/tools/ 的副本（工具脚本）
+.aris/installed-skills.txt    ← 安装清单；skills 从中读取 `repo_root`
+```
+
+确认安装结果：
+
+```bash
+ls .claude/skills | wc -l && cat .aris/installed-skills.txt | head -4
+```
+
+安装是**一次性**的：已有 `.aris/installed-skills.txt` 的项目会被跳过。
+要拉取上游新增的 skills，删除 `.aris/installed-skills.txt` 和
+`.claude/skills/`，然后在 Paseo 中重新添加该项目。
+
+<details>
+<summary>不使用 Paseo？手动复制 skills</summary>
 
 ```bash
 # 1. 克隆 ARIS 一次到稳定位置，~/aris_repo 是本地目录名，可自定义
 git clone https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep.git ~/aris_repo
 
-# 2. 在每个使用 ARIS 的项目中安装（通过符号链接）：
+# 2. 在每个使用 ARIS 的项目中复制 skills
 cd ~/your-paper-project
-bash ~/aris_repo/tools/install_aris.sh
+mkdir -p .claude/skills .claude/agents
+cp -r ~/aris_repo/skills/* .claude/skills/
+cp -r ~/aris_repo/agents/*.md .claude/agents/ 2>/dev/null || true
 
-# 其他常用：
-bash ~/aris_repo/tools/install_aris.sh --dry-run        # 预览安装计划，不实际执行
-bash ~/aris_repo/tools/install_aris.sh --uninstall      # 按安装清单卸载，不影响其他文件
+# 3. 导出 ARIS_REPO，让 dist/tools helper 解析链可用
+export ARIS_REPO=~/aris_repo
 ```
 
-脚本会显示安装计划并要求确认（输入 `y`），详见 [`install_aris.sh`](tools/install_aris.sh)：
+手动复制不会写入清单，因此必须保持 `ARIS_REPO` 已导出。更新时先在
+`~/aris_repo` 执行 `git pull`，再重新复制 —— 这会覆盖 `.claude/skills/`
+下的本地修改。
 
-```
-.claude/skills/<skill>        ← 每个 skill 一个符号链接 → ~/aris_repo/skills/<skill>
-.aris/installed-skills.txt    ← 安装清单（追踪 ARIS 创建的每条 skill symlink）
-.aris/tools                   ← → ~/aris_repo/tools/（工具脚本）
-CLAUDE.md                     ← 更新 ARIS 配置区块
-```
-
-符号链接直接引用 ARIS 仓库源文件，不复制内容。更新时分两种情况：
-
-```bash
-# 情况一：上游修改了已有技能的内容
-# 符号链接自动生效，只需拉取最新代码
-cd ~/aris_repo && git pull
-
-# 情况二：上游新增或删除了技能目录
-# 需要先拉取最新代码，再重新运行安装脚本
-cd ~/aris_repo && git pull
-cd ~/your-paper-project
-bash ~/aris_repo/tools/install_aris.sh
-```
+</details>
 
 ## 第四步：配置 GPU 服务器
 

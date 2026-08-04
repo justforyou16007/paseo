@@ -51,7 +51,7 @@ def main() -> int:
             "       /paper-illustration-image2 SKILL\n"
             "       ('skills/paper-illustration-image2/scripts/'). Your\n"
             "       local checkout may be incomplete — try `git pull` from the\n"
-            "       ARIS repo, or rerun `bash tools/install_aris.sh` to refresh\n"
+            "       ARIS repo, or set ARIS_REPO to point at it\n"
             "       the project-local symlink chain."
         )
     os.execv(sys.executable, [sys.executable, str(REAL), *sys.argv[1:]])

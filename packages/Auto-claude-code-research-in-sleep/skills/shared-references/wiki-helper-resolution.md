@@ -3,7 +3,8 @@
 Canonical resolution chain for the research-wiki helper. Used by every
 SKILL that touches the wiki — never hard-code `python3 tools/research_wiki.py`,
 because that silently fails when `<project>/tools/` is not on disk
-(the post-`install_aris.sh` default), exactly the failure mode that
+(the normal state — an ARIS install puts the helpers in `.aris/tools/`,
+not `tools/`), exactly the failure mode that
 left a real user's `research-wiki/` empty for a week.
 
 ## The chain
@@ -29,9 +30,8 @@ The skill **is** the wiki tool. If the helper is missing, fail loudly.
 [ -f "$WIKI_SCRIPT" ] || {
   echo "ERROR: research_wiki.py not found at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
   echo "       Fix one of:" >&2
-  echo "         1. rerun 'bash tools/install_aris.sh' from the ARIS repo (creates .aris/tools symlink)" >&2
-  echo "         2. export ARIS_REPO=<path-to-ARIS-repo>" >&2
-  echo "         3. cp <ARIS-repo>/tools/research_wiki.py tools/" >&2
+  echo "         1. export ARIS_REPO=<path-to-ARIS-repo>" >&2
+  echo "         2. cp <ARIS-repo>/tools/research_wiki.py tools/" >&2
   exit 1
 }
 ```
@@ -48,7 +48,7 @@ skipped.
 [ -f "$WIKI_SCRIPT" ] || {
   echo "WARN: research_wiki.py not found at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
   echo "      Primary output will still be produced; wiki update is skipped." >&2
-  echo "      Fix: rerun 'bash tools/install_aris.sh', export ARIS_REPO, or 'cp <ARIS-repo>/tools/research_wiki.py tools/'." >&2
+  echo "      Fix: export ARIS_REPO, or 'cp <ARIS-repo>/tools/research_wiki.py tools/'." >&2
   WIKI_SCRIPT=""
 }
 ```
@@ -65,13 +65,13 @@ Three locations correspond to three legitimate install / dev paths:
 
 | Location                            | When applicable                                                                                                                               |
 | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.aris/tools/research_wiki.py`      | After running `bash tools/install_aris.sh` in the user project (Phase 0 symlink, added in #174 / #192)                                        |
+| `.aris/tools/research_wiki.py`      | Copied into the project when ARIS is installed (Paseo installs on project add)                                                               |
 | `tools/research_wiki.py`            | (a) Manual copy of the helper into the user project (a documented temporary workaround); (b) running a SKILL from inside the ARIS repo itself |
 | `$ARIS_REPO/tools/research_wiki.py` | Env var explicitly set, or auto-resolved from `.aris/installed-skills.txt`'s `repo_root` field                                                |
 
-Order matters: the symlinked install is preferred because the symlink
-auto-tracks upstream tool fixes; the manual copy is second because it
-catches users who haven't run `install_aris.sh`; the env var is last
+Order matters: the installed copy is preferred because it is what a
+normal project has; the manual copy is second because it catches
+projects ARIS was never installed into; the env var is last
 because it's the most fragile.
 
 ## What NOT to add

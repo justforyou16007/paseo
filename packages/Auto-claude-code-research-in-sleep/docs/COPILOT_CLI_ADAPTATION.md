@@ -33,49 +33,45 @@ npm install -g @github/copilot-cli
 
 ### 2.2 Clone ARIS and install skills
 
+Copilot reads skills from `.github/skills/` (project) or
+`~/.copilot/skills/` (global). ARIS ships no Copilot installer — copy
+the skills in directly:
+
 ```bash
 git clone https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep.git ~/aris_repo
 cd ~/your-project
 
-# Symlink install (recommended, stays in sync with upstream)
-bash ~/aris_repo/tools/install_aris_copilot.sh .
+# Project-level install
+mkdir -p .github/skills
+cp -r ~/aris_repo/skills/* .github/skills/
 ```
 
-This creates:
+Also add an `AGENTS.md` at the project root (Copilot's equivalent of
+`CLAUDE.md`) describing the project — see §1.
 
-```
-.github/skills/<skill-name> -> ~/aris_repo/skills/<skill-name>
-.aris/installed-skills-copilot.txt    # manifest
-AGENTS.md                             # managed block added
-```
-
-Reconcile after upstream changes:
+Update after upstream changes — re-copy:
 
 ```bash
 cd ~/aris_repo && git pull
-bash ~/aris_repo/tools/install_aris_copilot.sh ~/your-project --reconcile
+cp -r ~/aris_repo/skills/* ~/your-project/.github/skills/
 ```
 
-Uninstall:
+> ⚠️ A plain re-copy overwrites any local edits you made to a skill. If
+> you customize skills in place, keep your changes in a separate branch
+> of the ARIS repo and copy from there instead.
+
+Uninstall: `rm -rf .github/skills`.
+
+### 2.3 Alternative: Global install
+
+Available to every project, no per-project copy:
 
 ```bash
-bash ~/aris_repo/tools/install_aris_copilot.sh ~/your-project --uninstall
-```
-
-### 2.3 Alternative: Copy-based install
-
-For environments where symlinks don't work:
-
-```bash
-# Global install
 mkdir -p ~/.copilot/skills
 cp -r ~/aris_repo/skills/* ~/.copilot/skills/
 
 # Update later
-bash ~/aris_repo/tools/smart_update_copilot.sh --apply
-
-# Project-level
-bash ~/aris_repo/tools/smart_update_copilot.sh --project ~/your-project --apply
+cd ~/aris_repo && git pull && cp -r ~/aris_repo/skills/* ~/.copilot/skills/
 ```
 
 ### 2.4 Configure Codex MCP reviewer
@@ -351,11 +347,11 @@ When Copilot CLI uses GPT-5 as executor **and** Codex MCP also routes to GPT-5.5
 
 ```bash
 # Install skills to project
-bash ~/aris_repo/tools/install_aris_copilot.sh .
+mkdir -p .github/skills && cp -r ~/aris_repo/skills/* .github/skills/
 
 # Update after upstream changes
 cd ~/aris_repo && git pull
-bash ~/aris_repo/tools/install_aris_copilot.sh ~/your-project --reconcile
+cp -r ~/aris_repo/skills/* ~/your-project/.github/skills/
 
 # Launch Copilot with full permissions for ARIS
 copilot --allow-tool='write' --allow-tool='shell'
@@ -370,7 +366,7 @@ copilot --allow-tool='write' --allow-tool='shell'
 
 ## 12. Migration Checklist: Claude Code → Copilot CLI
 
-- [ ] Install skills: `bash tools/install_aris_copilot.sh .`
+- [ ] Install skills: `mkdir -p .github/skills && cp -r <aris_repo>/skills/* .github/skills/`
 - [ ] Configure MCP: add Codex or llm-chat to `~/.copilot/mcp-config.json`
 - [ ] Copy `CLAUDE.md` content to `AGENTS.md` (or keep both + symlink)
 - [ ] Set permission flags: `--allow-tool='write' --allow-tool='shell'`

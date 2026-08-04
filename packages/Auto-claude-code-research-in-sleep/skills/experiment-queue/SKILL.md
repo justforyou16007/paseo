@@ -186,7 +186,7 @@ if [ -z "$QUEUE_TOOLS" ]; then
   [ -f "$QUEUE_TOOLS/queue-manager.js" ] || { [ -n "${ARIS_REPO:-}" ] && QUEUE_TOOLS="$ARIS_REPO/dist/skills/experiment-queue"; }
   [ -f "$QUEUE_TOOLS/queue-manager.js" ] || QUEUE_TOOLS=""
 fi
-[ -z "$QUEUE_TOOLS" ] && { echo "ERROR: experiment-queue helpers not found (layer 0: \$CLAUDE_SKILL_DIR dist/; layers 1-3: .aris/dist/, dist/, \$ARIS_REPO/dist/). Run npm run build in ARIS repo, or rerun install_aris.sh." >&2; exit 1; }
+[ -z "$QUEUE_TOOLS" ] && { echo "ERROR: experiment-queue helpers not found (layer 0: \$CLAUDE_SKILL_DIR dist/; layers 1-3: .aris/dist/, dist/, \$ARIS_REPO/dist/). Run npm run build in the ARIS repo." >&2; exit 1; }
 ```
 
 After Phase 4 (TypeScript migration), the compiled JS lives at `dist/skills/experiment-queue/`. The `npm run build` step compiles from `src/skills/experiment-queue/` into `dist/`.

@@ -96,7 +96,7 @@ EXA_FETCHER=".aris/dist/tools/exa-search.js"
 [ -f "$EXA_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && EXA_FETCHER="$ARIS_REPO/dist/tools/exa-search.js"; }
 [ -f "$EXA_FETCHER" ] || {
   echo "ERROR: exa-search.js not resolved at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
-  echo "       Fix: rerun bash tools/install_aris.sh, export ARIS_REPO, or copy the helper to tools/." >&2
+  echo "       Fix: export ARIS_REPO, or copy the helper to tools/." >&2
   echo "       Also ensure 'exa-py' is installed: pip install exa-py" >&2
   exit 1
 }
@@ -183,7 +183,7 @@ if [ -d research-wiki/ ] and query category was "research paper":
     [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
     [ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/dist/tools/research-wiki.js"; }
     [ -f "$WIKI_SCRIPT" ] || {
-      echo "WARN: research-wiki.js not found; exa-search results delivered, wiki ingest skipped. Fix: bash tools/install_aris.sh, export ARIS_REPO, or cp <ARIS-repo>/dist/tools/research-wiki.js tools/." >&2
+      echo "WARN: research-wiki.js not found; exa-search results delivered, wiki ingest skipped. Fix: export ARIS_REPO, or cp <ARIS-repo>/dist/tools/research-wiki.js tools/." >&2
       WIKI_SCRIPT=""
     }
     [ -n "$WIKI_SCRIPT" ] && for each research-paper hit in results:

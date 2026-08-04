@@ -65,47 +65,54 @@ touch CLAUDE.md
 ```
 
 - `git init` — some skills need git to locate the project root
-- `CLAUDE.md` — Claude Code's project config file; the install script will write ARIS info into it
+- `CLAUDE.md` — Claude Code's project config file; describe your project and GPU servers here
 
 ## Step 3: Install Skills
 
-Install ARIS skills into your project via symlinks (the recommended project-local install method):
+**Paseo installs ARIS for you.** When you add a project in Paseo, the
+daemon copies the skill bundle into it automatically — there is no
+install script to run:
+
+```
+.claude/skills/<skill>        ← a copy of ~/aris_repo/skills/<skill>
+.claude/agents/<agent>.md     ← a copy of ~/aris_repo/agents/<agent>.md
+.aris/tools/                  ← a copy of ~/aris_repo/tools/ (helper scripts)
+.aris/installed-skills.txt    ← install manifest; skills read `repo_root` from it
+```
+
+Confirm it happened:
+
+```bash
+ls .claude/skills | wc -l && cat .aris/installed-skills.txt | head -4
+```
+
+The install is **one-shot**: a project that already has
+`.aris/installed-skills.txt` is skipped. To pick up new upstream skills,
+delete `.aris/installed-skills.txt` and `.claude/skills/`, then re-add
+the project in Paseo.
+
+<details>
+<summary>Not using Paseo? Copy the skills in by hand</summary>
 
 ```bash
 # 1. Clone ARIS once to a stable location, ~/aris_repo is the local dir name (customizable)
 git clone https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep.git ~/aris_repo
 
-# 2. Install in each project that uses ARIS (via symlinks):
+# 2. Copy the skills into each project that uses ARIS
 cd ~/your-paper-project
-bash ~/aris_repo/tools/install_aris.sh
+mkdir -p .claude/skills .claude/agents
+cp -r ~/aris_repo/skills/* .claude/skills/
+cp -r ~/aris_repo/agents/*.md .claude/agents/ 2>/dev/null || true
 
-# Other useful flags:
-bash ~/aris_repo/tools/install_aris.sh --dry-run        # preview install plan, no changes
-bash ~/aris_repo/tools/install_aris.sh --uninstall      # uninstall per manifest, leaves other files intact
+# 3. Point ARIS_REPO at the checkout so the dist/tools helper chain resolves
+export ARIS_REPO=~/aris_repo
 ```
 
-The script shows an install plan and asks for confirmation (type `y`). See [`install_aris.sh`](tools/install_aris.sh):
+A manual copy writes no manifest, so `ARIS_REPO` must stay exported.
+To update, `git pull` in `~/aris_repo` and re-run the copy — this
+overwrites local edits under `.claude/skills/`.
 
-```
-.claude/skills/<skill>        ← one symlink per skill → ~/aris_repo/skills/<skill>
-.aris/installed-skills.txt    ← install manifest (tracks every skill symlink ARIS created)
-.aris/tools                   ← → ~/aris_repo/tools/ (helper scripts)
-CLAUDE.md                     ← updates the ARIS config block
-```
-
-Symlinks reference ARIS repo source files directly — no copies. Updates fall into two cases:
-
-```bash
-# Case 1: upstream modified existing skill content
-# symlinks pick up changes automatically, just pull the latest
-cd ~/aris_repo && git pull
-
-# Case 2: upstream added or removed skill directories
-# pull first, then rerun the install script to sync
-cd ~/aris_repo && git pull
-cd ~/your-paper-project
-bash ~/aris_repo/tools/install_aris.sh
-```
+</details>
 
 ## Step 4: Configure GPU Server
 

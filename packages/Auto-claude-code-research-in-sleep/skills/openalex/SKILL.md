@@ -120,7 +120,7 @@ OPENALEX_FETCHER=".aris/dist/tools/openalex-fetch.js"
 [ -f "$OPENALEX_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && OPENALEX_FETCHER="$ARIS_REPO/dist/tools/openalex-fetch.js"; }
 [ -f "$OPENALEX_FETCHER" ] || {
   echo "ERROR: openalex-fetch.js not resolved at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
-  echo "       Fix: rerun bash tools/install_aris.sh, export ARIS_REPO, or copy the helper to tools/." >&2
+  echo "       Fix: export ARIS_REPO, or copy the helper to tools/." >&2
   echo "       Also ensure 'requests' is installed: pip install requests" >&2
   exit 1
 }

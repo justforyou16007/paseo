@@ -53,7 +53,7 @@ or a single subcommand of an existing helper. Every caller invokes the same
 entrypoint, but every caller must also resolve **where** that entrypoint lives,
 because the helper may sit at any of:
 
-- `<project>/.aris/dist/tools/<helper>` — symlinked by `install_aris.sh`
+- `<project>/.aris/dist/tools/<helper>` — placed by the ARIS install
 - `<project>/dist/tools/<helper>` — running from inside the ARIS repo (after `npm run build`)
 - `$ARIS_REPO/dist/tools/<helper>` — env var or auto-resolved from the install manifest
 
@@ -122,7 +122,7 @@ gets produced, only the wiki side-effect is missed).
 ```bash
 [ -n "$WIKI_SCRIPT" ] || {
   echo "WARN: research-wiki.js not resolved; primary output unaffected, wiki side-effect skipped." >&2
-  echo "      Fix: rerun bash tools/install_aris.sh, export ARIS_REPO, or copy the helper to tools/." >&2
+  echo "      Fix: export ARIS_REPO, or copy the helper to tools/." >&2
 }
 [ -n "$WIKI_SCRIPT" ] && node "$WIKI_SCRIPT" ingest_paper research-wiki/ --arxiv-id "$id"
 ```
@@ -297,9 +297,7 @@ with a "Phase 3.N move" note pointing at the new canonical location.
 Every helper invoked from any SKILL.md (single-skill or shared
 across skills) is classified below so that downstream SKILLs in
 Phase 1.2-1.7 do not have to guess. Pure developer utilities that
-are never invoked from a SKILL.md — installers
-(`install_aris.sh`, `install_aris_codex.sh`), update scripts
-(`smart_update.sh`, `smart_update_codex.sh`), manual setup
+are never invoked from a SKILL.md — manual setup
 (`overleaf_setup.sh`), generators
 (`convert-skills-to-llm-chat.js`, `generate_codex_claude_review_overrides.py`),
 the `meta_opt/` hook scripts, and `watchdog.js` — are out of scope.
@@ -325,8 +323,6 @@ here first.
 | `provenance.js` (in `/meta-apply`; `assert_cross_family`/`stamp`)                                                         | A (gate)                                                                                                                           | The landing acquittal: if unresolved, `/meta-apply` cannot verify author≠reviewer family and MUST refuse to land (fail-closed). `stamp()` itself raises on same-family, so an unresolved or same-family case blocks the corpus mutation                                                                                                                                                                                                                                                                                                                     |
 | `run-state.js` (in `/research-pipeline`)                                                                                  | B (side-effect)                                                                                                                    | Resumability is a convenience; the pipeline still runs end-to-end without it (warn-and-skip, never block). Predicate = `RESUMABLE` / `— resume <run_id>` set                                                                                                                                                                                                                                                                                                                                                                                                |
 | `iteration-log.js` (in `/research-pipeline`, `/idea-discovery`)                                                           | B (side-effect)                                                                                                                    | Stall→pivot ledger is a convenience for overnight loops; the pipeline runs without it (warn-and-skip, never block). Predicate = an overnight heartbeat is driving the loop. Mainline-only for now (Codex-mirror sync pending external-cadence mirror).                                                                                                                                                                                                                                                                                                      |
-| `analysis-tools.js` `register` / `deprecate` / `add-category` (in `/analyse-tool`)                                        | B (side-effect)                                                                                                                    | The registry is a personal convenience collection of reusable analysis methods (`$HOME/.aris/analysis_tools/`, overridable via `$ARIS_ANALYSIS_TOOLS_DIR`); the primary research output is delivered without it (warn-and-skip). Personal — not repo-local — because skills cannot be reloaded at runtime so the helper _is_ the access mechanism. Register enforces the mandatory `scripts/tool-unit-test.py` + `references/` test-data contract (Policy B, but the test itself is a Type-A deterministic gate the subagent runs first via `test --slug`). |
-| `analysis-tools.js` `list` / `query` / `get` / `load` / `resource` / `test` / `categories` / `stats` (in `/analyse-tool`) | B (side-effect)                                                                                                                    | Read-only / execution access to the registry; unresolved ⇒ warn-and-skip (primary output unaffected). `load`/`resource` provide the 3-tier progressive disclosure (L0 metadata → L1 full SKILL.md → L2 per-script/reference); `test` runs a tool's `tool-unit-test.py` and appends a `test` ledger receipt. All of `load`/`register`/`merge`/`run` must fan out to a subagent — only `find` runs in the main agent.                                                                                                                                         |
 | `experiment-env/env-helper.js` `provision` / `preflight` / `sync` / `deploy` / `monitor` / `collect` / `destroy`          | A (gate, multi-owner)                                                                                                              | Unified experiment-environment control across local/remote/vast/modal; consumed by `/run-experiment`, `/monitor-experiment`, `/vast-gpu`, `/serverless-modal`, `/experiment-queue` (5 owners). Canonical location: `dist/tools/experiment-env/` (compiled from `src/tools/experiment-env/`). A failed action subcommand blocks the calling skill.                                                                                                                                                  |
 | `experiment-env/env-helper.js` `parse` / `info`                                                                           | E (diagnostic)                                                                                                                     | Validates the agent's candidate env JSON + writes `.aris/experiment-env.json`; emits non-blocking warnings for unknown fields / deprecated aliases. Does NOT read markdown — the agent extracts env params from CLAUDE.md/AGENTS.md and emits canonical-field JSON; this subcommand only validates+writes.                                                                                                                                                                                                                                                  |
 

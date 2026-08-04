@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { access, lstat, mkdir, readdir, rename, symlink, writeFile } from "node:fs/promises";
+import { access, cp, lstat, mkdir, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Logger } from "pino";
@@ -9,6 +9,8 @@ const MANIFEST_NAME = "installed-skills.txt";
 const SAFE_NAME_REGEX = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const SUPPORT_NAMES = new Set(["shared-references"]);
 const EXCLUDE_NAMES = new Set(["skills-codex.bak"]);
+// Build artifacts that must not follow the skill bundle into a project.
+const COPY_EXCLUDE_BASENAMES = new Set(["__pycache__", "node_modules", ".git"]);
 
 interface ArisAutoInstallOptions {
   cwd: string;
@@ -73,6 +75,17 @@ async function isSymlink(p: string): Promise<boolean> {
 async function pathExists(p: string): Promise<boolean> {
   try {
     await access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Existence check that does not follow symlinks, so a dangling symlink still counts
+// as occupied and is never silently overwritten.
+async function pathExistsLstat(p: string): Promise<boolean> {
+  try {
+    await lstat(p);
     return true;
   } catch {
     return false;
@@ -162,20 +175,23 @@ async function scanUpstreamAgents(arisRepo: string): Promise<UpstreamEntry[]> {
   return entries;
 }
 
-async function createSymlinkSafe(source: string, target: string, logger: Logger): Promise<boolean> {
+async function copyEntrySafe(source: string, target: string, logger: Logger): Promise<boolean> {
   try {
-    const stat = await lstat(target).catch(() => null);
-    if (stat) {
-      if (stat.isSymbolicLink()) {
-        return true;
-      }
-      logger.warn({ target }, "ARIS auto-install: target exists as non-symlink, skipping");
+    if (await pathExistsLstat(target)) {
+      logger.warn({ target }, "ARIS auto-install: target already exists, skipping");
       return false;
     }
-    await symlink(source, target);
+    await cp(source, target, {
+      recursive: true,
+      // Upstream may contain symlinks; materialize them so the project copy is standalone.
+      dereference: true,
+      force: false,
+      errorOnExist: true,
+      filter: (src) => !COPY_EXCLUDE_BASENAMES.has(path.basename(src)),
+    });
     return true;
   } catch (error) {
-    logger.warn({ err: error, source, target }, "ARIS auto-install: failed to create symlink");
+    logger.warn({ err: error, source, target }, "ARIS auto-install: failed to copy entry");
     return false;
   }
 }
@@ -188,7 +204,7 @@ function buildManifest(arisRepo: string, cwd: string, entries: UpstreamEntry[]):
   lines.push(`generated\t${new Date().toISOString().replace(/\.\d{3}Z$/, "Z")}`);
   lines.push("kind\tname\tsource_rel\ttarget_rel\tmode");
   for (const entry of entries) {
-    lines.push(`${entry.kind}\t${entry.name}\t${entry.sourceRel}\t${entry.targetRel}\tsymlink`);
+    lines.push(`${entry.kind}\t${entry.name}\t${entry.sourceRel}\t${entry.targetRel}\tcopy`);
   }
   lines.push("");
   return lines.join("\n");
@@ -234,14 +250,14 @@ export async function ensureArisSkillsInstalled(
     for (const entry of allEntries) {
       const source = path.join(arisRepo, entry.sourceRel);
       const target = path.join(cwd, entry.targetRel);
-      const created = await createSymlinkSafe(source, target, logger);
+      const created = await copyEntrySafe(source, target, logger);
       if (created) {
         installedEntries.push(entry);
       }
     }
 
     const toolsTarget = path.join(cwd, ".aris", "tools");
-    await createSymlinkSafe(path.join(arisRepo, "tools"), toolsTarget, logger);
+    await copyEntrySafe(path.join(arisRepo, "tools"), toolsTarget, logger);
 
     const manifestContent = buildManifest(arisRepo, cwd, installedEntries);
     const manifestTmp = `${manifestPath}.tmp.${process.pid}`;

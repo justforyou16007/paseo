@@ -65,7 +65,7 @@ if [ -z "$RENDER_HTML" ]; then
 fi
 [ -z "$RENDER_HTML" ] && {
   echo "ERROR: render-html.js not resolved (layer 0: \$CLAUDE_SKILL_DIR dist/; layers 1-3: .aris/dist/, dist/, \$ARIS_REPO/dist/)." >&2
-  echo "       /render-html cannot produce HTML output. Fix: run npm run build in ARIS repo, or rerun install_aris.sh." >&2
+  echo "       /render-html cannot produce HTML output. Fix: run npm run build in the ARIS repo." >&2
   exit 1
 }
 ```

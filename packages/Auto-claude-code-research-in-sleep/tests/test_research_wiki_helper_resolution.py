@@ -3,8 +3,8 @@
 
 Covers the bug that left a real user's research-wiki/ empty for a week:
 caller skills hard-coded `python3 tools/research_wiki.py`, which silently
-fails when <project>/tools/ is not on disk (the post-install_aris.sh
-default — install_aris.sh creates .aris/tools symlink, not tools/).
+fails when <project>/tools/ is not on disk (the normal state — an ARIS
+install places helpers under .aris/tools/, not tools/).
 
 The fix is a 3-layer resolution chain documented in
 skills/shared-references/wiki-helper-resolution.md. This test runs the
@@ -85,7 +85,7 @@ class ChainTest(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     # ------------------------------------------------------------------
-    # Layer 1: .aris/tools/ symlink (post-install_aris.sh default)
+    # Layer 1: .aris/tools/ (where the ARIS install places helpers)
     # ------------------------------------------------------------------
     def test_layer1_symlink(self):
         """Helper at .aris/tools/research_wiki.py -> <repo>/tools/."""

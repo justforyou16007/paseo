@@ -191,7 +191,6 @@ ARIS 在 `tools/` 下有一整套可复用工具。新增功能前检查是否�
 | `extract_paper_style.py`                                                                                    | 论文风格提取           |
 | `figure_renderer.py`                                                                                        | 图表渲染               |
 | `arxiv_fetch.py` / `deepxiv_fetch.py` / `semantic_scholar_fetch.py` / `exa_search.py` / `openalex_fetch.py` | 文献搜索               |
-| `analysis_tools.py`                                                                                         | 分析工具               |
 
 > **新功能检查**:在新增工具前,确认 `tools/` 中没有功能重叠的已有工具。
 
