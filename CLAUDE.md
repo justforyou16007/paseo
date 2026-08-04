@@ -40,6 +40,7 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 | [docs/expo-router.md](docs/expo-router.md)                         | Expo Router route ownership, startup restore, and native blank-screen gotchas                                                  |
 | [docs/file-icons.md](docs/file-icons.md)                           | Material icon theme integration for the file explorer                                                                          |
 | [docs/providers.md](docs/providers.md)                             | Adding a new agent provider end-to-end                                                                                         |
+| [docs/aris-auto-install.md](docs/aris-auto-install.md)             | ARIS skill auto-install: what it writes, when it runs, finding the checkout from a packaged daemon, in-session skill reload    |
 | [docs/custom-providers.md](docs/custom-providers.md)               | Custom provider config: Z.AI, Alibaba/Qwen, ACP agents, profiles, custom binaries                                              |
 | [docs/service-proxy.md](docs/service-proxy.md)                     | Service proxy: exposing workspace scripts at public URLs, DNS setup, reverse proxy config                                      |
 | [docs/development.md](docs/development.md)                         | Dev server, build sync gotchas, CLI reference, agent state, Playwright MCP                                                     |

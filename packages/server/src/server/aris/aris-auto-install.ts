@@ -1,8 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { access, cp, lstat, mkdir, readdir, rename, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Logger } from "pino";
+import { resolvePaseoHome } from "../paseo-home.js";
 
 const MANIFEST_VERSION = "1";
 const MANIFEST_NAME = "installed-skills.txt";
@@ -31,6 +33,12 @@ interface UpstreamEntry {
 }
 
 let _cachedArisRepoPath: string | null | undefined;
+let _warnedArisRepoNotFound = false;
+
+// Explicit overrides, highest priority first. `ARIS_REPO` is the name the ARIS
+// skills themselves already use to locate their helpers, so a project set up
+// for one is set up for the other.
+const ARIS_REPO_ENV_VARS = ["PASEO_ARIS_REPO", "ARIS_REPO"] as const;
 
 function isMonorepoRoot(packageJsonPath: string): boolean {
   try {
@@ -41,26 +49,79 @@ function isMonorepoRoot(packageJsonPath: string): boolean {
   }
 }
 
-function resolveArisRepoPath(): string | null {
-  if (_cachedArisRepoPath !== undefined) return _cachedArisRepoPath;
+function expandHomeDir(input: string): string {
+  if (input === "~") return os.homedir();
+  if (input.startsWith("~/")) return path.join(os.homedir(), input.slice(2));
+  return input;
+}
 
-  const thisModuleDir = path.dirname(fileURLToPath(import.meta.url));
-  let current = thisModuleDir;
+/** An ARIS checkout is anything with a `skills/` directory to copy from. */
+function isArisRepo(candidate: string): boolean {
+  return existsSync(path.join(candidate, "skills"));
+}
+
+function findMonorepoArisRepo(): string | null {
+  let current = path.dirname(fileURLToPath(import.meta.url));
 
   while (true) {
     const packageJsonPath = path.join(current, "package.json");
     if (existsSync(packageJsonPath) && isMonorepoRoot(packageJsonPath)) {
       const candidate = path.join(current, "packages", "Auto-claude-code-research-in-sleep");
-      _cachedArisRepoPath = existsSync(path.join(candidate, "skills")) ? candidate : null;
-      return _cachedArisRepoPath;
+      return isArisRepo(candidate) ? candidate : null;
     }
     const parent = path.dirname(current);
-    if (parent === current) break;
+    if (parent === current) return null;
     current = parent;
   }
+}
 
-  _cachedArisRepoPath = null;
+function findArisRepoPath(logger: Logger): string | null {
+  const tried: string[] = [];
+
+  for (const envVar of ARIS_REPO_ENV_VARS) {
+    const configured = process.env[envVar]?.trim();
+    if (!configured) continue;
+    const resolved = path.resolve(expandHomeDir(configured));
+    if (isArisRepo(resolved)) return resolved;
+    logger.warn(
+      { envVar, path: resolved },
+      "ARIS auto-install: configured ARIS path has no skills/ directory",
+    );
+    tried.push(`$${envVar}=${resolved}`);
+  }
+
+  // Only resolves when the daemon runs from the paseo source checkout. A
+  // packaged daemon — Electron, Docker, global npm install — has no monorepo
+  // above it, which is why the env vars and $PASEO_HOME/aris exist.
+  const monorepoArisRepo = findMonorepoArisRepo();
+  if (monorepoArisRepo) return monorepoArisRepo;
+  tried.push("<paseo checkout>/packages/Auto-claude-code-research-in-sleep");
+
+  const paseoHomeArisRepo = path.join(resolvePaseoHome(), "aris");
+  if (isArisRepo(paseoHomeArisRepo)) return paseoHomeArisRepo;
+  tried.push(paseoHomeArisRepo);
+
+  if (!_warnedArisRepoNotFound) {
+    _warnedArisRepoNotFound = true;
+    logger.warn(
+      { tried },
+      "ARIS auto-install: no ARIS checkout found, skills will not be installed into projects. " +
+        "Set $PASEO_ARIS_REPO to an ARIS checkout, or clone one into $PASEO_HOME/aris.",
+    );
+  }
   return null;
+}
+
+function resolveArisRepoPath(logger: Logger): string | null {
+  // Revalidate before reusing: a checkout that was moved or deleted must not
+  // silently disable installs until the daemon restarts. Only a positive result
+  // is cached, so a daemon that starts before ARIS is on disk picks it up on the
+  // next project add.
+  if (_cachedArisRepoPath && isArisRepo(_cachedArisRepoPath)) return _cachedArisRepoPath;
+  _cachedArisRepoPath = undefined;
+  const found = findArisRepoPath(logger);
+  if (found) _cachedArisRepoPath = found;
+  return found;
 }
 
 async function isSymlink(p: string): Promise<boolean> {
@@ -216,9 +277,8 @@ export async function ensureArisSkillsInstalled(
   const { cwd, logger } = options;
 
   try {
-    const arisRepo = resolveArisRepoPath();
+    const arisRepo = resolveArisRepoPath(logger);
     if (!arisRepo) {
-      logger.debug("ARIS auto-install: ARIS source not found, skipping");
       return { installed: false, skippedReason: "aris_source_not_found" };
     }
 
