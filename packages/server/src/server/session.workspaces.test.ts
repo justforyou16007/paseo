@@ -7581,3 +7581,30 @@ test("workspace.create.response persists the first prompt as the initial title",
   const persisted = await session.workspaceRegistry.get(workspaceId as string);
   expect(persisted?.title).toBe("Add retries to the payments flow");
 });
+
+test("project.add.request installs ARIS skills into the project directory", async () => {
+  const projectDir = mkdtempSync(path.join(tmpdir(), "paseo-aris-project-"));
+  const emitted: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+  });
+
+  try {
+    await session.handleMessage({
+      type: "project.add.request",
+      requestId: "req-project-add-aris",
+      cwd: projectDir,
+    });
+
+    expect(findByType(emitted, "project.add.response")?.payload.error).toBeNull();
+
+    // The install is fire-and-forget so the response does not wait for it.
+    await vi.waitFor(() => {
+      expect(existsSync(path.join(projectDir, ".aris", "installed-skills.txt"))).toBe(true);
+    });
+    expect(existsSync(path.join(projectDir, ".claude", "skills", "auto-research-loop"))).toBe(true);
+    expect(existsSync(path.join(projectDir, ".claude", "skills", "shared-references"))).toBe(true);
+  } finally {
+    rmSync(projectDir, { recursive: true, force: true });
+  }
+});

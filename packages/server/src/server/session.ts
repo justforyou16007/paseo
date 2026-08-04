@@ -4693,6 +4693,7 @@ export class Session {
         projectsBefore.set(project.projectId, project);
       }
       const project = await this.workspaceProvisioning.findOrCreateProjectForDirectory(cwd);
+      this.backgroundInstallArisSkills(cwd);
       this.sessionLogger.info(
         {
           requestedCwd,
