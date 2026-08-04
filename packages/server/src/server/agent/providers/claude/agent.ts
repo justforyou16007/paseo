@@ -2416,6 +2416,21 @@ class ClaudeAgentSession implements AgentSession {
     return Array.from(commandMap.values()).sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  /**
+   * Re-scan skill directories on the live query. Skills that Paseo installs
+   * into `.claude/skills/` after the session started (ARIS auto-install on
+   * project add) are otherwise invisible until the user types
+   * `/reload-skills`. With no live query there is nothing to refresh — the
+   * next `ensureQuery()` reads whatever is on disk at that point.
+   */
+  async reloadSkills(): Promise<void> {
+    const activeQuery = this.query;
+    if (!activeQuery) {
+      return;
+    }
+    await activeQuery.reloadSkills();
+  }
+
   async revertConversation(input: { messageId: string }): Promise<void> {
     const target = this.resolveConversationRewindTarget(input.messageId);
     if (target.kind === "fresh-session") {

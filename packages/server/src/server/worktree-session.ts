@@ -110,6 +110,12 @@ interface CreatePaseoWorktreeInBackgroundDependencies {
   getDaemonTcpHost: (() => string | null) | null;
   serviceProxyPublicBaseUrl?: string | null;
   onScriptsChanged: ((workspaceId: string, workspaceDirectory: string) => void) | null;
+  /**
+   * Re-scan skill directories for live agents under a directory. Called after
+   * the ARIS skill copy finishes so an agent that booted mid-copy is not stuck
+   * with a partial skill list until the user types `/reload-skills`.
+   */
+  reloadAgentSkillsForDirectory?: (cwd: string) => Promise<number>;
 }
 
 interface CreatePaseoWorktreeWorkflowDependencies extends CreatePaseoWorktreeInBackgroundDependencies {
@@ -608,12 +614,22 @@ export async function createPaseoWorktreeWorkflow(
         "Failed to warm workspace git data after creating worktree",
       );
     });
-    void ensureArisSkillsInstalled({
-      cwd: createdWorktree.worktree.worktreePath,
-      logger: dependencies.sessionLogger,
-    }).catch((error) => {
+    const arisInstallCwd = createdWorktree.worktree.worktreePath;
+    void (async () => {
+      const result = await ensureArisSkillsInstalled({
+        cwd: arisInstallCwd,
+        logger: dependencies.sessionLogger,
+      });
+      if (!result.installed || !dependencies.reloadAgentSkillsForDirectory) {
+        return;
+      }
+      // The worktree's first agent boots while this copy is still running, so
+      // its session can scan a partial `.claude/skills`. Refresh it now that
+      // the copy is complete.
+      await dependencies.reloadAgentSkillsForDirectory(arisInstallCwd);
+    })().catch((error) => {
       dependencies.sessionLogger.warn(
-        { err: error, cwd: createdWorktree.worktree.worktreePath },
+        { err: error, cwd: arisInstallCwd },
         "Background ARIS skill install failed for worktree",
       );
     });

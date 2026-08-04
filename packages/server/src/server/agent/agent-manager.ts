@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 import { stat } from "node:fs/promises";
 import {
   AGENT_LIFECYCLE_STATUSES,
@@ -399,6 +399,17 @@ function isAgentBusy(status: AgentLifecycleStatus): boolean {
   return BUSY_STATUSES.has(status);
 }
 
+/** True when `candidate` is `root` itself or lives somewhere beneath it. */
+function isPathAtOrUnder(candidate: string, root: string): boolean {
+  const resolvedCandidate = resolve(candidate);
+  const resolvedRoot = resolve(root);
+  if (resolvedCandidate === resolvedRoot) {
+    return true;
+  }
+  const prefix = resolvedRoot.endsWith(sep) ? resolvedRoot : `${resolvedRoot}${sep}`;
+  return resolvedCandidate.startsWith(prefix);
+}
+
 function isTurnTerminalEvent(event: AgentStreamEvent): boolean {
   return (
     event.type === "turn_completed" ||
@@ -737,6 +748,35 @@ export class AgentManager {
     return Array.from(this.agents.values())
       .filter((agent) => !agent.internal)
       .map((agent) => Object.assign({}, agent));
+  }
+
+  /**
+   * Re-scan skill directories for every live agent running at or under `cwd`.
+   * Paseo installs ARIS skills into a project directory after agents may
+   * already be running there; without this the user has to type
+   * `/reload-skills` by hand before the new skills exist for the session.
+   * Providers that cannot reload in place are skipped. Returns the number of
+   * agents that reloaded successfully.
+   */
+  async reloadSkillsForDirectory(cwd: string): Promise<number> {
+    const targets = Array.from(this.agents.values()).filter(
+      (agent) => !!agent.session.reloadSkills && isPathAtOrUnder(agent.cwd, cwd),
+    );
+    const outcomes = await Promise.all(
+      targets.map(async (agent) => {
+        try {
+          await agent.session.reloadSkills!();
+          return true;
+        } catch (error) {
+          this.logger.warn(
+            { err: error, agentId: agent.id, cwd: agent.cwd },
+            "Failed to reload skills for agent",
+          );
+          return false;
+        }
+      }),
+    );
+    return outcomes.filter(Boolean).length;
   }
 
   async listImportableSessions(
