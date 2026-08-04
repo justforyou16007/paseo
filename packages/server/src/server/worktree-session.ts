@@ -47,6 +47,7 @@ import {
   createPaseoWorktreeCommand,
   listPaseoWorktreesCommand,
 } from "./worktree/commands.js";
+import { ensureArisSkillsInstalled } from "./aris/aris-auto-install.js";
 
 const SAFE_GIT_REF_PATTERN = /^[A-Za-z0-9._/-]+$/;
 
@@ -605,6 +606,15 @@ export async function createPaseoWorktreeWorkflow(
       dependencies.sessionLogger.warn(
         { err: error, workspaceId: workspace.workspaceId },
         "Failed to warm workspace git data after creating worktree",
+      );
+    });
+    void ensureArisSkillsInstalled({
+      cwd: createdWorktree.worktree.worktreePath,
+      logger: dependencies.sessionLogger,
+    }).catch((error) => {
+      dependencies.sessionLogger.warn(
+        { err: error, cwd: createdWorktree.worktree.worktreePath },
+        "Background ARIS skill install failed for worktree",
       );
     });
     if (setupContinuation.kind === "workspace") {

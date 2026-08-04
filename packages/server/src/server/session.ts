@@ -219,6 +219,7 @@ import {
 import { type WorktreeConfig, createWorktree } from "../utils/worktree.js";
 import { runGitCommand } from "../utils/run-git-command.js";
 import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dispatch.js";
+import { ensureArisSkillsInstalled } from "./aris/aris-auto-install.js";
 
 // TODO: Remove once all app store clients are on >=0.1.45 and understand arbitrary provider strings.
 // Clients before 0.1.45 validate providers with z.enum(["claude", "codex", "opencode"]) and reject
@@ -2492,6 +2493,9 @@ export class Session {
       );
       createdAgentId = snapshot.id;
       await this.agentUpdates.forwardLiveAgent(snapshot);
+      if (createdDirectoryWorkspaceForAgent) {
+        this.backgroundInstallArisSkills(createAgentConfig.cwd);
+      }
       if (createdDirectoryWorkspaceForAgent && trimmedPrompt) {
         this.workspaceAutoName.scheduleForDirectory(
           {
@@ -4415,6 +4419,12 @@ export class Session {
     }
   }
 
+  private backgroundInstallArisSkills(cwd: string): void {
+    void ensureArisSkillsInstalled({ cwd, logger: this.sessionLogger }).catch((error) => {
+      this.sessionLogger.warn({ err: error, cwd }, "Background ARIS skill install failed");
+    });
+  }
+
   private async handleWorkspaceCreateLocal(
     request: Extract<SessionInboundMessage, { type: "workspace.create.request" }>,
   ): Promise<void> {
@@ -4460,6 +4470,7 @@ export class Session {
       },
     });
     await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
+    this.backgroundInstallArisSkills(workspace.cwd);
     void this.workspaceGitService
       .getSnapshot(workspace.cwd, { force: true, includeGitHub: true, reason: "open_project" })
       .catch((error) => {
@@ -4600,6 +4611,7 @@ export class Session {
       await this.syncWorkspaceGitObserverForWorkspace(workspace);
       const descriptor = await this.describeWorkspaceRecord(workspace);
       await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
+      this.backgroundInstallArisSkills(workspace.cwd);
       this.sessionLogger.info(
         {
           requestedCwd,
