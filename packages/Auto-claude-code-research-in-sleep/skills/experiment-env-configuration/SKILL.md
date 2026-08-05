@@ -2,7 +2,7 @@
 name: experiment-env-configuration
 description: 'Interactively configure a project''s experiment environment ONCE, then freeze the whole prepare → run → feedback loop into a reusable project-local skill at `.claude/skills/run-<project>-experiment/`. Covers experiment-file placement (local/remote), dependency environment, the run command/CLI, and the three feedback channels (error, result, analysis). The frozen configuration is cross-model audited by /experiment-audit before the skill is created. Every step becomes a script or CLI so the second and later runs are fully automatic with no re-configuration. Use when user says "configure experiment environment", "实验环境配置", "set up how experiments run", or when a baseline reproduction finishes and the flow must be made replayable.'
 argument-hint: "[— project: <name>] [— reconfigure] [— reviewer: codex|oracle-pro|manual]"
-allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, AskUserQuestion, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__wait_for_agent, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission
+allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, AskUserQuestion, WebSearch, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__wait_for_agent, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission
 ---
 
 > **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in
@@ -323,13 +323,39 @@ the process exits; it is done when all three channels have been read.
 - `"Missing result file"` — "Success is defined by the result artifact existing."
 - `"Scheduler status"` — "squeue/kubectl reports FAILED."
 
-Record `feedback.error = { signal, log_path, failure_patterns[] }`. Default
-`failure_patterns`: `Traceback`, `CUDA out of memory`, `Killed`, `AssertionError`,
-`RuntimeError`, `No such file`.
+**Q2** — header: "任务类型", question: "这个项目主要执行什么类型的实验任务？（如：PyTorch 训练、分布式 DDP、强化学习、数据预处理、推理评估、自定义流程等）"
 
-`collect.sh` greps these and surfaces matching lines. A silent failure that looks
-identical to "still running" is the worst outcome — the pattern list must cover
-crashes, not only the happy path.
+Free text answer. Record as `feedback.error.task_type`.
+
+**Q3** — header: "错误收集", question:
+"对于这类任务，你认为哪些错误信息和日志内容需要重点收集？（如：loss nan、梯度爆炸、NCCL 超时、特定框架的错误格式等。可以留空，skill 会自动搜索补充）"
+
+Free text answer. Parse into `feedback.error.user_patterns[]`.
+
+**Web search.** Use `WebSearch` to find common error patterns and log collection
+best practices for the stated task type:
+
+- Query 1: `"<task_type> common errors failure modes log patterns"`
+- Query 2: `"<task_type> <framework if mentioned> debugging error collection best practices"`
+
+Parse search results to extract error patterns, log signatures, and collection
+recommendations. Record as `feedback.error.web_patterns[]`.
+
+**Merge.** Take the union of `user_patterns[]` and `web_patterns[]`:
+- Deduplicate by semantic overlap (e.g. "OOM" and "CUDA out of memory" → keep both)
+- Present the merged list to the user:
+
+**Q4** — header: "确认收集列表", question:
+"以下是合并后的错误收集列表（来自你的输入 + 互联网搜索）：\n<merged list>\n\n需要增减吗？"
+
+Free text answer. User can add/remove items, or confirm as-is.
+
+Record the final confirmed list as `feedback.error.failure_patterns[]`.
+
+`collect.sh` greps these patterns and surfaces matching lines. `analyze.sh`
+Stage 1 uses the same list for comprehensive error log collection. A silent
+failure that looks identical to "still running" is the worst outcome — the
+pattern list should be as comprehensive as possible for the specific task type.
 
 ### 4b. Result feedback — what did the run measure?
 
@@ -421,7 +447,16 @@ after Phase 5.5's audit passes.
   },
   "run": { "entry_point": "...", "arg_style": "...", "launch_mode": "...", "gpu_selection": "...", "template": "..." },
   "feedback": {
-    "error": { "signal": "...", "log_path": "...", "failure_patterns": ["..."] },
+    "error": {
+      "signal": "...",
+      "log_path": "...",
+      "task_type": "<user's task type description>",
+      "user_patterns": ["<from user Q3>"],
+      "web_patterns": ["<from web search>"],
+      "failure_patterns": ["<merged and confirmed final list from Q4>"],
+      "collect_full_traces": true,
+      "context_lines": 5
+    },
     "result": { "path_template": "...", "format": "...", "primary_metric_key": "...", "extra_keys": ["..."] },
     "analysis": { "mode": "...", "logic": "...", "script_path": "...", "output_path": "..." }
   },
@@ -480,6 +515,9 @@ verdict line: `RESULT ok <primary_metric>=<value>` or `RESULT failed <first matc
   "analysis_path": "...",
   "failure_reason": null,
   "failure_patterns_matched": [],
+  "error_report": "<output_dir>/error_report.md",
+  "error_count": 0,
+  "error_types": [],
   "gpu_usage": { "memory_used_mib": 0, "utilization_pct": 0 },
   "wandb": null,
   "handle": "handles/<exp>.json",
@@ -492,9 +530,34 @@ This receipt replaces multiple formerly separate data sources: env-helper
 monitor output, SSH W&B queries, CLAUDE.md parsing, and hardcoded error
 patterns — all in one file that downstream skills can read directly.
 
-**`analyze.sh`** — per `feedback.analysis.mode`: dispatch the ARIS skill, call
-the project script, or run the generated analysis; write to
+**`analyze.sh`** — two-stage output:
+
+**Stage 1: Comprehensive error log collection.** Scan ALL log files for the
+error patterns in `feedback.error.failure_patterns[]` (the merged list from
+user input + web search, confirmed in Phase 4a Q4). Collect:
+- Full stack traces (from error marker through the final error line)
+- Surrounding context (5 lines before and after each match)
+- Log file path and line number for each error
+- Deduplicated error summary (same root cause collapsed)
+
+Write to `<output_dir>/error_report.md`:
+```
+## Error Report — <exp_name>
+### Errors Found: <count>
+#### Error 1: <error type> at <log_file>:<line>
+<context + full trace>
+### Summary
+- Total errors: <n>
+- Unique error types: <n>
+- Most frequent: <type> (<count> occurrences)
+```
+
+**Stage 2: Result analysis.** Per `feedback.analysis.mode`: dispatch the ARIS
+skill, call the project script, or run the generated analysis; write to
 `feedback.analysis.output_path`.
+
+Stage 1 always runs. A run with zero errors produces an error_report.md
+confirming "0 errors found".
 
 **`monitor.sh <exp_name>`** — check status of a running experiment. Reads the
 handle from `handles/<exp_name>.json`, queries the backend (screen session /
