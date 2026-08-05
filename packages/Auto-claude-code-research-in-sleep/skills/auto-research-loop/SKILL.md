@@ -20,7 +20,7 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent,
 > | Append the log line assembled from receipt fields | Compose the log's analytical content |
 
 > **The 10 phases per iteration, in order:**
-> 1. baseline reproduction (`/experiment-bridge`), then freeze the environment into a reusable project skill (`/experiment-env-configuration`)
+> 1. baseline reproduction (`/experiment-bridge`), then check if the experiment environment is configured (`.claude/skills/run-<project>-experiment/env.json` with `status == "complete"`); warn the user to run `/experiment-env-configuration` manually if not
 > 2. auto-review baseline (`/research-review` of the baseline)
 > 3. identify baseline problems (reviewer-issued, **recorded as gaps** in `research-wiki/gap_map.md`)
 > 4. run experiments to prove/disprove the gaps (`/run-experiment` or `/experiment-queue` for multi-seed)
@@ -57,7 +57,7 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent,
 3. **`refine-logs/EXPERIMENT_RESULTS.md`** — existing experiment results.
 4. **`refine-logs/EXPERIMENT_TRACKER.md`** — current experiment status.
 5. **`research-wiki/index.md`** and `research-wiki/graph/edges.jsonl` — canonical state of ideas/claims/experiments/edges.
-6. **`.aris/setup-state.json`** — the project's `research-setup` answers (e.g. `gpu_type`, `paseo_configured`). Note: `gpu_type` is now transcribed from `.aris/experiment-env.json` by `/research-setup` Phase 7.5 rather than from the setup wizard's own type question; the read contract here is unchanged — this skill still reads `gpu_type` from `setup-state.json`.
+6. **`.aris/setup-state.json`** — the project's `research-setup` answers (e.g. `gpu_type`, `paseo_configured`). Note: `gpu_type` is transcribed from the generated experiment skill's `info.sh` output by `/research-setup` Phase 7.5; the read contract here is unchanged — this skill reads `gpu_type` from `setup-state.json`.
 7. **`.aris/runs/<run_id>.json`** — the orchestrator's per-phase run-state (read `phase=research-iteration` row).
 
 If `CLAUDE.md` is missing the `## Metric Target` block, abort with: `ERROR: auto-research-loop requires `## Metric Target` in CLAUDE.md. Add a `primary: <number> <unit>` line under that header.`
@@ -93,7 +93,7 @@ This is a table lookup on `ITERATION`, not a judgment. The parent selects the ro
 
 | iteration | Round type | What Step 3 + Step 4 dispatch |
 |---|---|---|
-| 1 (1-indexed) | baseline reproduction + environment freeze | Step 3 dispatches `/experiment-bridge refine-logs/EXPERIMENT_PLAN.md`, then `/experiment-env-configuration — non-interactive` to freeze the verified environment into `.claude/skills/run-<project>-experiment/`. Step 4 records the experiments to research-wiki. |
+| 1 (1-indexed) | baseline reproduction + environment freeze | Step 3 dispatches `/experiment-bridge refine-logs/EXPERIMENT_PLAN.md`, then checks whether `.claude/skills/run-<project>-experiment/env.json` exists with `status == "complete"`. If yes: the experiment environment is already configured — use it. If no: log a warning that the experiment environment is not configured and note that the user should run `/experiment-env-configuration` manually. Step 4 records the experiments to research-wiki. |
 | 2 | baseline review + kill-argument attack | Step 3 dispatches `/kill-argument — gap-output: research-wiki/gap_map.md` on the baseline results to find problems and record them as gaps, then `/research-review` on the generated plan. Step 4 records the claims. |
 | 3+ | hypothesis → experiment → review loop | Step 3 dispatches `/kill-argument — gap-output: research-wiki/gap_map.md` on the previous round's results, then `/research-review` for convergence → `/experiment-bridge` runs the plan. Step 4 records + re-judges. |
 
@@ -147,45 +147,35 @@ The parent reads this receipt (file-paths-only), then:
 1. If `overall_verdict == "PASS"` (defense survives — no `still_unresolved`): no gaps to address, skip to Step 5 (stop evaluation). This is a natural convergence signal.
 2. Otherwise: dispatch `/research-review` on `plan_path` for convergence checking, then `/experiment-bridge "<plan_path>"` to run the diagnostic experiments.
 
-**Step 3b — Freeze the experiment environment** (iteration 1 only)
+**Step 3b — Check the experiment environment** (iteration 1 only)
 
-Immediately after baseline reproduction succeeds — and only then, because a
-verified baseline is the proof that the environment actually works — dispatch
-`/experiment-env-configuration — non-interactive` as a paseo claude sub-agent.
+Immediately after baseline reproduction succeeds, check whether the experiment
+environment has already been configured by `/experiment-env-configuration`:
 
-That skill records the whole prepare → run → feedback loop as a reusable
-project-local skill at `.claude/skills/run-<project>-experiment/`:
+```bash
+PROJECT_NAME=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
+ENV_JSON=".claude/skills/run-${PROJECT_NAME}-experiment/env.json"
 
-- **preparation** — where experiment code must live (local or a remote path) and
-  how it gets there; which dependency environment runs it and the command that
-  proves the environment is usable
-- **run** — the single command/CLI that launches one experiment
-- **feedback** — the error channel (how a failure is detected and where the log
-  is), the result channel (which file holds the metrics and which key is primary),
-  and the analysis channel (which skill or script interprets them, and where the
-  artifact lands)
+if [ -f "$ENV_JSON" ]; then
+  STATUS=$(grep -oE '"status": *"[^"]+"' "$ENV_JSON" | head -1 | grep -oE '"[^"]+"$' | tr -d '"')
+  if [ "$STATUS" = "complete" ]; then
+    echo "Experiment environment already configured: $ENV_JSON"
+  else
+    echo "WARNING: Experiment environment exists but status=$STATUS (not complete)."
+    echo "Run /experiment-env-configuration manually to complete the setup."
+  fi
+else
+  echo "WARNING: Experiment environment is not configured."
+  echo "  Missing: $ENV_JSON"
+  echo "  Run /experiment-env-configuration manually to configure the experiment environment."
+  echo "  The skill requires user interaction and cannot be auto-configured."
+fi
+```
 
-It is **idempotent**: if `.claude/skills/run-<project>-experiment/SKILL.md` already
-exists it verifies and returns `already_configured` without re-asking anything.
-So iterations 2..N cost nothing here, and every later stage runs
-`/run-<project>-experiment <exp_name>` instead of re-deriving how this project's
-experiments work. That re-derivation — rediscovering the conda hook, the sync
-path, the metric key — is the single largest source of wasted rounds in a long
-loop.
-
-Receipt: `.aris/runs/<run_id>.research-iteration.iter-1.env-config.done.json` with
-`{ "status": "complete|already_configured|incomplete|audit_failed", "skill_dir": "<path>", "missing_keys": [...], "audit_verdict": "<pass|warn|fail|null>" }`.
-On `incomplete`, log the missing keys and continue the loop with the built-in
-backend — do not block the research loop on environment polish.
-On `audit_failed`, the configuration was plausible but the cross-model reviewer
-flagged trustworthiness issues (see `ENV_CONFIG_AUDIT.md` in the audit dir).
-Continue the loop with the built-in backend; a future `/experiment-env-configuration
-— reconfigure` or manual fix + re-audit is the resolution path. The research loop
-never blocks on an audit failure — it still works, it just loses the convenience
-of the frozen skill for this iteration.
-
-The audit can be re-run independently to check if the environment has recovered:
-`/experiment-env-audit — project: <project> — target: promoted`
+If the environment is configured (`status == "complete"`), the frozen skill at
+`.claude/skills/run-<project>-experiment/` is used by later stages. If not,
+the loop continues with the built-in backend — the research loop never blocks
+on environment configuration.
 
 All sub-skill dispatches follow `shared-references/paseo-subagent-dispatch.md` Rule 1 (one agent = one skill) and Rule 4 (no in-process `Skill` fallbacks):
 
@@ -404,7 +394,7 @@ When `MAX_ITERATIONS = 0` (today's default), the stage is `skipped` and the pipe
 10. **Helper resolution** — every helper (`research-wiki.js`, `iteration-log.js`, `run-state.js`, `save_trace.sh`) resolved via the canonical chain from `shared-references/integration-contract.md` §2: `.aris/dist/tools/<helper>` → `dist/tools/<helper>` → `$ARIS_REPO/dist/tools/<helper>`. Variant A (hard-fail) for the wiki itself; Variant B (warn-and-skip) for callers of optional helpers.
 11. **The parent schedules; sub-agents work.** The parent agent's permitted actions are exhaustively: dispatch (`create_agent`), wait (`wait_for_agent` / `notifyOnFinish`), read a receipt JSON, run a canonical helper with receipt values **transcribed verbatim**, evaluate the Type-A numeric arithmetic, and archive a finished child. Anything requiring a judgment or a sentence of original prose — deciding what the problems are, writing an experiment plan, summarizing results, deciding a claim holds, composing the log's analytical content — is a sub-agent's job and MUST be dispatched. Concretely: Step 3a's gap identification and plan authoring is `/kill-argument` (one skill, one agent); Step 4's claim verdicts are `/result-to-claim` codex sub-agents; Step 5's assessment is the fresh codex reviewer. If the parent finds itself about to read an experiment log or write an original sentence, it is violating this rule — dispatch instead. The reason is not tidiness: a parent that forms its own opinion becomes a second, unaudited reviewer whose reasoning never appears in any receipt or trace, which defeats the cross-model acquittal design in Rules 2–4 and 7.
 12. **Gaps for open questions, claims for evidenced assertions.** A kill-argument's `still_unresolved` entries are unanswered by construction, so they are recorded as **gaps** in `research-wiki/gap_map.md` — never as claims. Claims arrive later, from `/result-to-claim`, with `--addresses G<n>` pointing back at the gap the experiment closed. Recording an unresolved problem as a claim asserts something no experiment has shown and pollutes the claim graph with unfalsified statements.
-13. **Environment configured once, replayed forever.** Iteration 1 dispatches `/experiment-env-configuration — non-interactive` after the baseline reproduces, freezing preparation/run/feedback into `.claude/skills/run-<project>-experiment/`. It is idempotent, so iterations 2..N are free. Later stages invoke the generated skill; they do not re-derive the sync path, conda hook, or metric key. That skill gates its own output on a cross-model `/experiment-audit` verdict (its Phase 5.5), so a frozen environment that exists has been reviewed by a different model family — the loop inherits that guarantee without doing anything. If it returns `incomplete` or `audit_failed`, log the reason and continue with the built-in backend — the research loop never blocks on environment polish, and it never overrides the audit's refusal either.
+13. **Environment configured once, replayed forever.** Iteration 1 checks whether `.claude/skills/run-<project>-experiment/env.json` exists with `status == "complete"` after the baseline reproduces. If the environment is already configured, the frozen preparation/run/feedback skill is used by all subsequent stages. If not configured, a warning is logged noting that the user should run `/experiment-env-configuration` manually — the skill requires user interaction and cannot be auto-configured. Later stages invoke the generated skill when available; they do not re-derive the sync path, conda hook, or metric key. That skill gates its own output on a cross-model `/experiment-audit` verdict (its Phase 5.5), so a frozen environment that exists has been reviewed by a different model family — the loop inherits that guarantee without doing anything. If the environment is not configured, the loop continues with the built-in backend — the research loop never blocks on environment configuration.
 
 ## External dependencies (reused, not modified)
 
@@ -415,7 +405,7 @@ When `MAX_ITERATIONS = 0` (today's default), the stage is `skipped` and the pipe
 - `src/lib/cli.ts` / `src/lib/run.ts` — `createCli` / `runCli` / `run` (the `run` helper swallows non-zero exit; check `exitCode` in the caller).
 - `skills/result-to-claim/SKILL.md` — dispatched as a sub-agent for every claim judgement. 5-step contract: collect evidence → deterministic pre-check → codex judgment → integrity attach → route.
 - `skills/kill-argument/SKILL.md` — dispatched in Step 3a (iteration ≥ 2) with `— gap-output` and `— plan-output` to find baseline problems, record them as gaps, and produce the diagnostic experiment plan. One skill, one agent — no separate gap-drafting intermediary.
-- `skills/experiment-env-configuration/SKILL.md` — dispatched once in iteration 1 (`— non-interactive`) to freeze prepare/run/feedback into `.claude/skills/run-<project>-experiment/`. Idempotent; returns `already_configured` on later rounds.
+- `skills/experiment-env-configuration/SKILL.md` — iteration 1 checks for its output (`.claude/skills/run-<project>-experiment/env.json` with `status == "complete"`) rather than dispatching it automatically. The skill requires user interaction; if the environment is not configured, a warning is logged and the user is told to run `/experiment-env-configuration` manually.
 - `skills/run-experiment/SKILL.md` — dispatched for baseline + idea experiment runs.
 - `skills/experiment-queue/SKILL.md` — dispatched for multi-seed / multi-config batches.
 - `skills/research-review/SKILL.md` — dispatched for baseline review + cross-model judgment on each iteration.

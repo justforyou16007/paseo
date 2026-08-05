@@ -13,75 +13,45 @@ Deploy and run ML experiment: $ARGUMENTS
 
 ## Workflow
 
-> **Environment control is delegated to the `experiment-env` helper** (`tools/experiment-env/env-helper.js`). Resolve it once via the Layer 0-3 chain, then every step calls a subcommand. The agent reads `CLAUDE.md` (or `AGENTS.md` in codex mode) and translates the env section into a candidate JSON; `env-helper.js parse` validates + writes `.aris/experiment-env.json`. See `tools/experiment-env/README.md` for the translation guide.
+> **Environment control is delegated to the generated experiment skill's atomic scripts** (`.claude/skills/run-<project>-experiment/scripts/`). The agent uses `info.sh`, `prepare.sh`, `run.sh`, `collect.sh`, and `monitor.sh` -- no direct reads of `.aris/experiment-env.json`.
 
 ```bash
-# --- resolve experiment-env helper (multi-owner, Layer 2 canonical) ---
-ENV_HELPER=""
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
-fi
-ENV_HELPER=".aris/dist/tools/experiment-env/env-helper.js"
-[ -f "$ENV_HELPER" ] || ENV_HELPER="dist/tools/experiment-env/env-helper.js"
-[ -f "$ENV_HELPER" ] || { [ -n "${ARIS_REPO:-}" ] && ENV_HELPER="$ARIS_REPO/dist/tools/experiment-env/env-helper.js"; }
-[ -f "$ENV_HELPER" ] || ENV_HELPER=""
-[ -z "$ENV_HELPER" ] && { echo "ERROR: experiment-env helper not found (Layer 1-3)" >&2; exit 1; }
-ENV_CONFIG=".aris/experiment-env.json"
-```
-
-### Step 1: Parse Environment Config
-
-**Priority path: use the generated experiment skill when available.**
-
-```bash
+# --- resolve the project-level experiment skill ---
 PROJECT=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')
 SKILL_DIR=".claude/skills/run-${PROJECT}-experiment"
-if [ -d "$SKILL_DIR/scripts" ] && jq -e '.status == "complete"' "$SKILL_DIR/env.json" >/dev/null 2>&1; then
-  # Use the atomic interface — skip all CLAUDE.md parsing and env-helper.js
-  sh "$SKILL_DIR/scripts/prepare.sh"
-  sh "$SKILL_DIR/scripts/run.sh" "$EXP_NAME" --args "$ARGS"
-  # Continue to Step 5 (Verify Launch) using monitor.sh
-fi
+[ -d "$SKILL_DIR/scripts" ] || { echo "ERROR: experiment skill not found at $SKILL_DIR. Run /experiment-env-configuration first." >&2; exit 1; }
 ```
 
-When the skill exists and `env.json.status == "complete"`, use its scripts
-directly. **Fall back to the legacy path below** only when the skill is absent
-(backward compatibility for unconfigured projects).
+### Step 1: Read Environment Config
 
-If `prepare.sh` fails, the environment may have changed since configuration.
-Suggest running an environment audit:
-`/experiment-env-audit — project: <project> — target: promoted`
-
-Read the project's `CLAUDE.md` (or `AGENTS.md` if no `CLAUDE.md`), find the `## Remote Server` / `## Vast.ai` / `## Modal` / `## Local Environment` / `## Experiment Environment` section, and translate it into a **canonical candidate JSON** (field names: `env_type`, `ssh_alias`, `conda_hook`, `conda_env`, `code_dir`, `code_sync`, `instance_id`, `auto_destroy`, `image`, `modal_gpu`, `modal_timeout`, `modal_volume`, `modal_app_file`, `modal_secrets`, ... -- see `tools/experiment-env/README.md` for the alias→canonical table). Then validate + write it:
+Read the environment configuration from the generated experiment skill:
 
 ```bash
-echo '<candidate-json>' | node "$ENV_HELPER" parse --json - --source CLAUDE.md
-# reads env_type + fields from $ENV_CONFIG thereafter
+sh "$SKILL_DIR/scripts/info.sh" | jq '.'
 ```
+
+This returns the env type, backend, connection details, and all configured fields.
+If `info.sh` fails, the environment may have changed since configuration.
+Suggest running an environment audit:
+`/experiment-env-audit — project: <project> — target: promoted`
 
 The four env types map to: `gpu: local` → local, `gpu: remote` → remote, `gpu: vast` → vast (reuse `instance_id` if a running instance exists in `vast-instances.json`, else fresh rental in Step 4), `gpu: modal` → modal (serverless, no SSH/screen).
 
 ### Step 2: Pre-flight Check
 
 ```bash
-node "$ENV_HELPER" preflight --env-config "$ENV_CONFIG" --dry-run   # inspect first
-node "$ENV_HELPER" preflight --env-config "$ENV_CONFIG"            # actually run
+sh "$SKILL_DIR/scripts/prepare.sh"
 ```
 
-Returns `{ok, checks[], gpu_free_mib, ...}`. Free GPU = `memory.used < 500 MiB`. Pick a free GPU index from `gpu_free_mib` for Step 4. Modal skips GPU preflight (it manages allocation automatically).
+Runs pre-flight checks and environment preparation. Free GPU = `memory.used < 500 MiB`. Pick a free GPU index for Step 4. Modal skips GPU preflight (it manages allocation automatically).
 
 ### Step 3: Sync Code
 
-```bash
-node "$ENV_HELPER" sync --env-config "$ENV_CONFIG" --src ./src --dry-run
-node "$ENV_HELPER" sync --env-config "$ENV_CONFIG" --src ./src
-```
-
-Honors `code_sync` from config (`rsync` default, or `git` push/pull). Vast always rsyncs to `/workspace/project/`. Modal mounts local code at run time (no pre-sync). Only necessary files are synced — never data/checkpoints.
+Code sync is handled by `prepare.sh` (Step 2). Honors `code_sync` from config (`rsync` default, or `git` push/pull). Vast always rsyncs to `/workspace/project/`. Modal mounts local code at run time (no pre-sync). Only necessary files are synced — never data/checkpoints.
 
 ### Step 3.5: W&B Integration (when `wandb: true` in CLAUDE.md)
 
-**Skip this step entirely if `wandb` is not set or is `false` in CLAUDE.md.** (The `wandb` / `wandb_project` / `wandb_entity` fields are read from `$ENV_CONFIG` by the backend.)
+**Skip this step entirely if `wandb` is not set or is `false` in CLAUDE.md.** (The `wandb` / `wandb_project` / `wandb_entity` fields are read from the generated experiment skill's `env.json`.)
 
 Before deploying, ensure the experiment scripts have W&B logging:
 
@@ -122,17 +92,10 @@ Before deploying, ensure the experiment scripts have W&B logging:
 
 ### Step 4: Deploy
 
-Provision the environment first (vast: rent/reuse instance; remote/local/modal: verify), then launch the job. Build a `run_spec` JSON (`{script, args, gpu_id, exp_name, log_file, env_vars?}`) and deploy:
+Launch the job via the generated experiment skill:
 
 ```bash
-# Provision (vast: rent or reuse instance_id; remote/modal/local: verify connectivity)
-node "$ENV_HELPER" provision --env-config "$ENV_CONFIG" --dry-run
-node "$ENV_HELPER" provision --env-config "$ENV_CONFIG"
-
-# Deploy one job
-echo '<run_spec-json>' > /tmp/run_spec.json
-node "$ENV_HELPER" deploy --env-config "$ENV_CONFIG" --run-spec /tmp/run_spec.json --dry-run
-node "$ENV_HELPER" deploy --env-config "$ENV_CONFIG" --run-spec /tmp/run_spec.json > /tmp/handle.json
+sh "$SKILL_DIR/scripts/run.sh" "$EXP_NAME" --args "$ARGS"
 ```
 
 `deploy` returns a `handle` (screen session / modal app / local pid) — save it (`/tmp/handle.json`) for Step 5/7. The backend picks the right launch primitive per env_type:
@@ -147,10 +110,10 @@ For local long-running jobs, use `run_in_background: true` to keep the conversat
 ### Step 5: Verify Launch
 
 ```bash
-node "$ENV_HELPER" monitor --env-config "$ENV_CONFIG" --handle /tmp/handle.json
+sh "$SKILL_DIR/scripts/monitor.sh"
 ```
 
-Returns `{status: running|done|failed, tail, ...}`. Confirm the job is running and the GPU is allocated.
+Confirm the job is running and the GPU is allocated.
 
 ### Step 6: Feishu Notification (if configured)
 
@@ -161,14 +124,14 @@ After deployment is verified, check `~/.claude/feishu.json`:
 
 ### Step 7: Auto-Destroy Vast.ai Instance (when `gpu: vast` and `auto_destroy: true`)
 
-**Skip this step if not using vast.ai or `auto_destroy` is `false`** (the `auto_destroy` default rule: fresh rental → true, reuse → false; check `$ENV_CONFIG`). After the experiment completes (detected via `/monitor-experiment` or Step 5 showing `done`):
+**Skip this step if not using vast.ai or `auto_destroy` is `false`** (the `auto_destroy` default rule: fresh rental → true, reuse → false). After the experiment completes (detected via `/monitor-experiment` or Step 5 showing `done`):
 
 ```bash
-node "$ENV_HELPER" collect --env-config "$ENV_CONFIG"   # download results + logs to ./results/ ./logs/
-node "$ENV_HELPER" destroy --env-config "$ENV_CONFIG"    # vastai destroy instance + update vast-instances.json
+sh "$SKILL_DIR/scripts/collect.sh"
+sh "$SKILL_DIR/scripts/teardown.sh"
 ```
 
-`destroy` for modal does `modal app stop` + `modal volume rm` (serverless, no instance to destroy); remote/local only stop the job (host retained). Report cost from the `vast-instances.json` record.
+`teardown.sh` for modal does `modal app stop` + `modal volume rm` (serverless, no instance to destroy); remote/local only stop the job (host retained). Report cost from the `vast-instances.json` record.
 
 > This ensures users are never billed for idle vast.ai instances. When `auto_destroy: true` (the default for fresh rentals), the full lifecycle is automatic: rent → setup → run → collect → destroy.
 

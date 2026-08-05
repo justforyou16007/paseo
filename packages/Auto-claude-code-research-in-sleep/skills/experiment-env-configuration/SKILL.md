@@ -1,7 +1,7 @@
 ---
 name: experiment-env-configuration
 description: 'Interactively configure a project''s experiment environment ONCE, then freeze the whole prepare → run → feedback loop into a reusable project-local skill at `.claude/skills/run-<project>-experiment/`. Covers experiment-file placement (local/remote), dependency environment, the run command/CLI, and the three feedback channels (error, result, analysis). The frozen configuration is cross-model audited by /experiment-audit before the skill is created. Every step becomes a script or CLI so the second and later runs are fully automatic with no re-configuration. Use when user says "configure experiment environment", "实验环境配置", "set up how experiments run", or when a baseline reproduction finishes and the flow must be made replayable.'
-argument-hint: "[— project: <name>] [— reconfigure] [— non-interactive] [— reviewer: codex|oracle-pro|manual]"
+argument-hint: "[— project: <name>] [— reconfigure] [— reviewer: codex|oracle-pro|manual]"
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, AskUserQuestion, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__wait_for_agent, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission
 ---
 
@@ -42,11 +42,12 @@ stage (`/experiment-bridge`, `/run-experiment`, `/auto-research-loop`) invokes
 the generated skill instead of re-asking anything.
 
 ```
-Phase 0    Pre-flight: resolve roots, detect existing config, decide interactive vs derived
+Phase 0    Pre-flight: resolve roots, detect existing config
+Phase 0.5  User describes environment CLI → index lookup for reuse
 Phase 1    Experiment preparation — files (where the code must live, how it gets there)
 Phase 2    Experiment preparation — environment (which dependency env, how it is verified)
 Phase 3    Run — the single command/CLI that executes an experiment
-Phase 3.5  [interactive only] Establish runnable baseline (mock if no evidence exists)
+Phase 3.5  Establish runnable baseline (mock if no evidence exists)
 Phase 4    Feedback — error channel, result channel, analysis channel
 Phase 4.5  Transport config — write .aris/experiment-env.json (internal) + CLAUDE.md env block
 Phase 5    Emit the project-local skill bundle (SKILL.md + scripts/ + env.json) — DRAFT only
@@ -119,16 +120,52 @@ becomes an invocable skill on the strength of this skill's own say-so.
    - The most recent `refine-logs/EXPERIMENT_TRACKER.md` rows — the commands that
      actually worked during baseline reproduction are the best possible default.
 
-5. **Non-interactive mode.** If `$ARGUMENTS` contains `— non-interactive` (how
-   `/auto-research-loop` calls this skill), do NOT call `AskUserQuestion` at all.
-   Derive every answer from step 4's sources. If a **required** answer cannot be
-   derived, write `$STAGING_DIR/env.json` with `"status": "incomplete"` and the list
-   of missing keys, emit a clear warning, and stop — do not guess a run command.
-   A wrong run command silently burns GPU hours.
-
-6. **Parse reviewer override.** If `$ARGUMENTS` contains `— reviewer: <backend>`,
+5. **Parse reviewer override.** If `$ARGUMENTS` contains `— reviewer: <backend>`,
    set `REVIEWER_BACKEND = <backend>` (valid: `codex`, `oracle-pro`, `manual`).
    Otherwise default to `codex`. This is passed through to `/experiment-audit`.
+
+---
+
+## Phase 0.5: User Describes Environment CLI → Index Lookup
+
+Before diving into structured questions, ask the user to describe their
+environment workflow in their own words. This provides the seed for all
+subsequent phases.
+
+**Q1** — header: "环境描述", question:
+"请描述你通常如何在命令行中使用实验环境（包括连接方式、代码部署、运行实验、获取结果的完整流程）。例如：
+- 'ssh gpu-server, conda activate ml, cd ~/project, python train.py --lr 1e-4, scp results back'
+- 'docker run --gpus all -v ./:/workspace my-image python train.py'
+- 'modal run launcher.py'
+请尽量具体，包括实际使用的命令："
+
+Free text answer. Parse the description to extract: connection method, dependency
+type, transfer method, run command pattern, result location.
+
+**Index lookup.** Check `$REF_DIR/index.md` for a matching previously-explored
+environment:
+
+1. Extract key traits from the user's description: connection method
+   (SSH/docker/modal/local), dependency type (conda/venv/container/system),
+   transfer method (rsync/git/shared/cli-upload).
+2. Match against the Entries table in `index.md` by Location + Dependency.
+3. **If a match exists**: read the corresponding `<project>-env.md` reference.
+
+   `AskUserQuestion`:
+   - header: "复用配置"
+   - question: "发现与你描述的环境类似的已有配置：\n<summary from reference>\n\n是否复用此配置？"
+   - options:
+     - `"直接复用"` — copy the reference's configuration, skip Phase 1-4,
+       go directly to Phase 5 (emit bundle) with answers adapted to current project
+     - `"参考但重新配置"` — use the reference to pre-fill Phase 1-4 defaults,
+       but still ask all questions
+     - `"不使用，从头配置"` — ignore the reference, proceed to Phase 1
+
+4. **If no match or no index**: proceed to Phase 1 with the CLI description
+   as the seed for pre-filling questions.
+
+Record as: `cli_description = "<raw text>"`, `index_match = "<project>|none"`,
+`reuse_mode = "full|seed|none"`.
 
 ---
 
@@ -137,7 +174,7 @@ becomes an invocable skill on the strength of this skill's own say-so.
 Goal: know **where the experiment code must physically be** for a run to work,
 and **how it gets there**.
 
-Use `AskUserQuestion` (skip in non-interactive mode; derive instead).
+Use `AskUserQuestion`.
 
 **Q1** — header: "Location", question: "Where do experiments actually execute?"
 - `"Local machine"` — "Code runs from the project directory as-is; no transfer."
@@ -232,15 +269,11 @@ per-run values, e.g.:
 
 ---
 
-## Phase 3.5: Establish a Runnable Baseline (interactive only)
+## Phase 3.5: Establish a Runnable Baseline
 
 **Trigger:** Phase 3 Q1 found no evidence of a previously executed command —
 `refine-logs/EXPERIMENT_TRACKER.md` has no success rows, `.aris/runs/*.json`
 is empty, and the project has no recognizable training entry point.
-
-**Skip entirely in `— non-interactive` mode.** `/auto-research-loop` only calls
-this skill after baseline reproduction succeeds — manufacturing mock evidence
-for a project that already has real evidence would be dishonest.
 
 1. Generate `.aris/env-config/<project>/mock/smoke_baseline.py` — minimal but
    **real**: import the framework per `preparation.environment`, allocate a
@@ -603,6 +636,7 @@ VERDICT=$(jq -r '.overall_verdict' "$AUDIT_JSON" | tr 'A-Z' 'a-z')
 | `pass` | **allowed** | `complete` | Phase 6 promotes the bundle. |
 | `warn` | **allowed, tagged** | `complete` | Promote, and copy the WARN action items into the generated `SKILL.md` under a `## Known caveats (from audit)` section so every later run sees them. |
 | `fail` | **refused** | `audit_failed` | Do **not** create `.claude/skills/run-<project>-experiment/`. The draft stays in staging. Print the failing checks and their action items. |
+| `fail` (user overrides) | **allowed, tagged** | `user_override` | User chose to override the audit. Promote with `## ⚠️ Audit overridden by user` caveat section. |
 | missing / unparseable | **refused** | `audit_error` | As above; report that the audit did not return a verdict. |
 
 Record into the draft `env.json`:
@@ -621,24 +655,38 @@ Record into the draft `env.json`:
 FAIL as "a warning really", does not average A–K into an overall of its own, and
 does not re-run the audit hoping for a better answer. One audit, one verdict.
 
-### 5.5c. On FAIL — repair, then re-audit (bounded)
+### 5.5c. On FAIL — ask user for help (every round)
 
-A FAIL is actionable, not terminal. Up to **MAX_AUDIT_ROUNDS = 2** times:
+When the audit returns FAIL, immediately involve the user:
 
-1. Read the action items from `ENV_CONFIG_AUDIT.md`.
-2. Fix the *specific* draft artifacts they name — re-derive the run command from
-   the tracker, correct the metric key, widen the failure patterns, replace the
-   tautological verify command.
-3. Re-run 5.5a as a **fresh** sub-agent (a fresh `/experiment-env-audit` dispatch, not a follow-up round — the
-   reviewer must not be anchored on having already seen a broken draft).
+1. Print the failing checks and action items from `ENV_CONFIG_AUDIT.md`.
 
-If round 2 still returns FAIL, stop and report. Do **not** promote. In
-non-interactive mode this returns `status: "audit_failed"` to the caller, which
-is a legitimate outcome — `/auto-research-loop` treats it as "environment not
-frozen this iteration" and proceeds without the generated skill.
+2. `AskUserQuestion`:
+   - header: "审计失败"
+   - question: "环境配置审计未通过：\n<failing checks with action items>\n\n请提供修复指导，或选择其他操作："
+   - options:
+     - `"我来协助修复"` — user will provide fix guidance
+     - `"跳过此检查，强制部署"` — override the audit
+     - `"放弃本次配置"` — abort
 
-**Never** loop unbounded, never re-audit for a third time, and never re-word the
-audit prompt to make the failure go away. That is verdict shopping.
+3. On "协助修复":
+   - `AskUserQuestion` with header "修复指导", question "请描述如何修复上述问题：",
+     free text answer
+   - Apply fixes to the draft artifacts as directed by the user
+   - Re-run Phase 5.5a (fresh `/experiment-env-audit` dispatch)
+   - If FAIL again → repeat from step 1 (no autonomous round limit — the user
+     controls when to stop via "跳过" or "放弃")
+
+4. On "跳过此检查，强制部署":
+   - Set `audit.status = "user_override"` and `audit.verdict = "fail_overridden"`
+   - Promote the bundle to `.claude/skills/run-<project>-experiment/`
+   - Add `## ⚠️ Audit overridden by user` section to the generated SKILL.md
+     listing the failing checks and the user's decision to override
+   - This is a conscious user decision, not the skill's judgment
+
+5. On "放弃":
+   - Return `status: "audit_failed"` with the failing checks
+   - The draft stays in staging
 
 ---
 
@@ -660,7 +708,7 @@ Run in order; do not report success on a failure. Steps 1–3 verify the draft
 4. **Gate — the audit verdict permits promotion.** This is the STOP gate; it
    reads the Phase 5.5 verdict and does not re-derive it:
    ```bash
-   jq -e '.audit.status == "passed" or .audit.status == "passed_with_warnings"' \
+   jq -e '.audit.status == "passed" or .audit.status == "passed_with_warnings" or .audit.status == "user_override"' \
      "$STAGING_DIR/env.json"
    ```
    Non-zero exit ⇒ **do not promote**. Leave the draft in `$STAGING_DIR`, leave
@@ -725,7 +773,7 @@ Experiment environment NOT configured for "<project>" — audit did not pass.
 
 Draft (not promoted): .aris/env-config/<project>/draft/
 Audit report:         .aris/env-config/<project>/ENV_CONFIG_AUDIT.md
-Verdict:              FAIL  (rounds used: <n>/2)
+Verdict:              FAIL
 
 Failing checks:
   <ID>. <check name> — <one-line action item from the report>
@@ -770,7 +818,6 @@ without them; they reduce exploration time for similar environments.
 - **DEFAULT_EXCLUDES** = `.git, __pycache__, results/, logs/, checkpoints/, *.pt, *.ckpt, data/`
 - **DEFAULT_FAILURE_PATTERNS** = `Traceback`, `CUDA out of memory`, `Killed`, `AssertionError`, `RuntimeError`, `No such file`
 - **MAX_VERIFY_RETRIES** = 3
-- **MAX_AUDIT_ROUNDS** = 2
 - **REVIEWER_BACKEND** = `codex` (override with `— reviewer: oracle-pro|manual`)
 - **REF_DIR_TEMPLATE** = `$CLAUDE_SKILL_DIR/references` → `.claude/skills/experiment-env-configuration/references` → `$ARIS_REPO/skills/experiment-env-configuration/references`
 - **MOCK_DIR_TEMPLATE** = `.aris/env-config/<project>/mock`
@@ -782,9 +829,9 @@ without them; they reduce exploration time for similar environments.
    `.claude/skills/run-<project>-experiment/`. The environment is project data.
 2. **Idempotent by default.** Existing `SKILL.md` + no `— reconfigure` = verify
    and stop. This is the property that makes later rounds fully automatic.
-3. **Never guess a run command.** In non-interactive mode, an underivable
-   required answer produces `status: "incomplete"` and a hard stop. A guessed
-   command wastes GPU hours and produces results that look real.
+3. **Never guess a run command.** If the answer cannot be derived from the
+   user or existing sources, ask the user. A guessed command wastes GPU hours
+   and produces results that look real.
 4. **Prefer an existing backend.** If `local`/`remote`/`vast`/`modal`/`docker`
    covers the environment, set `backend_hint` and call `env-helper.js` from the
    generated scripts. Only fall back to `custom` direct commands when none fits.
@@ -804,8 +851,9 @@ without them; they reduce exploration time for similar environments.
    trustworthy".
 10. **Never self-judge the audit result.** This skill may verify that the audit
     *ran* (Type-A) and must read `overall_verdict` verbatim (Type-B). It must not
-    reinterpret, average, override, or re-run-until-favourable a verdict. At most
-    `MAX_AUDIT_ROUNDS` audits, each after a real repair, each a fresh reviewer.
+    reinterpret, average, override, or re-run-until-favourable a verdict. The user
+    controls how many repair rounds to attempt. Each round dispatches a fresh
+    `/experiment-env-audit`.
 11. **The audit stays advisory to everyone else.** `/experiment-env-audit`'s own
     contract (which internally dispatches `/experiment-audit`) is untouched; the
     block is implemented here, in the caller. Do not edit `/experiment-env-audit`

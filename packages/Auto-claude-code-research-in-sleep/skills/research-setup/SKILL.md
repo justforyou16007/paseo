@@ -80,13 +80,7 @@ fi
 }
 ```
 
-### 0b. Check ARIS installation
-
-If `.aris/installed-skills.txt` does NOT exist, ARIS was not installed into
-this project. Setup can still generate every artifact; note it and carry on —
-Phase 7f re-checks and tells the user how to trigger the install.
-
-### 0c. Resume detection
+### 0b. Resume detection
 
 Read `.aris/setup-state.json`. If it exists and `completed` is `false`:
 
@@ -99,14 +93,14 @@ Use AskUserQuestion:
 If "Resume": skip completed stages, pre-populate answers from state.
 If "Start fresh": delete state file, start from Phase 1.
 
-### 0d. Detect existing artifacts
+### 0c. Detect existing artifacts
 
 Check for:
 - `CLAUDE.md` — if exists, will merge (not overwrite)
 - `RESEARCH_BRIEF.md` — if exists and non-empty, will ask before overwriting
 - `research-wiki/` — if exists with content, skip wiki init
 
-### 0e. Detect language
+### 0d. Detect language
 
 Parse `$ARGUMENTS` for `— language: zh` or `— language: en`.
 If not specified, detect from user's message language.
@@ -130,7 +124,7 @@ Use AskUserQuestion with 2 questions:
 - **question** (en): "Preferred language for ARIS skill outputs?"
   (zh): "ARIS 技能输出的首选语言？"
 - **options**: `["English", "中文"]`
-  Default to detected language from Phase 0e.
+  Default to detected language from Phase 0d.
 
 **After Phase 1:** Save state:
 ```json
@@ -217,7 +211,7 @@ This phase asks **no questions**. Environment configuration is owned exclusively
 by `/experiment-env-configuration`, invoked in Phase 7.5 (after CLAUDE.md exists).
 
 Save state with `completed_stages` including `4`. Do not write `answers.gpu_type`
-here — it is transcribed from `.aris/experiment-env.json` after Phase 7.5.
+here — it is transcribed from the generated experiment skill after Phase 7.5.
 
 **After Phase 4:** Save state with `completed_stages: [1,2,3,4]`.
 
@@ -495,36 +489,6 @@ If not, append the ARIS entries at the end with a header comment:
 .aris/setup-state.json
 ```
 
-### 7f. Verify ARIS skills are installed
-
-Paseo installs ARIS into a project automatically when the project is
-added or a workspace is opened: it copies `skills/` into
-`.claude/skills/`, `agents/` into `.claude/agents/`, `tools/` into
-`.aris/tools/`, and writes the `.aris/installed-skills.txt` manifest.
-There is nothing to run here — only confirm it happened, because
-without it no ARIS slash command is available in the project.
-
-```bash
-if [ -f .aris/installed-skills.txt ] && [ -d .claude/skills ]; then
-  echo "ARIS skills installed: $(ls .claude/skills | wc -l) entries"
-else
-  echo "MISSING"
-fi
-```
-
-If it printed `MISSING`, tell the user:
-
-```
-ARIS skills are not installed in this project, so ARIS slash commands
-will not be available. Paseo installs them when the project is added —
-re-add the project in Paseo, or open it as a workspace, to trigger it.
-```
-
-Note the install is one-shot: a project that already has
-`.aris/installed-skills.txt` is skipped. To force a reinstall (e.g. to
-pick up new upstream skills), delete `.aris/installed-skills.txt` and
-`.claude/skills/`, then re-add the project.
-
 ### Phase 7.5: Experiment Environment Configuration (delegated)
 
 After CLAUDE.md exists, unconditionally invoke `/experiment-env-configuration`
@@ -538,9 +502,9 @@ Args: — project: <project_name>
 
 After it completes, transcribe results (do NOT judge them):
 
-1. Read `.aris/experiment-env.json` → set `answers.gpu_type` to the `env_type`
-   value (preserves `auto-research-loop/SKILL.md:60` and
-   `experiment-env-configuration/SKILL.md:111` read contracts).
+1. Read environment type from the generated skill:
+   `sh "$SKILL_DIR/scripts/info.sh" 2>/dev/null | jq -r '.backend_hint // "none"'`
+   → set `answers.gpu_type` to the result.
 2. Read `.claude/skills/run-<project>-experiment/env.json` → set
    `answers.experiment_skill = "run-<project>-experiment"` and
    `answers.env_config_status` to the `status` field (`complete` /
@@ -564,7 +528,6 @@ set `answers.gpu_type = "none"`, print the draft and audit report paths, and
     "research-wiki/",
     ".gitignore",
     ".claude/skills/ (ARIS skills)",
-    ".aris/experiment-env.json (when env config succeeded)",
     ".claude/skills/run-<project>-experiment/ (when env config status = complete)"
   ],
   "timestamp": "<ISO 8601>"
@@ -598,16 +561,7 @@ Created:
   • RESEARCH_BRIEF.md — 研究方向简报
   • research-wiki/ — 知识库（5 个子目录，5 个种子文件）
   • .gitignore — 已添加 ARIS 条目
-  • .claude/skills/ — ARIS 技能符号链接已注册
-
-⚠️ If ARIS skills were installed or updated during this setup, they won't
-   appear until you reload. Run `/reload-skills` or start a new Claude Code session.
-   After reloading, please also run `/clear` to free up context window space
-   before starting research work.
-
-   如果此次设置安装或更新了 ARIS 技能，需要重新加载才能使用。
-   请运行 `/reload-skills` 或启动新的 Claude Code 会话。
-   重新加载后，请运行 `/clear` 来释放上下文窗口空间，再开始研究工作。
+  • .claude/skills/ — ARIS skills installed
 ```
 
 Then suggest next steps based on work type:
@@ -661,4 +615,4 @@ Suggested next steps:
 
 8. **Environment configuration goes exclusively through `/experiment-env-configuration`.**
    This skill never asks about backend types, never writes `## Experiment Environment`
-   field values, and never calls `env-helper.js`. The delegation happens in Phase 7.5.
+   field values, and never reads `.aris/experiment-env.json` directly. The delegation happens in Phase 7.5.

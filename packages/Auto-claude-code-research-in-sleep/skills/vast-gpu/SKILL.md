@@ -54,20 +54,13 @@ This file is the source of truth for `/run-experiment` and `/monitor-experiment`
 
 ## Workflow
 
-> **Instance lifecycle (rent/setup/destroy) is delegated to the `experiment-env` helper's `vast` backend** (`tools/experiment-env/vast-env.js`). Resolve it once, then `provision`/`preflight`/`sync`/`destroy` drive the instance. The offer-search + cost-presentation UX stays in this skill (the backend's fresh-rental `provision` expects the chosen `offer_id` in the config).
+> **Instance lifecycle (rent/setup/destroy) is delegated to the generated experiment skill's atomic scripts.** The offer-search + cost-presentation UX stays in this skill; `prepare.sh`/`collect.sh`/`teardown.sh` drive the instance.
 
 ```bash
-# --- resolve experiment-env helper (multi-owner, Layer 2 canonical) ---
-ENV_HELPER=""
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
-fi
-ENV_HELPER=".aris/dist/tools/experiment-env/env-helper.js"
-[ -f "$ENV_HELPER" ] || ENV_HELPER="dist/tools/experiment-env/env-helper.js"
-[ -f "$ENV_HELPER" ] || { [ -n "${ARIS_REPO:-}" ] && ENV_HELPER="$ARIS_REPO/dist/tools/experiment-env/env-helper.js"; }
-[ -f "$ENV_HELPER" ] || ENV_HELPER=""
-[ -z "$ENV_HELPER" ] && { echo "ERROR: experiment-env helper not found (Layer 1-3)" >&2; exit 1; }
-ENV_CONFIG=".aris/experiment-env.json"
+# --- resolve the project-level experiment skill ---
+PROJECT=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')
+SKILL_DIR=".claude/skills/run-${PROJECT}-experiment"
+[ -d "$SKILL_DIR/scripts" ] || { echo "ERROR: experiment skill not found at $SKILL_DIR. Run /experiment-env-configuration first." >&2; exit 1; }
 ```
 
 ### Action: Provision (default)
@@ -170,16 +163,13 @@ Use these to scale the base estimated hours across offers.
 
 ### Action: Rent
 
-Create an instance from a user-selected offer. **After the user picks an offer in Provision Step 4**, set the chosen `offer_id` (+ `gpu_name`/`num_gpus`/`dph`/`disk_gb`/`image`) in the candidate config, then `parse` + `provision` — the backend does `vastai create instance`, waits for `running`, resolves `vastai ssh-url`, verifies SSH, and writes `vast-instances.json`:
+Create an instance from a user-selected offer. **After the user picks an offer in Provision Step 4**, provision via the generated experiment skill:
 
 ```bash
-# agent: write candidate JSON with env_type=vast + offer_id, then:
-echo '<candidate-with-offer_id>' | node "$ENV_HELPER" parse --json - --source CLAUDE.md
-node "$ENV_HELPER" provision --env-config "$ENV_CONFIG" --dry-run   # inspect
-node "$ENV_HELPER" provision --env-config "$ENV_CONFIG"             # rent + verify + write state
+sh "$SKILL_DIR/scripts/prepare.sh"
 ```
 
-The detailed `vastai create instance` / wait / ssh-url / verify steps below are the **reference implementation** the backend reproduces — they are now executed by `env-helper.js provision`, not inlined here.
+The detailed `vastai create instance` / wait / ssh-url / verify steps below are the **reference implementation** the backend reproduces — they are now executed by `prepare.sh`, not inlined here.
 
 **Step 1: Create Instance**
 
@@ -268,11 +258,10 @@ To destroy when done: /vast-gpu destroy <ID>
 
 ### Action: Setup
 
-Set up the rented instance for a specific experiment. Called automatically by `/run-experiment` when targeting a vast.ai instance. **Delegated to `env_helper`:**
+Set up the rented instance for a specific experiment. Called automatically by `/run-experiment` when targeting a vast.ai instance. **Delegated to the generated experiment skill:**
 
 ```bash
-node "$ENV_HELPER" preflight --env-config "$ENV_CONFIG"   # GPU free + torch import check
-node "$ENV_HELPER" sync --env-config "$ENV_CONFIG" --src ./src   # rsync → /workspace/project/ + pip install requirements.txt
+sh "$SKILL_DIR/scripts/prepare.sh"
 ```
 
 The pip-install / rsync / torch-verify steps below are the reference the backend reproduces.
@@ -314,11 +303,11 @@ Expected output: `PyTorch 2.1.0, CUDA: True, GPUs: 1` (or more GPUs if multi-GPU
 
 ### Action: Destroy
 
-Tear down a vast.ai instance to stop billing. **Delegated to `env_helper`** (collects results first, then `vastai destroy instance`, updates `vast-instances.json`; respects `auto_destroy` — skipped if false):
+Tear down a vast.ai instance to stop billing. **Delegated to the generated experiment skill** (collects results first, then destroys; respects `auto_destroy` — skipped if false):
 
 ```bash
-node "$ENV_HELPER" collect --env-config "$ENV_CONFIG"    # rsync results + scp logs to ./results/ ./logs/
-node "$ENV_HELPER" destroy --env-config "$ENV_CONFIG"    # vastai destroy instance + update state
+sh "$SKILL_DIR/scripts/collect.sh"
+sh "$SKILL_DIR/scripts/teardown.sh"
 ```
 
 The result-download / destroy / state-update steps below are the reference the backend reproduces.

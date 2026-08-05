@@ -102,7 +102,7 @@ mcp__paseo__create_agent
       Generated skill:     <BUNDLE_DIR>/SKILL.md
       Baseline evidence:   refine-logs/EXPERIMENT_TRACKER.md
       Metric contract:     CLAUDE.md  (## Metric Target)
-      Prior env answers:   .aris/experiment-env.json, .aris/setup-state.json
+      Prior env answers:   <BUNDLE_DIR>/env.json (the bundle's own frozen config), .aris/setup-state.json
 
     Apply checklist A–F as written, PLUS these configuration-specific checks.
     Report each as PASS | WARN | FAIL with file:line evidence:

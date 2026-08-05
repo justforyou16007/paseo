@@ -87,25 +87,18 @@ Cost estimate (Modal):
 
 ## Workflow
 
-> **Launcher generation, run, monitor, collect, cleanup are delegated to the `experiment-env` helper's `modal` backend** (`tools/experiment-env/modal-env.js`). Resolve it once, then `deploy` generates the `modal_launcher.py` (Pattern A) and runs it; `monitor`/`collect`/`destroy` cover the rest. The cost-estimate + GPU-choice UX (Step 1) stays in this skill.
+> **Launcher generation, run, monitor, collect, cleanup are delegated to the generated experiment skill's atomic scripts.** The cost-estimate + GPU-choice UX (Step 1) stays in this skill; `prepare.sh`/`run.sh`/`collect.sh`/`teardown.sh` drive the Modal lifecycle.
 
 ```bash
-# --- resolve experiment-env helper (multi-owner, Layer 2 canonical) ---
-ENV_HELPER=""
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
-fi
-ENV_HELPER=".aris/dist/tools/experiment-env/env-helper.js"
-[ -f "$ENV_HELPER" ] || ENV_HELPER="dist/tools/experiment-env/env-helper.js"
-[ -f "$ENV_HELPER" ] || { [ -n "${ARIS_REPO:-}" ] && ENV_HELPER="$ARIS_REPO/dist/tools/experiment-env/env-helper.js"; }
-[ -f "$ENV_HELPER" ] || ENV_HELPER=""
-[ -z "$ENV_HELPER" ] && { echo "ERROR: experiment-env helper not found (Layer 1-3)" >&2; exit 1; }
-ENV_CONFIG=".aris/experiment-env.json"
+# --- resolve the project-level experiment skill ---
+PROJECT=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')
+SKILL_DIR=".claude/skills/run-${PROJECT}-experiment"
+[ -d "$SKILL_DIR/scripts" ] || { echo "ERROR: experiment skill not found at $SKILL_DIR. Run /experiment-env-configuration first." >&2; exit 1; }
 ```
 
 ### Step 1: Analyze Task → Estimate Cost → Choose GPU
 
-Same analysis as any GPU skill — determine VRAM needs from model size, pick GPU, estimate hours, calculate cost. See pricing table above. Then ensure the chosen GPU is in `$ENV_CONFIG` as `modal_gpu` (the agent writes the candidate from CLAUDE.md/AGENTS.md + this choice, then `env-helper.js parse`).
+Same analysis as any GPU skill — determine VRAM needs from model size, pick GPU, estimate hours, calculate cost. See pricing table above. The chosen GPU is configured in the generated experiment skill's `env.json` as `modal_gpu`.
 
 **VRAM Rules of Thumb:**
 | Model Size | FP16 VRAM | Recommended GPU |
@@ -119,9 +112,8 @@ Same analysis as any GPU skill — determine VRAM needs from model size, pick GP
 ### Step 2: Generate Modal Launcher (now done by `env_helper deploy`)
 
 ```bash
-echo '<run_spec-json>' > /tmp/run_spec.json   # {script, args, exp_name, gpu_id?}
-node "$ENV_HELPER" deploy --env-config "$ENV_CONFIG" --run-spec /tmp/run_spec.json --dry-run   # inspect generated launcher
-node "$ENV_HELPER" deploy --env-config "$ENV_CONFIG" --run-spec /tmp/run_spec.json > /tmp/handle.json   # generates + `modal run`
+sh "$SKILL_DIR/scripts/prepare.sh"
+sh "$SKILL_DIR/scripts/run.sh" "$EXP_NAME" --args "$ARGS"
 ```
 
 `deploy` generates `modal_launcher.py` reproducing Pattern A (`modal.Mount.from_local_dir` + `modal.Volume` + `@app.function(gpu=modal_gpu, timeout=modal_timeout, secrets=modal_secrets)` + `volume.commit()` + `train.remote()`) and runs `modal run`. The Pattern A/B/C/D/E/F reference below documents what the backend generates — kept for choosing the right pattern (Pattern A is the run-experiment default).
@@ -256,7 +248,7 @@ def train_distributed():
 
 ### Step 3: Run
 
-Now executed by `env_helper deploy` (it runs `modal run` after generating the launcher). The raw command below is the reference:
+Now executed by `run.sh` in the generated experiment skill. The raw command below is the reference:
 
 ```bash
 modal run launcher.py     # One-shot execution (most common for experiments) — now inside `env_helper deploy`
@@ -266,7 +258,7 @@ modal deploy app.py       # Persistent service deployment
 ### Step 4: Verify & Monitor
 
 ```bash
-node "$ENV_HELPER" monitor --env-config "$ENV_CONFIG" --handle /tmp/handle.json
+sh "$SKILL_DIR/scripts/monitor.sh"
 ```
 
 (Backend runs `modal app list` + `modal app logs <app>` — reference below.)
@@ -279,7 +271,7 @@ modal app logs <app-name> # Stream logs
 ### Step 5: Collect Results
 
 ```bash
-node "$ENV_HELPER" collect --env-config "$ENV_CONFIG"   # modal volume ls + get → ./results/
+sh "$SKILL_DIR/scripts/collect.sh"
 ```
 
 Results collection depends on the pattern used (reference):
@@ -302,7 +294,7 @@ Results are printed to terminal or returned from the function — already local.
 Modal auto-scales to zero — no manual instance destruction needed. But clean up unused resources:
 
 ```bash
-node "$ENV_HELPER" destroy --env-config "$ENV_CONFIG"   # modal app stop + modal volume rm
+sh "$SKILL_DIR/scripts/teardown.sh"
 ```
 
 (Reference commands the backend reproduces:)
