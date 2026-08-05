@@ -178,7 +178,7 @@ function checkInventory(): string[] {
       "collection of <strong>(?<count>\\d+) composable Claude Code skills</strong>",
     ],
     [ARIS_INTRO_HTML, arisIntroHtml, 'id="the-(?<count>\\d+)-skills"'],
-    [ARIS_INTRO_HTML, arisIntroHtml, "一组 (?<count>\\d+) 个可组合的 Claude Code skills"],
+    [ARIS_INTRO_HTML, arisIntroHtml, "一组\\s+(?<count>\\d+)\\s+个可组合的 Claude Code skills"],
   ];
   for (const [fp, text, pattern] of countChecks) {
     requireCount(fp, text, pattern, expectedCount, failures);

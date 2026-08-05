@@ -48,6 +48,10 @@ When the skill exists and `env.json.status == "complete"`, use its scripts
 directly. **Fall back to the legacy path below** only when the skill is absent
 (backward compatibility for unconfigured projects).
 
+If `prepare.sh` fails, the environment may have changed since configuration.
+Suggest running an environment audit:
+`/experiment-env-audit — project: <project> — target: promoted`
+
 Read the project's `CLAUDE.md` (or `AGENTS.md` if no `CLAUDE.md`), find the `## Remote Server` / `## Vast.ai` / `## Modal` / `## Local Environment` / `## Experiment Environment` section, and translate it into a **canonical candidate JSON** (field names: `env_type`, `ssh_alias`, `conda_hook`, `conda_env`, `code_dir`, `code_sync`, `instance_id`, `auto_destroy`, `image`, `modal_gpu`, `modal_timeout`, `modal_volume`, `modal_app_file`, `modal_secrets`, ... -- see `tools/experiment-env/README.md` for the alias→canonical table). Then validate + write it:
 
 ```bash

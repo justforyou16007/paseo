@@ -27,7 +27,7 @@ ARIS is a research harness: composable Markdown skills that orchestrate the ML r
 | ------------------------------------------------------- | ------------------------------------- | --------------------------------------------------------------- |
 | Claude Code / Cursor / Trae / Antigravity / Copilot CLI | `skills/<name>/SKILL.md`              | Mainline skills; native `SKILL.md` invocation                   |
 
-**Full catalog**: [`docs/SKILLS_CATALOG.md`](docs/SKILLS_CATALOG.md) — **82 skills**, grouped by role.
+**Full catalog**: [`docs/SKILLS_CATALOG.md`](docs/SKILLS_CATALOG.md) — **83 skills**, grouped by role.
 
 Invocation syntax is identical across hosts:
 

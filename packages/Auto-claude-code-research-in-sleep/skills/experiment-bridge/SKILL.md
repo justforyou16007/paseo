@@ -185,6 +185,10 @@ If sanity fails → **auto-debug before giving up** (max 3 attempts):
    - If `/codex:rescue` is not available (plugin not installed), continue with Claude's own diagnosis
 5. **Still failing after 3 attempts?** → stop, report the failure with all attempted fixes and error logs. Do not proceed with broken code.
 
+After 3 failed debug attempts, the root cause may be environment drift rather
+than code bugs. Suggest an environment audit:
+`/experiment-env-audit — project: <project> — target: promoted`
+
 > Never give up on the first failure. Most experiment crashes are fixable without human intervention.
 
 ### Phase 4: Deploy Full Experiments

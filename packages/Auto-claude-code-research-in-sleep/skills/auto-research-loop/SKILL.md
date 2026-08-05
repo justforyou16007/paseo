@@ -184,6 +184,9 @@ Continue the loop with the built-in backend; a future `/experiment-env-configura
 never blocks on an audit failure — it still works, it just loses the convenience
 of the frozen skill for this iteration.
 
+The audit can be re-run independently to check if the environment has recovered:
+`/experiment-env-audit — project: <project> — target: promoted`
+
 All sub-skill dispatches follow `shared-references/paseo-subagent-dispatch.md` Rule 1 (one agent = one skill) and Rule 4 (no in-process `Skill` fallbacks):
 
 ```bash
