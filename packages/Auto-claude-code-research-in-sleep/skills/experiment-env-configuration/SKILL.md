@@ -373,11 +373,10 @@ Record `feedback.result = { path_template, format, primary_metric_key, extra_key
 
 ### 4c. Analysis feedback — what do the numbers mean?
 
-**Q1** — header: "Analysis", question: "How should results be analyzed?"
-- `"Reuse an ARIS skill"` — "/analyze-results — comparison table + significance."
-- `"Reuse a project script"` — "An existing script in this repo."
-- `"Generate a new script"` — "Create one now from the described logic."
-- `"Custom per-experiment"` — "Analysis differs each time; only record the inputs."
+**Q1** — header: "Analysis", question: "实验结果需要什么样的分析？"
+- `"标准统计分析"` — "对比表 + 显著性检验 + insights（由 /analyze-results 驱动）"
+- `"自定义分析脚本"` — "项目已有分析脚本，指定路径（/analyze-results 将其作为 — method 参数）"
+- `"每次实验不同"` — "分析逻辑因实验而异，只记录输入"
 
 **Q2** — header: "Analysis logic", question: "What comparison or test is required?"
 - e.g. "compare each run against the baseline row, bootstrap 95% CI over seeds".
@@ -389,10 +388,11 @@ Record `feedback.result = { path_template, format, primary_metric_key, extra_key
 
 Record `feedback.analysis = { mode, logic, script_path, output_path }`.
 
-**Reuse before generate.** For `mode = "Reuse an ARIS skill"`, `analyze.sh` must
-dispatch the skill rather than reimplement it. Only `"Generate a new script"`
-writes fresh analysis code, and it writes it into the generated skill's
-`scripts/` directory so it is version-controlled with the project.
+**Analysis is driven by `/analyze-results`.** `analyze.sh` Stage 2 collects
+result file paths; `/analyze-results` handles all analysis logic, iteration,
+and supplementary experiment dispatch. The `— method` parameter on
+`/analyze-results` accepts a user's existing analysis script as the starting
+point.
 
 ---
 
@@ -552,9 +552,11 @@ Write to `<output_dir>/error_report.md`:
 - Most frequent: <type> (<count> occurrences)
 ```
 
-**Stage 2: Result analysis.** Per `feedback.analysis.mode`: dispatch the ARIS
-skill, call the project script, or run the generated analysis; write to
-`feedback.analysis.output_path`.
+**Stage 2: Result collection for /analyze-results.** Collect all result file
+paths and output a manifest to stdout (JSON list of `{path, format, experiment}`
+entries). `/analyze-results` reads this manifest as its input when it drives
+the iterative analysis loop. The actual analysis logic lives in
+`/analyze-results`, not in this script.
 
 Stage 1 always runs. A run with zero errors produces an error_report.md
 confirming "0 errors found".
@@ -898,8 +900,10 @@ without them; they reduce exploration time for similar environments.
 4. **Prefer an existing backend.** If `local`/`remote`/`vast`/`modal`/`docker`
    covers the environment, set `backend_hint` and call `env-helper.js` from the
    generated scripts. Only fall back to `custom` direct commands when none fits.
-5. **Reuse analysis before generating it.** `/analyze-results` and existing
-   project scripts come first; generate new analysis code only when neither fits.
+5. **Analysis is driven by `/analyze-results`.** `analyze.sh` Stage 2 provides
+   data collection; `/analyze-results` owns the analysis logic, iterates until
+   a cross-model verifier passes, and can trigger supplementary experiments.
+   Never duplicate analysis logic that belongs in `/analyze-results`.
 6. **The primary metric key must match `CLAUDE.md` `## Metric Target`.** A
    mismatch silently breaks every downstream Type-A stop check. Verify in Phase 6.
 7. **Every generated script supports `--dry-run`** and is verified with it before

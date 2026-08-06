@@ -272,7 +272,7 @@ When all jobs in `manifest.json` are `completed` or `stuck`:
 
 - The remote scheduler (`queue-manager.js`) exits cleanly with `All jobs done` to its own stdout (captured in `$REMOTE_RUN_DIR/queue_mgr.log`). It does NOT write the local summary.
 - The **local** skill agent then aggregates state into `$LOCAL_RUN_DIR/summary.md` (read `$REMOTE_RUN_DIR/queue_state.json`, group by status, optionally pull per-job logs).
-- Local skill agent invokes `/analyze-results` if `analyze_on_complete: true`.
+- Local skill agent invokes `/analyze-results — project: <project>` if `analyze_on_complete: true`.
 
 ## Grid Spec Syntax
 
@@ -377,7 +377,7 @@ If scheduler crashes / is killed:
 
 ## Next Steps
 
-- Run `/analyze-results` on output JSONs
+- Run `/analyze-results — project: <project>` on output JSONs
 - Figures auto-regen via `artifact-sync` (if configured)
 ```
 
@@ -430,7 +430,7 @@ Then user can check anytime or wait for summary report.
 
 - `/run-experiment` — single experiment deployment
 - `/monitor-experiment` — check progress (now reads from queue_state.json)
-- `/analyze-results` — post-hoc analysis
+- `/analyze-results — project: <project>` — post-hoc analysis
 - `dist/skills/experiment-queue/queue-manager.js` — the scheduler implementation; resolved at runtime via the fallback chain in Step 3a.
 - `dist/skills/experiment-queue/build-manifest.js` — build manifest from grid spec; same resolution chain.
 
