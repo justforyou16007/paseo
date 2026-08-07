@@ -2,8 +2,13 @@
 name: research-setup
 description: 'Interactive Q&A setup wizard for new ARIS research projects. Bootstraps CLAUDE.md, RESEARCH_BRIEF.md, and research-wiki from user answers; experiment environment configuration is delegated to /experiment-env-configuration. Resumable, bilingual (en/zh), smart defaults. Use when user says "研究项目初始化", "setup project", "初始化研究项目", "research setup", "new project", "配置项目", or wants to configure a new ARIS research workspace.'
 argument-hint: "[project-name] [— language: en|zh]"
-allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, AskUserQuestion, Skill
+allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, AskUserQuestion, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__wait_for_agent, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission
 ---
+
+> **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in
+> [](shared-references/paseo-subagent-dispatch.md) (Rule 1: One Agent = One Skill;
+> Rule 4: Paseo MCP Only, Strict). Phase 7.5 dispatches
+> `/experiment-env-configuration` via `mcp__paseo__create_agent`.
 
 # Research Project Setup Wizard
 
@@ -549,14 +554,21 @@ If not, append the ARIS entries at the end with a header comment:
 
 ### Phase 7.5: Experiment Environment Configuration (delegated)
 
-After CLAUDE.md exists, unconditionally invoke `/experiment-env-configuration`
-**in the current session** (not via a paseo sub-agent — the skill has 15
-`AskUserQuestion` calls and the user is in this interactive flow):
+After CLAUDE.md exists, dispatch `/experiment-env-configuration` as a **paseo
+sub-agent** (Rule 1: One Agent = One Skill; Rule 4: Paseo MCP Only):
 
 ```
-Skill: experiment-env-configuration
-Args: — project: <project_name>
+mcp__paseo__create_agent
+  title:    "experiment-env-configuration: <project_name>"
+  provider: claude
+  cwd:      $ROOT
+  initialPrompt: "/experiment-env-configuration — project: <project_name>"
+  notifyOnFinish: true
 ```
+
+The sub-agent handles all user interaction (AskUserQuestion) via paseo's
+permission forwarding — the user sees the questions in their terminal/app
+as normal. Wait for `notifyOnFinish`, then `mcp__paseo__archive_agent`.
 
 After it completes, transcribe results (do NOT judge them):
 

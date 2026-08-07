@@ -223,6 +223,16 @@ function checkInventory(): string[] {
       );
     }
 
+    if (/(^|,)\s*Skill\s*(,|$)/.test(at.join(", "))) {
+      const rel = path.relative(REPO_ROOT, skillFile);
+      failures.push(
+        `${rel} grants host \`Skill\` in allowed-tools — ` +
+          `FORBIDDEN per Global Rule 4 (Paseo MCP Only, Strict) in ` +
+          `shared-references/paseo-subagent-dispatch.md. Use ` +
+          `\`mcp__paseo__create_agent\` to dispatch sub-skills instead.`,
+      );
+    }
+
     const hasPaseoCreate = at.includes("mcp__paseo__create_agent");
     const bodyCitesPaseo = body.includes("paseo-subagent-dispatch.md");
     if (hasPaseoCreate && !bodyCitesPaseo) {
