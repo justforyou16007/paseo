@@ -138,6 +138,12 @@ Resolve `run-state.js` via the canonical chain (integration-contract §2):
 ```bash
 AUTO_RESEARCH_ITERATIONS=$(awk '/^## ARIS Paseo/{flag=1; next} flag && /auto_research_iterations:/{print $2; exit}' CLAUDE.md)
 AUTO_RESEARCH_ITERATIONS=${AUTO_RESEARCH_ITERATIONS:-0}
+
+# Read Reference Knowledge from CLAUDE.md (optional — empty is fine)
+REF_SKILLS=$(awk '/^## Reference Knowledge/{flag=1; next} flag && /^skills:/{flag2=1; next} flag2 && /^\[/{print; exit} flag2 && /^  -/{print}' CLAUDE.md | tr -d '[]" ' | paste -sd,)
+REF_DOCS=$(awk '/^## Reference Knowledge/{flag=1; next} flag && /^documents:/{flag2=1; next} flag2 && /^\[/{print; exit} flag2 && /^  -/{print}' CLAUDE.md | tr -d '[]" ' | paste -sd,)
+REF_KNOWLEDGE=$(awk '/^## Reference Knowledge/{flag=1; next} flag && /^knowledge:/{flag2=1; next} flag2 && /^\[/{print; exit} flag2 && /^  -/{gsub(/^  - /,""); print}' CLAUDE.md | paste -sd'|')
+
 if [ "$AUTO_RESEARCH_ITERATIONS" -gt 0 ] 2>/dev/null; then
   PHASES="idea-discovery,research-iteration,experiment-bridge,auto-review-loop,summary,paper-writing"
 else
@@ -303,7 +309,7 @@ claude sub-agents, and each cross-model reviewer as a paseo codex sub-agent.
 ```bash
 PROMPT=$(bash "$RENDER" --phase idea-discovery --run-id "$RUN_ID" --root "$ROOT" \
          --skill skills/idea-discovery/SKILL.md \
-         --extra "direction: $ARGUMENTS | ARXIV_DOWNLOAD=$ARXIV_DOWNLOAD COMPACT=$COMPACT")
+         --extra "direction: $ARGUMENTS | ARXIV_DOWNLOAD=$ARXIV_DOWNLOAD COMPACT=$COMPACT | reference_skills: $REF_SKILLS | reference_docs: $REF_DOCS | domain_knowledge: $REF_KNOWLEDGE")
 # create_agent W1 (claude) with $PROMPT ; await notifyOnFinish ; read receipt
 ```
 

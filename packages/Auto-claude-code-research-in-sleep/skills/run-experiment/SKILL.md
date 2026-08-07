@@ -135,6 +135,18 @@ sh "$SKILL_DIR/scripts/teardown.sh"
 
 > This ensures users are never billed for idle vast.ai instances. When `auto_destroy: true` (the default for fresh rentals), the full lifecycle is automatic: rent → setup → run → collect → destroy.
 
+### Post-run suggestion
+
+After a foreground experiment completes successfully, suggest structured analysis:
+
+```
+Experiment complete. For structured comparison and statistical analysis:
+/analyze-results — project: <project>
+```
+
+For background runs dispatched by `/experiment-bridge` or `/auto-research-loop`,
+analysis is handled automatically by the caller's Phase 5.6 / Phase 2.5.
+
 ## Key Rules
 
 - ALWAYS check GPU availability first — never blindly assign GPUs (except Modal, which manages allocation automatically)

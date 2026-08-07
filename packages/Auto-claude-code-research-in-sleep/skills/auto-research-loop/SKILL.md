@@ -155,6 +155,14 @@ STATE
 
 node "$RUN_STATE" set "$ROOT" "$RUN_ID" preconditions done \
     --artifact "$ROOT/research-iteration/paseo-config.json"
+
+# 0g. Read Reference Knowledge
+REF_SKILLS=$(awk '/^## Reference Knowledge/{flag=1; next} flag && /^skills:/{flag2=1; next} flag2 && /^\[/{print; exit} flag2 && /^  -/{print}' CLAUDE.md | tr -d '[]" ' | paste -sd,)
+REF_DOCS=$(awk '/^## Reference Knowledge/{flag=1; next} flag && /^documents:/{flag2=1; next} flag2 && /^\[/{print; exit} flag2 && /^  -/{print}' CLAUDE.md | tr -d '[]" ' | paste -sd,)
+REF_KNOWLEDGE=$(awk '/^## Reference Knowledge/{flag=1; next} flag && /^knowledge:/{flag2=1; next} flag2 && /^\[/{print; exit} flag2 && /^  -/{gsub(/^  - /,""); print}' CLAUDE.md | paste -sd'|')
+
+# If all empty, proceed without reference injection (no error — reference
+# knowledge is optional).
 ```
 ---
 
@@ -169,7 +177,7 @@ The first iteration's goal is to identify what can be improved about the baselin
 ```bash
 PROMPT=$(bash "$RENDER" --phase "idea-discovery" --run-id "$RUN_ID" --root "$ROOT" \
     --skill skills/idea-discovery/SKILL.md \
-    --extra "Baseline plan: $BASELINE_PLAN. Find improvement directions. Write IDEA_REPORT.md.")
+    --extra "Baseline plan: $BASELINE_PLAN. Find improvement directions. Write IDEA_REPORT.md. | reference_skills: $REF_SKILLS | reference_docs: $REF_DOCS | domain_knowledge: $REF_KNOWLEDGE")
 
 # Dispatch via paseo
 mcp__paseo__create_agent \
@@ -207,7 +215,7 @@ OPEN_GAPS=$(grep -E '^\*\*Status\*\*:.*open' research-wiki/gap_map.md \
 
 PROMPT=$(bash "$RENDER" --phase "idea-discovery" --run-id "$RUN_ID" --root "$ROOT" \
     --skill skills/idea-creator/SKILL.md \
-    --extra "Target open gaps: $OPEN_GAPS. Query pack: research-wiki/query_pack.md. Gap map: research-wiki/gap_map.md. Find ideas that close the highest-priority open gaps.")
+    --extra "Target open gaps: $OPEN_GAPS. Query pack: research-wiki/query_pack.md. Gap map: research-wiki/gap_map.md. Find ideas that close the highest-priority open gaps. | reference_skills: $REF_SKILLS | reference_docs: $REF_DOCS | domain_knowledge: $REF_KNOWLEDGE")
 
 mcp__paseo__create_agent \
     --title "research-loop-iter-${ITERATION}-idea-creator" \
@@ -291,6 +299,34 @@ node "$RUN_STATE" set "$ROOT" "$RUN_ID" experiment-bridge done \
 ```
 ---
 
+## Phase 2.5: Structured Analysis
+
+After experiment-bridge completes (Phase 2), dispatch `/analyze-results` to
+produce structured analysis before the review phase:
+
+```bash
+PROMPT="/analyze-results — project: $PROJECT"
+# mcp__paseo__create_agent; await notifyOnFinish; read receipt
+```
+
+Receipt: `.aris/runs/<run_id>.research-iteration.iter-<N>.analyze-results.done.json`
+
+The analysis output feeds:
+- **Phase 3 (W2 review):** the reviewer gets `refine-logs/EXPERIMENT_RESULTS.md`
+  with comparison tables and statistical tests rather than raw tracker rows.
+- **Phase 4 (metric evaluation):** `CURRENT_METRIC` is read from the
+  analyze-results receipt's `primary_metric` field rather than raw awk on
+  EXPERIMENT_TRACKER.md.
+
+```bash
+# Read metric from analyze-results receipt instead of raw awk
+RECEIPT=".aris/runs/${RUN_ID}.research-iteration.iter-${ITERATION}.analyze-results.done.json"
+CURRENT_METRIC=$(jq -r '.primary_metric // empty' "$RECEIPT")
+[ -z "$CURRENT_METRIC" ] && CURRENT_METRIC=$(awk '...' refine-logs/EXPERIMENT_TRACKER.md)  # fallback
+```
+
+---
+
 ## Phase 3: Auto Review Loop
 
 Dispatches `/auto-review-loop` on the current iteration's results. The review loop runs up to 4 internal rounds (fix → re-review) before returning a final verdict. A **fresh** codex reviewer is used (per `REVIEWER_BIAS_GUARD`).
@@ -298,7 +334,7 @@ Dispatches `/auto-review-loop` on the current iteration's results. The review lo
 ```bash
 PROMPT=$(bash "$RENDER" --phase "auto-review" --run-id "$RUN_ID" --root "$ROOT" \
     --skill skills/auto-review-loop/SKILL.md \
-    --extra "Review iteration $ITERATION results. Files: refine-logs/EXPERIMENT_RESULTS.md, refine-logs/EXPERIMENT_TRACKER.md, idea-stage/IDEA_REPORT.md. Metric target: $TARGET_METRIC $TARGET_UNIT. Use fresh codex reviewer (REVIEWER_BIAS_GUARD=true). Write verdict to research-iteration/review-iter-${ITERATION}.json.")
+    --extra "Review iteration $ITERATION results. Files: refine-logs/EXPERIMENT_RESULTS.md, refine-logs/EXPERIMENT_TRACKER.md, idea-stage/IDEA_REPORT.md. Metric target: $TARGET_METRIC $TARGET_UNIT. Use fresh codex reviewer (REVIEWER_BIAS_GUARD=true). Write verdict to research-iteration/review-iter-${ITERATION}.json. | reference_skills: $REF_SKILLS | reference_docs: $REF_DOCS | domain_knowledge: $REF_KNOWLEDGE")
 
 mcp__paseo__create_agent \
     --title "research-loop-iter-${ITERATION}-auto-review" \
@@ -332,11 +368,18 @@ This is the critical decision point. The parent evaluates purely arithmetic cond
 ### Type-A: Deterministic metric check
 
 ```bash
-# Read current metric from EXPERIMENT_TRACKER.md (latest row)
-CURRENT_METRIC=$(awk '/^|/{last=$0} END{
-    split(last, a, "|");
-    for(i=1;i<=length(a);i++) if(a[i] ~ /[0-9]+\.[0-9]+/) {print a[i]+0; exit}
-}' refine-logs/EXPERIMENT_TRACKER.md)
+# Prefer metric from analyze-results receipt; fall back to raw awk on EXPERIMENT_TRACKER.md
+ANALYZE_RECEIPT=".aris/runs/${RUN_ID}.research-iteration.iter-${ITERATION}.analyze-results.done.json"
+CURRENT_METRIC=""
+if [ -f "$ANALYZE_RECEIPT" ]; then
+    CURRENT_METRIC=$(jq -r '.primary_metric // empty' "$ANALYZE_RECEIPT")
+fi
+if [ -z "$CURRENT_METRIC" ]; then
+    CURRENT_METRIC=$(awk '/^|/{last=$0} END{
+        split(last, a, "|");
+        for(i=1;i<=length(a);i++) if(a[i] ~ /[0-9]+\.[0-9]+/) {print a[i]+0; exit}
+    }' refine-logs/EXPERIMENT_TRACKER.md)
+fi
 
 # Compute threshold with tolerance
 THRESHOLD=$(echo "$TARGET_METRIC * (1 - 0.01)" | bc -l)
@@ -436,7 +479,7 @@ When the compound gate does not fire, the loop must identify what to try next. T
 ```bash
 PROMPT=$(bash "$RENDER" --phase "gap-analysis" --run-id "$RUN_ID" --root "$ROOT" \
     --skill skills/kill-argument/SKILL.md \
-    --extra "/kill-argument refine-logs/ — gap-output: research-wiki/gap_map.md — plan-output: refine-logs/EXPERIMENT_PLAN-iter-${NEXT_ITERATION}.md — render html: false")
+    --extra "/kill-argument refine-logs/ — gap-output: research-wiki/gap_map.md — plan-output: refine-logs/EXPERIMENT_PLAN-iter-${NEXT_ITERATION}.md — render html: false | reference_skills: $REF_SKILLS | reference_docs: $REF_DOCS | domain_knowledge: $REF_KNOWLEDGE")
 
 mcp__paseo__create_agent \
     --title "research-loop-iter-${ITERATION}-kill-argument" \

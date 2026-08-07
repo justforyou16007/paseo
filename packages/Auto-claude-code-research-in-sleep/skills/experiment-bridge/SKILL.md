@@ -303,7 +303,28 @@ Append each completed experiment to `EXPERIMENT_LOG.md`:
 
 This structured log survives session recovery — downstream skills read it instead of parsing screen output.
 
-### Phase 5.6: Auto Ablation Planning
+### Phase 5.6: Structured Analysis
+
+After all experiments complete and results are collected, dispatch
+`/analyze-results — project: <project>` as a paseo sub-agent to perform
+structured analysis (comparison tables, statistics, insights) with
+cross-model completeness verification.
+
+```bash
+PROMPT="/analyze-results — project: $PROJECT"
+# mcp__paseo__create_agent with notifyOnFinish; await receipt
+```
+
+Wait for the receipt at `.aris/runs/<run_id>.analyze-results.<project>.done.json`.
+The analysis output at `refine-logs/EXPERIMENT_RESULTS.md` becomes input to the
+subsequent review phase (W2), giving the reviewer structured data rather than
+raw tracker rows.
+
+If the analyze-results skill is not installed (receipt missing after timeout),
+log a warning and continue with the current behavior — the review phase can
+still work from raw EXPERIMENT_TRACKER.md.
+
+### Phase 5.7: Auto Ablation Planning
 
 After main experiments (M2) complete with positive results, dispatch a paseo claude sub-agent for `/ablation-planner` per `shared-references/paseo-subagent-dispatch.md` (Paseo claude sub-agent per `paseo-subagent-dispatch.md`) to design ablation studies:
 

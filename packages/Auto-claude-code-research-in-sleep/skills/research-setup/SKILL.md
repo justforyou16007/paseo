@@ -22,6 +22,7 @@ Phase 3  Prior work & baselines (papers, experiments, results)  [skippable]
 Phase 4  Experiment environment (delegated to /experiment-env-configuration)
 Phase 4.5  Early stop configuration
 Phase 5  Research goals (budget, timeline, venue, constraints)
+Phase 5.5  Reference knowledge (skills, documents, domain constraints) [skippable]
 Phase 6  Paseo substrate config (multi-agent orchestration)     [skippable]
 Phase 7  Artifact generation (CLAUDE.md, RESEARCH_BRIEF.md, research-wiki, .gitignore)
 Phase 7.5  Experiment environment configuration (in-session /experiment-env-configuration)
@@ -344,6 +345,39 @@ If Q8 has a value, also record `answers.metric_direction` by inferring from the 
 
 ---
 
+## Phase 5.5: Reference Knowledge
+
+Collect reference materials and domain knowledge from the user. This section
+is written to CLAUDE.md `## Reference Knowledge` and consumed by
+auto-research-loop and research-pipeline to provide context to sub-skills.
+
+**Q1** — header: "参考技能" / "Reference skills", question:
+"在研究过程中，是否有需要特别调用的辅助技能？（如通信领域文献搜索 /comm-lit-review、公式推导 /formula-derivation 等。留空则跳过）"
+(en): "Any auxiliary skills to invoke during research? (e.g., /comm-lit-review for domain-specific literature, /formula-derivation for theory work. Leave blank to skip)"
+options: `["无需额外技能"]` + "Other"
+
+**Q2** — header: "参考文档" / "Reference docs", question:
+"有没有需要研究流程参考的文档？（如关键论文 PDF、技术笔记、代码仓库中的文件路径等。请提供路径，每行一个）"
+(en): "Any documents for the research flow to reference? (key papers, tech notes, file paths in the repo — one per line)"
+options: `["暂无"]` + "Other"
+
+**Q3** — header: "领域知识" / "Domain knowledge", question:
+"有什么需要研究流程了解的领域知识或约束？（如硬件限制、指标选择理由、关键假设、先前经验教训等）"
+(en): "Any domain knowledge or constraints the research flow should know? (hardware limits, metric rationale, key assumptions, lessons learned)"
+options: `["暂无"]` + "Other"
+
+**Exploration.** After receiving Q2 answers, if user provided document paths:
+- Read each file's first ~100 lines to extract key information
+- Summarize the domain context from the documents
+- Present the summary to the user for confirmation/correction
+
+Record `answers.reference_skills[]`, `answers.reference_documents[]`,
+`answers.reference_knowledge[]`.
+
+**After Phase 5.5:** Save state with `completed_stages: [1,2,3,4,4.5,5,5.5]`.
+
+---
+
 ## Phase 6: Paseo Substrate Config (Skippable)
 
 **Question 0 (gate):**
@@ -368,7 +402,7 @@ If "Yes", use AskUserQuestion with 3 questions:
 - Q4 header "AutoResearch", question: "Enable the auto-research-loop (closed research-iteration driver)? Inserted between W1 and W1.5; loops baseline reproduction → problem diagnosis → hypothesis → experiment → review until metric target is met or iteration budget is exhausted. Requires a `## Metric Target` block in `CLAUDE.md` (added in Phase 7b)."
   options: `["Off (0 iterations, default — today's flow)", "Up to 3 iterations (quick research push)", "Up to 5 iterations (full closed loop)"]` + "Other"
 
-**After Phase 6:** Save state with `completed_stages: [1,2,3,4,4.5,5,6]`. If "AutoResearch" was selected with iterations > 0, also write `answers.auto_research_iterations = <selected number>` and ensure the generated `## ARIS Paseo` block in `CLAUDE.md` includes `auto_research_iterations: <number>`. The `research-pipeline` orchestrator reads this field and conditionally inserts the `research-iteration` stage.
+**After Phase 6:** Save state with `completed_stages: [1,2,3,4,4.5,5,5.5,6]`. If "AutoResearch" was selected with iterations > 0, also write `answers.auto_research_iterations = <selected number>` and ensure the generated `## ARIS Paseo` block in `CLAUDE.md` includes `auto_research_iterations: <number>`. The `research-pipeline` orchestrator reads this field and conditionally inserts the `research-iteration` stage.
 
 ---
 
@@ -405,6 +439,7 @@ Copy the template and fill in:
   Phase 7.5 owns this section via `/experiment-env-configuration`.
 - In `## Early Stop Configuration`: if `answers.early_stop_enabled == true`, uncomment the block and fill in values from `answers.early_stop`. Otherwise leave it commented.
 - If `answers.paseo_configured == true`: append the Paseo section from `$TEMPLATES_DIR/CLAUDE_MD_PASEO_SECTION.md` with values filled in. Otherwise leave the Paseo section with defaults or commented.
+- `## Reference Knowledge` — fill `skills:` from `answers.reference_skills`, `documents:` from `answers.reference_documents`, `knowledge:` from `answers.reference_knowledge`. If all empty, leave with empty lists.
 
 **If `CLAUDE.md` DOES exist:**
 Merge strategy — preserve all existing content:
@@ -419,6 +454,8 @@ Merge strategy — preserve all existing content:
 8. If `## Early Stop Configuration` does NOT exist and `answers.early_stop_enabled == true`, insert the filled block
 9. Same for `## Project Constraints`, `## Non-Goals`, `## Compute Budget`
 10. If `## ARIS Paseo` does NOT exist and `answers.paseo_configured == true`, append it
+11. If `## Reference Knowledge` does NOT exist and answers have reference data, insert the filled block after `## Metric Target`
+12. If `## Reference Knowledge` exists, leave unchanged (user may have manually edited)
 
 Write the result to `CLAUDE.md`.
 
