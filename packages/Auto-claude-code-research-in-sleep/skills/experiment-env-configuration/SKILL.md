@@ -798,6 +798,31 @@ Run in order; do not report success on a failure. Steps 1–3 verify the draft
    whose `name` matches the directory name, and
    `jq -e '.status == "complete"' "$SKILL_DIR/env.json"` exits 0.
 
+7. **Register in CLAUDE.md.** Update the `## Experiment Skill` section so that
+   other skills (research-pipeline, auto-research-loop, experiment-bridge, etc.)
+   can discover the generated experiment skill by reading CLAUDE.md:
+
+   ```yaml
+   ## Experiment Skill
+
+   configured: true
+   skill_path: .claude/skills/run-<project>-experiment
+   status: <complete|user_override>
+   scripts:
+     prepare: .claude/skills/run-<project>-experiment/scripts/prepare.sh
+     run: .claude/skills/run-<project>-experiment/scripts/run.sh
+     collect: .claude/skills/run-<project>-experiment/scripts/collect.sh
+     analyze: .claude/skills/run-<project>-experiment/scripts/analyze.sh
+     monitor: .claude/skills/run-<project>-experiment/scripts/monitor.sh
+     info: .claude/skills/run-<project>-experiment/scripts/info.sh
+     teardown: .claude/skills/run-<project>-experiment/scripts/teardown.sh
+   ```
+
+   If `## Experiment Skill` exists, replace its yaml block. If absent, insert
+   after `## Experiment Environment`. This is the authoritative pointer — any
+   skill that needs to interact with the experiment environment reads this
+   section to find the script paths.
+
 Then print:
 
 ```

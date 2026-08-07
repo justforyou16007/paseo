@@ -84,6 +84,25 @@ last_updated: "" # YYYY-MM-DD HH:mm — auto-updated by skills on every output w
 - auto_remove: true
 -->
 
+## Experiment Skill
+
+> Auto-populated by `/experiment-env-configuration` after environment setup.
+> Other skills read this section to discover the generated experiment skill.
+
+```yaml
+configured: false
+skill_path: ""          # e.g., .claude/skills/run-myproject-experiment
+status: ""              # complete | audit_failed | user_override
+scripts:
+  prepare: ""           # sync code + verify env
+  run: ""               # launch one experiment
+  collect: ""           # pull results + logs
+  analyze: ""           # error collection + result analysis
+  monitor: ""           # check running job status
+  info: ""              # environment metadata (hardware, patterns, connection)
+  teardown: ""          # release resources
+```
+
 ## Early Stop Configuration
 
 > Optional. Watchdog will monitor training logs and stop experiments when conditions are met.
