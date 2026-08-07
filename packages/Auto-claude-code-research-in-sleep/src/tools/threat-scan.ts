@@ -263,13 +263,13 @@ export function quarantine(
   content: string,
   scope: Scope = "strict",
   label = "entry",
-): { text: string; findings: string[] } {
+): [string, string[]] {
   const findings = scanForThreats(content, scope);
-  if (findings.length === 0) return { text: content, findings: [] };
+  if (findings.length === 0) return [content, []];
   const placeholder =
     `[BLOCKED: ${label} matched threat pattern(s): ${findings.join(", ")} ` +
     `— raw text preserved on disk; review and remove. Not injected into context.]`;
-  return { text: placeholder, findings };
+  return [placeholder, findings];
 }
 
 const program = createCli("threat-scan", "ARIS injection / exfiltration scanner.");
@@ -293,10 +293,9 @@ program.action(async (filePath: string, opts: { scope: string; quarantine?: bool
     text = fs.readFileSync(filePath, "utf-8");
   }
   if (opts.quarantine) {
-    const result = quarantine(text, scope, filePath);
-    const out = result.text;
+    const [out, qFindings] = quarantine(text, scope, filePath);
     process.stdout.write(out.endsWith("\n") ? out : out + "\n");
-    process.exit(result.findings.length > 0 ? 1 : 0);
+    process.exit(qFindings.length > 0 ? 1 : 0);
   }
   const findings = scanForThreats(text, scope);
   if (findings.length > 0) {
