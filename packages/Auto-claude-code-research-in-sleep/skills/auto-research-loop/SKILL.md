@@ -244,6 +244,51 @@ answered which open question. `claim_supported: "no"` sets the status to
 `refuted`, which is equally informative and prevents a later round from
 re-proposing the same dead direction.
 
+### Step 4.5 — Rebuild query pack and propose ideas (iteration ≥ 2)
+
+Before the cross-model review, rebuild the research wiki's query pack so it
+reflects the current state of gaps, claims, experiments, and edges. Then
+dispatch `/idea-creator` to propose solution ideas targeting the open gaps.
+
+**4.5a. Rebuild query pack:**
+
+```bash
+$WIKI_SCRIPT rebuild_query_pack research-wiki/
+```
+
+This compresses the wiki state into `research-wiki/query_pack.md` (~8000 chars),
+which `/idea-creator` reads as its landscape context. Without this step,
+idea-creator has no visibility into what the loop has already tried, what gaps
+remain open, or what claims have been established.
+
+**4.5b. Dispatch `/idea-creator`** as a paseo sub-agent (Rule 1, Rule 4):
+
+```
+/idea-creator — direction: "address open gaps in research-wiki/gap_map.md" — query-pack: research-wiki/query_pack.md — target-gaps: <comma-joined open gap IDs from gap_map.md>
+```
+
+The sub-agent reads `query_pack.md` for landscape context and `gap_map.md` for
+the specific open gaps to target. It produces `idea-stage/IDEA_REPORT.md` with
+ideas ranked by their potential to close the highest-priority open gaps.
+
+Receipt: `.aris/runs/<run_id>.research-iteration.iter-<N>.idea-creator.done.json`
+
+**4.5c. Record ideas** in the wiki (verbatim from receipt):
+
+```bash
+# For each idea in the receipt's ideas[] array:
+$WIKI_SCRIPT upsert_idea research-wiki/ \
+  --id "idea:<slug>" \
+  --title "<title from receipt>" \
+  --target-gaps "<comma-joined gap IDs this idea addresses>"
+```
+
+**4.5d. Select the top idea** for the next experiment round. The parent reads
+the receipt's `top_idea_id` field — it does not rank ideas itself.
+
+If no open gaps remain (all closed or refuted), skip this step — the loop is
+converging and Step 5's review will evaluate whether to stop.
+
 ### Step 5 — Cross-model review (the codex reviewer sub-agent)
 
 Every round dispatches a **fresh** codex sub-agent (per `paseo-reviewer-dispatch.md` and `REVIEWER_BIAS_GUARD=true`). The reviewer reads file paths only — no executor summary.
