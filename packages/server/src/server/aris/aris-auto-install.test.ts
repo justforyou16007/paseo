@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -14,6 +14,29 @@ async function createArisSource(root: string): Promise<void> {
   await writeFile(path.join(root, "agents", "demo-agent.md"), "# agent\n", "utf-8");
   await mkdir(path.join(root, "tools"), { recursive: true });
   await writeFile(path.join(root, "tools", "research_wiki.py"), "# helper\n", "utf-8");
+  // Compiled tools — the primary dependency skills invoke at runtime
+  await mkdir(path.join(root, "dist", "tools"), { recursive: true });
+  await writeFile(
+    path.join(root, "dist", "tools", "research-wiki.js"),
+    "#!/usr/bin/env node\n",
+    "utf-8",
+  );
+  await mkdir(path.join(root, "dist", "lib"), { recursive: true });
+  await writeFile(
+    path.join(root, "dist", "lib", "cli.js"),
+    'import { Command } from "commander";\n',
+    "utf-8",
+  );
+  // Runtime dependency for compiled tools
+  await mkdir(path.join(root, "node_modules", "commander"), { recursive: true });
+  await writeFile(
+    path.join(root, "node_modules", "commander", "index.js"),
+    "module.exports = {};\n",
+    "utf-8",
+  );
+  // Templates for research-setup, meta-optimize, etc.
+  await mkdir(path.join(root, "templates"), { recursive: true });
+  await writeFile(path.join(root, "templates", "RESEARCH_BRIEF_TEMPLATE.md"), "# Brief\n", "utf-8");
 }
 
 describe("ensureArisSkillsInstalled", () => {
@@ -76,5 +99,34 @@ describe("ensureArisSkillsInstalled", () => {
     const second = await ensureArisSkillsInstalled({ cwd: projectDir, logger });
 
     expect(second).toEqual({ installed: false, skippedReason: "already_installed" });
+  });
+
+  it("copies compiled dist/, node_modules/, and templates/ into .aris/", async () => {
+    await ensureArisSkillsInstalled({ cwd: projectDir, logger });
+
+    await expect(
+      readFile(path.join(projectDir, ".aris", "dist", "tools", "research-wiki.js"), "utf-8"),
+    ).resolves.toBe("#!/usr/bin/env node\n");
+    await expect(
+      readFile(path.join(projectDir, ".aris", "dist", "lib", "cli.js"), "utf-8"),
+    ).resolves.toContain("commander");
+    await expect(
+      readFile(path.join(projectDir, ".aris", "node_modules", "commander", "index.js"), "utf-8"),
+    ).resolves.toContain("module.exports");
+    await expect(
+      readFile(path.join(projectDir, ".aris", "templates", "RESEARCH_BRIEF_TEMPLATE.md"), "utf-8"),
+    ).resolves.toBe("# Brief\n");
+  });
+
+  it("succeeds even when dist/ and templates/ do not exist in source", async () => {
+    await rm(path.join(arisSource, "dist"), { recursive: true });
+    await rm(path.join(arisSource, "templates"), { recursive: true });
+    await rm(path.join(arisSource, "node_modules"), { recursive: true });
+
+    const result = await ensureArisSkillsInstalled({ cwd: projectDir, logger });
+
+    expect(result).toEqual({ installed: true, skillCount: 1 });
+    // dist/ should not exist in target
+    await expect(access(path.join(projectDir, ".aris", "dist"))).rejects.toThrow();
   });
 });

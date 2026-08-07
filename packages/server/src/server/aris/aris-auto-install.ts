@@ -244,11 +244,28 @@ async function copyEntrySafe(source: string, target: string, logger: Logger): Pr
     }
     await cp(source, target, {
       recursive: true,
-      // Upstream may contain symlinks; materialize them so the project copy is standalone.
       dereference: true,
       force: false,
       errorOnExist: true,
       filter: (src) => !COPY_EXCLUDE_BASENAMES.has(path.basename(src)),
+    });
+    return true;
+  } catch (error) {
+    logger.warn({ err: error, source, target }, "ARIS auto-install: failed to copy entry");
+    return false;
+  }
+}
+
+async function copyDirUnfiltered(source: string, target: string, logger: Logger): Promise<boolean> {
+  try {
+    if (await pathExistsLstat(target)) {
+      return false;
+    }
+    await cp(source, target, {
+      recursive: true,
+      dereference: true,
+      force: false,
+      errorOnExist: true,
     });
     return true;
   } catch (error) {
@@ -318,6 +335,24 @@ export async function ensureArisSkillsInstalled(
 
     const toolsTarget = path.join(cwd, ".aris", "tools");
     await copyEntrySafe(path.join(arisRepo, "tools"), toolsTarget, logger);
+
+    // Compiled TypeScript tools — the helpers that skills actually invoke at runtime.
+    const distSource = path.join(arisRepo, "dist");
+    if (await pathExists(distSource)) {
+      await copyEntrySafe(distSource, path.join(cwd, ".aris", "dist"), logger);
+    }
+
+    // Runtime dependency for compiled tools (dist/lib/cli.js imports commander).
+    const nodeModulesSource = path.join(arisRepo, "node_modules");
+    if (await pathExists(nodeModulesSource)) {
+      await copyDirUnfiltered(nodeModulesSource, path.join(cwd, ".aris", "node_modules"), logger);
+    }
+
+    // Templates used by research-setup, meta-optimize, paper-poster-html.
+    const templatesSource = path.join(arisRepo, "templates");
+    if (await pathExists(templatesSource)) {
+      await copyEntrySafe(templatesSource, path.join(cwd, ".aris", "templates"), logger);
+    }
 
     const manifestContent = buildManifest(arisRepo, cwd, installedEntries);
     const manifestTmp = `${manifestPath}.tmp.${process.pid}`;

@@ -14,7 +14,10 @@ Into the project directory:
 | ---------------------------- | ------------------------------------------------------ |
 | `.claude/skills/<skill>/`    | One directory per ARIS skill, plus `shared-references` |
 | `.claude/agents/<agent>.md`  | ARIS subagent definitions                              |
-| `.aris/tools/`               | Helper scripts (`research_wiki.py`, …)                 |
+| `.aris/tools/`               | Shell-script helpers (`research_wiki.py`, …)           |
+| `.aris/dist/`                | Compiled TypeScript tools and MCP servers              |
+| `.aris/node_modules/`        | Runtime dependency for compiled tools (`commander`)    |
+| `.aris/templates/`           | Project scaffolding templates                          |
 | `.aris/installed-skills.txt` | TSV manifest; skills read `repo_root` from it          |
 
 Copies, not symlinks — the project owns its skills, so upgrading the daemon
