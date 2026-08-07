@@ -28,6 +28,18 @@ last_updated: "" # YYYY-MM-DD HH:mm — auto-updated by skills on every output w
 
 - {budget details, e.g., "8x A100 for 24h via vast.ai"}
 
+## Metric Target
+
+> Required for `/auto-research-loop`. The loop stops when the primary metric
+> reaches the target. Remove the comment markers and fill in.
+
+<!-- Metric Target
+primary: 0.85 F1          # target value + unit (e.g., "0.85 F1", "25.0 BLEU", "3.2 perplexity")
+direction: higher_better   # higher_better | lower_better
+baseline: ""               # current baseline value (filled after baseline reproduction)
+tolerance: 0.01            # relative tolerance — 1% by default
+-->
+
 ## Experiment Environment
 
 > Required for any GPU experiment. Uncomment **one** block and fill it in.

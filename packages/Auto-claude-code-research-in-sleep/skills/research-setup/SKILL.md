@@ -318,7 +318,7 @@ Use AskUserQuestion with up to 4 questions (max 4 per batch):
   - "Improvement on existing method" / "改进现有方法"
   - "Diagnostic study / analysis paper" / "诊断性研究 / 分析型论文"
 
-**Batch 2 (2 questions):**
+**Batch 2 (4 questions):**
 
 - Q5 header "Constraints" / "约束", question: "Any project constraints? (e.g., must use PyTorch, must compare against method X)"
   (zh): "项目有什么约束条件？（如：必须使用 PyTorch、必须与方法 X 比较）"
@@ -327,6 +327,18 @@ Use AskUserQuestion with up to 4 questions (max 4 per batch):
 - Q6 header "Non-goals" / "非目标", question: "Anything you explicitly do NOT want to work on?"
   (zh): "有什么明确不想做的事情？"
   options: `["None"]` + "Other"
+
+- Q7 header "Primary metric" / "主要指标", question: "What is the primary metric for this project? (e.g., F1, BLEU, perplexity, accuracy)"
+  (zh): "项目的主要评估指标是什么？（如：F1、BLEU、perplexity、accuracy）"
+  options: `["accuracy", "F1", "BLEU", "perplexity"]` + "Other"
+
+- Q8 header "Metric target" / "目标值", question: "What target value should the primary metric reach? (e.g., 0.85, 25.0). Leave blank if no specific target yet."
+  (zh): "主要指标的目标值是多少？（如：0.85、25.0）。如果暂无具体目标可留空。"
+  options: `["No specific target yet"]` + "Other"
+
+Record `answers.primary_metric` (Q7) and `answers.metric_target` (Q8, may be empty).
+If Q8 has a value, also record `answers.metric_direction` by inferring from the metric name:
+`perplexity` → `lower_better`; all others → `higher_better`. If ambiguous, default to `higher_better`.
 
 **After Phase 5:** Save state with `completed_stages: [1,2,3,4,4.5,5]`.
 
@@ -382,6 +394,13 @@ Copy the template and fill in:
 - Fill `## Project Constraints` with `answers.constraints` (or leave placeholder if "No specific constraints")
 - Fill `## Non-Goals` with `answers.non_goals` (or leave placeholder if "None")
 - Fill `## Compute Budget` with `answers.compute_budget`
+- `## Metric Target` — if `answers.metric_target` is set (not empty / not "No specific target yet"),
+  uncomment the block and fill in:
+  - `primary: <answers.metric_target> <answers.primary_metric>` (e.g., `primary: 0.85 F1`)
+  - `direction: <answers.metric_direction>` (e.g., `higher_better`)
+  - `baseline: ""` (filled later after baseline reproduction)
+  - `tolerance: 0.01`
+  If no target was specified, leave the section commented.
 - `## Experiment Environment` — leave the template's commented blocks as-is.
   Phase 7.5 owns this section via `/experiment-env-configuration`.
 - In `## Early Stop Configuration`: if `answers.early_stop_enabled == true`, uncomment the block and fill in values from `answers.early_stop`. Otherwise leave it commented.
@@ -392,12 +411,14 @@ Merge strategy — preserve all existing content:
 1. If `<!-- ARIS:BEGIN -->` block exists, preserve it
 2. If `## Pipeline Status` section exists, update the `language:` field only
 3. If `## Pipeline Status` does NOT exist, insert the filled Pipeline Status block after the first H1
-4. If `## Experiment Environment` section exists, leave it unchanged. If absent,
+4. If `## Metric Target` does NOT exist and `answers.metric_target` is set, insert the filled block after `## Compute Budget`
+5. If `## Metric Target` exists, leave it unchanged (user may have manually edited)
+6. If `## Experiment Environment` section exists, leave it unchanged. If absent,
    insert the template's fully-commented block.
-5. If `## Early Stop Configuration` section exists and `answers.early_stop_enabled == true`, update it with the new config
-6. If `## Early Stop Configuration` does NOT exist and `answers.early_stop_enabled == true`, insert the filled block
-7. Same for `## Project Constraints`, `## Non-Goals`, `## Compute Budget`
-8. If `## ARIS Paseo` does NOT exist and `answers.paseo_configured == true`, append it
+7. If `## Early Stop Configuration` section exists and `answers.early_stop_enabled == true`, update it with the new config
+8. If `## Early Stop Configuration` does NOT exist and `answers.early_stop_enabled == true`, insert the filled block
+9. Same for `## Project Constraints`, `## Non-Goals`, `## Compute Budget`
+10. If `## ARIS Paseo` does NOT exist and `answers.paseo_configured == true`, append it
 
 Write the result to `CLAUDE.md`.
 
