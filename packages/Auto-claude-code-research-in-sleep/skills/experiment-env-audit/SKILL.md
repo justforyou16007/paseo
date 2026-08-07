@@ -1,6 +1,6 @@
 ---
 name: experiment-env-audit
-description: 'Cross-model audit of a project''s experiment environment configuration. Checks that the frozen prepare→run→collect→analyze scripts are trustworthy: command provenance, metric key agreement, failure detectability, environment reachability, analysis honesty. Dispatches /experiment-audit for baseline checks A-F and adds environment-specific checks G-K. Use when environment may have changed and the existing config needs re-validation, or when /experiment-env-configuration needs to gate promotion of a draft bundle. Use when user says "audit experiment environment", "审计实验环境", "check if env config still works", or when prepare.sh/run.sh failures suggest environment drift.'
+description: 'Cross-model audit of a project''s experiment environment configuration with real execution verification. Static checks (G-K): command provenance, metric key agreement, failure detectability, environment reachability, analysis honesty. Execution checks (L-N): actually run prepare.sh/run.sh/collect.sh/info.sh and verify real results are produced. Use when environment may have changed, or when /experiment-env-configuration needs to gate promotion.'
 argument-hint: "[— project: <name>] [— reviewer: codex|oracle-pro|manual] [— target: draft|promoted]"
 allowed-tools: Bash(*), Read, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__wait_for_agent, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission
 ---
@@ -41,7 +41,8 @@ This skill is called in two contexts:
 
 ```
 Phase 0    Resolve target bundle (draft or promoted)
-Phase 1    Dispatch cross-model audit (/experiment-audit + checks G-K)
+Phase 1    Dispatch cross-model audit (/experiment-audit + checks G-K) — static analysis
+Phase 1.5  Execution verification — actually run prepare/run/collect and verify results (checks L-N)
 Phase 2    Read verdict (Type-B — verbatim, never self-judged)
 Phase 3    Output report and machine-readable verdict
 ```
@@ -154,6 +155,66 @@ If the file is missing or unparseable, that is a **hard stop**: report
 `{ "verdict": "error", "reason": "audit did not return a verdict" }`.
 A caller that promotes when the auditor failed to answer is self-acquitting
 by omission.
+
+---
+
+## Phase 1.5: Execution Verification (Type-A — this skill executes and checks)
+
+Checks G-K above are **static analysis** — they read files and reason about
+whether the scripts *would* work. This phase **actually runs the scripts** and
+verifies the results are real. This is Type-A (machine-checkable: did the
+command exit 0? did the expected file appear?).
+
+### L. prepare.sh — environment is reachable
+
+```bash
+sh "$BUNDLE_DIR/scripts/prepare.sh"
+```
+
+PASS if exit 0. FAIL if non-zero — the environment is not reachable or the
+dependency env is broken. Record stderr as the failure reason.
+
+### M. run.sh + collect.sh — a smoke experiment completes
+
+Run a minimal smoke experiment and verify it produces real output:
+
+```bash
+sh "$BUNDLE_DIR/scripts/run.sh" audit-smoke --args "" --gpu 0 2>&1
+# wait for completion (foreground mode or poll via monitor.sh)
+sh "$BUNDLE_DIR/scripts/collect.sh" audit-smoke
+```
+
+PASS if:
+1. `run.sh` exits 0 (or the launched job completes via `monitor.sh`)
+2. `collect.sh` exits 0
+3. The receipt JSON (`.aris/runs/*.experiment.audit-smoke.done.json`) exists
+4. The receipt's `status` field is `"ok"` (not `"failed"`)
+5. The receipt's `primary_metric` field is non-null (a real value was produced)
+
+FAIL if any of these checks fail. Record the exact failure point and any
+error output. A script that passes dry-run but fails real execution is the
+most dangerous kind of false positive — this check catches it.
+
+**Cleanup:** after verification, remove the smoke experiment's artifacts
+(`audit-smoke` handle, result files, log files) so they don't pollute real
+experiment data. Keep the receipt for audit evidence.
+
+### N. info.sh — metadata is valid
+
+```bash
+INFO_OUT=$(sh "$BUNDLE_DIR/scripts/info.sh")
+echo "$INFO_OUT" | jq -e '.hardware and .error_patterns and .connection' >/dev/null
+```
+
+PASS if `info.sh` exits 0 and the output contains the required JSON fields.
+FAIL if it errors or produces invalid JSON.
+
+### Record execution results
+
+Append checks L, M, N to the `ENV_CONFIG_AUDIT.json` `checks` object and
+update `overall_verdict` — if any of L/M/N is FAIL, the overall verdict
+becomes FAIL regardless of the G-K static checks. A configuration that
+looks correct on paper but fails in practice must not pass.
 
 ---
 

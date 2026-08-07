@@ -645,36 +645,21 @@ Body sections, in order:
 
 ---
 
-## Phase 5.5: Trustworthiness Audit (DRIVE/ACQUIT gate)
+## Phase 5.5: Trustworthiness Audit (moved to Phase 6d)
 
-The draft bundle now *claims* to reproduce the baseline run. This skill is the
-wrong party to believe that claim: it wrote the bundle, and the same reasoning
-that produced a plausible-but-wrong run command would also find that command
-plausible on review. Per `shared-references/acceptance-gate.md`, the acceptance
-question is Type-B and is routed off this model.
+The audit is now dispatched in **Phase 6d**, after preliminary promotion to the
+final path. This ensures the audit runs against the scripts at their real
+location (`.claude/skills/run-<project>-experiment/`), not the staging directory.
+
+See Phase 6d for the dispatch, Phase 6e for the verdict gate, and Phase 5.5c
+below for the user-assisted repair loop on FAIL.
 
 > `/experiment-env-audit` (which dispatches `/experiment-audit` internally) is
 > **advisory to its other callers and stays that way** —
 > its own contract ("never block") is unchanged and `/research-pipeline` still
 > continues on FAIL. The blocking behaviour lives **here, in the caller**. This
-> skill declines to promote a bundle its auditor did not clear; the auditor is
+> skill declines to finalize a bundle its auditor did not clear; the auditor is
 > not made to halt anyone.
-
-### 5.5a. Invoke the audit (Type-A — this skill may self-check this half)
-
-Dispatch a **paseo sub-agent** per Rule 1 / Rule 4 — never the host `Skill` tool:
-
-```
-mcp__paseo__create_agent
-  title:    "env-config audit: <project>"
-  provider: claude
-  cwd:      $ROOT
-  initialPrompt: |
-    /experiment-env-audit — project: <project> — reviewer: <REVIEWER_BACKEND> — target: draft
-```
-
-Then `mcp__paseo__wait_for_agent`, read the receipt file, and
-`mcp__paseo__archive_agent` (用完即 archive). **Never poll `get_agent_status`.**
 
 This half is Type-A — "the audit was invoked and its verdict file exists and
 parses" is machine-checkable, so this skill may judge it:
@@ -755,73 +740,103 @@ When the audit returns FAIL, immediately involve the user:
 
 ---
 
-## Phase 6: Verify and Promote
+## Phase 6: Verify, Promote, Audit, Finalize
 
-Run in order; do not report success on a failure. Steps 1–3 verify the draft
-**in staging**; only step 5 makes it an invocable skill.
+Scripts must be audited at their **final path** — a script that works from the
+draft directory but breaks after promotion is a false positive. The flow is:
+verify syntax → promote (preliminary, `status: "pending_audit"`) → audit at
+promoted path → finalize or demote.
 
-1. **Scripts are valid shell:** `sh -n` each of the four scripts in `$STAGING_DIR/scripts/`.
-2. **Dry-run each script:** `sh scripts/prepare.sh --dry-run`, `sh scripts/run.sh smoke --dry-run`,
-   `sh scripts/collect.sh smoke --dry-run`, `sh scripts/analyze.sh --dry-run`. Each must exit 0
-   and print a plausible command — no unsubstituted `{{placeholder}}` may survive.
-3. **`env.json` parses and is structurally complete:**
+### 6a. Syntax verification (in staging)
+
+1. **Scripts are valid shell:** `sh -n` each script in `$STAGING_DIR/scripts/`.
+2. **`env.json` parses and is structurally complete:**
    ```bash
    jq -e '.run.template != "" and .feedback.result.primary_metric_key != ""' \
      "$STAGING_DIR/env.json"
    ```
 
-4. **Gate — the audit verdict permits promotion.** This is the STOP gate; it
-   reads the Phase 5.5 verdict and does not re-derive it:
-   ```bash
-   jq -e '.audit.status == "passed" or .audit.status == "passed_with_warnings" or .audit.status == "user_override"' \
-     "$STAGING_DIR/env.json"
-   ```
-   Non-zero exit ⇒ **do not promote**. Leave the draft in `$STAGING_DIR`, leave
-   `.claude/skills/run-<project>-experiment/` absent, print the failing checks
-   from `ENV_CONFIG_AUDIT.md`, and report `status: "audit_failed"` (or
-   `"audit_error"`). Steps 1–3 passing does not override this: a bundle can be
-   syntactically perfect and still freeze the wrong command.
+### 6b. Preliminary promotion
 
-5. **Promote.** Only when step 4 passes:
-   ```bash
-   mkdir -p "$(dirname "$SKILL_DIR")"
-   cp -R "$STAGING_DIR" "$SKILL_DIR"
-   chmod +x "$SKILL_DIR"/scripts/*.sh
-   # flip draft → complete only now, in the promoted copy
-   tmp=$(mktemp)
-   jq '.status = "complete"' "$SKILL_DIR/env.json" > "$tmp" && mv "$tmp" "$SKILL_DIR/env.json"
-   ```
-   On `passed_with_warnings`, append the audit's WARN action items to
-   `$SKILL_DIR/SKILL.md` under `## Known caveats (from audit)` before finishing.
+Copy the draft to the final path so all paths resolve correctly during audit:
 
-6. **Skill is discoverable:** `$SKILL_DIR/SKILL.md` exists with valid frontmatter
-   whose `name` matches the directory name, and
-   `jq -e '.status == "complete"' "$SKILL_DIR/env.json"` exits 0.
+```bash
+mkdir -p "$(dirname "$SKILL_DIR")"
+cp -R "$STAGING_DIR" "$SKILL_DIR"
+chmod +x "$SKILL_DIR"/scripts/*.sh
+# mark as pending audit — NOT complete yet
+tmp=$(mktemp)
+jq '.status = "pending_audit"' "$SKILL_DIR/env.json" > "$tmp" && mv "$tmp" "$SKILL_DIR/env.json"
+```
 
-7. **Register in CLAUDE.md.** Update the `## Experiment Skill` section so that
-   other skills (research-pipeline, auto-research-loop, experiment-bridge, etc.)
-   can discover the generated experiment skill by reading CLAUDE.md:
+### 6c. Dry-run verification (at promoted path)
 
-   ```yaml
-   ## Experiment Skill
+```bash
+sh "$SKILL_DIR/scripts/prepare.sh" --dry-run
+sh "$SKILL_DIR/scripts/run.sh" smoke --dry-run
+sh "$SKILL_DIR/scripts/collect.sh" smoke --dry-run
+sh "$SKILL_DIR/scripts/analyze.sh" --dry-run
+sh "$SKILL_DIR/scripts/monitor.sh" --dry-run 2>/dev/null || true
+sh "$SKILL_DIR/scripts/info.sh" > /dev/null
+sh "$SKILL_DIR/scripts/teardown.sh" --dry-run 2>/dev/null || true
+```
 
-   configured: true
-   skill_path: .claude/skills/run-<project>-experiment
-   status: <complete|user_override>
-   scripts:
-     prepare: .claude/skills/run-<project>-experiment/scripts/prepare.sh
-     run: .claude/skills/run-<project>-experiment/scripts/run.sh
-     collect: .claude/skills/run-<project>-experiment/scripts/collect.sh
-     analyze: .claude/skills/run-<project>-experiment/scripts/analyze.sh
-     monitor: .claude/skills/run-<project>-experiment/scripts/monitor.sh
-     info: .claude/skills/run-<project>-experiment/scripts/info.sh
-     teardown: .claude/skills/run-<project>-experiment/scripts/teardown.sh
-   ```
+Each must exit 0 and print a plausible command — no unsubstituted
+`{{placeholder}}` may survive. If any fails, demote (step 6g) and report.
 
-   If `## Experiment Skill` exists, replace its yaml block. If absent, insert
-   after `## Experiment Environment`. This is the authoritative pointer — any
-   skill that needs to interact with the experiment environment reads this
-   section to find the script paths.
+### 6d. Dispatch audit (at promoted path)
+
+Dispatch `/experiment-env-audit` targeting the **promoted** location:
+
+```
+mcp__paseo__create_agent
+  title:    "env-config audit: <project>"
+  provider: claude
+  cwd:      $ROOT
+  initialPrompt: |
+    /experiment-env-audit — project: <project> — reviewer: <REVIEWER_BACKEND> — target: promoted
+```
+
+Wait, read verdict, archive agent. The audit now runs against `.claude/skills/run-<project>-experiment/` — the same path downstream skills will use.
+
+### 6e. Gate — read audit verdict
+
+Same Type-A / Type-B split as before. On FAIL → Phase 5.5c user-assisted
+repair loop (fix, re-promote, re-audit). On repeated FAIL → user can override
+or abort.
+
+If verdict permits (pass / warn / user_override):
+
+### 6f. Finalize
+
+```bash
+tmp=$(mktemp)
+jq '.status = "complete"' "$SKILL_DIR/env.json" > "$tmp" && mv "$tmp" "$SKILL_DIR/env.json"
+```
+
+On `passed_with_warnings`, append WARN action items to `$SKILL_DIR/SKILL.md`
+under `## Known caveats (from audit)`.
+
+### 6g. Demote (on failure)
+
+If audit fails and user chooses "放弃":
+
+```bash
+rm -rf "$SKILL_DIR"
+# draft stays in $STAGING_DIR for inspection
+```
+
+Report `status: "audit_failed"` with paths to the draft and audit report.
+
+### 6h. Register in CLAUDE.md
+
+After finalization (step 6f), update `## Experiment Skill` in CLAUDE.md with
+the skill path and script paths (same as previously defined in step 7).
+
+### 6i. Skill is discoverable
+
+`$SKILL_DIR/SKILL.md` exists with valid frontmatter whose `name` matches the
+directory name, and `jq -e '.status == "complete"' "$SKILL_DIR/env.json"` exits 0.
 
 Then print:
 
