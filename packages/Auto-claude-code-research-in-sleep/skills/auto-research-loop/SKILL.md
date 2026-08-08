@@ -197,7 +197,11 @@ Record ideas in wiki (verbatim from receipt):
 for idea in $(jq -r '.ideas[] | @base64' "$RECEIPT"); do
     ID=$(echo "$idea" | base64 -d | jq -r '.id')
     TITLE=$(echo "$idea" | base64 -d | jq -r '.title')
-    node "$WIKI_SCRIPT" upsert_idea research-wiki/ --id "$ID" --title "$TITLE"
+    TARGET_GAPS=$(echo "$idea" | base64 -d | jq -r '.target_gaps // [] | join(",")')
+    BASED_ON=$(echo "$idea" | base64 -d | jq -r '.based_on // [] | join(",")')
+    node "$WIKI_SCRIPT" upsert_idea research-wiki/ --id "$ID" --title "$TITLE" \
+        ${TARGET_GAPS:+--target-gaps "$TARGET_GAPS"} \
+        ${BASED_ON:+--based-on "$BASED_ON"}
 done
 ```
 
@@ -222,6 +226,20 @@ mcp__paseo__create_agent \
     --provider "claude/claude-sonnet-4-6" \
     --initialPrompt "$PROMPT" \
     --notifyOnFinish true
+```
+
+Record ideas in wiki (same as iteration 1, but with gap targeting):
+```bash
+RECEIPT=".aris/runs/$RUN_ID.research-iteration.iter-${ITERATION}.idea-discovery.done.json"
+for idea in $(jq -r '.ideas[] | @base64' "$RECEIPT"); do
+    ID=$(echo "$idea" | base64 -d | jq -r '.id')
+    TITLE=$(echo "$idea" | base64 -d | jq -r '.title')
+    TARGET_GAPS=$(echo "$idea" | base64 -d | jq -r '.target_gaps // [] | join(",")')
+    BASED_ON=$(echo "$idea" | base64 -d | jq -r '.based_on // [] | join(",")')
+    node "$WIKI_SCRIPT" upsert_idea research-wiki/ --id "$ID" --title "$TITLE" \
+        ${TARGET_GAPS:+--target-gaps "$TARGET_GAPS"} \
+        ${BASED_ON:+--based-on "$BASED_ON"}
+done
 ```
 
 **Gate:** deterministic — receipt file exists with non-empty `ideas[]` array.
@@ -288,6 +306,16 @@ for exp in $(jq -r '.experiments[] | @base64' "$RECEIPT"); do
         --title "$EXP_TITLE" \
         --idea-id "$IDEA_ID" \
         --status completed
+
+    # Wire experiment → gap edges (experiment addresses the gaps its idea targets)
+    GAPS=$(echo "$exp" | base64 -d | jq -r '.addresses_gaps // [] | .[]')
+    for GAP_ID in $GAPS; do
+        node "$WIKI_SCRIPT" add_edge research-wiki/ \
+            --from "exp:$RUN_ID.iter-${ITERATION}:${EXP_ID}" \
+            --to "$GAP_ID" \
+            --type addresses_gap \
+            --evidence "experiment $EXP_TITLE run in iteration $ITERATION"
+    done
 done
 ```
 
