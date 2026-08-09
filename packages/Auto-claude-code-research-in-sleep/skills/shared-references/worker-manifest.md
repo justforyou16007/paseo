@@ -22,6 +22,7 @@ protocol achieves this by:
 │   ├── <iter>-<phase>/
 │   │   ├── input-manifest.json      ← written by orchestrator before dispatch
 │   │   ├── receipt.json             ← written by worker on completion
+│   │   ├── progress_error.md    ← system error log (append-only, one line per error)
 │   │   └── outputs/                 ← worker's complete output files
 │   │       └── ...
 ```
@@ -68,6 +69,8 @@ Written by the orchestrator before dispatching the worker.
 3. Use `context` values for scalar parameters
 4. Write ALL output artifacts to `output_dir`
 5. Write `receipt.json` as the last action
+6. On any system error during execution: append one `LEVEL | location | reason`
+   line to `progress_error.md` in the worker directory
 
 ## `receipt.json` Schema
 
@@ -87,7 +90,9 @@ Written by the worker after completing its work.
     "<nested.field>": <new-value>,
     ...
   },
-  "completed_at": "<ISO-8601>"
+  "completed_at": "<ISO-8601>",
+  "has_errors": false,
+  "error_count": 0
 }
 ```
 
@@ -101,6 +106,9 @@ Written by the worker after completing its work.
 - **`dashboard_patch`** — a JSON patch object that the orchestrator merges
   into `dashboard.json`. This is how workers update the orchestrator's state
   without the orchestrator reading output files.
+- **`has_errors`** — `true` if `progress_error.md` is non-empty. The orchestrator
+  reads this scalar; it does NOT read the error file itself (Rule 5).
+- **`error_count`** — number of lines in `progress_error.md`.
 
 ### `dashboard_patch` rules
 
@@ -108,6 +116,40 @@ Written by the worker after completing its work.
 - Use dot notation for nested fields: `"metric.current": 0.82`
 - Array fields: provide the full new array (not append — orchestrator does `=` not `+=`)
 - The orchestrator applies the patch via: read dashboard → merge patch → write dashboard
+
+## `progress_error.md`
+
+Workers and verifiers append to this file when they encounter **system-level
+errors** — ARIS infrastructure problems, not experiment failures.
+
+**System errors (write here):**
+- Helper not found (`research-wiki.js`, `run-state.js` resolution failure)
+- Malformed manifest (invalid JSON, missing required fields)
+- Expected input file missing
+- Permission denied on scripts/paths
+- Paseo MCP tool failure (provider unavailable, skill not installed)
+- Schema validation error (receipt/dashboard field mismatch)
+
+**NOT system errors (do not write here):**
+- Experiment failures (OOM, divergence) → `error_report.md` in outputs
+- Audit FAIL verdict → legitimate outcome
+- User interaction → AskUserQuestion
+
+### Format
+
+One line per error, max 120 chars: `LEVEL | location | reason`
+
+```
+ERROR | research-wiki.js:add_edge | not found at .aris/dist/tools/research-wiki.js
+WARN  | receipt.json:dashboard_patch | field "metric.current" null, skipped
+ERROR | manifest:inputs.gap_map | file missing: research-wiki/gap_map.md
+ERROR | mcp__paseo__create_agent | provider "codex" unavailable
+```
+
+- **Level**: `ERROR` (blocks progress) or `WARN` (non-blocking)
+- **Location**: `<component>:<detail>`
+- **Reason**: one phrase, no stack traces
+- Append-only. Absent or empty = no errors.
 
 ## `dashboard.json` Schema
 
@@ -156,7 +198,11 @@ The orchestrator's single state source. ~50 lines, ~300 tokens.
 
   "stop_reason": null,
   "started_at": "...",
-  "updated_at": "..."
+  "updated_at": "...",
+  "system_errors": {
+    "total": 0,
+    "last": null
+  }
 }
 ```
 
@@ -170,6 +216,9 @@ The orchestrator's single state source. ~50 lines, ~300 tokens.
 5. Dispatch: "Run /<skill> — manifest: <manifest-path>"
 6. Wait for notifyOnFinish
 7. Read workers/<iter>-<phase>/receipt.json
+7.5. If receipt.has_errors: increment dashboard.system_errors.total by
+     receipt.error_count, set dashboard.system_errors.last to "<iter>-<phase>".
+     Do NOT read progress_error.md (Rule 5 — humans inspect it for debugging).
 8. Apply dashboard_patch to dashboard.json
 9. Update current_phase in dashboard
 10. Gate arithmetic on dashboard fields

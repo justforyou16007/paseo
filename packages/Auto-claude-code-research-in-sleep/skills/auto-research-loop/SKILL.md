@@ -49,6 +49,12 @@ For the full manifest and receipt JSON schemas, see `shared-references/worker-ma
    - If status=failed → log and decide (retry or stop)
    - Merge dashboard_patch into $DASHBOARD via jq
 
+**Error tracking:** If `receipt.has_errors == true`, update dashboard:
+`dashboard.system_errors.total += receipt.error_count` and
+`dashboard.system_errors.last = "<iter>-<phase>"`. The orchestrator does NOT
+read `progress_error.md` (Rule 5). Humans inspect it at
+`.aris/runs/<run_id>/workers/<iter>-<phase>/progress_error.md` for debugging.
+
 6. Archive the worker: mcp__paseo__archive_agent
 
 7. Update run-state: node "$RUN_STATE" set "$ROOT" "$RUN_ID" <phase> done

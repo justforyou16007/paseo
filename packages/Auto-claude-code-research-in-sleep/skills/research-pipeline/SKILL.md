@@ -67,6 +67,12 @@ Full manifest/receipt/dashboard schemas: [`worker-manifest.md`](../shared-refere
    `$CFG.reviewer_provider` / `reviewer_mode` / `reviewer_thinking`.
 3. **On notifyOnFinish:** read `$STAGE_DIR/receipt.json`, apply `dashboard_patch`
    to `dashboard.json`, `run-state.js set <run_id> <phase> done --artifact <receipt.artifact_path>`.
+
+**Error tracking:** If `receipt.has_errors == true`, update dashboard:
+`dashboard.system_errors.total += receipt.error_count` and
+`dashboard.system_errors.last = "<stage-name>"`. Do NOT read
+`progress_error.md` (Rule 5).
+
 4. **Run the gate** (per acceptance table below). On pass: `run-state.js accept`,
    then `archive_agent` the W-agent (用完即 archive).
 
