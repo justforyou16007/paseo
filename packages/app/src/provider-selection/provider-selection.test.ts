@@ -66,6 +66,24 @@ describe("combined model selector data", () => {
     ]);
   });
 
+  it("hides compatibility-only model entries from new clients", () => {
+    const compatibilityModel: AgentModelDefinition = {
+      ...codexModel,
+      id: "gpt-5.4-legacy",
+      label: "GPT-5.4 legacy",
+      isSelectable: false,
+    };
+
+    const [provider] = buildSelectableProviderSelectorProviders([
+      snapshotEntry({ provider: "codex", models: [codexModel, compatibilityModel] }),
+    ]);
+
+    expect(provider?.modelSelection).toMatchObject({
+      kind: "models",
+      rows: [{ modelId: "gpt-5.4" }],
+    });
+  });
+
   it("synthesizes a default model row for ready enabled providers without explicit models", () => {
     expect(
       buildSelectableProviderSelectorProviders([
@@ -258,6 +276,44 @@ describe("combined model selector data", () => {
         isLoading: false,
       }),
     ).toBe("Default");
+  });
+
+  it("distinguishes a loading selection from a resolved empty selection", () => {
+    expect(
+      resolveSelectedModelLabel({
+        providers: [],
+        selectedProvider: "",
+        selectedModel: "",
+        isLoading: true,
+      }),
+    ).toBe("Loading...");
+    expect(
+      resolveSelectedModelLabel({
+        providers: [],
+        selectedProvider: "",
+        selectedModel: "",
+        isLoading: false,
+      }),
+    ).toBe("Select model");
+  });
+
+  it("keeps a stored selected model visible when current snapshot rows no longer offer it", () => {
+    const providers = buildSelectableProviderSelectorProviders([
+      snapshotEntry({
+        provider: "codex",
+        label: "Codex",
+        models: [{ provider: "codex", id: "gpt-5.4", label: "GPT-5.4", isDefault: true }],
+      }),
+    ]);
+
+    expect(
+      resolveSelectedModelLabel({
+        providers,
+        selectedProvider: "codex",
+        selectedModel: "gpt-5.3",
+        isLoading: false,
+      }),
+    ).toBe("gpt-5.3");
   });
 
   it("keeps provider snapshot errors visible in the selected trigger label", () => {

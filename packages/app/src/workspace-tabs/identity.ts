@@ -1,7 +1,5 @@
-import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 import { normalizeWorkspaceFileLocation, workspaceFileLocationsEqual } from "@/workspace/file-open";
-
-type WorkspaceDraftTabSetup = NonNullable<Extract<WorkspaceTabTarget, { kind: "draft" }>["setup"]>;
+import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tabs/model";
 
 export function normalizeWorkspaceTabTarget(
   value: WorkspaceTabTarget | null | undefined,
@@ -21,20 +19,18 @@ export function normalizeWorkspaceTabTarget(
     const agentId = trimNonEmpty(value.agentId);
     return agentId ? { kind: "agent", agentId } : null;
   }
-  if (value.kind === "terminal") {
-    const terminalId = trimNonEmpty(value.terminalId);
-    return terminalId ? { kind: "terminal", terminalId } : null;
-  }
-  if (value.kind === "browser") {
-    const browserId = trimNonEmpty(value.browserId);
-    return browserId ? { kind: "browser", browserId } : null;
+  if (value.kind === "provider_subagent") {
+    const parentAgentId = trimNonEmpty(value.parentAgentId);
+    const subagentId = trimNonEmpty(value.subagentId);
+    return parentAgentId && subagentId
+      ? { kind: "provider_subagent", parentAgentId, subagentId }
+      : null;
   }
   if (value.kind === "file") {
     return normalizeFileTabTarget(value);
   }
-  if (value.kind === "setup") {
-    const workspaceId = trimNonEmpty(value.workspaceId);
-    return workspaceId ? { kind: "setup", workspaceId } : null;
+  if (value.kind === "working_diff") {
+    return normalizeWorkingDiffTabTarget(value);
   }
   if (value.kind === "aris") {
     return normalizeArisTabTarget(value);
@@ -45,7 +41,48 @@ export function normalizeWorkspaceTabTarget(
   if (value.kind === "aris-wiki-entity") {
     return normalizeArisWikiEntityTabTarget(value);
   }
-  return null;
+  return normalizeSimpleWorkspaceTabTarget(value);
+}
+
+function normalizeSimpleWorkspaceTabTarget(value: WorkspaceTabTarget): WorkspaceTabTarget | null {
+  switch (value.kind) {
+    case "agent": {
+      const agentId = trimNonEmpty(value.agentId);
+      return agentId ? { kind: "agent", agentId } : null;
+    }
+    case "terminal": {
+      const terminalId = trimNonEmpty(value.terminalId);
+      return terminalId ? { kind: "terminal", terminalId } : null;
+    }
+    case "browser": {
+      const browserId = trimNonEmpty(value.browserId);
+      return browserId ? { kind: "browser", browserId } : null;
+    }
+    case "setup": {
+      const workspaceId = trimNonEmpty(value.workspaceId);
+      return workspaceId ? { kind: "setup", workspaceId } : null;
+    }
+    case "commit_diff": {
+      const sha = trimNonEmpty(value.sha);
+      return sha ? { kind: "commit_diff", sha } : null;
+    }
+    default:
+      return null;
+  }
+}
+
+const ARIS_ARTIFACT_STAGE_IDS = ["W1", "W1.5", "W2", "W3", "W4", "W5", "W6"] as const;
+
+function isArisArtifactStageId(value: unknown): value is (typeof ARIS_ARTIFACT_STAGE_IDS)[number] {
+  return (
+    typeof value === "string" && (ARIS_ARTIFACT_STAGE_IDS as readonly string[]).includes(value)
+  );
+}
+
+const ARIS_WIKI_ENTITY_TYPES = ["papers", "ideas", "experiments", "claims", "gap"] as const;
+
+function isArisWikiEntityType(value: unknown): value is (typeof ARIS_WIKI_ENTITY_TYPES)[number] {
+  return typeof value === "string" && (ARIS_WIKI_ENTITY_TYPES as readonly string[]).includes(value);
 }
 
 function normalizeArisTabTarget(
@@ -59,14 +96,6 @@ function normalizeArisTabTarget(
   return { kind: "aris", runId, view };
 }
 
-const ARIS_ARTIFACT_STAGE_IDS = ["W1", "W1.5", "W2", "W3", "W4", "W5", "W6"] as const;
-
-function isArisArtifactStageId(value: unknown): value is (typeof ARIS_ARTIFACT_STAGE_IDS)[number] {
-  return (
-    typeof value === "string" && (ARIS_ARTIFACT_STAGE_IDS as readonly string[]).includes(value)
-  );
-}
-
 function normalizeArisArtifactTabTarget(
   value: Extract<WorkspaceTabTarget, { kind: "aris-artifact" }>,
 ): WorkspaceTabTarget | null {
@@ -74,12 +103,6 @@ function normalizeArisArtifactTabTarget(
     return null;
   }
   return { kind: "aris-artifact", stageId: value.stageId };
-}
-
-const ARIS_WIKI_ENTITY_TYPES = ["papers", "ideas", "experiments", "claims", "gap"] as const;
-
-function isArisWikiEntityType(value: unknown): value is (typeof ARIS_WIKI_ENTITY_TYPES)[number] {
-  return typeof value === "string" && (ARIS_WIKI_ENTITY_TYPES as readonly string[]).includes(value);
 }
 
 function normalizeArisWikiEntityTabTarget(
@@ -126,55 +149,50 @@ export function workspaceTabTargetsEqual(
   if (left.kind !== right.kind) {
     return false;
   }
-  // After the kind check above, `right` has the same kind as `left`. tsgo
-  // doesn't narrow the second operand through correlation, so we cast.
-  switch (left.kind) {
-    case "draft":
-      return workspaceDraftTabTargetsEqual(
-        left,
-        right as Extract<WorkspaceTabTarget, { kind: "draft" }>,
-      );
-    case "agent":
-      return left.agentId === (right as Extract<WorkspaceTabTarget, { kind: "agent" }>).agentId;
-    case "terminal":
-      return (
-        left.terminalId === (right as Extract<WorkspaceTabTarget, { kind: "terminal" }>).terminalId
-      );
-    case "browser":
-      return (
-        left.browserId === (right as Extract<WorkspaceTabTarget, { kind: "browser" }>).browserId
-      );
-    case "file":
-      return workspaceFileLocationsEqual(
-        left,
-        right as Extract<WorkspaceTabTarget, { kind: "file" }>,
-      );
-    case "setup":
-      return (
-        left.workspaceId === (right as Extract<WorkspaceTabTarget, { kind: "setup" }>).workspaceId
-      );
-    case "aris": {
-      const r = right as Extract<WorkspaceTabTarget, { kind: "aris" }>;
-      return left.runId === r.runId && left.view === r.view;
-    }
-    case "aris-artifact":
-      return (
-        left.stageId === (right as Extract<WorkspaceTabTarget, { kind: "aris-artifact" }>).stageId
-      );
-    case "aris-wiki-entity": {
-      const r = right as Extract<WorkspaceTabTarget, { kind: "aris-wiki-entity" }>;
-      return left.entityType === r.entityType && left.entityId === r.entityId;
-    }
-    default:
-      return false;
+  if (left.kind === "draft" && right.kind === "draft") {
+    return left.draftId === right.draftId && workspaceDraftTabSetupsEqual(left.setup, right.setup);
   }
+  if (left.kind === "agent" && right.kind === "agent") {
+    return left.agentId === right.agentId;
+  }
+  if (left.kind === "provider_subagent" && right.kind === "provider_subagent") {
+    return left.parentAgentId === right.parentAgentId && left.subagentId === right.subagentId;
+  }
+  if (left.kind === "terminal" && right.kind === "terminal") {
+    return left.terminalId === right.terminalId;
+  }
+  return secondaryWorkspaceTabTargetsEqual(left, right);
 }
 
-function workspaceDraftTabTargetsEqual(
-  left: Extract<WorkspaceTabTarget, { kind: "draft" }>,
-  right: Extract<WorkspaceTabTarget, { kind: "draft" }>,
+function secondaryWorkspaceTabTargetsEqual(
+  left: WorkspaceTabTarget,
+  right: WorkspaceTabTarget,
 ): boolean {
-  return left.draftId === right.draftId && workspaceDraftTabSetupsEqual(left.setup, right.setup);
+  if (left.kind === "browser" && right.kind === "browser") {
+    return left.browserId === right.browserId;
+  }
+  if (left.kind === "file" && right.kind === "file") {
+    return workspaceFileLocationsEqual(left, right);
+  }
+  if (left.kind === "working_diff" && right.kind === "working_diff") {
+    return left.focusPath === right.focusPath && left.focusRequestId === right.focusRequestId;
+  }
+  if (left.kind === "setup" && right.kind === "setup") {
+    return left.workspaceId === right.workspaceId;
+  }
+  if (left.kind === "commit_diff" && right.kind === "commit_diff") {
+    return left.sha === right.sha;
+  }
+  if (left.kind === "aris" && right.kind === "aris") {
+    return left.runId === right.runId && left.view === right.view;
+  }
+  if (left.kind === "aris-artifact" && right.kind === "aris-artifact") {
+    return left.stageId === right.stageId;
+  }
+  if (left.kind === "aris-wiki-entity" && right.kind === "aris-wiki-entity") {
+    return left.entityType === right.entityType && left.entityId === right.entityId;
+  }
+  return false;
 }
 
 function workspaceDraftTabSetupsEqual(
@@ -217,6 +235,9 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
   if (target.kind === "agent") {
     return `agent_${target.agentId}`;
   }
+  if (target.kind === "provider_subagent") {
+    return `provider_subagent_${target.parentAgentId.length}_${target.parentAgentId}_${target.subagentId.length}_${target.subagentId}`;
+  }
   if (target.kind === "terminal") {
     return `terminal_${target.terminalId}`;
   }
@@ -225,6 +246,12 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
   }
   if (target.kind === "setup") {
     return `setup_${target.workspaceId}`;
+  }
+  if (target.kind === "commit_diff") {
+    return `commit_diff_${target.sha}`;
+  }
+  if (target.kind === "working_diff") {
+    return "working_diff";
   }
   if (target.kind === "aris") {
     const view = target.view ?? "cockpit";
@@ -252,6 +279,24 @@ function normalizeFileTabTarget(
 ): WorkspaceTabTarget | null {
   const location = normalizeWorkspaceFileLocation(value);
   return location ? { kind: "file", ...location } : null;
+}
+
+function normalizeWorkingDiffTabTarget(
+  value: Extract<WorkspaceTabTarget, { kind: "working_diff" }>,
+): WorkspaceTabTarget | null {
+  const focusPath = trimNonEmpty(value.focusPath)?.replace(/\\/g, "/") ?? null;
+  const focusRequestId = normalizePositiveInteger(value.focusRequestId);
+  return {
+    kind: "working_diff" as const,
+    ...(focusPath ? { focusPath } : {}),
+    ...(focusRequestId ? { focusRequestId } : {}),
+  };
+}
+
+function normalizePositiveInteger(value: number | null | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : null;
 }
 
 function trimOptionalString(value: string | null | undefined): string | null {

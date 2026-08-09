@@ -36,6 +36,7 @@ function useArisPanelDescriptor(target: {
 
   return {
     label: `ARIS ${viewLabel}`,
+    tooltip: `ARIS ${viewLabel}`,
     subtitle: target.runId ? `Run ${target.runId}` : "AutoResearch",
     titleState: "ready",
     icon,

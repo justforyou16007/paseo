@@ -8,7 +8,8 @@ import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manife
 import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
 import { buildFavoriteModelKey, type FavoriteModelRow } from "@/hooks/use-form-preferences";
 import { i18n } from "@/i18n/i18next";
-import { compareMatchScores, scoreTextFields } from "@/utils/score-match";
+import { compareMatchScores, scoreTextFields } from "@getpaseo/protocol/search/text-match";
+import { filterSelectableModels } from "./model-catalog";
 
 export type ProviderSelectionModelRow = FavoriteModelRow & { isDefault?: boolean };
 
@@ -76,10 +77,11 @@ function buildModelSelection(
   if (models === null) {
     return { kind: "loading" };
   }
-  if (models.length === 0) {
+  const selectableModels = filterSelectableModels(models) ?? [];
+  if (selectableModels.length === 0) {
     return { kind: "models", rows: [buildSyntheticDefaultRow(provider, providerLabel)] };
   }
-  return { kind: "models", rows: buildModelRows(provider, providerLabel, models) };
+  return { kind: "models", rows: buildModelRows(provider, providerLabel, selectableModels) };
 }
 
 function buildEntryModelSelection(
@@ -157,7 +159,9 @@ export function resolveSelectedModelLabel(input: {
 }): string {
   const selectedProvider = input.selectedProvider.trim();
   if (!selectedProvider) {
-    return i18n.t("providerSelection.selectModel");
+    return input.isLoading
+      ? i18n.t("providerSelection.loading")
+      : i18n.t("providerSelection.selectModel");
   }
 
   const provider = input.providers.find((entry) => entry.id === selectedProvider);
@@ -177,6 +181,10 @@ export function resolveSelectedModelLabel(input: {
   }
 
   const model = provider.modelSelection.rows.find((entry) => entry.modelId === input.selectedModel);
+  const selectedModel = input.selectedModel.trim();
+  if (!model && selectedModel) {
+    return selectedModel;
+  }
   const defaultModel = provider.modelSelection.rows.find((row) => row.isDefault);
   return (
     model?.modelLabel ??

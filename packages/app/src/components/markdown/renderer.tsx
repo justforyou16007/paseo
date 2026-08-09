@@ -22,9 +22,9 @@ import Markdown, {
   type RenderRules,
 } from "react-native-markdown-display";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { MarkdownParagraphView, MarkdownTextSpan } from "@/components/markdown-text";
+import { MarkdownTableCellText } from "@/components/markdown-text-selection";
 import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-list";
 import { markdownNodeContainsType } from "@/utils/markdown-ast";
 import { createCompactMarkdownStyles, createMarkdownStyles } from "@/styles/markdown-styles";
@@ -109,11 +109,7 @@ export function MarkdownRenderer({
     ],
   );
 
-  return (
-    <AppearanceStyleBoundary>
-      <MarkdownPartList parts={parts} rendererProps={rendererProps} />
-    </AppearanceStyleBoundary>
-  );
+  return <MarkdownPartList parts={parts} rendererProps={rendererProps} />;
 }
 
 type MarkdownPartRendererProps = Omit<MarkdownRendererProps, "text" | "enableHtmlish"> & {
@@ -568,8 +564,26 @@ export function createSharedMarkdownRules(): RenderRules {
         {children}
       </MarkdownInheritedText>
     ),
-    hardbreak: (node: ASTNode) => <MarkdownTextSpan key={node.key}>{"\n"}</MarkdownTextSpan>,
-    softbreak: (node: ASTNode) => <MarkdownTextSpan key={node.key}>{"\n"}</MarkdownTextSpan>,
+    hardbreak: (
+      node: ASTNode,
+      _children: ReactNode[],
+      _parent: ASTNode[],
+      styles: MarkdownStyles,
+    ) => (
+      <MarkdownTextSpan key={node.key} style={styles.hardbreak}>
+        {"\n"}
+      </MarkdownTextSpan>
+    ),
+    softbreak: (
+      node: ASTNode,
+      _children: ReactNode[],
+      _parent: ASTNode[],
+      styles: MarkdownStyles,
+    ) => (
+      <MarkdownTextSpan key={node.key} style={styles.softbreak}>
+        {"\n"}
+      </MarkdownTextSpan>
+    ),
     code_block: (
       node: ASTNode,
       _children: ReactNode[],
@@ -661,6 +675,16 @@ export function createSharedMarkdownRules(): RenderRules {
         </View>
       );
     },
+    th: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
+      <MarkdownTableCellText key={node.key}>
+        <View style={styles._VIEW_SAFE_th}>{children}</View>
+      </MarkdownTableCellText>
+    ),
+    td: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
+      <MarkdownTableCellText key={node.key}>
+        <View style={styles._VIEW_SAFE_td}>{children}</View>
+      </MarkdownTableCellText>
+    ),
     paragraph: (
       node: ASTNode,
       children: ReactNode[],

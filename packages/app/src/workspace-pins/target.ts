@@ -5,6 +5,13 @@ export type PinnedTabTarget =
   | { kind: "aris" }
   | { kind: "profile"; profileId: string };
 
+export function isPinnedTargetAvailable(
+  target: PinnedTabTarget,
+  environment: { isElectron: boolean },
+): boolean {
+  return target.kind !== "browser" || environment.isElectron;
+}
+
 export function pinnedTargetKey(target: PinnedTabTarget): string {
   if (target.kind === "profile") {
     return `profile:${target.profileId}`;

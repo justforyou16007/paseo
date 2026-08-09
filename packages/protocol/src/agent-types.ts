@@ -74,6 +74,8 @@ export type ProviderStatus = "ready" | "loading" | "error" | "unavailable";
 export interface AgentModelDefinition {
   provider: AgentProvider;
   id: string;
+  aliases?: string[];
+  isSelectable?: boolean;
   label: string;
   description?: string;
   isDefault?: boolean;
@@ -104,6 +106,7 @@ export interface ProviderSnapshotEntry {
   provider: AgentProvider;
   status: ProviderStatus;
   enabled: boolean;
+  source?: "builtin" | "custom";
   error?: string;
   models?: AgentModelDefinition[];
   modes?: AgentMode[];
@@ -337,7 +340,7 @@ export interface CompactionTimelineItem {
 }
 
 export type AgentTimelineItem =
-  | { type: "user_message"; text: string; messageId?: string }
+  | { type: "user_message"; text: string; messageId?: string; clientMessageId?: string }
   | { type: "assistant_message"; text: string; messageId?: string }
   | { type: "reasoning"; text: string }
   | ToolCallTimelineItem
@@ -450,6 +453,26 @@ export interface AgentRunResult {
   canceled?: boolean;
 }
 
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+export type ProviderOptions = Record<string, JsonValue>;
+
+export interface McpToolRef {
+  kind: "mcp";
+  server: string;
+  tool: string;
+}
+
+export interface ToolPolicy {
+  preapproved: McpToolRef[];
+}
+
 export interface AgentSessionConfig {
   provider: AgentProvider;
   cwd: string;
@@ -463,14 +486,8 @@ export interface AgentSessionConfig {
   thinkingOptionId?: string;
   featureValues?: Record<string, unknown>;
   title?: string | null;
-  approvalPolicy?: string;
-  sandboxMode?: string;
-  networkAccess?: boolean;
-  webSearch?: boolean;
-  extra?: {
-    codex?: AgentMetadata;
-    claude?: AgentMetadata;
-  };
+  providerOptions?: ProviderOptions;
+  toolPolicy?: ToolPolicy;
   mcpServers?: Record<string, McpServerConfig>;
   /**
    * Internal agents are hidden from listings and don't trigger notifications.

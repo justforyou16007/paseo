@@ -24,6 +24,7 @@ function useArisArtifactPanelDescriptor(target: {
 }): PanelDescriptor {
   return {
     label: `${target.stageId} · ${STAGE_NAMES[target.stageId]}`,
+    tooltip: `${target.stageId} · ${STAGE_NAMES[target.stageId]}`,
     subtitle: `ARIS artifact · ${target.stageId}`,
     titleState: "ready",
     icon: Layers,

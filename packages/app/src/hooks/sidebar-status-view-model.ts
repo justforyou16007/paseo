@@ -1,6 +1,6 @@
-import type { SidebarStatusWorkspacePlacement } from "@/hooks/sidebar-workspaces-view-model";
+import type { SidebarWorkspaceEntry } from "@/hooks/sidebar-workspaces-view-model";
 
-export type StatusBucket = SidebarStatusWorkspacePlacement["statusBucket"];
+export type StatusBucket = SidebarWorkspaceEntry["statusBucket"];
 
 export const STATUS_BUCKET_ORDER: readonly StatusBucket[] = [
   "needs_input",
@@ -21,14 +21,14 @@ export const STATUS_BUCKET_LABELS: Record<StatusBucket, string> = {
 export interface StatusGroup {
   bucket: StatusBucket;
   label: string;
-  rows: SidebarStatusWorkspacePlacement[];
+  rows: SidebarWorkspaceEntry[];
 }
 
 export function buildStatusGroups(
-  workspaces: SidebarStatusWorkspacePlacement[],
-  projectNamesByKey: Map<string, string>,
+  workspaces: SidebarWorkspaceEntry[],
+  projectNamesByViewKey: Map<string, string>,
 ): StatusGroup[] {
-  const bucketRows = new Map<StatusBucket, SidebarStatusWorkspacePlacement[]>();
+  const bucketRows = new Map<StatusBucket, SidebarWorkspaceEntry[]>();
 
   for (const ws of workspaces) {
     const bucket: StatusBucket = ws.statusBucket;
@@ -46,7 +46,7 @@ export function buildStatusGroups(
     const rows = bucketRows.get(bucket);
     if (!rows || rows.length === 0) continue;
 
-    rows.sort((a, b) => compareStatusRows(a, b, projectNamesByKey));
+    rows.sort((a, b) => compareStatusRows(a, b, projectNamesByViewKey));
     groups.push({ bucket, label: STATUS_BUCKET_LABELS[bucket], rows });
   }
 
@@ -54,9 +54,9 @@ export function buildStatusGroups(
 }
 
 function compareStatusRows(
-  a: SidebarStatusWorkspacePlacement,
-  b: SidebarStatusWorkspacePlacement,
-  projectNamesByKey: Map<string, string>,
+  a: SidebarWorkspaceEntry,
+  b: SidebarWorkspaceEntry,
+  projectNamesByViewKey: Map<string, string>,
 ): number {
   const aTime = a.statusEnteredAt?.getTime() ?? null;
   const bTime = b.statusEnteredAt?.getTime() ?? null;
@@ -69,8 +69,8 @@ function compareStatusRows(
     return 1;
   }
 
-  const aProject = projectNamesByKey.get(a.projectKey) ?? "";
-  const bProject = projectNamesByKey.get(b.projectKey) ?? "";
+  const aProject = projectNamesByViewKey.get(a.projectViewKey) ?? "";
+  const bProject = projectNamesByViewKey.get(b.projectViewKey) ?? "";
   const projectCmp = aProject.localeCompare(bProject);
   if (projectCmp !== 0) return projectCmp;
 

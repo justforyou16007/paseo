@@ -9,8 +9,9 @@ interface OpenCodeResponse {
 
 export class TestOpenCodeHarness implements OpenCodeServerManagerLike {
   readonly acquisitions: Array<{
-    kind: "current" | "new" | "dedicated";
+    kind: "current" | "new" | "dedicated" | "existing";
     env?: Record<string, string>;
+    url?: string;
     releaseCount: number;
   }> = [];
   readonly clientCreations: Array<{ baseUrl: string; directory: string }> = [];
@@ -34,26 +35,28 @@ export class TestOpenCodeHarness implements OpenCodeServerManagerLike {
     return this.recordAcquisition({ kind: "dedicated", env });
   }
 
+  acquireExisting(url: string): OpenCodeServerAcquisition | null {
+    return url === this.server.url ? this.recordAcquisition({ kind: "existing", url }) : null;
+  }
+
   private recordAcquisition(input: {
-    kind: "current" | "new" | "dedicated";
+    kind: "current" | "new" | "dedicated" | "existing";
     env?: Record<string, string>;
+    url?: string;
   }): OpenCodeServerAcquisition {
     const acquisition = {
       kind: input.kind,
       releaseCount: 0,
       ...(input.env ? { env: input.env } : {}),
+      ...(input.url ? { url: input.url } : {}),
     };
     this.acquisitions.push(acquisition);
     return {
       server: this.server,
-      release: () => {
+      release: async () => {
         acquisition.releaseCount += 1;
       },
     };
-  }
-
-  async ensureRunning(): Promise<{ port: number; url: string }> {
-    return this.server;
   }
 
   readonly createClient = (options: { baseUrl: string; directory: string }): OpencodeClient => {
@@ -82,9 +85,11 @@ export class TestOpenCodeClient {
     sessionCommand: [] as unknown[],
     sessionCreate: [] as unknown[],
     sessionDelete: [] as unknown[],
+    sessionChildren: [] as unknown[],
     sessionGet: [] as unknown[],
     sessionMessages: [] as unknown[],
     sessionPromptAsync: [] as unknown[],
+    sessionStatus: [] as unknown[],
     sessionSummarize: [] as unknown[],
     sessionUpdate: [] as unknown[],
   };
@@ -98,20 +103,28 @@ export class TestOpenCodeClient {
   permissionReplyResponse: OpenCodeResponse = {};
   providerListResponse: OpenCodeResponse = { data: { connected: [], all: [] } };
   providerListImplementation: (() => Promise<OpenCodeResponse>) | null = null;
+  globalEventImplementation:
+    | ((options: unknown) => Promise<{ stream: AsyncIterable<unknown> }>)
+    | null = null;
   questionRejectResponse: OpenCodeResponse = {};
   questionReplyResponse: OpenCodeResponse = {};
   sessionAbortResponse: OpenCodeResponse = {};
+  sessionAbortImplementation: ((parameters: unknown) => Promise<OpenCodeResponse>) | null = null;
   sessionCommandError: unknown = null;
   sessionCommandEvents: unknown[] = [idleEvent()];
   sessionCommandResponse: OpenCodeResponse = {};
   sessionCreateResponse: OpenCodeResponse = { data: { id: "session-1" } };
   sessionDeleteResponse: OpenCodeResponse = {};
+  sessionChildrenResponses: OpenCodeResponse[] = [];
+  sessionChildrenImplementation: ((parameters: unknown) => Promise<OpenCodeResponse>) | null = null;
   sessionGetResponse: OpenCodeResponse = {
     data: { id: "session-1", directory: "/workspace/repo", title: null },
   };
   sessionMessagesResponse: OpenCodeResponse = { data: [] };
   sessionPromptAsyncEvents: unknown[] = [idleEvent()];
   sessionPromptAsyncResponse: OpenCodeResponse = {};
+  sessionStatusResponse: OpenCodeResponse = { data: {} };
+  sessionStatusImplementation: ((parameters: unknown) => Promise<OpenCodeResponse>) | null = null;
   sessionSummarizeEvents: unknown[] = [idleEvent()];
   sessionSummarizeResponse: OpenCodeResponse = { data: {} };
   sessionUpdateResponse: OpenCodeResponse = {};
@@ -156,7 +169,13 @@ export class TestOpenCodeClient {
       global: {
         event: async (options: unknown) => {
           this.calls.globalEvent.push(options);
-          return { stream: this.eventStream };
+          if (this.globalEventImplementation) {
+            return await this.globalEventImplementation(options);
+          }
+          const signal = (options as { signal?: AbortSignal }).signal;
+          return {
+            stream: signal ? stopEventStreamOnAbort(this.eventStream, signal) : this.eventStream,
+          };
         },
       },
       mcp: {
@@ -196,7 +215,9 @@ export class TestOpenCodeClient {
       session: {
         abort: async (parameters: unknown) => {
           this.calls.sessionAbort.push(parameters);
-          return this.sessionAbortResponse;
+          return this.sessionAbortImplementation
+            ? await this.sessionAbortImplementation(parameters)
+            : this.sessionAbortResponse;
         },
         command: async (parameters: unknown) => {
           this.calls.sessionCommand.push(parameters);
@@ -216,6 +237,13 @@ export class TestOpenCodeClient {
           this.calls.sessionDelete.push(parameters);
           return this.sessionDeleteResponse;
         },
+        children: async (parameters: unknown) => {
+          this.calls.sessionChildren.push(parameters);
+          if (this.sessionChildrenImplementation) {
+            return await this.sessionChildrenImplementation(parameters);
+          }
+          return this.sessionChildrenResponses.shift() ?? { data: [] };
+        },
         get: async (parameters: unknown) => {
           this.calls.sessionGet.push(parameters);
           return this.sessionGetResponse;
@@ -231,6 +259,12 @@ export class TestOpenCodeClient {
           }
           return this.sessionPromptAsyncResponse;
         },
+        status: async (parameters: unknown) => {
+          this.calls.sessionStatus.push(parameters);
+          return this.sessionStatusImplementation
+            ? await this.sessionStatusImplementation(parameters)
+            : this.sessionStatusResponse;
+        },
         summarize: async (parameters: unknown) => {
           this.calls.sessionSummarize.push(parameters);
           for (const event of this.sessionSummarizeEvents) {
@@ -245,6 +279,38 @@ export class TestOpenCodeClient {
       },
     } as unknown as OpencodeClient;
   }
+}
+
+function stopEventStreamOnAbort(
+  stream: AsyncIterable<unknown>,
+  signal: AbortSignal,
+): AsyncIterable<unknown> {
+  return {
+    [Symbol.asyncIterator]: () => {
+      const iterator = stream[Symbol.asyncIterator]();
+      return {
+        next: () => {
+          if (signal.aborted) {
+            return Promise.resolve({ done: true, value: undefined });
+          }
+          return new Promise<IteratorResult<unknown>>((resolve, reject) => {
+            const onAbort = () => resolve({ done: true, value: undefined });
+            signal.addEventListener("abort", onAbort, { once: true });
+            void iterator.next().then(
+              (result) => {
+                signal.removeEventListener("abort", onAbort);
+                return resolve(result);
+              },
+              (error) => {
+                signal.removeEventListener("abort", onAbort);
+                return reject(error);
+              },
+            );
+          });
+        },
+      };
+    },
+  };
 }
 
 export function createEventStream(events: unknown[]): AsyncGenerator<unknown> {

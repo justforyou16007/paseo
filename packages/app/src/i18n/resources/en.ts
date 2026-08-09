@@ -52,13 +52,26 @@ export const en = {
       close: "Close menu",
     },
     commandCenter: {
-      placeholder: "Type a command or search agents...",
+      placeholder: "Search commands, workspaces, and agents...",
       noMatches: "No matches",
       actions: "Actions",
+      workspaces: "Workspaces",
       agents: "Agents",
       newAgent: "New agent",
-      openProject: "Open project",
+      addProject: "Add project",
       home: "Home",
+      modelGroupLabel: "Model",
+      modelSearchKeywords: "switch model change model set model select model",
+      thinkingGroupLabel: "Thinking",
+      thinkingSearchKeywords: "reasoning effort thinking think",
+      modeGroupLabel: "Mode",
+      modeSearchKeywords: "access permission approval mode",
+      planModeGroupLabel: "Plan mode",
+      planModeSearchKeywords: "plan planning plan mode",
+      fastModeGroupLabel: "Fast",
+      fastModeSearchKeywords: "fast speed low latency",
+      settingOn: "On",
+      settingOff: "Off",
     },
   },
   composer: {
@@ -66,9 +79,11 @@ export const en = {
       desktop: "Message the agent, tag @files, or use /commands and /skills",
       mobile: "Message, @files, /commands",
       fallback: "Message...",
+      terminal: "Prompt",
     },
     input: {
       accessibilityLabel: "Message agent...",
+      terminalAccessibilityLabel: "Terminal prompt",
       focusHint: "{{shortcut}} to focus",
       addAttachment: "Add attachment",
       interruptAgent: "Interrupt agent",
@@ -97,8 +112,10 @@ export const en = {
     },
     attachments: {
       addImage: "Add image",
+      pasteImage: "Paste image",
       addFile: "Upload file",
       addIssueOrPr: "Add issue or PR",
+      addIssueOrPr_mr: "Add issue or MR",
       dropImagesHere: "Drop images here",
       dropFilesHere: "Drop files here",
       editQueuedMessage: "Edit queued message",
@@ -106,8 +123,8 @@ export const en = {
       openImage: "Open image attachment",
       removeImage: "Remove image attachment",
       removeFile: "Remove file attachment",
-      openGithub: "Open {{kind}} #{{number}}",
-      removeGithub: "Remove {{kind}} #{{number}}",
+      openGithub: "Open {{kind}} {{number}}",
+      removeGithub: "Remove {{kind}} {{number}}",
       element: "Element",
       openBrowserElement: "Open browser element attachment",
       removeBrowserElement: "Remove browser element attachment",
@@ -121,6 +138,8 @@ export const en = {
       initialPromptRequired: "Initial prompt is required",
       alreadyLoading: "Already loading",
       uploadFailed: "Failed to upload file",
+      noClipboardImage: "No image in clipboard",
+      pasteImageFailed: "Failed to paste image",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {
@@ -131,7 +150,9 @@ export const en = {
       searching: "Searching...",
       noResults: "No results found.",
       searchPlaceholder: "Search issues and PRs...",
+      searchPlaceholder_mr: "Search issues and MRs...",
       title: "Attach issue or PR",
+      title_mr: "Attach issue or MR",
     },
   },
   agentControls: {
@@ -169,6 +190,7 @@ export const en = {
   agentStream: {
     empty: "Start chatting with this agent...",
     scrollToBottom: "Scroll to bottom",
+    historyLoadFailed: "Couldn't load agent history",
     permission: {
       plan: "Plan",
       required: "Permission Required",
@@ -183,7 +205,8 @@ export const en = {
     states: {
       notFound: "Agent not found",
       failedToLoad: "Failed to load agent",
-      reconnecting: "Reconnecting...",
+      reconnecting: "Reconnecting",
+      timelineSyncFailed: "Couldn't refresh agent history. Retrying…",
       archivingTitle: "Archiving agent...",
       archivingSubtitle: "Please wait while we archive this agent.",
     },
@@ -207,8 +230,13 @@ export const en = {
   sessions: {
     title: "History",
     empty: "No sessions yet",
+    noMatches: "No sessions match",
+    tooManyMatches: "Too many matches — narrow your search",
+    hostLoadFailed: "{{host}}: Could not load history",
+    searchPlaceholder: "Search history",
     actions: {
       loadMore: "Load more",
+      clearSearch: "Clear search",
     },
   },
   agentList: {
@@ -244,7 +272,7 @@ export const en = {
       copyCode: "Copy code",
       copyTurn: "Copy turn",
       copyMessage: "Copy message",
-      forkMenu: "Fork chat",
+      forkMenu: "Fork chat from here",
       forkInNewTab: "Fork in a new tab",
       forkInNewWorkspace: "Fork in a new workspace",
       forkUnavailable: "Update the host to use this.",
@@ -333,22 +361,37 @@ export const en = {
   workspace: {
     route: {
       loading: "Loading workspace",
-      restoring: "Restoring workspace",
-      restoreFailed:
-        "Couldn't restore this workspace — the directory may have been moved or deleted",
       connecting: "Connecting",
       hostOffline: "{{hostName}} is offline",
       cannotReachHost: "Cannot reach {{hostName}}",
       hostStatus: "Host status: {{status}}",
-      missing: "Workspace not found",
       needsHostUpgrade: "Update your host to restore this workspace",
       manageHost: "Manage host",
+      recovery: {
+        archivedTitle: "Workspace archived",
+        restoreDescription:
+          "{{workspaceName}} was archived and its worktree was removed. Restore branch {{branch}} to open it again.",
+        unarchiveDescription: "{{workspaceName}} is archived. Unarchive it to open it again.",
+        restoreAction: "Restore",
+        unarchiveAction: "Unarchive",
+        restoringTitle: "Restoring workspace",
+        restoringAction: "Restoring...",
+        unavailableTitle: "Workspace unavailable",
+        checkFailedTitle: "Couldn't check workspace",
+      },
     },
     hoverCard: {
       scriptsAccessibility: "Workspace scripts",
       copyPath: "Copy path",
       copyBranchName: "Copy branch name",
       copied: "Copied",
+    },
+    fileActions: {
+      openFile: "Open file",
+      copyPath: "Copy path",
+      download: "Download",
+      addToChat: "Add to chat",
+      moreActions: "More actions",
     },
     fileExplorer: {
       sort: {
@@ -359,8 +402,6 @@ export const en = {
       context: {
         size: "Size",
         modified: "Modified",
-        copyPath: "Copy path",
-        download: "Download",
       },
       actions: {
         back: "Back",
@@ -446,10 +487,12 @@ export const en = {
     },
     terminal: {
       hostDisconnected: "Host is not connected",
+      updateHost: "Update the host to use the native terminal renderer.",
       unableToSubscribe: "Unable to subscribe to terminal",
     },
     tabs: {
       loading: "Loading...",
+      modified: "Unsaved changes",
       loadingAgentTitle: "Loading agent title",
       emptyPane: "No tabs in this pane.",
       fallback: {
@@ -471,6 +514,7 @@ export const en = {
         openFor: "Open menu for {{label}}",
         copyResumeCommand: "Copy resume command",
         copyAgentId: "Copy agent id",
+        copyTerminalId: "Copy terminal id",
         copyFilePath: "Copy file path",
         rename: "Rename",
         closeAbove: "Close tabs above",
@@ -491,6 +535,7 @@ export const en = {
         preparingTerminalTooltip: "Preparing terminal...",
         newBrowser: "New browser",
         newAris: "New AutoResearch",
+        exitFocusMode: "Exit focus mode",
         splitRight: "Split pane right",
         splitDown: "Split pane down",
         terminalProfilesMenu: "Terminal profiles",
@@ -508,6 +553,7 @@ export const en = {
       toasts: {
         copyFailed: "Copy failed",
         agentIdCopiedLabel: "Agent ID",
+        terminalIdCopiedLabel: "Terminal ID",
         resumeCommandCopiedLabel: "resume command",
         filePathCopiedLabel: "File path",
         resumeIdUnavailable: "Resume ID not available",
@@ -520,6 +566,12 @@ export const en = {
         close: "Close",
         cancel: "Cancel",
         archive: "Archive",
+        unsavedTitle: "Unsaved changes",
+        unsavedMessage:
+          "This tab has changes that have not been saved. Closing it will discard the draft.",
+        closeWithoutSaving: "Close without saving",
+        closePaneTitle: "Close pane?",
+        bulkUnsaved: "{{count}} tab(s) have unsaved changes. Closing will discard those drafts.",
         closeTerminalTitle: "Close terminal?",
         closeTerminalMessage: "Any running process in this terminal will be stopped immediately.",
         archiveRunningAgentTitle: "Archive running agent?",
@@ -565,19 +617,34 @@ export const en = {
     scripts: {
       title: "Scripts",
       actions: {
+        chooseUrl: "Choose URL",
+        copyUrl: "Copy URL",
+        openService: "View service",
+        restart: "Restart",
         run: "Run",
-        view: "View",
+        stop: "Stop",
+        view: "View terminal",
       },
       accessibility: {
         trigger: "Workspace scripts",
-        openAt: "Open {{scriptName}} at {{label}}",
+        openService: "View {{scriptName}} service",
         viewTerminal: "View {{scriptName}} terminal",
         runScript: "Run {{scriptName}} script",
+        stopScript: "Stop {{scriptName}}",
+        restartScript: "Restart {{scriptName}}",
+        copyUrl: "Copy {{scriptName}} URL",
+        chooseUrl: "Choose URL for {{scriptName}}",
         script: "{{scriptName}} script",
+      },
+      routes: {
+        public: "Reverse proxy",
+        paseo: "Memorable",
+        direct: "Direct",
       },
       states: {
         exitCode: "exit {{code}}",
         startFailed: "Failed to start {{scriptName}}",
+        stopFailed: "Failed to stop {{scriptName}}",
       },
     },
     git: {
@@ -605,10 +672,14 @@ export const en = {
           success: "Pulled and pushed",
         },
         viewPr: "View PR",
+        viewPr_mr: "View MR",
         createPr: {
           label: "Create PR",
           pending: "Creating PR...",
           success: "PR Created",
+          label_mr: "Create MR",
+          pending_mr: "Creating MR...",
+          success_mr: "MR Created",
         },
         mergeBranch: {
           label: "Merge locally",
@@ -621,7 +692,7 @@ export const en = {
           success: "Updated",
         },
         archive: {
-          label: "Archive worktree",
+          label: "Archive workspace",
           pending: "Archiving...",
           success: "Archived",
         },
@@ -631,6 +702,11 @@ export const en = {
           rebase: "Merge PR (rebase)",
           pending: "Merging PR...",
           success: "PR merged",
+          squash_mr: "Merge MR (squash)",
+          merge_mr: "Merge MR (merge)",
+          rebase_mr: "Merge MR (rebase)",
+          pending_mr: "Merging MR...",
+          success_mr: "MR merged",
         },
         autoMerge: {
           enableSquash: "Auto merge (squash)",
@@ -642,7 +718,8 @@ export const en = {
           disabled: "Auto-merge disabled",
         },
         unavailable: {
-          viewPrNoGithub: "View PR isn't available right now because GitHub isn't connected",
+          viewPrNoForge:
+            "View {{noun}} isn't available right now because {{brand}} isn't connected",
           pullNoRemote:
             "Pull isn't available here because this branch is not connected to a remote yet",
           pullDirty:
@@ -656,8 +733,13 @@ export const en = {
             "Pull and push isn't available here because this branch is not connected to a remote yet",
           pullAndPushDirty:
             "Pull and push isn't available while you have local changes so commit or stash them first",
+          pullAndPushNoIncoming:
+            "Pull and push isn't available because there are no incoming changes to pull first",
           pullAndPushInSync: "Pull and push isn't available because this branch is already in sync",
-          createPrNoGithub: "Create PR isn't available right now because GitHub isn't connected",
+          pullAndPushNothingToPush:
+            "Pull and push isn't available because there is nothing new to send after pulling",
+          createPrNoForge:
+            "Create {{noun}} isn't available right now because {{brand}} isn't connected",
           createPrNoCommits:
             "Create PR isn't available because this branch doesn't have any new commits yet",
           mergeNoBase: "Merge isn't available because we couldn't determine the base branch",
@@ -670,9 +752,11 @@ export const en = {
             "Update isn't available while you have local changes so commit or stash them first",
           updateCurrent:
             "Update isn't available because this branch is already up to date with {{baseRef}}",
+          mergePrNoGithub: "Merge PR isn't available right now because GitHub isn't connected",
           archiveNotWorktree:
             "Archive isn't available here because this workspace was not created as a Paseo worktree",
-          mergePrNoGithub: "Merge PR isn't available right now because GitHub isn't connected",
+          mergePrNoForge:
+            "Merge {{noun}} isn't available right now because {{brand}} isn't connected",
           mergePrMissing: "Merge PR isn't available because there isn't a pull request yet",
           mergePrDraft: "Merge PR isn't available because the pull request is still a draft",
           mergePrMerged: "Merge PR isn't available because the pull request is already merged",
@@ -680,7 +764,7 @@ export const en = {
           mergePrConflicts: "Merge PR isn't available because the pull request has conflicts",
           mergePrQueue: "Merge PR isn't available here because this repository uses a merge queue",
           mergePrNotReady:
-            "Merge PR isn't available until GitHub reports the pull request is ready to merge",
+            "Merge {{noun}} isn't available until {{brand}} reports the {{noun}} is ready to merge",
           autoMergeCannotDisable: "Auto-merge is enabled, but this account can't disable it",
         },
         toasts: {
@@ -695,11 +779,9 @@ export const en = {
           baseRefUnavailable: "Base ref unavailable",
           failedMerge: "Failed to merge",
           failedMergeFromBase: "Failed to merge from base",
-          worktreePathUnavailable: "Worktree path unavailable",
-          failedArchive: "Failed to archive worktree",
         },
         archiveWarning: {
-          title: 'Archive "{{worktreeName}}"?',
+          title: 'Archive "{{workspaceName}}"?',
           confirm: "Archive",
           cancel: "Cancel",
           uncommittedChanges: "Uncommitted changes",
@@ -713,18 +795,30 @@ export const en = {
         },
       },
       diff: {
+        openChangesTab: "Open Changes tab",
+        closeChangesTab: "Close Changes tab",
         binaryFile: "Binary file",
         tooLarge: "Diff too large to display",
+        previewTooLargeTitle: "This diff is too large to preview",
+        previewTooLargeDescription: "Narrow the comparison to preview it here",
         unified: "Unified diff",
         split: "Side-by-side diff",
+        switchToUnified: "Switch to unified diff",
+        switchToSplit: "Switch to side-by-side diff",
+        showTreeView: "Show folder tree",
+        showFlatView: "Show flat file list",
+        options: "Diff options",
         hideWhitespace: "Hide whitespace",
+        showWhitespace: "Show whitespace",
         scrollLongLines: "Scroll long lines",
         wrapLongLines: "Wrap long lines",
         collapseAll: "Collapse all files",
         expandAll: "Expand all files",
+        collapseAllFolders: "Collapse all folders",
+        expandAllFolders: "Expand all folders",
         refreshing: "Refreshing",
         refresh: "Refresh",
-        refreshState: "Refresh git and GitHub state",
+        refreshState: "Refresh git and {{brand}} state",
         failedRefresh: "Failed to refresh git state.",
         emptyHiddenWhitespace: "No visible changes after hiding whitespace",
         emptyUncommitted: "No uncommitted changes",
@@ -738,6 +832,16 @@ export const en = {
         base: "base",
         newFile: "New",
         deletedFile: "Deleted",
+        commits: {
+          title: "Commits",
+          countLabel: "{{count}} workspace commits",
+          noneAhead: "No commits ahead of {{baseRef}} yet",
+          fileDiffEmpty: "No changes to display",
+          fileDiffError: "Failed to load file diff",
+          loading: "Loading commits…",
+          loadError: "Failed to load commits",
+          empty: "No commits yet",
+        },
       },
       openInEditor: {
         open: "Open",
@@ -749,13 +853,31 @@ export const en = {
       pr: {
         actions: {
           viewPullRequest: "View",
+          openOn: "Open on {{brand}}",
+        },
+        checksSummary: {
+          passedLabel: "passed",
+          failedLabel: "failed",
+          runningLabel: "running",
+          passedAccessible: "Checks passed",
+          failedAccessible: "Checks failed",
+          runningAccessible: "Checks running",
         },
         sections: {
           checks: "Checks",
+          pipeline: "Pipeline",
           reviews: "Reviews",
         },
+        empty: {
+          noJobs: "No jobs",
+          loadingPipeline: "Loading pipeline…",
+          pipelineJobsLoadFailed: "Could not load pipeline jobs",
+          allowedToFail: "allowed to fail",
+        },
+        approvals: "{{given}} of {{required}} approvals",
         accessibility: {
           pullRequest: "Pull request #{{number}}",
+          pullRequest_mr: "Merge request !{{number}}",
         },
         states: {
           draft: "Draft",
@@ -772,14 +894,57 @@ export const en = {
         time: {
           justNow: "just now",
         },
+        thread: {
+          discussion: "Discussion thread",
+        },
         errors: {
           statusLoadFailed: "Unable to load pull request status",
           activityLoadFailed: "Unable to load pull request activity",
         },
       },
+      forgeSetup: {
+        installCli: "Install the {{cli}} CLI to use {{brand}} features.",
+        signIn: "Run {{command}} to use {{brand}} features.",
+        generic: "Set up {{brand}} on this host to use its features.",
+      },
     },
   },
   sidebar: {
+    display: {
+      trigger: "Display preferences",
+      heading: "Display",
+      grouping: {
+        label: "Grouping",
+        project: "Project",
+        status: "Status",
+      },
+      titleSource: {
+        label: "Title",
+        title: "Title",
+        branch: "Branch name",
+      },
+      show: {
+        label: "Show",
+        host: "Host",
+        changeRequest: "Pull request",
+        checks: "Checks",
+        services: "Services",
+        diff: "Diff stats",
+        timestamp: "Last activity",
+      },
+      checks: {
+        iconAndText: "Icon and text",
+        icon: "Icon only",
+        none: "Hidden",
+      },
+      hostFilter: {
+        label: "Host",
+        all: "All hosts",
+      },
+    },
+    pinned: {
+      title: "Pinned",
+    },
     host: {
       noHost: "No host",
       switchTitle: "Switch host",
@@ -788,9 +953,21 @@ export const en = {
     actions: {
       addProject: "Add project",
       newWorkspace: "New workspace",
+      hosts: "Hosts",
       home: "Home",
       settings: "Settings",
       closeSidebar: "Close sidebar",
+    },
+    help: {
+      trigger: "Help and support",
+      sectionHelp: "Help",
+      diagnostics: "Run diagnostics",
+      shortcuts: "Keyboard shortcuts",
+      reportIssue: "Report an issue",
+      discord: "Discord",
+      github: "Create GitHub issue",
+      whatsNew: "What's new",
+      appName: "Paseo",
     },
     sections: {
       sessions: "History",
@@ -808,6 +985,8 @@ export const en = {
         openSettings: "Open project settings",
         openNewWindow: "Open in new window",
         openNewWindowFailed: "Couldn't open a new window",
+        openFolder: "Open in file manager",
+        openFolderFailed: "Couldn't open folder",
         remove: "Remove project",
         removing: "Removing...",
       },
@@ -830,18 +1009,23 @@ export const en = {
     },
     workspace: {
       status: {
-        scriptsAvailable: "Scripts available",
+        serviceRunning: "Service {{name}} running",
+        serviceUnhealthy: "Service {{name}} unhealthy",
         creating: "Creating...",
       },
       actions: {
         menu: "Workspace actions",
         newWorkspace: "New workspace",
+        showMore: "Show more",
+        showLess: "Show less",
         createWorkspaceFor: "Create a new workspace for {{projectName}}",
         copyPath: "Copy path",
         copyBranchName: "Copy branch name",
         rename: "Rename workspace",
+        pin: "Pin to top",
+        unpin: "Unpin",
         archive: "Archive",
-        archiveWorktree: "Archive worktree",
+        archiveWorkspace: "Archive workspace",
         hideFromSidebar: "Hide from sidebar",
         archiving: "Archiving...",
         hiding: "Hiding...",
@@ -864,7 +1048,7 @@ export const en = {
         branchNameCopied: "Branch name copied",
         hostDisconnected: "Host is not connected",
         hideFailed: "Failed to hide workspace",
-        archiveFailed: "Failed to archive worktree",
+        archiveFailed: "Failed to archive workspace",
       },
     },
   },
@@ -888,17 +1072,29 @@ export const en = {
       composerStateRequired: "Composer state is required",
       selectModel: "Select a model",
     },
+    tooltips: {
+      project: "Choose the project",
+      host: "Choose the host",
+      isolation: "Choose the isolation level",
+      startingRef: "Choose where to start from",
+      launch: "Choose what to launch",
+    },
     refPicker: {
       startingRef: "Starting ref",
-      chooseStart: "Choose where to start from",
-      checkoutHint: "Check out PR #{{number}}?",
-      checkoutPr: "Check out PR #{{number}}",
-      dismissCheckoutHint: "Dismiss PR #{{number}} checkout hint",
       intoBase: "into {{baseRef}}",
       searching: "Searching...",
       noMatchingRefs: "No matching refs.",
       searchPlaceholder: "Search branches and PRs",
       title: "Start from",
+    },
+    launch: {
+      title: "What to launch",
+      chat: "Chat",
+      terminal: "Terminal",
+      manageProfiles: "Manage profiles",
+      submit: "Launch",
+      promptPlaceholder: "Prompt {{name}}",
+      commandPlaceholder: "Run a command, or leave empty for a blank terminal",
     },
   },
   desktop: {
@@ -1055,8 +1251,14 @@ export const en = {
         installFailed: "Unable to install orchestration skills.",
         updateFailed: "Unable to update orchestration skills.",
         uninstallFailed: "Unable to uninstall orchestration skills.",
+        saveSelectionFailed: "Unable to save the orchestration skills selection.",
       },
     },
+  },
+  rootError: {
+    title: "Paseo ran into a problem.",
+    body: "Try again to reload the app. If this keeps happening, include the details below when you report it.",
+    details: "Details",
   },
   startup: {
     errorTitle: "Something went wrong",
@@ -1089,7 +1291,8 @@ export const en = {
     },
   },
   projectPicker: {
-    placeholder: "Type a directory path...",
+    placeholder: "Type to search...",
+    browse: "Browse…",
     opening: "Opening project...",
     searching: "Searching...",
     empty: "Start typing a path",
@@ -1300,9 +1503,21 @@ export const en = {
       loadingOffer: "Loading pairing offer...",
       failedToLoadOffer: "Failed to load pairing offer.",
       relayDisabled: "Relay is not enabled. Enable relay to pair a device.",
+      enableTitle: "Enable relay?",
+      enableDescription:
+        "Relay lets this device connect from anywhere. Pairing traffic is end-to-end encrypted.",
+      relayDocs: "How relay works",
+      relayDocsAccessibility: "Read how Paseo relay works",
+      enableRelay: "Enable relay",
+      enablingRelay: "Enabling...",
+      notNow: "Not now",
+      directConnectionHint:
+        "Without relay, connect directly over TCP, Tailscale, or another VPN. No QR code is created.",
+      updateRequired: "Update the host to enable relay from Paseo Desktop.",
       unavailable: "Pairing offer unavailable.",
       hint: "Scan this QR code with Paseo on your phone, or copy the link below.",
       qrUnavailable: "QR code unavailable.",
+      qrAccessibility: "Pairing QR code",
       retry: "Retry",
       copy: "Copy",
       copied: "Copied",
@@ -1353,6 +1568,8 @@ export const en = {
     detachTooltip: "Detach subagent",
     archiveAction: "Archive {{label}}",
     archiveTooltip: "Archive subagent",
+    archiveFinishedAction: "Archive finished subagents",
+    archiveFinishedTooltip: "Archive finished",
   },
   panels: {
     draft: {
@@ -1366,6 +1583,38 @@ export const en = {
       binaryPreviewUnavailable: "Binary preview unavailable",
       failedToLoad: "Failed to load file",
       failedToLoadPreview: "Failed to load file preview",
+      editor: {
+        fileSize: "File size {{size}}",
+        lines: "{{count}} lines",
+        editorStatus: "Editor status {{status}}",
+        unsavedChanges: "Unsaved changes",
+        saving: "Saving...",
+        saveFailed: "Save failed",
+        changedOnDisk: "Changed on disk",
+        vimMode: "Vim mode {{mode}}",
+        cursor: "Line {{line}}, column {{column}}",
+        preview: "Preview",
+        source: "Source",
+        deletedTitle: "File deleted on disk",
+        checkFailedTitle: "Couldn't check file on disk",
+        preservedDescription: "The open copy is preserved.",
+        conflictDescription: "The local buffer was preserved. Choose which version to keep.",
+        overwrite: "Overwrite",
+        reload: "Reload",
+        reloadTitle: "Reload from disk?",
+        reloadMessage: "Your local changes will be lost.",
+      },
+    },
+    diff: {
+      changesLabel: "Changes",
+      changesSubtitle: "Working tree diff",
+      commitSubtitle: "Commit diff",
+      uncommittedSubtitle: "Uncommitted changes",
+      baseSubtitle: "Compared with {{baseRef}}",
+      directoryMissing: "Workspace directory not found.",
+      empty: "No changes",
+      loadError: "Failed to load diff",
+      capabilityMissing: "Update the host to view commit diffs.",
     },
   },
   toolCallDetails: {
@@ -1374,6 +1623,33 @@ export const en = {
     subAgentActivity: "Sub-agent activity",
     input: "Input",
     output: "Output",
+  },
+  toolCallGroup: {
+    editedFiles: {
+      one: "edited {{count}} file",
+      other: "edited {{count}} files",
+    },
+    commands: {
+      one: "ran {{count}} command",
+      other: "ran {{count}} commands",
+    },
+    readFiles: {
+      one: "read {{count}} file",
+      other: "read {{count}} files",
+    },
+    searches: {
+      one: "searched {{count}} time",
+      other: "searched {{count}} times",
+    },
+    otherTools: {
+      one: "used {{count}} other tool",
+      other: "used {{count}} other tools",
+    },
+    paseoCalls: {
+      one: "called Paseo {{count}} time",
+      other: "called Paseo {{count}} times",
+    },
+    and: "and",
   },
   renameModal: {
     rename: "Rename",
@@ -1415,6 +1691,7 @@ export const en = {
     },
     backToWorkspace: "Back",
     addHost: "Add host",
+    enableBuiltInDaemon: "Enable built-in daemon",
     projects: "Projects",
     projectList: {
       hostLoadFailed: "Couldn't load projects from host {{hostName}}: {{message}}",
@@ -1423,25 +1700,58 @@ export const en = {
     groupInfo: "About {{title}}",
     sections: {
       general: "General",
-      daemon: "Daemon",
       appearance: "Appearance",
+      editor: "Editor",
       shortcuts: "Shortcuts",
       integrations: "Integrations",
+      notifications: "Notifications",
       permissions: "Permissions",
       diagnostics: "Diagnostics",
       about: "About",
     },
+    editor: {
+      title: "Editor",
+      vimKeybindings: "Vim keybindings",
+      vimHint: "Applies to source files on web and desktop.",
+    },
+    notifications: {
+      title: "Notifications",
+      permission: "Notification permission",
+      refreshAccessibility: "Refresh notification permission",
+      playSound: "Play sound",
+      playSoundHint: "Play a sound when a desktop notification arrives",
+      test: "Test notification",
+      testHint: "Send a notification using these settings",
+      permissionRequired: "Allow notification access before testing",
+      send: "Send",
+      sending: "Sending...",
+      sentTitle: "Test notification sent",
+      sentDescription: "Paseo handed the notification to the operating system.",
+      sendFailedTitle: "Unable to send test notification",
+    },
     hostSections: {
+      projects: "Projects",
       connections: "Connections",
       agents: "Agents",
       workspaces: "Workspaces",
       providers: "Providers",
       usage: "Usage",
       terminals: "Terminals",
-      host: "Host",
+      host: "Overview",
     },
     general: {
       title: "General",
+      browserData: {
+        title: "Browser data",
+        siteData: "Cookies and site data",
+        description: "Browser tabs share sign-ins and site data across Paseo.",
+        clear: "Clear browser data",
+        clearing: "Clearing...",
+        confirmTitle: "Clear browser data?",
+        confirmMessage: "Sites will be signed out and open browser tabs will reload.",
+        success: "Browser data cleared.",
+        error: "Couldn't clear browser data.",
+      },
       defaultSend: {
         label: "Default send",
         descriptions: {
@@ -1467,6 +1777,19 @@ export const en = {
         description: "Lines kept in the built-in terminal buffer",
         accessibilityLabel: "Terminal scrollback lines",
       },
+      autoExpandReasoning: {
+        label: "Always expand reasoning",
+        description: "Show agent thinking and chain-of-thought blocks fully expanded by default",
+      },
+      toolCallDetail: {
+        label: "Tool call display",
+        description: "How tool calls appear in the timeline",
+        accessibilityLabel: "Select tool call display ({{value}})",
+        options: {
+          overview: "Summary",
+          detailed: "Full detail",
+        },
+      },
       language: {
         label: "Language",
         description: "App language",
@@ -1477,6 +1800,7 @@ export const en = {
           es: "Spanish",
           fr: "French",
           ja: "Japanese",
+          ko: "Korean",
           ptBR: "Brazilian Portuguese",
           ru: "Russian",
           zhCN: "Simplified Chinese",
@@ -1485,6 +1809,11 @@ export const en = {
     },
     diagnostics: {
       title: "Diagnostics",
+      legacyTerminalRenderer: {
+        label: "Use legacy terminal renderer",
+        description: "Use the previous WebView terminal after reopening a terminal",
+        accessibilityLabel: "Use legacy terminal renderer",
+      },
       testAudio: "Test audio",
       playTest: "Play test",
       playing: "Playing...",
@@ -1545,8 +1874,16 @@ export const en = {
           midnight: "Midnight",
           claude: "Claude",
           ghostty: "Ghostty",
+          pureBlack: "Pure black",
           auto: "System",
         },
+      },
+      detailLevel: {
+        title: "Detail level",
+      },
+      chatOutline: {
+        title: "Chat outline",
+        description: "Show an outline for jumping between prompts",
       },
       fonts: {
         title: "Fonts",
@@ -1573,13 +1910,18 @@ export const en = {
     },
     shortcuts: {
       dialogTitle: "Shortcuts",
+      searchPlaceholder: "Search shortcuts",
       unavailableOnMobile: "Keyboard shortcuts are only available on desktop",
       capturePrompt: "Press shortcut...",
+      unassigned: "Not set",
       actions: {
+        menu: "Actions for {{name}}",
         done: "Done",
         cancel: "Cancel",
+        bind: "Bind",
         rebind: "Rebind",
-        reset: "Reset",
+        clear: "Clear",
+        reset: "Reset to default",
         resetAll: "Reset all",
       },
       sections: {
@@ -1593,7 +1935,7 @@ export const en = {
         openProject: "Open project",
         newWorkspace: "New workspace",
         newWorktree: "New worktree",
-        archiveWorktree: "Archive worktree",
+        archiveWorkspace: "Archive workspace",
         newTab: "New tab",
         closeCurrentTab: "Close current tab",
         jumpToWorkspace: "Jump to workspace",
@@ -1630,6 +1972,7 @@ export const en = {
         sendMessage: "Send message",
         queueMessage: "Queue message",
         muteUnmuteVoiceMode: "Mute/unmute voice mode",
+        switchProject: "Switch project",
       },
       helpNotes: {
         showKeyboardShortcuts: "Available when focus is not in a text field or terminal.",
@@ -1656,6 +1999,15 @@ export const en = {
         uninstallTitle: "Uninstall Paseo skills?",
         uninstallMessage:
           "Removes all Paseo orchestration skills from ~/.agents, ~/.claude, ~/.codex.",
+        choose: "Choose skills",
+        chooseAll: "All skills",
+        chooseAllHint: "Keep every bundled skill installed, including ones added later.",
+        chooseList: "Bundled skills",
+        chooseEmpty: "This build bundles no skills.",
+        removeTitle: "Remove deselected skills?",
+        removeMessage:
+          "{{skills}} will be deleted from ~/.agents, ~/.claude, and ~/.codex. Anything you added inside those skill folders is deleted too.",
+        saveFailed: "Could not save your skill selection.",
       },
       actions: {
         install: "Install",
@@ -1663,7 +2015,10 @@ export const en = {
         installed: "Installed",
         update: "Update",
         working: "Working...",
+        remove: "Remove",
         uninstall: "Uninstall",
+        save: "Save",
+        saving: "Saving...",
       },
       operations: {
         add: "Add skill",
@@ -1673,20 +2028,52 @@ export const en = {
     },
     permissions: {
       title: "Permissions",
-      notifications: "Notifications",
       microphone: "Microphone",
       refresh: "Refresh",
       refreshing: "Refreshing...",
       refreshAccessibility: "Refresh desktop permissions",
-      test: "Test",
       actions: {
         granted: "Granted",
         request: "Request",
         requesting: "Requesting...",
-        busySuffix: "{{label}}...",
       },
     },
     host: {
+      appearance: {
+        title: "Appearance",
+        name: {
+          label: "Name",
+        },
+        color: {
+          label: "Color",
+          accessibilityLabel: "Color, {{value}}",
+          options: {
+            none: "Default",
+            violet: "Violet",
+            sky: "Sky",
+            emerald: "Emerald",
+            orange: "Orange",
+            pink: "Pink",
+            indigo: "Indigo",
+            teal: "Teal",
+            red: "Red",
+            amber: "Amber",
+            blue: "Blue",
+          },
+        },
+        badge: {
+          label: "Sidebar badge",
+          accessibilityLabel: "Sidebar badge, {{value}}",
+          options: {
+            name: "Name",
+            icon: "Icon only",
+            hidden: "Hidden",
+          },
+        },
+        preview: {
+          workspaceName: "my-workspace",
+        },
+      },
       notFound: "Host not found",
       badges: {
         relay: "Relay",
@@ -1786,6 +2173,8 @@ export const en = {
           dialogFailedMessage: "Unable to open the restart confirmation dialog.",
         },
         update: {
+          desktopManagedHint:
+            "This daemon is managed by Paseo Desktop. Update Paseo Desktop on the host.",
           title: "Update daemon",
           hint: "Update the daemon to the latest version and restart it",
           confirm: "Update",
@@ -1834,6 +2223,17 @@ export const en = {
       loading: "Loading...",
       addErrorTitle: "Unable to add provider",
       updateErrorTitle: "Unable to update provider",
+      actions: {
+        menu: "{{name}} actions",
+        remove: "Remove provider",
+        removing: "Removing...",
+      },
+      remove: {
+        confirmTitle: "Remove {{name}}?",
+        confirmMessage: "This deletes the provider entry from config.json. It cannot be undone.",
+        confirm: "Remove",
+        errorTitle: "Unable to remove provider",
+      },
       statuses: {
         disabled: "Disabled",
         loading: "Loading",
@@ -1879,24 +2279,23 @@ export const en = {
       },
     },
     project: {
-      noEditableTarget: "We don't have an editable copy of this project on any connected host.",
+      noEditableTarget: "This project isn't editable on this host.",
       backToProjects: "Back to projects",
-      switchHost: "Switch host",
-      rename: {
-        renamedToast: "Project renamed",
-        errorFallback: "Couldn't rename project",
-        renameLabel: "Rename project",
-        resetLabel: "Reset project name to default",
-        projectNameLabel: "Project name",
-        saveLabel: "Save project name",
-        cancelLabel: "Cancel renaming",
-        reset: "Reset",
+      edit: {
+        title: "Edit project",
+        name: "Name",
+        nameLabel: "Project name",
+        icon: "Icon",
+        chooseImage: "Choose image",
+        useAutomatic: "Use automatic",
+        imageUrl: "Image or website URL",
+        save: "Save changes",
+        savedToast: "Project updated",
       },
       readFailures: {
         invalidTitle: "paseo.json couldn't be parsed",
         invalidDescription: "Fix the file on disk, then reload.",
         missingTitle: "This host doesn't have this project",
-        missingWithHosts: "Switch to another host above, or reload.",
         missingSingleHost: "The selected host has no record of this project.",
         transportTitle: "Couldn't load paseo.json",
         transportFallback: "The host didn't respond.",

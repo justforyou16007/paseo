@@ -47,6 +47,7 @@ function useArisWikiEntityPanelDescriptor(target: {
   const label = `${ENTITY_TYPE_LABELS[target.entityType]} · ${target.entityId}`;
   return {
     label,
+    tooltip: label,
     subtitle: `ARIS wiki · ${label}`,
     titleState: "ready",
     icon: BookOpen,
