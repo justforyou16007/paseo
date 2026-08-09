@@ -5,73 +5,88 @@ argument-hint: "[— baseline: <experiment-plan-path>] [— resume <run_id>] [�
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__wait_for_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent, mcp__paseo__create_heartbeat
 ---
 
-# Auto Research Loop — Metric-Target Iterative Research Driver
+# Auto Research Loop — Dashboard + Manifest Architecture
 
-> **Paseo dispatch contract (Rule 1/4).** This skill is a thin scheduler. It dispatches sub-agents via `mcp__paseo__create_agent`, reads their receipt files, runs canonical bookkeeping helpers with values taken verbatim from those receipts, evaluates the deterministic stop arithmetic, and archives finished children. It performs **no analysis, no drafting, and no judgment of its own**. Every sub-skill invocation is a separate paseo agent — no in-process `Skill` tool calls. The parent never reads experiment logs to form opinions; it transcribes receipt fields into canonical helpers.
-
-> **Gate provenance — compound stop gate.**
-> - **Type-A (deterministic):** `current_metric >= target * (1 - TOLERANCE)` OR `iteration >= MAX_ITERATIONS` OR `consecutive_pivots >= PATIENCE`. Owner-self-judgeable arithmetic.
-> - **Type-B (codex verdict):** Fresh codex reviewer confirms `verdict=stop`, `score >= 9`, `metric_progress=met target`. Cross-model, never self-acquittal.
-> - **STOP = Type-A AND Type-B.** Neither alone is sufficient. Type-A without Type-B uses `deterministic:research-iteration:max-iter-reached`. Type-B without Type-A means the reviewer is being conservative without metric basis — log and continue.
+> **Paseo dispatch contract (Rules 1-5).** This skill is a thin scheduler. It dispatches sub-agents via `mcp__paseo__create_agent`, reads their `receipt.json` files, applies `dashboard_patch` fields to `dashboard.json`, evaluates deterministic stop arithmetic on dashboard fields only, and archives finished children. It performs **no analysis, no drafting, and no judgment of its own**. Every sub-skill invocation is a separate paseo agent — no in-process `Skill` tool calls.
+>
+> **Rule 5 — Manifest Protocol.** All context for workers goes through `input-manifest.json`, not the orchestrator prompt. The dispatch prompt is minimal: skill name + manifest path. Workers read their manifest, do their work, write `receipt.json`. The orchestrator never reads worker output files (no `cat`, `awk`, `grep` on outputs). It reads only `dashboard.json` and `receipt.json` files.
+>
+> See: `shared-references/paseo-subagent-dispatch.md`, `shared-references/worker-manifest.md`
 
 ## Purpose
 
 This skill differs from `research-pipeline` in three ways:
 
-1. **Iterative.** Research-pipeline is a single pass (W1→W6). This skill loops Phases 1–5 until a metric target is met or budget is exhausted.
+1. **Iterative.** Research-pipeline is a single pass (W1-W6). This skill loops Phases 1-5 until a metric target is met or budget is exhausted.
 2. **Metric-driven.** The loop is governed by a quantitative target read from `CLAUDE.md ## Metric Target`. Every iteration's output is evaluated against this target.
-3. **Requires baseline.** Iteration 1 reproduces a confirmed baseline. Subsequent iterations discover and test improvements targeting identified gaps. The baseline establishes the floor; all progress is measured against it.
+3. **Requires baseline.** Iteration 1 reproduces a confirmed baseline. Subsequent iterations discover and test improvements targeting identified gaps.
 
-The architecture reuses research-pipeline's infrastructure: `run-state.js` for phase tracking, `render_w_agent_prompt.sh` for prompt construction, `paseo-config.json` for sub-agent configuration, and the same sub-skill dispatch patterns.
+## Dispatch Pattern
+
+Every phase follows the same cycle. This is shown once here; each phase section below specifies only what differs (inputs, context, dispatch skill).
+
+For the full manifest and receipt JSON schemas, see `shared-references/worker-manifest.md`.
+
+```
+1. WORKER_DIR="$WORKERS_DIR/${ITERATION}-<phase-name>"
+   mkdir -p "$WORKER_DIR"
+
+2. Write $WORKER_DIR/input-manifest.json with:
+   - phase, run_id, iteration, root (standard header)
+   - inputs: file paths the worker needs (phase-specific, see tables below)
+   - config: scalar context values (phase-specific)
+   - output: receipt_path + output file paths
+
+3. Dispatch via mcp__paseo__create_agent:
+   title: "research-loop-iter-${ITERATION}-<phase-name>"
+   provider: "claude/claude-sonnet-4-6"
+   initialPrompt: "/<skill-name> — manifest: $WORKER_DIR/input-manifest.json"
+   notifyOnFinish: true
+
+4. Wait for completion notification.
+
+5. Read $WORKER_DIR/receipt.json:
+   - If status=failed → log and decide (retry or stop)
+   - Merge dashboard_patch into $DASHBOARD via jq
+
+6. Archive the worker: mcp__paseo__archive_agent
+
+7. Update run-state: node "$RUN_STATE" set "$ROOT" "$RUN_ID" <phase> done
+```
 
 ## Phase Diagram
 
 ```
-Phase 0     Validate preconditions (metric target, env config, baseline plan)
-─── Iteration loop (1 → MAX_ITERATIONS) ───
+Phase 0     Validate preconditions + Initialize dashboard.json
+--- Iteration loop (1 -> MAX_ITERATIONS) ---
 Phase 1     Idea Discovery
-            iter 1: improvement directions for baseline
-            iter N: ideas targeting open gaps from gap_map.md
 Phase 2     Experiment Bridge
-            iter 1: baseline reproduction
-            iter N: run improvement experiments
-Phase 3     Auto Review Loop (review + fix, up to 4 internal rounds)
-Phase 4     Metric Evaluation + Compound Stop Gate
-Phase 5     Gap Analysis (kill-argument → rebuild query pack) → loop
-─── End loop ───
-Phase 6     Summary (NARRATIVE_REPORT.md + metric trajectory)
-Phase 7     Paper Writing (optional, dispatches /paper-writing)
+Phase 2.5   Analyze Results
+Phase 3     Auto Review
+Phase 4     Metric Evaluation (pure arithmetic — NO dispatch)
+Phase 5     Gap Analysis (skipped if stop gate fires)
+--- End loop ---
+Phase 6     Summary (on stop)
+Phase 7     Paper Writing (optional, if metric met)
 ```
+
 ## Constants
 
 | Constant | Value | Notes |
 |----------|-------|-------|
-| `MAX_ITERATIONS` | 5 | Max full loop iterations. Override via `— max-iterations: N` argument. |
-| `TARGET_METRIC` | from CLAUDE.md | Read from `## Metric Target` block, line `primary: <number> <unit>`. |
-| `TARGET_TOLERANCE` | 0.01 | Relative tolerance. `current >= target * (1 - 0.01)` counts as met. |
-| `REVIEWER_BIAS_GUARD` | true | Fresh codex sub-agent every iteration. No continuation context. |
-| `REVIEWER_MODEL` | gpt-5.5 | Cross-model (not Claude). Self-acquittal tripwire on `claude*`. |
-| `PATIENCE` | 2 | Max consecutive `pivot` verdicts before forcing stop. |
-| `OUTPUT_DIR` | `research-iteration/` | All iteration artifacts and state files. |
-| `STATE_FILE` | `research-iteration/auto-research-loop-state.json` | Loop-internal state (iteration, metric, gaps). |
-| `LOG_FILE` | `research-iteration/auto-research-loop-log.md` | Cumulative per-iteration transcript. |
-| `REPORT_FILE` | `research-iteration/NARRATIVE_REPORT.md` | Final summary with metric trajectory. |
-| `RUN_STATE_PHASES` | `preconditions,idea-discovery,experiment-bridge,auto-review,metric-eval,gap-analysis,summary` | Phases registered with run-state.js. |
+| `MAX_ITERATIONS` | 5 | Override via `-- max-iterations: N`. |
+| `TARGET_METRIC` | from CLAUDE.md | Read from `## Metric Target`, line `primary: <number> <unit>`. |
+| `TARGET_TOLERANCE` | 0.01 | `current >= target * (1 - 0.01)` counts as met. |
+| `PATIENCE` | 2 | Max consecutive pivot verdicts before force stop. |
+| `REVIEWER_MODEL` | gpt-5.5 | Cross-model. Self-acquittal tripwire on `claude*`. |
+| `DASHBOARD_PATH` | `.aris/runs/<run_id>/dashboard.json` | Single source of truth. |
+| `WORKERS_DIR` | `.aris/runs/<run_id>/workers/` | All worker manifests and receipts. |
 
-## Inputs (read at startup)
-
-1. **`CLAUDE.md ## Metric Target`** — Must contain `primary: <number> <unit>` (e.g., `primary: 0.85 F1`). Skill aborts if absent. Also reads `## Project Constraints` and `## Compute Budget`.
-2. **Baseline plan** — Via `— baseline:` argument OR `refine-logs/EXPERIMENT_PLAN.md`. This is what iteration 1 reproduces.
-3. **Experiment env config** — `.claude/skills/run-<project>-experiment/env.json` with `status=complete`. Warning if absent (user must run `/experiment-env-configuration` manually).
-4. **Research wiki** — `research-wiki/index.md`, `research-wiki/graph/edges.jsonl`, `research-wiki/gap_map.md`. Created if absent.
-5. **`.aris/setup-state.json`** — Project setup answers (gpu_type, paseo_configured).
-6. **Run state** — `.aris/runs/<run_id>.json` if resuming.
+Dashboard schema: see `shared-references/worker-manifest.md` section "dashboard.json Schema". All gate arithmetic uses dashboard fields only. The orchestrator NEVER reads experiment logs, result files, or review prose.
 
 ---
 
-## Phase 0: Validate Preconditions
-
-Read the metric target, verify environment, locate baseline, and initialize run state.
+## Phase 0: Preconditions + Initialize Dashboard
 
 ```bash
 cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
@@ -83,7 +98,6 @@ if [ -f .aris/installed-skills.txt ]; then
 fi
 WIKI_SCRIPT="$ARIS_REPO/dist/tools/research-wiki.js"
 RUN_STATE="$ARIS_REPO/dist/tools/run-state.js"
-RENDER="$ARIS_REPO/dist/tools/render_w_agent_prompt.sh"
 
 # 0a. Read metric target
 TARGET_METRIC=$(awk '/^## Metric Target/{flag=1; next} flag && /^primary:/{print $2; exit}' CLAUDE.md)
@@ -99,706 +113,368 @@ PROJECT_NAME=$(basename "$ROOT")
 ENV_JSON=".claude/skills/run-${PROJECT_NAME}-experiment/env.json"
 ENV_CONFIGURED=false
 if [ -f "$ENV_JSON" ]; then
-    STATUS=$(grep -oE '"status": *"[^"]+"' "$ENV_JSON" | head -1 | grep -oE '"[^"]+"$' | tr -d '"')
+    STATUS=$(jq -r '.status' "$ENV_JSON")
     [ "$STATUS" = "complete" ] && ENV_CONFIGURED=true
 fi
 if [ "$ENV_CONFIGURED" = "false" ]; then
-    echo "WARNING: Experiment environment not configured (missing or incomplete $ENV_JSON)."
-    echo "Run /experiment-env-configuration manually. Loop continues with built-in backend."
+    echo "WARNING: Experiment environment not configured. Run /experiment-env-configuration."
 fi
 
 # 0c. Locate baseline plan
 BASELINE_PLAN="${ARG_BASELINE:-refine-logs/EXPERIMENT_PLAN.md}"
 if [ ! -f "$BASELINE_PLAN" ]; then
     echo "ERROR: Baseline plan not found at $BASELINE_PLAN"
-    echo "Provide via '— baseline: <path>' or ensure refine-logs/EXPERIMENT_PLAN.md exists."
     exit 1
 fi
 
-# 0d. Initialize run state
+# 0d. Create run directory + initialize dashboard
 RUN_ID=$(date +%Y%m%d-%H%M%S)-research-loop
-mkdir -p research-iteration .aris/runs
+DASHBOARD=".aris/runs/$RUN_ID/dashboard.json"
+WORKERS_DIR=".aris/runs/$RUN_ID/workers"
+mkdir -p "$WORKERS_DIR"
+
+# Initialize dashboard.json per schema in shared-references/worker-manifest.md
+# Fields: run_id, status="running", iteration=0, max_iterations, metric{target,unit,tolerance,current,baseline,history},
+#         best_idea, last_review{verdict,score,metric_progress,reviewer_id}, gaps{open,closed},
+#         consecutive_pivots=0, stop_reason=null, phases_completed=[], started_at, updated_at
+
+# 0e. Initialize run-state
 node "$RUN_STATE" start "$ROOT" "$RUN_ID" \
-    --phases "preconditions,idea-discovery,experiment-bridge,auto-review,metric-eval,gap-analysis,summary"
-
-# 0e. Emit paseo-config.json (sub-agent configuration)
-cat > research-iteration/paseo-config.json <<CONF
-{
-  "run_id": "$RUN_ID",
-  "root": "$ROOT",
-  "target_metric": $TARGET_METRIC,
-  "target_unit": "$TARGET_UNIT",
-  "target_tolerance": 0.01,
-  "max_iterations": ${ARG_MAX_ITERATIONS:-5},
-  "reviewer_model": "gpt-5.5",
-  "reviewer_bias_guard": true,
-  "patience": 2,
-  "baseline_plan": "$BASELINE_PLAN",
-  "env_configured": $ENV_CONFIGURED
-}
-CONF
-
-# 0f. Initialize state file
-cat > "$STATE_FILE" <<STATE
-{
-  "iteration": 0,
-  "current_metric": null,
-  "target_metric": $TARGET_METRIC,
-  "last_verdict": null,
-  "last_score": null,
-  "open_gaps": [],
-  "consecutive_pivots": 0,
-  "status": "running",
-  "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-}
-STATE
-
+    --phases "preconditions,idea-discovery,experiment-bridge,analyze-results,auto-review,metric-eval,gap-analysis,summary"
 node "$RUN_STATE" set "$ROOT" "$RUN_ID" preconditions done \
-    --artifact "$ROOT/research-iteration/paseo-config.json"
-
-# 0g. Read Reference Knowledge
-REF_SKILLS=$(awk '/^## Reference Knowledge/{flag=1; next} flag && /^skills:/{flag2=1; next} flag2 && /^\[/{print; exit} flag2 && /^  -/{print}' CLAUDE.md | tr -d '[]" ' | paste -sd,)
-REF_DOCS=$(awk '/^## Reference Knowledge/{flag=1; next} flag && /^documents:/{flag2=1; next} flag2 && /^\[/{print; exit} flag2 && /^  -/{print}' CLAUDE.md | tr -d '[]" ' | paste -sd,)
-REF_KNOWLEDGE=$(awk '/^## Reference Knowledge/{flag=1; next} flag && /^knowledge:/{flag2=1; next} flag2 && /^\[/{print; exit} flag2 && /^  -/{gsub(/^  - /,""); print}' CLAUDE.md | paste -sd'|')
-
-# If all empty, proceed without reference injection (no error — reference
-# knowledge is optional).
+    --artifact "$ROOT/$DASHBOARD"
 ```
+
 ---
 
-## Phase 1: Idea Discovery (per iteration)
+## Phase 1: Idea Discovery
 
-Dispatches `/idea-discovery` or `/idea-creator` as a paseo sub-agent. The parent constructs the prompt from file paths only — it does not read experiment results or compose improvement directions.
+Dispatch `/idea-discovery` with context about the research direction, open gaps, and prior iteration history.
 
-### Iteration 1: Improvement directions for baseline
+| Input | Path |
+|-------|------|
+| claude_md | `$ROOT/CLAUDE.md` |
+| research_brief | `$ROOT/RESEARCH_BRIEF.md` |
+| baseline_plan | `$ROOT/$BASELINE_PLAN` |
+| query_pack | `$ROOT/research-wiki/query_pack.md` |
+| gap_map | `$ROOT/research-wiki/gap_map.md` |
+| wiki_index | `$ROOT/research-wiki/index.md` |
+| prior_iterations | `dashboard.metric.history` (inline from dashboard) |
 
-The first iteration's goal is to identify what can be improved about the baseline. The baseline plan is the anchor.
+Context: `target_metric`, `target_unit`, `open_gaps` (from dashboard), `iteration_context` (`baseline_improvement` if iter 1, else `gap_targeted`)
 
-```bash
-PROMPT=$(bash "$RENDER" --phase "idea-discovery" --run-id "$RUN_ID" --root "$ROOT" \
-    --skill skills/idea-discovery/SKILL.md \
-    --extra "Baseline plan: $BASELINE_PLAN. Find improvement directions. Write IDEA_REPORT.md. | reference_skills: $REF_SKILLS | reference_docs: $REF_DOCS | domain_knowledge: $REF_KNOWLEDGE")
+Output: `idea_report` at `$ROOT/idea-stage/IDEA_REPORT.md`
 
-# Dispatch via paseo
-mcp__paseo__create_agent \
-    --title "research-loop-iter-1-idea-discovery" \
-    --provider "claude/claude-sonnet-4-6" \
-    --initialPrompt "$PROMPT" \
-    --notifyOnFinish true
-```
+Dispatch: `/<idea-discovery> -- manifest: $WORKER_DIR/input-manifest.json`
 
-Wait for completion notification. Read receipt:
-```
-.aris/runs/$RUN_ID.research-iteration.iter-1.idea-discovery.done.json
-```
+**Dashboard patch fields:** `best_idea`, `idea_ids`, `ideas[]`
 
-Record ideas in wiki (verbatim from receipt):
-```bash
-for idea in $(jq -r '.ideas[] | @base64' "$RECEIPT"); do
-    ID=$(echo "$idea" | base64 -d | jq -r '.id')
-    TITLE=$(echo "$idea" | base64 -d | jq -r '.title')
-    TARGET_GAPS=$(echo "$idea" | base64 -d | jq -r '.target_gaps // [] | join(",")')
-    BASED_ON=$(echo "$idea" | base64 -d | jq -r '.based_on // [] | join(",")')
-    node "$WIKI_SCRIPT" upsert_idea research-wiki/ --id "$ID" --title "$TITLE" \
-        ${TARGET_GAPS:+--target-gaps "$TARGET_GAPS"} \
-        ${BASED_ON:+--based-on "$BASED_ON"}
-done
-```
+**Post-receipt wiki writes:** For each `idea_id` in `dashboard_patch.idea_ids`, call `node "$WIKI_SCRIPT" upsert_idea research-wiki/ --id "$idea_id" --title "$TITLE"`.
 
-### Iteration 2+: Ideas targeting open gaps
-
-Before dispatching, rebuild the query pack so the idea generator has full context of what has been tried and what gaps remain open.
-
-```bash
-# Rebuild query pack with current wiki state
-node "$WIKI_SCRIPT" rebuild_query_pack research-wiki/
-
-# Read open gap IDs from gap_map.md
-OPEN_GAPS=$(grep -E '^\*\*Status\*\*:.*open' research-wiki/gap_map.md \
-    | grep -oE 'G[0-9]+' | paste -sd, -)
-
-PROMPT=$(bash "$RENDER" --phase "idea-discovery" --run-id "$RUN_ID" --root "$ROOT" \
-    --skill skills/idea-creator/SKILL.md \
-    --extra "Target open gaps: $OPEN_GAPS. Query pack: research-wiki/query_pack.md. Gap map: research-wiki/gap_map.md. Find ideas that close the highest-priority open gaps. | reference_skills: $REF_SKILLS | reference_docs: $REF_DOCS | domain_knowledge: $REF_KNOWLEDGE")
-
-mcp__paseo__create_agent \
-    --title "research-loop-iter-${ITERATION}-idea-creator" \
-    --provider "claude/claude-sonnet-4-6" \
-    --initialPrompt "$PROMPT" \
-    --notifyOnFinish true
-```
-
-Record ideas in wiki (same as iteration 1, but with gap targeting):
-```bash
-RECEIPT=".aris/runs/$RUN_ID.research-iteration.iter-${ITERATION}.idea-discovery.done.json"
-for idea in $(jq -r '.ideas[] | @base64' "$RECEIPT"); do
-    ID=$(echo "$idea" | base64 -d | jq -r '.id')
-    TITLE=$(echo "$idea" | base64 -d | jq -r '.title')
-    TARGET_GAPS=$(echo "$idea" | base64 -d | jq -r '.target_gaps // [] | join(",")')
-    BASED_ON=$(echo "$idea" | base64 -d | jq -r '.based_on // [] | join(",")')
-    node "$WIKI_SCRIPT" upsert_idea research-wiki/ --id "$ID" --title "$TITLE" \
-        ${TARGET_GAPS:+--target-gaps "$TARGET_GAPS"} \
-        ${BASED_ON:+--based-on "$BASED_ON"}
-done
-```
-
-**Gate:** deterministic — receipt file exists with non-empty `ideas[]` array.
-
-```bash
-node "$RUN_STATE" set "$ROOT" "$RUN_ID" idea-discovery done \
-    --artifact "$RECEIPT"
-```
+Follow the standard dispatch pattern (Dispatch Pattern section above).
 
 ---
 
 ## Phase 2: Experiment Bridge
 
-Dispatches `/experiment-bridge` to implement and run experiments. Iteration 1 reproduces the baseline; iteration 2+ runs the improvement plan from Phase 1.
+Dispatch `/experiment-bridge` to implement and run experiments from the idea report.
 
-### Iteration 1: Baseline reproduction
+| Input | Path |
+|-------|------|
+| experiment_plan | `$ROOT/$BASELINE_PLAN` (iter 1) or `$ROOT/refine-logs/EXPERIMENT_PLAN-iter-${ITERATION}.md` (iter 2+) |
+| idea_report | `$ROOT/idea-stage/IDEA_REPORT.md` |
+| experiment_skill | `$ROOT/.claude/skills/run-${PROJECT_NAME}-experiment/env.json` |
 
-```bash
-PROMPT=$(bash "$RENDER" --phase "experiment-bridge" --run-id "$RUN_ID" --root "$ROOT" \
-    --skill skills/experiment-bridge/SKILL.md \
-    --extra "Reproduce baseline from: $BASELINE_PLAN. Record results to EXPERIMENT_TRACKER.md.")
+Context: `is_baseline` (true if iter 1), `target_metric`, `target_unit`
 
-mcp__paseo__create_agent \
-    --title "research-loop-iter-1-experiment-bridge" \
-    --provider "claude/claude-sonnet-4-6" \
-    --initialPrompt "$PROMPT" \
-    --notifyOnFinish true
-```
+Output: `tracker` at `refine-logs/EXPERIMENT_TRACKER.md`, `results` at `refine-logs/EXPERIMENT_RESULTS.md`
 
-After completion, verify the experiment environment:
-```bash
-if [ "$ENV_CONFIGURED" = "false" ] && [ -f "$ENV_JSON" ]; then
-    STATUS=$(grep -oE '"status": *"[^"]+"' "$ENV_JSON" | head -1 | grep -oE '"[^"]+"$' | tr -d '"')
-    [ "$STATUS" = "complete" ] && ENV_CONFIGURED=true
-fi
-```
+Dispatch: `/experiment-bridge -- manifest: $WORKER_DIR/input-manifest.json`
 
-### Iteration 2+: Run improvement experiments
+**Dashboard patch fields:** `primary_metric` (set as `metric.baseline` on iter 1 only), `experiment_ids`, `experiments[]`
 
-```bash
-# The plan comes from Phase 1's idea or Phase 5's kill-argument plan output
-ITER_PLAN="refine-logs/EXPERIMENT_PLAN-iter-${ITERATION}.md"
+**Post-receipt wiki writes:** For each `exp_id` in `dashboard_patch.experiment_ids`, call `node "$WIKI_SCRIPT" add_experiment research-wiki/ --id "$exp_id" --title "$TITLE" --status completed`.
 
-PROMPT=$(bash "$RENDER" --phase "experiment-bridge" --run-id "$RUN_ID" --root "$ROOT" \
-    --skill skills/experiment-bridge/SKILL.md \
-    --extra "Run improvement experiments from: $ITER_PLAN. This is iteration $ITERATION targeting gaps: $OPEN_GAPS.")
-
-mcp__paseo__create_agent \
-    --title "research-loop-iter-${ITERATION}-experiment-bridge" \
-    --provider "claude/claude-sonnet-4-6" \
-    --initialPrompt "$PROMPT" \
-    --notifyOnFinish true
-```
-
-Record experiments in wiki (verbatim from receipt):
-```bash
-RECEIPT=".aris/runs/$RUN_ID.research-iteration.iter-${ITERATION}.experiment-bridge.done.json"
-for exp in $(jq -r '.experiments[] | @base64' "$RECEIPT"); do
-    EXP_ID=$(echo "$exp" | base64 -d | jq -r '.id')
-    EXP_TITLE=$(echo "$exp" | base64 -d | jq -r '.title')
-    IDEA_ID=$(echo "$exp" | base64 -d | jq -r '.idea_id')
-    node "$WIKI_SCRIPT" add_experiment research-wiki/ \
-        --id "exp:$RUN_ID.iter-${ITERATION}:${EXP_ID}" \
-        --title "$EXP_TITLE" \
-        --idea-id "$IDEA_ID" \
-        --status completed
-
-    # Wire experiment → gap edges (experiment addresses the gaps its idea targets)
-    GAPS=$(echo "$exp" | base64 -d | jq -r '.addresses_gaps // [] | .[]')
-    for GAP_ID in $GAPS; do
-        node "$WIKI_SCRIPT" add_edge research-wiki/ \
-            --from "exp:$RUN_ID.iter-${ITERATION}:${EXP_ID}" \
-            --to "$GAP_ID" \
-            --type addresses_gap \
-            --evidence "experiment $EXP_TITLE run in iteration $ITERATION"
-    done
-done
-```
-
-**Gate:** deterministic — experiments[] in receipt is non-empty and all have `status: completed`.
-
-```bash
-node "$RUN_STATE" set "$ROOT" "$RUN_ID" experiment-bridge done \
-    --artifact "$RECEIPT"
-```
 ---
 
-## Phase 2.5: Structured Analysis
+## Phase 2.5: Analyze Results
 
-After experiment-bridge completes (Phase 2), dispatch `/analyze-results` to
-produce structured analysis before the review phase:
+Dispatch `/analyze-results` to extract the authoritative metric value from experiment outputs.
 
-```bash
-PROMPT="/analyze-results — project: $PROJECT"
-# mcp__paseo__create_agent; await notifyOnFinish; read receipt
+| Input | Path |
+|-------|------|
+| tracker | `$ROOT/refine-logs/EXPERIMENT_TRACKER.md` |
+| results | `$ROOT/refine-logs/EXPERIMENT_RESULTS.md` |
+| prior_metrics | `dashboard.metric.history` (inline from dashboard) |
+
+Context: `target_metric`, `target_unit`
+
+Output: `analysis` at `$ROOT/refine-logs/ANALYSIS-iter-${ITERATION}.md`
+
+Dispatch: `/analyze-results -- manifest: $WORKER_DIR/input-manifest.json`
+
+**Dashboard patch fields:** `primary_metric`, `metric_delta`, `statistical_significance`
+
+**Post-receipt dashboard merge:** The analyze-results receipt is the AUTHORITATIVE source for `metric.current`. Apply:
 ```
-
-Receipt: `.aris/runs/<run_id>.research-iteration.iter-<N>.analyze-results.done.json`
-
-The analysis output feeds:
-- **Phase 3 (W2 review):** the reviewer gets `refine-logs/EXPERIMENT_RESULTS.md`
-  with comparison tables and statistical tests rather than raw tracker rows.
-- **Phase 4 (metric evaluation):** `CURRENT_METRIC` is read from the
-  analyze-results receipt's `primary_metric` field rather than raw awk on
-  EXPERIMENT_TRACKER.md.
-
-```bash
-# Read metric from analyze-results receipt instead of raw awk
-RECEIPT=".aris/runs/${RUN_ID}.research-iteration.iter-${ITERATION}.analyze-results.done.json"
-CURRENT_METRIC=$(jq -r '.primary_metric // empty' "$RECEIPT")
-[ -z "$CURRENT_METRIC" ] && CURRENT_METRIC=$(awk '...' refine-logs/EXPERIMENT_TRACKER.md)  # fallback
+.metric.current = $patch.primary_metric
+.metric.history += [{"iteration": .iteration, "value": $patch.primary_metric, "timestamp": now}]
 ```
 
 ---
 
-## Phase 3: Auto Review Loop
+## Phase 3: Auto Review
 
-Dispatches `/auto-review-loop` on the current iteration's results. The review loop runs up to 4 internal rounds (fix → re-review) before returning a final verdict. A **fresh** codex reviewer is used (per `REVIEWER_BIAS_GUARD`).
+Dispatch `/auto-review-loop` for cross-model review of the iteration's results.
 
-```bash
-PROMPT=$(bash "$RENDER" --phase "auto-review" --run-id "$RUN_ID" --root "$ROOT" \
-    --skill skills/auto-review-loop/SKILL.md \
-    --extra "Review iteration $ITERATION results. Files: refine-logs/EXPERIMENT_RESULTS.md, refine-logs/EXPERIMENT_TRACKER.md, idea-stage/IDEA_REPORT.md. Metric target: $TARGET_METRIC $TARGET_UNIT. Use fresh codex reviewer (REVIEWER_BIAS_GUARD=true). Write verdict to research-iteration/review-iter-${ITERATION}.json. | reference_skills: $REF_SKILLS | reference_docs: $REF_DOCS | domain_knowledge: $REF_KNOWLEDGE")
+| Input | Path |
+|-------|------|
+| analysis | `$ROOT/refine-logs/ANALYSIS-iter-${ITERATION}.md` |
+| tracker | `$ROOT/refine-logs/EXPERIMENT_TRACKER.md` |
+| results | `$ROOT/refine-logs/EXPERIMENT_RESULTS.md` |
+| idea_report | `$ROOT/idea-stage/IDEA_REPORT.md` |
 
-mcp__paseo__create_agent \
-    --title "research-loop-iter-${ITERATION}-auto-review" \
-    --provider "claude/claude-sonnet-4-6" \
-    --initialPrompt "$PROMPT" \
-    --notifyOnFinish true
-```
+Context: `target_metric`, `target_unit`, `reviewer_model` (`gpt-5.5`), `reviewer_bias_guard` (true), `max_review_rounds` (4)
 
-Wait for completion. Read review verdict:
-```bash
-REVIEW_FILE="research-iteration/review-iter-${ITERATION}.json"
-VERDICT=$(jq -r '.verdict' "$REVIEW_FILE")
-SCORE=$(jq -r '.score' "$REVIEW_FILE")
-METRIC_PROGRESS=$(jq -r '.metric_progress' "$REVIEW_FILE")
-CODEX_AGENT_ID=$(jq -r '.codex_agent_id' "$REVIEW_FILE")
-```
+Output: `review` at `$ROOT/research-iteration/review-iter-${ITERATION}.json`
 
-**Gate:** codex verdict `score >= 6` (review acceptance threshold). If score < 6, the auto-review-loop's internal fix rounds have not converged — log and proceed to Phase 4 regardless (the metric is the primary gate).
+Dispatch: `/auto-review-loop -- manifest: $WORKER_DIR/input-manifest.json`
 
-```bash
-node "$RUN_STATE" set "$ROOT" "$RUN_ID" auto-review done \
-    --artifact "$REVIEW_FILE"
-```
+**Dashboard patch fields:** `verdict`, `score`, `metric_progress`, `reviewer_id` (merged into `last_review.*`)
 
 ---
 
-## Phase 4: Metric Evaluation + Compound Stop Gate
+## Phase 4: Metric Evaluation
 
-This is the critical decision point. The parent evaluates purely arithmetic conditions (Type-A) and reads the codex verdict (Type-B). No judgment, no interpretation — just comparisons.
+**Pure arithmetic on dashboard fields. NO file reads. NO external tool calls. NO dispatch.**
 
-### Type-A: Deterministic metric check
+The orchestrator reads `dashboard.json` and evaluates the compound stop gate.
+
+### Type-A: Deterministic (dashboard fields only)
 
 ```bash
-# Prefer metric from analyze-results receipt; fall back to raw awk on EXPERIMENT_TRACKER.md
-ANALYZE_RECEIPT=".aris/runs/${RUN_ID}.research-iteration.iter-${ITERATION}.analyze-results.done.json"
-CURRENT_METRIC=""
-if [ -f "$ANALYZE_RECEIPT" ]; then
-    CURRENT_METRIC=$(jq -r '.primary_metric // empty' "$ANALYZE_RECEIPT")
-fi
-if [ -z "$CURRENT_METRIC" ]; then
-    CURRENT_METRIC=$(awk '/^|/{last=$0} END{
-        split(last, a, "|");
-        for(i=1;i<=length(a);i++) if(a[i] ~ /[0-9]+\.[0-9]+/) {print a[i]+0; exit}
-    }' refine-logs/EXPERIMENT_TRACKER.md)
-fi
+# Read ALL values from dashboard — never from files
+CURRENT=$(jq -r '.metric.current' "$DASHBOARD")
+TARGET=$(jq -r '.metric.target' "$DASHBOARD")
+TOLERANCE=$(jq -r '.metric.tolerance' "$DASHBOARD")
+ITERATION=$(jq -r '.iteration' "$DASHBOARD")
+MAX_ITER=$(jq -r '.max_iterations' "$DASHBOARD")
+CONSEC_PIVOTS=$(jq -r '.consecutive_pivots' "$DASHBOARD")
+VERDICT=$(jq -r '.last_review.verdict' "$DASHBOARD")
 
-# Compute threshold with tolerance
-THRESHOLD=$(echo "$TARGET_METRIC * (1 - 0.01)" | bc -l)
+THRESHOLD=$(echo "$TARGET * (1 - $TOLERANCE)" | bc -l)
 
-# Type-A conditions
 METRIC_MET=false
-[ "$(echo "$CURRENT_METRIC >= $THRESHOLD" | bc -l)" = "1" ] && METRIC_MET=true
+[ "$(echo "$CURRENT >= $THRESHOLD" | bc -l)" = "1" ] && METRIC_MET=true
 
 BUDGET_EXHAUSTED=false
-[ "$ITERATION" -ge "${MAX_ITERATIONS:-5}" ] && BUDGET_EXHAUSTED=true
+[ "$ITERATION" -ge "$MAX_ITER" ] && BUDGET_EXHAUSTED=true
 
-# Track consecutive pivots
-CONSECUTIVE_PIVOTS=$(jq -r '.consecutive_pivots' "$STATE_FILE")
+# Update consecutive pivots
 if [ "$VERDICT" = "pivot" ]; then
-    CONSECUTIVE_PIVOTS=$((CONSECUTIVE_PIVOTS + 1))
+    CONSEC_PIVOTS=$((CONSEC_PIVOTS + 1))
 else
-    CONSECUTIVE_PIVOTS=0
+    CONSEC_PIVOTS=0
 fi
 PATIENCE_EXCEEDED=false
-[ "$CONSECUTIVE_PIVOTS" -ge 2 ] && PATIENCE_EXCEEDED=true
+[ "$CONSEC_PIVOTS" -ge 2 ] && PATIENCE_EXCEEDED=true
 
 TYPE_A_FIRES=false
 [ "$METRIC_MET" = "true" ] || [ "$BUDGET_EXHAUSTED" = "true" ] || [ "$PATIENCE_EXCEEDED" = "true" ] && TYPE_A_FIRES=true
 ```
 
-### Type-B: Codex verdict confirmation
+### Type-B: Codex verdict (dashboard fields only)
 
 ```bash
 TYPE_B_FIRES=false
-if [ "$VERDICT" = "stop" ] && [ "$SCORE" -ge 9 ] && [ "$METRIC_PROGRESS" = "met target" ]; then
-    # Self-acquittal tripwire: reject if reviewer is Claude family
-    if echo "$CODEX_AGENT_ID" | grep -qE '^claude'; then
-        echo "TRIPWIRE: codex reviewer resolved to Claude model. Type-B rejected."
+REVIEW_VERDICT=$(jq -r '.last_review.verdict' "$DASHBOARD")
+REVIEW_SCORE=$(jq -r '.last_review.score' "$DASHBOARD")
+REVIEW_PROGRESS=$(jq -r '.last_review.metric_progress' "$DASHBOARD")
+REVIEWER_ID=$(jq -r '.last_review.reviewer_id' "$DASHBOARD")
+
+if [ "$REVIEW_VERDICT" = "stop" ] && [ "$REVIEW_SCORE" -ge 9 ] && [ "$REVIEW_PROGRESS" = "met target" ]; then
+    if echo "$REVIEWER_ID" | grep -qE '^claude'; then
+        echo "TRIPWIRE: reviewer resolved to Claude. Type-B rejected."
     else
         TYPE_B_FIRES=true
     fi
 fi
 ```
 
-### Compound gate evaluation
+### Compound gate
 
-```bash
-if [ "$TYPE_A_FIRES" = "true" ] && [ "$TYPE_B_FIRES" = "true" ]; then
-    # FULL STOP — both gates fire
-    STOP_REASON="compound_gate"
-    # → Phase 6
-elif [ "$TYPE_A_FIRES" = "true" ] && [ "$TYPE_B_FIRES" = "false" ]; then
-    # Budget/patience exhausted without codex confirmation
-    # Accept with deterministic reviewer
-    STOP_REASON="deterministic:research-iteration:max-iter-reached"
-    # → Phase 6
-elif [ "$TYPE_A_FIRES" = "false" ] && [ "$TYPE_B_FIRES" = "true" ]; then
-    # Codex says stop but metric not met — reviewer being conservative
-    echo "Type-B fired without Type-A. Codex is conservative. Continuing."
-    STOP_REASON=""
-    # → Phase 5 (continue loop)
-else
-    # Neither fires — continue iterating
-    STOP_REASON=""
-    # → Phase 5
-fi
-```
+| Type-A | Type-B | Result |
+|--------|--------|--------|
+| true | true | `stop_reason = "compound_gate"` |
+| true | false | `stop_reason = "deterministic:research-iteration:max-iter-reached"` |
+| false | true | Log "reviewer conservative" and continue |
+| false | false | Continue to Phase 5 |
 
-### Update state file
+Update dashboard: `consecutive_pivots`, `stop_reason`, `status` ("stopped" if stop_reason set, else "running").
 
-```bash
-cat > "$STATE_FILE" <<STATE
-{
-  "iteration": $ITERATION,
-  "current_metric": $CURRENT_METRIC,
-  "target_metric": $TARGET_METRIC,
-  "last_verdict": "$VERDICT",
-  "last_score": $SCORE,
-  "metric_progress": "$METRIC_PROGRESS",
-  "consecutive_pivots": $CONSECUTIVE_PIVOTS,
-  "open_gaps": $(jq '.open_gaps' "$STATE_FILE"),
-  "stop_reason": "$STOP_REASON",
-  "status": "$([ -n "$STOP_REASON" ] && echo 'stopped' || echo 'running')",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-}
-STATE
-
-node "$RUN_STATE" set "$ROOT" "$RUN_ID" metric-eval done \
-    --artifact "$STATE_FILE"
-```
-
-If `STOP_REASON` is non-empty → skip Phase 5, proceed to Phase 6.
-If `STOP_REASON` is empty → proceed to Phase 5 (gap analysis + loop back).
----
-
-## Phase 5: Gap Analysis (if metric not met)
-
-When the compound gate does not fire, the loop must identify what to try next. This phase dispatches `/kill-argument` to find unresolved problems, records them as gaps, rebuilds the query pack, and loops back to Phase 1.
-
-### 5a. Kill-argument with gap output
-
-```bash
-PROMPT=$(bash "$RENDER" --phase "gap-analysis" --run-id "$RUN_ID" --root "$ROOT" \
-    --skill skills/kill-argument/SKILL.md \
-    --extra "/kill-argument refine-logs/ — gap-output: research-wiki/gap_map.md — plan-output: refine-logs/EXPERIMENT_PLAN-iter-${NEXT_ITERATION}.md — render html: false | reference_skills: $REF_SKILLS | reference_docs: $REF_DOCS | domain_knowledge: $REF_KNOWLEDGE")
-
-mcp__paseo__create_agent \
-    --title "research-loop-iter-${ITERATION}-kill-argument" \
-    --provider "claude/claude-sonnet-4-6" \
-    --initialPrompt "$PROMPT" \
-    --notifyOnFinish true
-```
-
-Kill-argument performs the adversarial analysis and directly:
-- Appends `still_unresolved` findings as gap entries to `research-wiki/gap_map.md` (format: `## G<n> — <label>`, Status/Sub-direction/Why it matters/What would close it)
-- Produces a diagnostic experiment plan at `refine-logs/EXPERIMENT_PLAN-iter-<N>.md` targeting those gaps
-
-Receipt: `.aris/runs/$RUN_ID.research-iteration.iter-${ITERATION}.kill-argument.done.json`
-```json
-{
-  "phase": "kill-argument",
-  "iteration": "<N>",
-  "gap_ids": ["G7", "G8"],
-  "gap_titles": ["<label for G7>", "<label for G8>"],
-  "plan_path": "refine-logs/EXPERIMENT_PLAN-iter-<N>.md",
-  "milestone_count": 3,
-  "overall_verdict": "PASS|WARN|FAIL",
-  "completed_at": "<ISO-8601>"
-}
-```
-
-### 5b. Evaluate kill-argument verdict
-
-```bash
-KA_VERDICT=$(jq -r '.overall_verdict' "$KA_RECEIPT")
-
-if [ "$KA_VERDICT" = "PASS" ]; then
-    # Defense survives — no unresolved gaps. Natural convergence.
-    echo "Kill-argument: PASS. No new gaps. Loop converging."
-    # Force Type-A to fire on next iteration (convergence signal)
-fi
-```
-
-### 5c. Rebuild query pack
-
-```bash
-node "$WIKI_SCRIPT" rebuild_query_pack research-wiki/
-```
-
-This compresses the wiki state into `research-wiki/query_pack.md` (~8000 chars), giving Phase 1's idea generator full visibility into what has been tried and what gaps remain.
-
-### 5d. Update gap tracking in state
-
-```bash
-OPEN_GAPS=$(grep -B2 'Status.*open' research-wiki/gap_map.md | grep -oE 'G[0-9]+' | jq -R . | jq -s .)
-
-# Update state with new gaps
-jq --argjson gaps "$OPEN_GAPS" '.open_gaps = $gaps' "$STATE_FILE" > "${STATE_FILE}.tmp"
-mv "${STATE_FILE}.tmp" "$STATE_FILE"
-```
-
-### 5e. Iteration check and loop
-
-```bash
-NEXT_ITERATION=$((ITERATION + 1))
-
-if [ "$NEXT_ITERATION" -gt "${MAX_ITERATIONS:-5}" ]; then
-    echo "Max iterations ($MAX_ITERATIONS) reached. Exiting loop."
-    STOP_REASON="deterministic:research-iteration:max-iter-reached"
-    # → Phase 6
-else
-    ITERATION=$NEXT_ITERATION
-    echo "Starting iteration $ITERATION..."
-    # → Phase 1
-fi
-
-node "$RUN_STATE" set "$ROOT" "$RUN_ID" gap-analysis done \
-    --artifact "$KA_RECEIPT"
-```
-
-### 5f. Log iteration (transcription only)
-
-Every value below is read from a receipt — the parent does not compose analytical content.
-
-```bash
-cat >> "$LOG_FILE" <<LOG
-
-## Iteration $ITERATION ($(date -u +%Y-%m-%dT%H:%M:%SZ))
-
-- Metric: $CURRENT_METRIC / $TARGET_METRIC $TARGET_UNIT
-- Reviewer verdict: $VERDICT (score: $SCORE/10)
-- Metric progress: $METRIC_PROGRESS
-- Gaps opened: $(jq -r '.gap_ids | join(", ")' "$KA_RECEIPT")
-- Gaps closed: $CLOSED_GAPS_THIS_ITER
-- Next direction: $(jq -r '.next_round_direction // "continue"' "$REVIEW_FILE")
-- Stop reason: ${STOP_REASON:-none (continuing)}
-LOG
-```
+If `stop_reason` is non-empty -> skip Phase 5, proceed to Phase 6.
+If `stop_reason` is empty -> proceed to Phase 5.
 
 ---
 
-## Phase 6: Summary
+## Phase 5: Gap Analysis (if continuing)
 
-After the loop exits (metric met, budget exhausted, or convergence), produce the final narrative report with the full metric trajectory.
+When the compound gate does not fire, dispatch `/kill-argument` to identify unresolved problems and generate the next iteration's experiment plan.
 
+| Input | Path |
+|-------|------|
+| results_dir | `$ROOT/refine-logs/` |
+| gap_map | `$ROOT/research-wiki/gap_map.md` |
+| analysis | `$ROOT/refine-logs/ANALYSIS-iter-${ITERATION}.md` |
+
+Context: `gap_output` (`research-wiki/gap_map.md`), `plan_output` (`refine-logs/EXPERIMENT_PLAN-iter-${NEXT_ITERATION}.md`), `render_html` (false)
+
+Dispatch: `/kill-argument -- manifest: $WORKER_DIR/input-manifest.json`
+
+**Dashboard patch fields:** `open_gaps`, `closed_gaps`, `plan_path`, `overall_verdict`
+
+**Post-receipt actions:**
+1. Merge gap updates into `dashboard.gaps`
+2. Rebuild query pack: `node "$WIKI_SCRIPT" rebuild_query_pack research-wiki/`
+3. Increment iteration: `dashboard.iteration = NEXT_ITERATION`
+4. Loop back to Phase 1
+
+---
+
+## Phase 6: Summary (on stop)
+
+When the loop exits, dispatch `/render-html` with a narrative-report manifest.
+
+| Input | Path |
+|-------|------|
+| dashboard | `$ROOT/$DASHBOARD` |
+| wiki | `$ROOT/research-wiki/` |
+| gap_map | `$ROOT/research-wiki/gap_map.md` |
+
+Context: `stop_reason`, `total_iterations`, `final_metric`, `target_metric`, `metric_history` (all from dashboard)
+
+Output: `report` at `$ROOT/research-iteration/NARRATIVE_REPORT.md`
+
+Schema requirement: `required_sections = ["metric_trajectory", "stop_reason", "iteration_log", "open_gaps", "closed_gaps", "artifacts"]`
+
+Dispatch: `/render-html -- manifest: $WORKER_DIR/input-manifest.json`
+
+**Post-receipt:** Mark dashboard `status = "completed"`. Run acceptance:
 ```bash
-# Write NARRATIVE_REPORT.md
-cat > "$REPORT_FILE" <<REPORT
-# Auto Research Loop — Final Report
-
-## Metric Trajectory
-
-| Iteration | Metric ($TARGET_UNIT) | Target | Delta | Verdict |
-|-----------|----------------------|--------|-------|---------|
-REPORT
-
-# Append trajectory from log (each iteration's metric)
-for i in $(seq 1 $ITERATION); do
-    ITER_METRIC=$(jq -r ".iterations[$((i-1))].metric // \"N/A\"" "$STATE_FILE" 2>/dev/null || echo "N/A")
-    ITER_VERDICT=$(jq -r ".iterations[$((i-1))].verdict // \"N/A\"" "$STATE_FILE" 2>/dev/null || echo "N/A")
-    DELTA=$(echo "$ITER_METRIC - $TARGET_METRIC" | bc -l 2>/dev/null || echo "N/A")
-    echo "| $i | $ITER_METRIC | $TARGET_METRIC | $DELTA | $ITER_VERDICT |" >> "$REPORT_FILE"
-done
-
-cat >> "$REPORT_FILE" <<REPORT
-
-## Stop Reason
-
-$STOP_REASON
-
-## Iteration Log
-
-$(cat "$LOG_FILE")
-
-## Open Gaps (remaining)
-
-$(grep -A4 'Status.*open' research-wiki/gap_map.md 2>/dev/null || echo "None")
-
-## Closed Gaps
-
-$(grep -A4 'Status.*closed' research-wiki/gap_map.md 2>/dev/null || echo "None")
-
-## Artifacts
-
-- State: $STATE_FILE
-- Log: $LOG_FILE
-- Wiki: research-wiki/
-- Plans: refine-logs/EXPERIMENT_PLAN-iter-*.md
-- Reviews: research-iteration/review-iter-*.json
-REPORT
-
-node "$RUN_STATE" set "$ROOT" "$RUN_ID" summary done --artifact "$REPORT_FILE"
-
-# Acceptance
-if [ -n "$STOP_REASON" ]; then
-    REVIEWER_ID="${CODEX_AGENT_ID:-deterministic:research-iteration:max-iter-reached}"
-    node "$RUN_STATE" accept "$ROOT" "$RUN_ID" research-iteration \
-        --verdict-id "$REVIEWER_ID" \
-        --reviewer "$REVIEWER_ID"
-fi
+REVIEWER_ID=$(jq -r '.last_review.reviewer_id // "deterministic:research-iteration:max-iter-reached"' "$DASHBOARD")
+node "$RUN_STATE" accept "$ROOT" "$RUN_ID" research-iteration \
+    --verdict-id "$REVIEWER_ID" --reviewer "$REVIEWER_ID"
 ```
 
-Optionally render HTML (dispatched as a sub-agent, non-blocking):
-```bash
-mcp__paseo__create_agent \
-    --title "research-loop-render-html" \
-    --provider "claude/claude-sonnet-4-6" \
-    --initialPrompt "/render-html $REPORT_FILE" \
-    --notifyOnFinish false
-```
 ---
 
 ## Phase 7: Paper Writing (optional)
 
-If the metric target was met and sufficient evidence exists, optionally dispatch the paper-writing pipeline. Same pattern as research-pipeline Stage 5.
+Gate: `metric.current >= metric.target * (1 - tolerance)` AND `iteration >= 2`.
 
-```bash
-if [ "$METRIC_MET" = "true" ] && [ "$ITERATION" -ge 2 ]; then
-    PROMPT=$(bash "$RENDER" --phase "paper-writing" --run-id "$RUN_ID" --root "$ROOT" \
-        --skill skills/paper-writing/SKILL.md \
-        --extra "Write paper from iteration results. Narrative report: $REPORT_FILE. Wiki: research-wiki/. Results: refine-logs/EXPERIMENT_RESULTS.md.")
+If both conditions met and `AUTO_WRITE=true`, dispatch `/paper-writing`.
 
-    mcp__paseo__create_agent \
-        --title "research-loop-paper-writing" \
-        --provider "claude/claude-sonnet-4-6" \
-        --initialPrompt "$PROMPT" \
-        --notifyOnFinish true
-fi
-```
+| Input | Path |
+|-------|------|
+| narrative_report | `$ROOT/research-iteration/NARRATIVE_REPORT.md` |
+| wiki | `$ROOT/research-wiki/` |
+| results | `$ROOT/refine-logs/EXPERIMENT_RESULTS.md` |
+| dashboard | `$ROOT/$DASHBOARD` |
 
-This phase is optional and only triggered when:
-1. The metric target was actually met (not just budget exhausted)
-2. At least 2 iterations completed (sufficient evidence for a paper)
-3. The user has not disabled paper writing via `— no-paper` argument
+Context: `metric_trajectory`, `final_metric`, `target_metric` (from dashboard)
+
+Output: `paper_dir` at `$ROOT/paper/`
 
 ---
 
-## State Management
-
-### run-state.js integration
-
-The skill registers phases with `run-state.js` at startup and updates them as each phase completes. This enables:
-- **Resumability:** On resume (`— resume <run_id>`), read the last completed phase and iteration from run-state, then continue from the next step.
-- **Visibility:** External tools (paseo UI, CLI) can query progress via `run-state.js status`.
-- **Acceptance:** The final `accept` call requires both a `verdict_id` and `reviewer` — the codex agent ID or the deterministic string.
-
-### Resume protocol
+## Resume Protocol
 
 ```bash
 if [ -n "$ARG_RESUME" ]; then
     RUN_ID="$ARG_RESUME"
-    # Read last iteration from state file
-    ITERATION=$(jq -r '.iteration' "$STATE_FILE")
-    LAST_PHASE=$(node "$RUN_STATE" resumePoint "$ROOT" "$RUN_ID")
-    echo "Resuming run $RUN_ID from iteration $ITERATION, phase $LAST_PHASE"
-    # Jump to the appropriate phase
-fi
-```
+    DASHBOARD=".aris/runs/$RUN_ID/dashboard.json"
+    WORKERS_DIR=".aris/runs/$RUN_ID/workers"
+    ITERATION=$(jq -r '.iteration' "$DASHBOARD")
+    STATUS=$(jq -r '.status' "$DASHBOARD")
 
-### Stale-state recovery (24h window)
-
-On startup, if `STATE_FILE` exists and its `timestamp` is within 24 hours, resume from `iteration + 1`. If older than 24h, treat as a fresh start (the previous run likely crashed or was abandoned).
-
-```bash
-if [ -f "$STATE_FILE" ]; then
-    LAST_TS=$(jq -r '.timestamp' "$STATE_FILE")
-    AGE_HOURS=$(( ($(date +%s) - $(date -d "$LAST_TS" +%s)) / 3600 ))
-    if [ "$AGE_HOURS" -lt 24 ]; then
-        ITERATION=$(jq -r '.iteration' "$STATE_FILE")
-        echo "Resuming from iteration $((ITERATION + 1)) (state is ${AGE_HOURS}h old)"
-    else
-        echo "State file is ${AGE_HOURS}h old (>24h). Starting fresh."
-        ITERATION=0
+    if [ "$STATUS" = "stopped" ] || [ "$STATUS" = "completed" ]; then
+        echo "Run $RUN_ID already completed (status: $STATUS). Nothing to resume."
+        exit 0
     fi
+
+    # Determine last completed phase and jump to the next one
+    LAST_PHASE=$(jq -r '.phases_completed[-1] // "preconditions"' "$DASHBOARD")
+    echo "Resuming run $RUN_ID from iteration $ITERATION, after phase: $LAST_PHASE"
 fi
 ```
+
+**Stale-state recovery:** If dashboard `updated_at` is older than 24h, start a fresh run instead of resuming.
+
+---
+
+## Compound Stop Gate
+
+> **Type-A (deterministic):** `dashboard.metric.current >= dashboard.metric.target * (1 - TOLERANCE)` OR `dashboard.iteration >= MAX_ITERATIONS` OR `dashboard.consecutive_pivots >= PATIENCE`. Pure arithmetic on dashboard fields.
+>
+> **Type-B (codex verdict):** Fresh codex reviewer confirms `verdict=stop`, `score >= 9`, `metric_progress=met target`. Cross-model, never self-acquittal.
+>
+> **STOP = Type-A AND Type-B.** Neither alone is sufficient. Type-A without Type-B uses `deterministic:research-iteration:max-iter-reached`. Type-B without Type-A means the reviewer is conservative — log and continue.
 
 ---
 
 ## Critical Rules
 
-1. **Parent schedules only, never judges.** The parent's permitted actions are exhaustively: dispatch (`create_agent`), wait (`notifyOnFinish`), read a receipt JSON, run canonical helpers with receipt values transcribed verbatim, evaluate Type-A arithmetic, and archive children. If the parent is about to read an experiment log or write an original sentence, it is violating this rule — dispatch instead.
+1. **Orchestrator reads ONLY dashboard.json + receipt.json.** Never reads experiment logs, result files, review prose, tracker markdown, or any worker output file. All information flows through the manifest->receipt->dashboard_patch pipeline. If the orchestrator is about to `cat`, `awk`, or `grep` a worker output — it is violating Rule 5.
 
-2. **Fresh codex reviewer per iteration (`REVIEWER_BIAS_GUARD=true`).** Every iteration creates a fresh codex sub-agent. Iteration N's review does NOT see iteration N-1's review. A continuation reviewer drifts toward confirming its own prior suggestions; freshness is the only way to get genuinely independent assessment.
+2. **Minimal dispatch prompts.** Worker dispatch prompt is ONLY the skill name + manifest path. All context goes in `input-manifest.json`. No extra instructions, no file paths in the prompt, no inline context.
 
-3. **Canonical wiki writes only.** Every claim, idea, experiment, and edge goes through `research-wiki.js` subcommands (`add_claim`, `upsert_idea`, `add_experiment`, `add_edge`). No freehand markdown in `research-wiki/`. Exception: `gap_map.md` — there is no `add_gap` subcommand, so gaps are appended by `/kill-argument` in the established format.
+3. **dashboard_patch is the only write contract.** Workers emit `dashboard_patch` in their receipt. The orchestrator merges this into `dashboard.json`. Workers never write to `dashboard.json` directly.
 
-4. **No in-process Skill calls.** All sub-skill dispatch via `mcp__paseo__create_agent`. The strict-mode rule (Rule 4 from `paseo-subagent-dispatch.md`) forbids in-process execution. No fallbacks.
+4. **Gate arithmetic uses dashboard fields only (Phase 4).** Every comparison value is read from `dashboard.json`. Never from files, never from receipts at gate-evaluation time (receipts are already merged before Phase 4 runs).
 
-5. **File-paths-only receipts.** The parent reads receipt JSONs for file paths and scalar values. It never reads the underlying experiment logs, result files, or review prose. Sub-agents write receipts; the parent transcribes from receipts.
+5. **Fresh codex reviewer per iteration (REVIEWER_BIAS_GUARD).** Every iteration creates a fresh codex sub-agent. Iteration N's review does NOT see iteration N-1's review.
 
-6. **Metric evaluation is deterministic (Type-A).** The parent reads a number from `EXPERIMENT_TRACKER.md`, compares it to the target with tolerance. No interpretation, no "close enough" judgment. The arithmetic either passes or it doesn't.
+6. **No in-process Skill calls (Rule 4).** All sub-skill dispatch via `mcp__paseo__create_agent`. No fallbacks, no inline execution.
 
-7. **Codex verdict is never overridden.** If the codex reviewer says `stop` but Type-A hasn't fired, the parent logs the conservative verdict and continues. If Type-A fires but Type-B hasn't, the parent uses the deterministic acceptance path. The parent never overrides or reinterprets the codex verdict.
+7. **Archive sub-agents after receipt read.** Every child agent is archived once its receipt has been processed. No lingering sub-agents.
 
-8. **Gap identification via kill-argument only.** The parent never identifies problems itself. Gaps come from `/kill-argument` dispatch with `— gap-output`. This ensures every gap has a provenance trail (which skill identified it, which iteration, what evidence).
+8. **Canonical wiki writes only.** Ideas, experiments, edges go through `research-wiki.js`. Gaps come exclusively from `/kill-argument` dispatch.
 
-9. **Environment configured once, replayed forever.** The frozen experiment skill at `.claude/skills/run-<project>-experiment/` (if configured) is used by all iterations. The loop never re-derives sync paths, conda hooks, or metric keys. If not configured, a warning is logged and the built-in backend is used.
+9. **One long-lived agent, loops internally.** This skill runs as ONE paseo agent. Do NOT wrap in `/loop` / `create_heartbeat`.
 
-10. **One long-lived agent, loops internally.** This skill runs as ONE paseo agent. Do NOT wrap in `/loop` / `CronCreate` / `create_heartbeat`. The single agent owns internal cadence per the fence (`shared-references/external-cadence.md`).
+10. **Self-acquittal tripwire.** Never accept on a Claude reviewer. Require `codex-gpt-5.5` or `deterministic:` prefix for budget-exhausted stops.
 
-11. **Patience enforcement.** If `consecutive_pivot_verdicts >= PATIENCE` (2), force stop to prevent infinite direction-churn. This is Type-A fire-control — no quality judgment.
+11. **Patience enforcement.** `consecutive_pivots >= PATIENCE` (2) forces stop via Type-A. Pure dashboard arithmetic.
 
-12. **Self-acquittal tripwire.** `run-state.js accept` with `reviewer` starting with `claude*` emits a stderr warning. Never accept on a Claude reviewer. Require `codex-gpt-5.5` or `deterministic:` for budget-exhausted stops.
+12. **Codex verdict is never overridden.** Type-B without Type-A -> log and continue. Type-A without Type-B -> deterministic acceptance. Parent never reinterprets.
 
-13. **Gaps for open questions, claims for evidenced assertions.** Kill-argument's `still_unresolved` entries are unanswered — they are gaps, never claims. Claims arrive from `/result-to-claim` with `--addresses G<n>`.
+13. **Input-manifest is the COMPLETE context.** Workers should be able to do their job reading only their manifest. If a worker needs something not in its manifest, fix the manifest, not the dispatch prompt.
 
-14. **Archive sub-agents after receipt read.** Every child agent is archived (`mcp__paseo__archive_agent`) once its receipt has been read and processed. No lingering sub-agents.
+14. **Receipt schema is a contract.** Each worker MUST emit `dashboard_patch` with the fields its phase documents. Missing `dashboard_patch` = worker failure.
 
 ---
 
-## External Dependencies (reused, not modified)
+## External Dependencies
 
 ### Infrastructure tools
-- `src/tools/research-wiki.ts` — 12 subcommands: `init`, `slug`, `ingest_paper`, `sync`, `add_claim`, `upsert_idea`, `add_experiment`, `add_edge`, `rebuild_query_pack`, `rebuild_index`, `stats`, `log`
-- `src/tools/run-state.ts` — `start`, `set`, `accept`, `status`, `resumePoint`. Accept requires non-empty `verdict_id` and `reviewer`; warns on `claude*` reviewer.
-- `src/tools/iteration-log.ts` — `note` (per-iteration log to `.aris/runs/<run_id>.iterations.jsonl`)
-- `src/tools/provenance.ts` — `stamp` after every codex round (cross-family integrity check)
-- `dist/tools/render_w_agent_prompt.sh` — Prompt construction for sub-agent dispatch
+- `src/tools/research-wiki.ts` — `init`, `slug`, `ingest_paper`, `sync`, `add_claim`, `upsert_idea`, `add_experiment`, `add_edge`, `rebuild_query_pack`, `rebuild_index`, `stats`, `log`
+- `src/tools/run-state.ts` — `start`, `set`, `accept`, `status`, `resumePoint`
+- `src/tools/iteration-log.ts` — `note`
+- `src/tools/provenance.ts` — `stamp`
 
 ### Dispatched sub-skills
-- `skills/idea-discovery/SKILL.md` — Full idea discovery pipeline (iteration 1)
-- `skills/idea-creator/SKILL.md` — Gap-targeted idea generation (iteration 2+)
-- `skills/experiment-bridge/SKILL.md` — Implements and deploys experiments from plan
+- `skills/idea-discovery/SKILL.md` — Full idea discovery pipeline
+- `skills/idea-creator/SKILL.md` — Gap-targeted idea generation
+- `skills/experiment-bridge/SKILL.md` — Implements and runs experiments
+- `skills/analyze-results/SKILL.md` — Structured analysis with metric extraction
 - `skills/auto-review-loop/SKILL.md` — Multi-round review with fix cycle
 - `skills/kill-argument/SKILL.md` — Adversarial attack, gap output, diagnostic plan
-- `skills/result-to-claim/SKILL.md` — Claim judgment per experiment
-- `skills/run-experiment/SKILL.md` — Single experiment execution
-- `skills/experiment-queue/SKILL.md` — Multi-seed/multi-config batch execution
-- `skills/paper-writing/SKILL.md` — End-to-end paper generation (optional Phase 7)
-- `skills/render-html/SKILL.md` — HTML rendering (optional)
+- `skills/paper-writing/SKILL.md` — End-to-end paper generation (optional)
+- `skills/render-html/SKILL.md` — HTML rendering
 
 ### Shared references
-- `shared-references/paseo-subagent-dispatch.md` — Rule 1 (one agent = one skill), Rule 2 (parent-child push), Rule 3 (file-paths-only), Rule 4 (Paseo MCP only)
-- `shared-references/paseo-reviewer-dispatch.md` — Codex sub-agent spawn shape, fresh-thread bias guard
+- `shared-references/paseo-subagent-dispatch.md` — Rules 1-4 (dispatch protocol)
+- `shared-references/worker-manifest.md` — Rule 5 (manifest protocol, receipt schema, dashboard schema)
+- `shared-references/paseo-reviewer-dispatch.md` — Fresh-thread bias guard
 - `shared-references/external-cadence.md` — The fence (no wrapping in `/loop`)
-- `shared-references/integration-contract.md` — Helper resolution chain
-- `shared-references/review-tracing.md` — `save_trace.sh` (Policy C forensic)
 - `shared-references/acceptance-gate.md` — Type-A vs Type-B gate classification

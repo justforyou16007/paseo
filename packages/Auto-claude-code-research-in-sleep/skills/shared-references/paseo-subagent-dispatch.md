@@ -604,3 +604,37 @@ else:
   machine; resume re-attaches a live child or recreates a dead one.
 - [`external-cadence.md`](external-cadence.md) — stall detection →
   forced structural pivot; heartbeat idle-supervision rules.
+
+### Rule 5 — Orchestrator Context Discipline (Strict)
+
+A **pipeline/loop orchestrator** (any skill dispatching ≥2 sub-skills in
+sequence or loop) MUST keep its context growth bounded per iteration.
+
+**The orchestrator's state is `dashboard.json`** — a single JSON file (~300 tokens)
+containing only what it needs: current phase, iteration count, metric value,
+best idea, gap counts, last review verdict, and stop reason.
+
+**Workers are self-sufficient.** Each worker receives an `input-manifest.json`
+listing all files it needs. The orchestrator writes the manifest, dispatches
+the worker, and reads only the `receipt.json` on completion. It never reads
+worker output files.
+
+**Allowed orchestrator operations:**
+1. Read/write `dashboard.json` (its single state file)
+2. Write `input-manifest.json` for the next worker
+3. Dispatch worker via `mcp__paseo__create_agent`
+4. Read `receipt.json` scalar fields + apply `dashboard_patch`
+5. Gate arithmetic on dashboard fields (Type-A only)
+6. Call bookkeeping helpers with dashboard values (run-state.js, iteration-log.js)
+
+**Forbidden orchestrator operations:**
+- `cat` / `read` / `awk` / `grep` on worker output files
+- Inline file content into context (`$(cat file)`)
+- Compose multi-paragraph documents
+- Heuristic extraction from unstructured files
+- Any operation that adds O(file_size) tokens to context
+
+**Why:** Over K iterations, bounded-context orchestrators grow at O(K × 350)
+tokens total. Unbounded ones grow at O(K × file_sizes), triggering compression
+that erases flow state. See `shared-references/worker-manifest.md` for the
+full manifest protocol.
