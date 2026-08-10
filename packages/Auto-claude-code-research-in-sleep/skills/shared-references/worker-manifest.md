@@ -41,6 +41,7 @@ Written by the orchestrator before dispatching the worker.
     ...
   },
   "context": {
+    "build_cmd": "pip install -e .",
     "<key>": "<scalar-or-array>",
     ...
   },

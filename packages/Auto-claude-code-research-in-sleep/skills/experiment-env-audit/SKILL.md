@@ -165,14 +165,56 @@ whether the scripts *would* work. This phase **actually runs the scripts** and
 verifies the results are real. This is Type-A (machine-checkable: did the
 command exit 0? did the expected file appear?).
 
-### L. prepare.sh — environment is reachable
+### L. prepare.sh — environment is reachable AND changes propagate
+
+Two sub-checks:
+
+**L1. Basic reachability** — prepare.sh exits 0:
 
 ```bash
 sh "$BUNDLE_DIR/scripts/prepare.sh"
 ```
 
-PASS if exit 0. FAIL if non-zero — the environment is not reachable or the
-dependency env is broken. Record stderr as the failure reason.
+PASS if exit 0. This proves sync + build + verify all work.
+
+**L2. Change propagation** — a code modification is reflected after rebuild:
+
+1. **Identify canary location.** Read `env.json` `run.entry_point` to find
+   the main script/module. Locate an observable output point — a print/log
+   statement, a version string, or any marker that appears in stdout/stderr
+   during execution.
+
+2. **Inject a canary marker:**
+   ```bash
+   CANARY="AUDIT_CANARY_$(date +%s)"
+   # Insert a print/log near the top of entry_point that emits $CANARY
+   # Python: print("$CANARY")
+   # C/C++: printf("$CANARY\n");
+   # Shell: echo "$CANARY"
+   ```
+   The exact injection method matches the entry point's language. The
+   auditor reads the file and picks the simplest safe injection.
+
+3. **Rebuild** via prepare.sh (which runs build_cmd):
+   ```bash
+   sh "$BUNDLE_DIR/scripts/prepare.sh"
+   ```
+
+4. **Run and check** — execute a minimal run and verify the canary appears:
+   ```bash
+   sh "$BUNDLE_DIR/scripts/run.sh" audit-canary --args "" --gpu 0 2>&1 \
+     | tee /tmp/canary-out.txt
+   grep -q "$CANARY" /tmp/canary-out.txt
+   ```
+
+5. **Revert** the canary injection (restore the original file via
+   `git checkout -- <entry_point>`).
+
+PASS if the canary string appears in the run output — the build pipeline
+correctly propagates source changes into execution artifacts.
+FAIL if the canary is absent — stale build artifacts are served despite
+source code modification. This is the failure mode where agents modify
+experiment code but `run.sh` silently executes old compiled output.
 
 ### M. run.sh + collect.sh — a smoke experiment completes
 
@@ -192,12 +234,15 @@ PASS if:
 5. The receipt's `primary_metric` field is non-null (a real value was produced)
 
 FAIL if any of these checks fail. Record the exact failure point and any
-error output. A script that passes dry-run but fails real execution is the
-most dangerous kind of false positive — this check catches it.
+error output.
+
+If L2 already produced a successful full run with receipt, this check may
+reuse that evidence rather than running a second smoke. The auditor decides
+based on whether L2's run produced a complete receipt.
 
 **Cleanup:** after verification, remove the smoke experiment's artifacts
-(`audit-smoke` handle, result files, log files) so they don't pollute real
-experiment data. Keep the receipt for audit evidence.
+(`audit-smoke` / `audit-canary` handles, result files, log files) so they
+don't pollute real experiment data. Keep the receipt for audit evidence.
 
 ### N. info.sh — metadata is valid
 

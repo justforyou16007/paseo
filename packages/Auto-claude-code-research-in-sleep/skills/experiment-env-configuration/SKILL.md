@@ -227,7 +227,11 @@ packages, and a way to *prove* it before launching.
 - This becomes the last line of `prepare.sh`. A run must never be launched into
   an environment that has not answered this successfully.
 
-**Record as:** `preparation.environment = { type, name, activation, verify_cmd }`.
+**Q5** — header: "Build" / "构建", question: "代码同步后需要什么构建/安装步骤？（如 `pip install -e .`、`make`、`cmake --build` 等。如果代码可直接执行则留空）"
+(en): "What build/install steps are needed after code is synced? (e.g., `pip install -e .`, `make`, `cmake --build`. Leave blank if code runs directly)"
+options: `["无需构建，直接可执行"]` + "Other"
+
+**Record as:** `preparation.environment = { type, name, activation, build_cmd, verify_cmd }`.
 
 ---
 
@@ -443,7 +447,7 @@ after Phase 5.5's audit passes.
   "backend_hint": "<local|remote|vast|modal|docker|custom>",
   "preparation": {
     "files": { "location": "...", "remote_path": "...", "transfer": "...", "excludes": ["..."] },
-    "environment": { "type": "...", "name": "...", "activation": "...", "verify_cmd": "..." }
+    "environment": { "type": "...", "name": "...", "activation": "...", "build_cmd": "...", "verify_cmd": "..." }
   },
   "run": { "entry_point": "...", "arg_style": "...", "launch_mode": "...", "gpu_selection": "...", "template": "..." },
   "feedback": {
@@ -483,9 +487,16 @@ Each is POSIX `sh`, `set -eu`, reads `env.json` via `jq`, and accepts
 `--dry-run` (print the command, execute nothing). All four must be executable
 (`chmod +x`).
 
-**`prepare.sh`** — transfer code per `preparation.files`, then run
-`preparation.environment.verify_cmd` on the execution machine. Non-zero exit
-means do not proceed to `run.sh`.
+**`prepare.sh`** — three steps:
+
+1. **Sync** — transfer code per `preparation.files`.
+2. **Build** — if `preparation.environment.build_cmd` is set, run the build
+   command on the execution machine. Incremental build is fine — the audit
+   phase (`/experiment-env-audit` Check L2) separately verifies that source
+   changes propagate correctly through the build pipeline.
+   If `build_cmd` is empty, skip this step (code runs directly).
+3. **Verify** — run `preparation.environment.verify_cmd`. Non-zero exit
+   means do not proceed to `run.sh`.
 
 **`run.sh <exp_name> [--gpu N] [--args "..."]`** — substitute into
 `run.template` and launch. Prints the resolved command before executing so the
