@@ -1,6 +1,6 @@
 # ARIS Skills Catalog
 
-Every skill that ships with ARIS, grouped by role. **84 skills** as of the
+Every skill that ships with ARIS, grouped by role. **85 skills** as of the
 latest update; new skills land via PR and get added to the table below.
 
 - Each `Skill` link goes to the canonical `SKILL.md` (the LLM-readable spec).
@@ -166,6 +166,7 @@ Cross-cutting infrastructure used by other skills or run on demand.
 | [`/feishu-notify`](../skills/feishu-notify/SKILL.md)               | Send notifications to Feishu / Lark — push-only (webhook) or interactive (bidirectional) modes. Off by default                                                                                              | Feishu webhook URL                       |
 | [`/interview-cheatsheet`](../skills/interview-cheatsheet/SKILL.md) | Generate long-form Chinese ML / LLM interview-prep cheat sheets with formulas, code, Q&A, review, and HTML output                                                                                           | Codex MCP, Python                        |
 | [`/research-setup`](../skills/research-setup/SKILL.md)           | Interactive Q&A setup wizard for new ARIS research projects — bootstraps CLAUDE.md, RESEARCH_BRIEF.md, research-wiki; delegates experiment environment to `/experiment-env-manager`; bilingual (en/zh), resumable          | None (pure Markdown + TS helpers)       |
+| [`/aris-update`](../skills/aris-update/SKILL.md)                 | Incremental update of ARIS skills in a project directory — diffs upstream, preserves local edits, syncs tools/dist/templates, and outputs adaptation guidance for current project progress | None |
 
 ---
 
