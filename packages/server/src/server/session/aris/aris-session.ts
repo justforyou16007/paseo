@@ -792,8 +792,10 @@ export class ArisSession {
         return;
       case "run_state":
       case "paper":
-      case "wiki":
         await this.emitWorkflowUpdate(update.cwd);
+        return;
+      case "wiki":
+        await this.emitWikiUpdate(update.cwd);
         return;
       case "iteration_added":
         await this.emitIterationLogUpdate(update.cwd, update.runId, update.lines);
@@ -816,6 +818,18 @@ export class ArisSession {
     } catch (error) {
       this.logger.warn({ err: error, cwd, workspaceId }, "Failed to emit aris.workflow.update");
     }
+  }
+
+  private async emitWikiUpdate(cwd: string): Promise<void> {
+    const workspaceId = await this.resolveWorkspaceId(cwd);
+    if (workspaceId === null) {
+      this.logger.debug({ cwd }, "No workspace found for aris.wiki.update push");
+      return;
+    }
+    this.host.emit({
+      type: "aris.wiki.update",
+      payload: { workspaceId },
+    });
   }
 
   private async emitIterationLogUpdate(

@@ -305,6 +305,10 @@ export type DaemonEvent =
       payload: Extract<SessionOutboundMessage, { type: "aris.workflow.update" }>["payload"];
     }
   | {
+      type: "aris.wiki.update";
+      payload: Extract<SessionOutboundMessage, { type: "aris.wiki.update" }>["payload"];
+    }
+  | {
       type: "aris.iteration_log.update";
       payload: Extract<SessionOutboundMessage, { type: "aris.iteration_log.update" }>["payload"];
     }
@@ -6143,6 +6147,11 @@ export class DaemonClient {
       case "aris.workflow.update":
         return {
           type: "aris.workflow.update",
+          payload: msg.payload,
+        };
+      case "aris.wiki.update":
+        return {
+          type: "aris.wiki.update",
           payload: msg.payload,
         };
       case "aris.iteration_log.update":

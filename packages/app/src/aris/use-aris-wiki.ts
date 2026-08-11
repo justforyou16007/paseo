@@ -1,4 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { arisWikiQueryKey } from "./query-keys";
@@ -14,10 +15,14 @@ export function useArisWiki(serverId: string | null, cwd: string | null): UseAri
   const { t } = useTranslation();
   const client = useHostRuntimeClient(serverId ?? "");
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
+  const queryClient = useQueryClient();
+
+  const queryKey = arisWikiQueryKey(serverId, cwd);
+  const enabled = Boolean(serverId && cwd && client && isConnected);
 
   const query = useQuery({
-    queryKey: arisWikiQueryKey(serverId, cwd),
-    enabled: Boolean(serverId && cwd && client && isConnected),
+    queryKey,
+    enabled,
     staleTime: 30_000,
     queryFn: async () => {
       if (!client || !cwd) {
@@ -31,11 +36,24 @@ export function useArisWiki(serverId: string | null, cwd: string | null): UseAri
     },
   });
 
+  useEffect(() => {
+    if (!enabled || !client || !isConnected || !serverId) {
+      return;
+    }
+
+    return client.on("aris.wiki.update", (message) => {
+      if (message.type !== "aris.wiki.update") {
+        return;
+      }
+      void queryClient.invalidateQueries({ queryKey, type: "active", stale: true });
+    });
+  }, [client, enabled, isConnected, queryClient, queryKey, serverId]);
+
   return {
     data: query.data ?? null,
     // When the query is disabled (no cwd yet), report isLoading: false so
     // consumers can render with empty data instead of hanging on a spinner.
-    isLoading: Boolean(serverId && cwd && client && isConnected) && query.isLoading,
+    isLoading: enabled && query.isLoading,
     error: query.error,
   };
 }

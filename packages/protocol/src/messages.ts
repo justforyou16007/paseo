@@ -5870,6 +5870,15 @@ export const ArisWorkflowUpdateSchema = z
   })
   .passthrough();
 
+export const ArisWikiUpdateSchema = z
+  .object({
+    type: z.literal("aris.wiki.update"),
+    payload: z.object({
+      workspaceId: z.string(),
+    }),
+  })
+  .passthrough();
+
 export const ArisIterationLogUpdateSchema = z
   .object({
     type: z.literal("aris.iteration_log.update"),
@@ -6066,6 +6075,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ArisReviewUpdateSchema,
   ArisWorkflowStatusReadResponseSchema,
   ArisWorkflowUpdateSchema,
+  ArisWikiUpdateSchema,
   ArisIterationLogUpdateSchema,
 ]);
 
@@ -6286,6 +6296,7 @@ export type ArisWorkflowStatus = z.infer<typeof ArisWorkflowStatusSchema>;
 export type ArisWorkflowStatusReadRequest = z.infer<typeof ArisWorkflowStatusReadRequestSchema>;
 export type ArisWorkflowStatusReadResponse = z.infer<typeof ArisWorkflowStatusReadResponseSchema>;
 export type ArisWorkflowUpdate = z.infer<typeof ArisWorkflowUpdateSchema>;
+export type ArisWikiUpdate = z.infer<typeof ArisWikiUpdateSchema>;
 export type ArisIterationLogUpdate = z.infer<typeof ArisIterationLogUpdateSchema>;
 
 // Type exports for payload types
