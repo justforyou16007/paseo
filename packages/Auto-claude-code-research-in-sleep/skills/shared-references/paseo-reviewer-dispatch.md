@@ -220,7 +220,7 @@ Files to read (read them yourself; do not trust any summary):
 Output: write your verdict to /abs/path/to/<SKILL>_REVIEW.json with the schema:
   { "verdict": "PASS|WARN|FAIL|BLOCKED|ERROR|NOT_APPLICABLE",
     "score": <int>, "summary": "<text>", "issues": [...], "trace_path": "<filled by parent>" }
-Then return a one-line status. Do not call run_state.py.
+Then return a one-line status. Do not call run-state.js.
 ```
 
 The one **exception** (`reviewer-independence.md` §Exception): a continuation
@@ -342,7 +342,7 @@ opaque strings to the helpers):
 | ------------------------------------ | -------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------- |
 | `REVIEW_STATE.json`                  | `threadId`                 | codex MCP thread id     | paseo codex agent-id (continuation: round 2+ `send_agent_prompt` targets this)                  |
 | `PAPER_IMPROVEMENT_STATE.json`       | `threadId`                 | codex MCP thread id     | paseo codex agent-id (per-round, bookkeeping only — NOT reused; REVIEWER_BIAS_GUARD)            |
-| `run_state.py accept --verdict-id`   | `verdict_id`               | codex thread / trace id | paseo codex agent-id (codex-accepted phases) or verifier-report path/sha (deterministic phases) |
+| `run-state.js accept --verdict-id`   | `verdict_id`               | codex thread / trace id | paseo codex agent-id (codex-accepted phases) or verifier-report path/sha (deterministic phases) |
 | audit JSON (`PROOF_AUDIT.json` etc.) | `thread_id` / `trace_path` | codex thread id         | paseo codex agent-id / trace dir                                                                |
 
 On resume, a workflow agent reads the persisted codex agent-id from

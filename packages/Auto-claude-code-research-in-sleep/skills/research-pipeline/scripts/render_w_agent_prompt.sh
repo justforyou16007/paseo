@@ -202,7 +202,7 @@ $extra
 
 Read the listed files yourself; do not trust any summary. Emit a 6-state verdict
 (PASS|WARN|FAIL|BLOCKED|ERROR|NOT_APPLICABLE) to a verdict file on the shared
-workspace, then return a one-line status. Do not call run_state.py.
+workspace, then return a one-line status. Do not call run-state.js.
 
 Review backend: ${reviewer_provider} (paseo codex sub-agent; mode ${reviewer_mode}, thinking ${reviewer_thinking}; see paseo-reviewer-dispatch.md). Paseo MCP is required.
 EOF
@@ -229,15 +229,28 @@ Run context (this run, do not re-derive):
 ${extra_block}
 Operating rules (non-negotiable):
   1. Resolve every helper via integration-contract.md §2 (.aris/tools -> tools -> \$ARIS_REPO/tools). Never hardcode a path.
-  2. Write artifacts to the standard stage dir for this phase (per the SKILL's output protocol). Do NOT write elsewhere.
+  2. Read input-manifest.json from the additional run context and write every artifact under its output_dir. Do NOT write elsewhere.
   3. When you need the cross-model reviewer, spawn/continue a paseo codex sub-agent per skills/shared-references/paseo-reviewer-dispatch.md. Fresh review = create_agent; continuation = send_agent_prompt to the same agent. Reviewer provider/mode/thinking are fixed by the run's paseo-config.json — do not override.
   4. Fan out sub-skills as paseo claude sub-agents per skills/shared-references/paseo-subagent-dispatch.md (fanout_subagents=${fanout_subagents}; if false, use in-process Skill-tool fallback).
-  5. Do NOT call run_state.py accept. You may 'set done --artifact <path>'; acceptance is the orchestrator's job (acceptance-gate.md).
-  6. On completion, write the receipt below and stop. Do not call accept, do not start the next phase.
+  5. Do NOT call run-state.js accept. You may 'set done --artifact <path>'; acceptance is the orchestrator's job (acceptance-gate.md).
+  6. On completion, write the receipt per worker-manifest.md and stop. Do not call accept, do not start the next phase.
 
-Receipt (write this last, to ${root}/.aris/runs/${run_id}.${phase}.done.json):
-  { "phase": "${phase}", "artifact_path": "<abs path>", "summary": "<1-3 lines>",
-    "next_step": "<suggested next phase or null>", "reviewer_used": "<codex-agent-id or null>" }
+Receipt (write this last — the orchestrator reads it from your worker directory):
+  Path: The manifest's worker directory / receipt.json
+  Schema (worker-manifest.md):
+  {
+    "worker": "${phase}",
+    "iteration": <iteration from manifest>,
+    "status": "done|failed",
+    "error": null,
+    "primary_output": "<relative path within output_dir>",
+    "summary": { <phase-specific scalar fields> },
+    "dashboard_patch": { <fields this phase is authoritative for> },
+    "completed_at": "<ISO-8601>",
+    "has_errors": false,
+    "error_count": 0
+  }
+  On error, append to progress_error.md in your worker directory (one line per error).
 
 Executor backend: ${executor_provider} (paseo claude sub-agent; mode ${executor_mode}; see paseo-subagent-dispatch.md).
 EOF

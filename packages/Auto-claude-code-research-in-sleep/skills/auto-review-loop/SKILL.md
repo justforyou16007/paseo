@@ -95,6 +95,64 @@ Long-running loops may hit the context window limit, triggering automatic compac
 > - **[Output Manifest Protocol](../shared-references/output-manifest.md)** — log every output to MANIFEST.md
 > - **[Output Language Protocol](../shared-references/output-language.md)** — respect the project's language setting
 
+## Manifest Protocol (Worker Mode)
+
+When invoked with `— manifest: <path>`, this skill runs as a worker under an
+orchestrator (`/research-pipeline` or `/auto-research-loop`). The manifest
+provides all inputs; the skill writes its receipt to the manifest's directory.
+
+**Startup check:**
+```
+if "$ARGUMENTS" contains "— manifest:"; then
+    MANIFEST_PATH=<extracted path>
+    MANIFEST=$(cat "$MANIFEST_PATH")
+    WORKER_DIR=$(dirname "$MANIFEST_PATH")
+    OUTPUT_DIR=$(jq -r '.output_dir' <<< "$MANIFEST")
+    mkdir -p "$OUTPUT_DIR"
+    # Read inputs from manifest.inputs (file paths)
+    # Read context from manifest.context (scalar values)
+fi
+```
+
+**Receipt (write last to `$WORKER_DIR/receipt.json`):**
+```json
+{
+  "worker": "auto-review-loop",
+  "iteration": 1,
+  "status": "done",
+  "error": null,
+  "primary_output": "AUTO_REVIEW.md",
+  "summary": { "rounds": "<int>", "final_score": "<float>", "final_verdict": "<string>" },
+  "dashboard_patch": {
+    "last_review.verdict": "continue",
+    "last_review.score": 7,
+    "last_review.metric_progress": "improving",
+    "last_review.reviewer_id": "codex-agent-id"
+  },
+  "completed_at": "<ISO-8601>",
+  "has_errors": false,
+  "error_count": 0
+}
+```
+
+On failure, write receipt with `"status": "failed"` and structured `error` object
+per `worker-manifest.md`. Append system errors to `$WORKER_DIR/progress_error.md`.
+
+**Direct-call mode:** When invoked WITHOUT `— manifest:`, the skill operates
+normally using its own argument parsing. No receipt is written.
+
+**Output path mapping:** In worker mode, every hardcoded output path in this
+skill's body (listed below) maps to `$OUTPUT_DIR/<filename>`. The orchestrator's
+subsequent input-manifests reference prior workers' outputs using their full
+`$WORKERS_DIR/<iter>-<phase>/outputs/<file>` path. In direct-call mode, the
+paths below are project-root-relative as written.
+
+| Direct-call path | Worker-mode path |
+|---|---|
+| `review-stage/AUTO_REVIEW.md` | `$OUTPUT_DIR/AUTO_REVIEW.md` |
+| `review-stage/AUTO_REVIEW.html` | `$OUTPUT_DIR/AUTO_REVIEW.html` |
+| `review-stage/REVIEW_STATE.json` | `$OUTPUT_DIR/REVIEW_STATE.json` |
+
 ## Workflow
 
 ### Initialization

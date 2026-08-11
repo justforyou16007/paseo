@@ -51,6 +51,61 @@ reuse the same bundle file; otherwise paste the bundle contents inline because
 remote web UIs cannot read your local filesystem paths. Review tracing applies
 equally to both backends.
 
+## Manifest Protocol (Worker Mode)
+
+When invoked with `— manifest: <path>`, this skill runs as a worker under an
+orchestrator (`/research-pipeline` or `/auto-research-loop`). The manifest
+provides all inputs; the skill writes its receipt to the manifest's directory.
+
+**Startup check:**
+```
+if "$ARGUMENTS" contains "— manifest:"; then
+    MANIFEST_PATH=<extracted path>
+    MANIFEST=$(cat "$MANIFEST_PATH")
+    WORKER_DIR=$(dirname "$MANIFEST_PATH")
+    OUTPUT_DIR=$(jq -r '.output_dir' <<< "$MANIFEST")
+    mkdir -p "$OUTPUT_DIR"
+    # Read inputs from manifest.inputs (file paths)
+    # Read context from manifest.context (scalar values)
+fi
+```
+
+**Receipt (write last to `$WORKER_DIR/receipt.json`):**
+```json
+{
+  "worker": "idea-creator",
+  "iteration": 1,
+  "status": "done",
+  "error": null,
+  "primary_output": "IDEA_REPORT.md",
+  "summary": { "num_ideas": "<int>", "top_idea": "<title>" },
+  "dashboard_patch": {
+    "best_idea": {"id": "idea-1", "title": "top-ranked idea title", "metric": null, "iteration": 1},
+    "idea_ids": ["idea-1-id", "idea-2-id"]
+  },
+  "completed_at": "<ISO-8601>",
+  "has_errors": false,
+  "error_count": 0
+}
+```
+
+On failure, write receipt with `"status": "failed"` and structured `error` object
+per `worker-manifest.md`. Append system errors to `$WORKER_DIR/progress_error.md`.
+
+**Direct-call mode:** When invoked WITHOUT `— manifest:`, the skill operates
+normally using its own argument parsing. No receipt is written.
+
+**Output path mapping:** In worker mode, every hardcoded output path in this
+skill's body (listed below) maps to `$OUTPUT_DIR/<filename>`. The orchestrator's
+subsequent input-manifests reference prior workers' outputs using their full
+`$WORKERS_DIR/<iter>-<phase>/outputs/<file>` path. In direct-call mode, the
+paths below are project-root-relative as written.
+
+| Direct-call path | Worker-mode path |
+|---|---|
+| `idea-stage/IDEA_REPORT.md` | `$OUTPUT_DIR/IDEA_REPORT.md` |
+| `idea-stage/claude_brainstorm_bundle.md` | `$OUTPUT_DIR/claude_brainstorm_bundle.md` |
+
 ## Workflow
 
 ### Phase 0: Load Research Wiki (if active)
@@ -207,8 +262,9 @@ mcp__paseo__create_agent:
   notifyOnFinish: true
 ```
 
-On completion (`wait_for_agent`), read the bundle's receipt file from
-`.aris/runs/<run_id>.idea-generation.done.json`. The authoritative payload
+On completion (`wait_for_agent`), read the bundle's internal receipt file from
+`.aris/runs/<run_id>.idea-generation.done.json` (direct-call internal sub-agent receipt only;
+in worker mode the orchestrator reads `receipt.json` instead). The authoritative payload
 is the file; `<agent-response>` is at most a one-line status.
 
 If paseo MCP is unavailable, run the brainstorm inline in the
@@ -243,7 +299,8 @@ Bundle contents (write to `idea-stage/claude_brainstorm_bundle.md`):
 
     Be creative but grounded. A great idea is one where the answer matters regardless of which way it goes.
 
-    When done, write your receipt to .aris/runs/<run_id>.idea-generation.done.json:
+    When done, write your internal direct-call receipt to .aris/runs/<run_id>.idea-generation.done.json:
+    **Legacy:** This receipt format is used as an internal sub-agent receipt in direct-call mode only. In worker mode (manifest protocol), the receipt is written to `$WORKER_DIR/receipt.json` instead.
     { "phase": "idea-generation", "num_ideas": <int>, "summary": "<1-2 lines>" }
 ```
 

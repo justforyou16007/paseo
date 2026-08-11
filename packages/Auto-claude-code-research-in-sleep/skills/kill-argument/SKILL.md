@@ -63,6 +63,64 @@ This skill is most valuable for **theory papers** with ≥5 theorem-class enviro
 - **OUTPUT** = `KILL_ARGUMENT.md` (human-readable) + `KILL_ARGUMENT.json` (machine-readable) in the paper directory.
 - **RENDER_HTML = true** — When `true` (default), auto-render `KILL_ARGUMENT.md` to HTML after writing the report. Uses **full Codex review gate** (audit-class artifact — full render-fidelity check matches the skill's cross-model audit invariant; the sidecar `KILL_ARGUMENT.json` is also passed to the renderer). Set `false` to skip, or pass `— render html: false`.
 
+## Manifest Protocol (Worker Mode)
+
+When invoked with `— manifest: <path>`, this skill runs as a worker under an
+orchestrator (`/research-pipeline` or `/auto-research-loop`). The manifest
+provides all inputs; the skill writes its receipt to the manifest's directory.
+
+**Startup check:**
+```
+if "$ARGUMENTS" contains "— manifest:"; then
+    MANIFEST_PATH=<extracted path>
+    MANIFEST=$(cat "$MANIFEST_PATH")
+    WORKER_DIR=$(dirname "$MANIFEST_PATH")
+    OUTPUT_DIR=$(jq -r '.output_dir' <<< "$MANIFEST")
+    mkdir -p "$OUTPUT_DIR"
+    # Read inputs from manifest.inputs (file paths)
+    # Read context from manifest.context (scalar values)
+fi
+```
+
+**Receipt (write last to `$WORKER_DIR/receipt.json`):**
+```json
+{
+  "worker": "kill-argument",
+  "iteration": 1,
+  "status": "done",
+  "error": null,
+  "primary_output": "KILL_ARGUMENT.json",
+  "summary": { "overall_verdict": "<PASS|WARN|FAIL>", "still_unresolved": "<int>" },
+  "dashboard_patch": {
+    "gaps.open": ["G3", "G5"],
+    "gaps.closed": ["G1", "G2"],
+    "gaps.total": 5,
+    "plan_path": "<path or null>",
+    "overall_verdict": "WARN"
+  },
+  "completed_at": "<ISO-8601>",
+  "has_errors": false,
+  "error_count": 0
+}
+```
+
+On failure, write receipt with `"status": "failed"` and structured `error` object
+per `worker-manifest.md`. Append system errors to `$WORKER_DIR/progress_error.md`.
+
+**Direct-call mode:** When invoked WITHOUT `— manifest:`, the skill operates
+normally using its own argument parsing. No receipt is written.
+
+**Output path mapping:** In worker mode, every hardcoded output path in this
+skill's body (listed below) maps to `$OUTPUT_DIR/<filename>`. The orchestrator's
+subsequent input-manifests reference prior workers' outputs using their full
+`$WORKERS_DIR/<iter>-<phase>/outputs/<file>` path. In direct-call mode, the
+paths below are project-root-relative as written.
+
+| Direct-call path | Worker-mode path |
+|---|---|
+| `<paper-dir>/KILL_ARGUMENT.md` | `$OUTPUT_DIR/KILL_ARGUMENT.md` |
+| `<paper-dir>/KILL_ARGUMENT.json` | `$OUTPUT_DIR/KILL_ARGUMENT.json` |
+
 ## Workflow
 
 ### Step 1: Discover paper files
@@ -433,8 +491,10 @@ point is not empirically testable (a framing or writing-level objection), emit
 the gap but **skip** its milestone, and note the omission in `KILL_ARGUMENT.md`
 under `## Recommendation`. Do not invent an experiment to fill the slot.
 
-**Receipt.** When invoked with either argument (i.e. by a dispatching parent),
-write `.aris/runs/<run_id>.kill-argument.done.json`:
+**Receipt (direct-call mode).** When invoked with either argument (i.e. by a dispatching parent),
+write direct-call receipt `.aris/runs/<run_id>.kill-argument.done.json`:
+
+**Legacy:** This receipt format is used in direct-call mode. In worker mode (manifest protocol), the receipt is written to `$WORKER_DIR/receipt.json` instead.
 
 ```json
 {
@@ -487,7 +547,7 @@ To the user:
 - `<paper-dir>/KILL_ARGUMENT.html` (when `RENDER_HTML = true`, default) — single-file HTML view auto-rendered via `/render-html "<paper-dir>/KILL_ARGUMENT.md" --json "<paper-dir>/KILL_ARGUMENT.json"`. Full review gate applies. The `.review.json` sidecar carries the render-fidelity verdict. **Non-blocking**: if `/render-html` fails (helper missing, Codex MCP unavailable, file write error), log the failure and treat the skill as complete — the HTML view is a convenience, not a prerequisite for the kill-argument verdict.
 - (when `— gap-output` given) Gap entries appended to `<gap_map.md>`.
 - (when `— plan-output` given) `<plan.md>` — diagnostic experiment plan.
-- (when either `— gap-output` or `— plan-output` given) `.aris/runs/<run_id>.kill-argument.done.json` — receipt for dispatching parents.
+- (when either `— gap-output` or `— plan-output` given) `.aris/runs/<run_id>.kill-argument.done.json` — direct-call receipt for dispatching parents (legacy; worker mode uses `receipt.json`).
 
 ## Key Rules
 

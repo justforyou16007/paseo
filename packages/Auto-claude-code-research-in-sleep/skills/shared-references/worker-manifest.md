@@ -135,12 +135,30 @@ Written by the worker after completing its work.
   reads this scalar; it does NOT read the error file itself (Rule 5).
 - **`error_count`** — number of lines in `progress_error.md`.
 
-### `dashboard_patch` rules
+### `dashboard_patch` merge algorithm
 
-- Only set fields the worker is authoritative for
-- Use dot notation for nested fields: `"metric.current": 0.82`
-- Array fields: provide the full new array (not append — orchestrator does `=` not `+=`)
-- The orchestrator applies the patch via: read dashboard → merge patch → write dashboard
+The orchestrator applies `dashboard_patch` from `receipt.json` to `dashboard.json`
+using a **dot-notation-aware, idempotent merge**:
+
+1. For each key in `dashboard_patch`:
+   - If the key contains dots (e.g. `"metric.current"`), split on `.` and
+     traverse/create nested objects. Set the leaf value.
+   - If the key is a plain name, set the top-level field directly.
+2. Array fields: the patch provides the **full new value**, not an append.
+   The orchestrator does assignment (`=`), never append (`+=`).
+3. **Idempotency guard for `metric.history`:** The orchestrator checks
+   `receipt.iteration` against existing history entries before appending.
+   If an entry for this iteration already exists (from a prior crash+resume
+   that already merged), skip the append. Concretely:
+   ```
+   if not any(h.iter == receipt.iteration for h in dashboard.metric.history):
+       dashboard.metric.history.append({iter: receipt.iteration, value: patch.primary_metric, ...})
+   ```
+4. **Receipt tracking:** After merging, the orchestrator records the receipt
+   path in `dashboard.applied_receipts` (an array of strings). On resume,
+   if a receipt path is already in `applied_receipts`, skip the merge.
+   This is the primary crash-safety mechanism for idempotent resume.
+5. Only set fields the worker is authoritative for.
 
 ## `progress_error.md`
 
@@ -184,10 +202,16 @@ The orchestrator's single state source. ~50 lines, ~300 tokens.
 {
   "run_id": "...",
   "project": "...",
-  "status": "running|stopped|completed",
+  "status": "running|finishing|completed",
   "iteration": 3,
   "max_iterations": 5,
   "current_phase": "experiment-bridge",
+  "config": {
+    "baseline_plan": "refine-logs/EXPERIMENT_PLAN.md",
+    "auto_write": false,
+    "render_html": true,
+    "patience": 2
+  },
 
   "metric": {
     "name": "F1",
@@ -227,9 +251,37 @@ The orchestrator's single state source. ~50 lines, ~300 tokens.
   "system_errors": {
     "total": 0,
     "last": null
-  }
+  },
+  "applied_receipts": []
 }
 ```
+
+`config` stores immutable run inputs that affect dispatch or terminal behavior.
+An orchestrator restores these values on resume instead of re-reading current
+arguments or project defaults. Workflows that do not need extra run inputs may
+omit the object.
+
+### `status` values
+
+| Value | Meaning |
+|---|---|
+| `running` | The orchestrator loop is actively dispatching phases |
+| `finishing` | The stop gate fired; the loop exited but summary/paper-writing are still pending |
+| `completed` | All terminal actions done; nothing to resume |
+
+On resume, `finishing` means: skip the iteration loop, continue from summary.
+Only `completed` means nothing to do. There is no `stopped` status.
+
+### `primary_output` and `output_dir` path semantics
+
+- `output_dir` in `input-manifest.json` is an **absolute path** to
+  `.aris/runs/<run_id>/workers/<iter>-<phase>/outputs/`.
+- `primary_output` in `receipt.json` is a **relative path within output_dir**.
+  The orchestrator resolves the full path as `output_dir + "/" + primary_output`.
+- Workers MUST write all output artifacts to `output_dir`. When a subsequent
+  worker needs a prior worker's output, the orchestrator sets the full path
+  (`$WORKERS_DIR/<prior-iter>-<prior-phase>/outputs/<file>`) in the next
+  manifest's `inputs`.
 
 ## Orchestrator Workflow (per phase)
 
@@ -252,10 +304,14 @@ The orchestrator's single state source. ~50 lines, ~300 tokens.
 
 ## Backward Compatibility
 
-Workers that don't yet support the manifest protocol can still be dispatched
-with the old `--extra` style. The orchestrator detects whether a skill supports
-manifests by checking if it cites this document in its body. Transition is
-incremental — skills adopt the manifest protocol one by one.
+All orchestrator-dispatched workers use the manifest protocol. Skills that
+are also invoked directly (e.g. `/idea-discovery` from the command line)
+retain their direct-call argument parsing; the manifest startup check
+(`if "$ARGUMENTS" contains "— manifest:"`) selects the mode.
+
+Legacy receipt paths (`.aris/runs/<run_id>.<phase>.done.json`) are used only
+in direct-call mode for internal sub-agent coordination within a skill.
+Orchestrators never read these paths.
 
 ## Anti-patterns
 

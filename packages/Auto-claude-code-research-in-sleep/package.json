@@ -6,7 +6,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && ARIS_TEST_DIST=1 npx tsx tests/test_run_state.ts",
+    "test:source": "npx tsx tests/test_run_state.ts"
   },
   "dependencies": {
     "commander": "^15.0.0"

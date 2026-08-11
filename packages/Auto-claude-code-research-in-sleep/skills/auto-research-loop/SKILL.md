@@ -23,57 +23,110 @@ This skill differs from `research-pipeline` in three ways:
 
 ## Dispatch Pattern
 
-Every phase follows the same cycle. This is shown once here; each phase section below specifies only what differs (inputs, context, dispatch skill).
+Every phase follows the same cycle. This is shown once here; each phase section
+below specifies only what differs (inputs, context, dispatch skill).
+Phases 1-5 use the iteration-scoped directory shown below. The non-repeating
+`summary` and `paper-writing` phases explicitly override `WORKER_DIR` with their
+stable outer-lifecycle directories so resume always finds the same receipt.
 
 For the full manifest and receipt JSON schemas, see `shared-references/worker-manifest.md`.
 
 ```
 1. WORKER_DIR="$WORKERS_DIR/${ITERATION}-<phase-name>"
-   mkdir -p "$WORKER_DIR"
+   mkdir -p "$WORKER_DIR/outputs"
 
-2. Write $WORKER_DIR/input-manifest.json with:
-   - phase, run_id, iteration, root (standard header)
+2. Update dashboard: current_phase = "<phase-name>", updated_at = now.
+
+3. Write $WORKER_DIR/input-manifest.json with:
+   - worker: <skill-name>, iteration, run_id (standard header)
    - inputs: file paths the worker needs (phase-specific, see tables below)
-   - config: scalar context values (phase-specific)
-   - output: receipt_path + output file paths
+   - context: scalar context values (phase-specific)
+   - output_dir: "$WORKER_DIR/outputs"
 
-3. Dispatch via mcp__paseo__create_agent:
+4. Dispatch via mcp__paseo__create_agent:
    title: "research-loop-iter-${ITERATION}-<phase-name>"
    provider: "claude/claude-sonnet-4-6"
    initialPrompt: "/<skill-name> — manifest: $WORKER_DIR/input-manifest.json"
    notifyOnFinish: true
 
-4. Wait for completion notification.
+5. Wait for completion notification.
 
-5. Read $WORKER_DIR/receipt.json:
+6. Read $WORKER_DIR/receipt.json:
    - If status=failed → log and decide (retry or stop)
-   - Merge dashboard_patch into $DASHBOARD via jq
+   - Check idempotency: if "$WORKER_DIR/receipt.json" is already in
+     dashboard.applied_receipts, skip the merge (crash-safe resume guard).
+   - Merge dashboard_patch into $DASHBOARD (dot-notation-aware, per
+     worker-manifest.md merge algorithm).
+   - Append "$WORKER_DIR/receipt.json" to dashboard.applied_receipts.
+   - Update dashboard: current_phase = "<phase-name>", updated_at = now.
 
-**Error tracking:** If `receipt.has_errors == true`, update dashboard:
-`dashboard.system_errors.total += receipt.error_count` and
-`dashboard.system_errors.last = "<iter>-<phase>"`. The orchestrator does NOT
-read `progress_error.md` (Rule 5). Humans inspect it at
-`.aris/runs/<run_id>/workers/<iter>-<phase>/progress_error.md` for debugging.
+Error tracking: If receipt.has_errors == true, update dashboard:
+dashboard.system_errors.total += receipt.error_count and
+dashboard.system_errors.last = "<iter>-<phase>". The orchestrator does NOT
+read progress_error.md (Rule 5).
 
-6. Archive the worker: mcp__paseo__archive_agent
-
-7. Update run-state: node "$RUN_STATE" set "$ROOT" "$RUN_ID" <phase> done
+7. Archive the worker: mcp__paseo__archive_agent
 ```
+
+## State Machine Design
+
+### Why run-state tracks the outer lifecycle only
+
+The iteration loop reuses phases (idea-discovery runs in every iteration). If
+run-state tracked per-iteration phases as static entries, a crash between
+"gap-analysis accepted" and "next iteration's idea-discovery reset" would cause
+resume to skip to summary. Instead:
+
+- **run-state** tracks 4 non-repeating lifecycle phases: `init, loop, summary, paper-writing`.
+- **dashboard.json** tracks iteration progress: `iteration`, `current_phase`,
+  `stop_reason`. The orchestrator reads these on resume to determine where
+  within the loop to continue.
+- The `loop` phase is `running` while iterations execute and `done` when the
+  stop gate fires. It is `accepted` only after summary completes.
+
+### Phase lifecycle and terminal states
+
+| run-state phase | When `done` | When `accepted` | When `skipped` |
+|---|---|---|---|
+| `init` | Preconditions validated, dashboard created | Deterministic: dashboard exists | Never |
+| `loop` | Stop gate fired (metric met / budget exhausted / patience exceeded) | After summary phase completes successfully | Never |
+| `summary` | NARRATIVE_REPORT.md written | Deterministic or codex reviewer | Never |
+| `paper-writing` | Paper compiled and audits pass | `deterministic:verify_paper_audits.sh` | `AUTO_WRITE=false` |
+
+### Dashboard iteration tracking
+
+The dashboard tracks intra-iteration state for crash-safe resume:
+
+| Field | Purpose |
+|---|---|
+| `iteration` | Current iteration number (1-based) |
+| `current_phase` | Last completed or in-progress phase within the iteration |
+| `status` | `running` / `finishing` / `completed` |
+| `stop_reason` | `null` while looping; set when stop gate fires |
+| `config` | Immutable run inputs needed after restart: baseline path, auto-write/render flags, patience |
+
+**Status values:**
+- `running` — iteration loop is active
+- `finishing` — stop gate fired, summary/paper-writing in progress
+- `completed` — all terminal phases reached
+
+On resume, `status=finishing` means: skip the loop, continue from summary.
+Only `status=completed` means nothing to do.
 
 ## Phase Diagram
 
 ```
-Phase 0     Validate preconditions + Initialize dashboard.json
---- Iteration loop (1 -> MAX_ITERATIONS) ---
-Phase 1     Idea Discovery
-Phase 2     Experiment Bridge
-Phase 2.5   Analyze Results
-Phase 3     Auto Review
-Phase 4     Metric Evaluation (pure arithmetic — NO dispatch)
-Phase 5     Gap Analysis (skipped if stop gate fires)
---- End loop ---
-Phase 6     Summary (on stop)
-Phase 7     Paper Writing (optional, if metric met)
+init        Validate preconditions + Initialize dashboard + run-state
+loop        --- Iteration loop (1 -> MAX_ITERATIONS) ---
+              Phase 1     Idea Discovery
+              Phase 2     Experiment Bridge
+              Phase 2.5   Analyze Results
+              Phase 3     Auto Review
+              Phase 4     Metric Evaluation (pure arithmetic — NO dispatch)
+              Phase 5     Gap Analysis (skipped if stop gate fires)
+            --- End loop (stop gate fires) ---
+summary     Phase 6     Summary report
+paper-writing  Phase 7  Paper Writing (optional)
 ```
 
 ## Constants
@@ -92,7 +145,7 @@ Dashboard schema: see `shared-references/worker-manifest.md` section "dashboard.
 
 ---
 
-## Phase 0: Preconditions + Initialize Dashboard
+## Phase 0: Preconditions + Initialize
 
 ```bash
 cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
@@ -105,6 +158,9 @@ fi
 WIKI_SCRIPT="$ARIS_REPO/dist/tools/research-wiki.js"
 RUN_STATE="$ARIS_REPO/dist/tools/run-state.js"
 
+# Preconditions are a callable step. Fresh start calls it once; resume calls it
+# only when run-state reports the unfinished `init` phase.
+run_preconditions() {
 # 0a. Read metric target
 TARGET_METRIC=$(awk '/^## Metric Target/{flag=1; next} flag && /^primary:/{print $2; exit}' CLAUDE.md)
 if [ -z "$TARGET_METRIC" ]; then
@@ -123,21 +179,13 @@ if [ -f "$ENV_JSON" ]; then
     [ "$STATUS" = "complete" ] && ENV_CONFIGURED=true
 fi
 if [ "$ENV_CONFIGURED" = "false" ]; then
-    # Dispatch env-manager for baseline setup (HARD STOP if not configured)
     mcp__paseo__create_agent
       title: "env-manager: setup $PROJECT_NAME"
       provider: claude
       initialPrompt: "/experiment-env-manager — project: $PROJECT_NAME — mode: setup"
       notifyOnFinish: true
-
-    # Wait for completion, then verify env.json status directly
-    # (env-manager writes status=complete to env.json on success)
-    if [ -f "$ENV_JSON" ]; then
-        STATUS=$(jq -r '.status' "$ENV_JSON")
-        if [ "$STATUS" != "complete" ]; then
-            echo "ERROR: env-manager setup did not reach complete status (got: $STATUS). Cannot proceed."
-            exit 1
-        fi
+    # Verify env.json after completion
+    if [ -f "$ENV_JSON" ] && [ "$(jq -r '.status' "$ENV_JSON")" = "complete" ]; then
         ENV_CONFIGURED=true
     else
         echo "ERROR: env-manager did not produce experiment skill. Cannot proceed."
@@ -146,28 +194,145 @@ if [ "$ENV_CONFIGURED" = "false" ]; then
 fi
 
 # 0c. Locate baseline plan
-BASELINE_PLAN="${ARG_BASELINE:-refine-logs/EXPERIMENT_PLAN.md}"
+BASELINE_PLAN="${BASELINE_PLAN:-${ARG_BASELINE:-refine-logs/EXPERIMENT_PLAN.md}}"
 if [ ! -f "$BASELINE_PLAN" ]; then
     echo "ERROR: Baseline plan not found at $BASELINE_PLAN"
     exit 1
 fi
+}
+```
 
-# 0d. Create run directory + initialize dashboard
-RUN_ID=$(date +%Y%m%d-%H%M%S)-research-loop
-DASHBOARD=".aris/runs/$RUN_ID/dashboard.json"
-WORKERS_DIR=".aris/runs/$RUN_ID/workers"
-mkdir -p "$WORKERS_DIR"
+### Fresh start vs Resume
 
-# Initialize dashboard.json per schema in shared-references/worker-manifest.md
-# Fields: run_id, status="running", iteration=0, max_iterations, metric{target,unit,tolerance,current,baseline,history},
-#         best_idea, last_review{verdict,score,metric_progress,reviewer_id}, gaps{open,closed},
-#         consecutive_pivots=0, stop_reason=null, phases_completed=[], started_at, updated_at
+```bash
+if [ -n "$ARG_RESUME" ]; then
+    # ---- RESUME PATH ----
+    RUN_ID="$ARG_RESUME"
+    DASHBOARD=".aris/runs/$RUN_ID/dashboard.json"
+    WORKERS_DIR=".aris/runs/$RUN_ID/workers"
 
-# 0e. Initialize run-state
-node "$RUN_STATE" start "$ROOT" "$RUN_ID" \
-    --phases "preconditions,idea-discovery,experiment-bridge,analyze-results,auto-review,metric-eval,gap-analysis,summary"
-node "$RUN_STATE" set "$ROOT" "$RUN_ID" preconditions done \
-    --artifact "$ROOT/$DASHBOARD"
+    if [ ! -f "$DASHBOARD" ]; then
+        echo "ERROR: No dashboard at $DASHBOARD. Cannot resume."
+        exit 1
+    fi
+
+    STATE_FILE=".aris/runs/$RUN_ID.json"
+    if [ ! -f "$STATE_FILE" ]; then
+        INIT_ONLY=$(jq -r '(.current_phase == "init") and ((.applied_receipts // []) | length == 0)' "$DASHBOARD")
+        if [ "$INIT_ONLY" != "true" ]; then
+            echo "ERROR: run-state is missing after work started; acceptance provenance cannot be reconstructed."
+            exit 1
+        fi
+        node "$RUN_STATE" start "$ROOT" "$RUN_ID" \
+            --phases "init,loop,summary,paper-writing"
+    fi
+
+    # Use run-state for outer lifecycle
+    RESUME_OUTER=$(node "$RUN_STATE" resume "$ROOT" "$RUN_ID")
+    if [ "$RESUME_OUTER" = "COMPLETE" ]; then
+        jq '.status = "completed" | .updated_at = (now | todateiso8601)' \
+            "$DASHBOARD" > "$DASHBOARD.tmp" && mv "$DASHBOARD.tmp" "$DASHBOARD"
+        echo "Run $RUN_ID: all phases accepted/skipped. Nothing to resume."
+        exit 0
+    fi
+
+    STATUS=$(jq -r '.status' "$DASHBOARD")
+    ITERATION=$(jq -r '.iteration' "$DASHBOARD")
+    CURRENT_PHASE=$(jq -r '.current_phase' "$DASHBOARD")
+    BASELINE_PLAN=$(jq -r '.config.baseline_plan // "refine-logs/EXPERIMENT_PLAN.md"' "$DASHBOARD")
+    AUTO_WRITE=$(jq -r '.config.auto_write // false' "$DASHBOARD")
+    RENDER_HTML=$(jq -r '.config.render_html // true' "$DASHBOARD")
+    PATIENCE=$(jq -r '.config.patience // 2' "$DASHBOARD")
+
+    if [ "$STATUS" = "completed" ]; then
+        echo "ERROR: dashboard is completed but run-state still requires $RESUME_OUTER. Refusing to skip an acceptance obligation."
+        exit 1
+    fi
+
+    if [ "$RESUME_OUTER" = "init" ]; then
+        run_preconditions
+        node "$RUN_STATE" set "$ROOT" "$RUN_ID" init done --artifact "$ROOT/$DASHBOARD"
+        node "$RUN_STATE" accept "$ROOT" "$RUN_ID" init \
+            --verdict-id "deterministic:preconditions" --reviewer "deterministic:preconditions"
+        node "$RUN_STATE" set "$ROOT" "$RUN_ID" loop running
+        jq '.status = "running" | .current_phase = "idea-discovery" | .updated_at = (now | todateiso8601)' \
+            "$DASHBOARD" > "$DASHBOARD.tmp" && mv "$DASHBOARD.tmp" "$DASHBOARD"
+        RESUME_OUTER="loop"
+        STATUS="running"
+        CURRENT_PHASE="idea-discovery"
+    fi
+
+    echo "Resuming run $RUN_ID: outer=$RESUME_OUTER, iteration=$ITERATION, phase=$CURRENT_PHASE, status=$STATUS"
+
+    # Determine where to jump:
+    # - outer=init → run 0a-0c now, then mark init done+accepted and set loop running
+    # - outer=loop, status=running → resume iteration loop at current_phase
+    # - outer=loop, status=finishing → skip loop, go to summary
+    # - outer=summary → resume summary
+    # - outer=paper-writing → resume paper-writing
+
+else
+    # ---- FRESH START PATH ----
+    RUN_ID=$(date +%Y%m%d-%H%M%S)-research-loop
+    DASHBOARD=".aris/runs/$RUN_ID/dashboard.json"
+    WORKERS_DIR=".aris/runs/$RUN_ID/workers"
+    mkdir -p "$WORKERS_DIR"
+
+    BASELINE_PLAN="${ARG_BASELINE:-refine-logs/EXPERIMENT_PLAN.md}"
+    AUTO_WRITE=${AUTO_WRITE:-false}
+    RENDER_HTML=${RENDER_HTML:-true}
+    PATIENCE=${PATIENCE:-2}
+    run_preconditions
+
+    # Persist the dashboard first. `init` remains pending until both stores exist.
+    cat > "$DASHBOARD" <<DASH
+{
+  "run_id": "$RUN_ID",
+  "project": "$PROJECT_NAME",
+  "status": "running",
+  "iteration": 1,
+  "max_iterations": ${ARG_MAX_ITERATIONS:-5},
+  "current_phase": "init",
+  "config": {
+    "baseline_plan": "$BASELINE_PLAN",
+    "auto_write": $AUTO_WRITE,
+    "render_html": $RENDER_HTML,
+    "patience": $PATIENCE
+  },
+  "metric": {
+    "name": "$TARGET_UNIT",
+    "target": $TARGET_METRIC,
+    "direction": "higher_better",
+    "tolerance": 0.01,
+    "current": null,
+    "baseline": null,
+    "history": []
+  },
+  "best_idea": null,
+  "gaps": { "open": [], "closed": [], "total": 0 },
+  "last_review": { "verdict": null, "score": null, "metric_progress": null, "reviewer_id": null },
+  "consecutive_pivots": 0,
+  "stop_reason": null,
+  "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "updated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "system_errors": { "total": 0, "last": null },
+  "applied_receipts": []
+}
+DASH
+
+    # Initialize run-state with outer lifecycle phases only.
+    node "$RUN_STATE" start "$ROOT" "$RUN_ID" \
+        --phases "init,loop,summary,paper-writing"
+
+    # Mark init done + accepted (deterministic: preconditions validated)
+    node "$RUN_STATE" set "$ROOT" "$RUN_ID" init done \
+        --artifact "$ROOT/$DASHBOARD"
+    node "$RUN_STATE" accept "$ROOT" "$RUN_ID" init \
+        --verdict-id "deterministic:preconditions" --reviewer "deterministic:preconditions"
+
+    # Mark loop as running (the iteration loop is now active)
+    node "$RUN_STATE" set "$ROOT" "$RUN_ID" loop running
+fi
 ```
 
 ---
@@ -188,11 +353,11 @@ Dispatch `/idea-discovery` with context about the research direction, open gaps,
 
 Context: `target_metric`, `target_unit`, `open_gaps` (from dashboard), `iteration_context` (`baseline_improvement` if iter 1, else `gap_targeted`)
 
-Output: `idea_report` at `$ROOT/idea-stage/IDEA_REPORT.md`
+Output: `IDEA_REPORT.md` in `$WORKER_DIR/outputs/`
 
-Dispatch: `/<idea-discovery> -- manifest: $WORKER_DIR/input-manifest.json`
+Dispatch: `/idea-discovery — manifest: $WORKER_DIR/input-manifest.json`
 
-**Dashboard patch fields:** `best_idea`, `idea_ids`, `ideas[]`
+**Dashboard patch fields:** `best_idea`, `idea_ids`
 
 **Post-receipt wiki writes:** For each `idea_id` in `dashboard_patch.idea_ids`, call `node "$WIKI_SCRIPT" upsert_idea research-wiki/ --id "$idea_id" --title "$TITLE"`.
 
@@ -206,17 +371,17 @@ Dispatch `/experiment-bridge` to implement and run experiments from the idea rep
 
 | Input | Path |
 |-------|------|
-| experiment_plan | `$ROOT/$BASELINE_PLAN` (iter 1) or `$ROOT/refine-logs/EXPERIMENT_PLAN-iter-${ITERATION}.md` (iter 2+) |
-| idea_report | `$ROOT/idea-stage/IDEA_REPORT.md` |
+| experiment_plan | `$ROOT/$BASELINE_PLAN` (iter 1) or prior gap-analysis output: `$WORKERS_DIR/${PREV_ITERATION}-gap-analysis/outputs/EXPERIMENT_PLAN.md` (iter 2+) |
+| idea_report | `$WORKERS_DIR/${ITERATION}-idea-discovery/outputs/IDEA_REPORT.md` |
 | experiment_skill | `$ROOT/.claude/skills/run-${PROJECT_NAME}-experiment/env.json` |
 
 Context: `is_baseline` (true if iter 1), `target_metric`, `target_unit`
 
-Output: `tracker` at `refine-logs/EXPERIMENT_TRACKER.md`, `results` at `refine-logs/EXPERIMENT_RESULTS.md`
+Output: `EXPERIMENT_RESULTS.md`, `EXPERIMENT_TRACKER.md` in `$WORKER_DIR/outputs/`
 
-Dispatch: `/experiment-bridge -- manifest: $WORKER_DIR/input-manifest.json`
+Dispatch: `/experiment-bridge — manifest: $WORKER_DIR/input-manifest.json`
 
-**Dashboard patch fields:** `primary_metric` (set as `metric.baseline` on iter 1 only), `experiment_ids`, `experiments[]`
+**Dashboard patch fields:** `primary_metric` (set as `metric.baseline` on iter 1 only), `experiment_ids`
 
 **Post-receipt wiki writes:** For each `exp_id` in `dashboard_patch.experiment_ids`, call `node "$WIKI_SCRIPT" add_experiment research-wiki/ --id "$exp_id" --title "$TITLE" --status completed`.
 
@@ -228,22 +393,24 @@ Dispatch `/analyze-results` to extract the authoritative metric value from exper
 
 | Input | Path |
 |-------|------|
-| tracker | `$ROOT/refine-logs/EXPERIMENT_TRACKER.md` |
-| results | `$ROOT/refine-logs/EXPERIMENT_RESULTS.md` |
+| tracker | `$WORKERS_DIR/${ITERATION}-experiment-bridge/outputs/EXPERIMENT_TRACKER.md` |
+| results | `$WORKERS_DIR/${ITERATION}-experiment-bridge/outputs/EXPERIMENT_RESULTS.md` |
 | prior_metrics | `dashboard.metric.history` (inline from dashboard) |
 
 Context: `target_metric`, `target_unit`
 
-Output: `analysis` at `$ROOT/refine-logs/ANALYSIS-iter-${ITERATION}.md`
+Output: `EXPERIMENT_RESULTS.md` in `$WORKER_DIR/outputs/`
 
-Dispatch: `/analyze-results -- manifest: $WORKER_DIR/input-manifest.json`
+Dispatch: `/analyze-results — manifest: $WORKER_DIR/input-manifest.json`
 
 **Dashboard patch fields:** `primary_metric`, `metric_delta`, `statistical_significance`
 
-**Post-receipt dashboard merge:** The analyze-results receipt is the AUTHORITATIVE source for `metric.current`. Apply:
+**Post-receipt dashboard merge:** The analyze-results receipt is the AUTHORITATIVE source for `metric.current`. Apply (with idempotency guard per worker-manifest.md merge algorithm):
 ```
 .metric.current = $patch.primary_metric
-.metric.history += [{"iteration": .iteration, "value": $patch.primary_metric, "timestamp": now}]
+# Only append if no entry for this iteration exists yet:
+if not any(h.iter == ITERATION for h in .metric.history):
+    .metric.history += [{"iter": ITERATION, "value": $patch.primary_metric, "timestamp": now}]
 ```
 
 ---
@@ -254,18 +421,18 @@ Dispatch `/auto-review-loop` for cross-model review of the iteration's results.
 
 | Input | Path |
 |-------|------|
-| analysis | `$ROOT/refine-logs/ANALYSIS-iter-${ITERATION}.md` |
-| tracker | `$ROOT/refine-logs/EXPERIMENT_TRACKER.md` |
-| results | `$ROOT/refine-logs/EXPERIMENT_RESULTS.md` |
-| idea_report | `$ROOT/idea-stage/IDEA_REPORT.md` |
+| analysis | `$WORKERS_DIR/${ITERATION}-analyze-results/outputs/EXPERIMENT_RESULTS.md` |
+| tracker | `$WORKERS_DIR/${ITERATION}-experiment-bridge/outputs/EXPERIMENT_TRACKER.md` |
+| results | `$WORKERS_DIR/${ITERATION}-experiment-bridge/outputs/EXPERIMENT_RESULTS.md` |
+| idea_report | `$WORKERS_DIR/${ITERATION}-idea-discovery/outputs/IDEA_REPORT.md` |
 
 Context: `target_metric`, `target_unit`, `reviewer_model` (`gpt-5.5`), `reviewer_bias_guard` (true), `max_review_rounds` (4)
 
-Output: `review` at `$ROOT/research-iteration/review-iter-${ITERATION}.json`
+Output: `AUTO_REVIEW.md` in `$WORKER_DIR/outputs/`
 
-Dispatch: `/auto-review-loop -- manifest: $WORKER_DIR/input-manifest.json`
+Dispatch: `/auto-review-loop — manifest: $WORKER_DIR/input-manifest.json`
 
-**Dashboard patch fields:** `verdict`, `score`, `metric_progress`, `reviewer_id` (merged into `last_review.*`)
+**Dashboard patch fields:** `last_review.verdict`, `last_review.score`, `last_review.metric_progress`, `last_review.reviewer_id`
 
 ---
 
@@ -285,6 +452,7 @@ TOLERANCE=$(jq -r '.metric.tolerance' "$DASHBOARD")
 ITERATION=$(jq -r '.iteration' "$DASHBOARD")
 MAX_ITER=$(jq -r '.max_iterations' "$DASHBOARD")
 CONSEC_PIVOTS=$(jq -r '.consecutive_pivots' "$DASHBOARD")
+PATIENCE=$(jq -r '.config.patience // 2' "$DASHBOARD")
 VERDICT=$(jq -r '.last_review.verdict' "$DASHBOARD")
 
 THRESHOLD=$(echo "$TARGET * (1 - $TOLERANCE)" | bc -l)
@@ -302,10 +470,12 @@ else
     CONSEC_PIVOTS=0
 fi
 PATIENCE_EXCEEDED=false
-[ "$CONSEC_PIVOTS" -ge 2 ] && PATIENCE_EXCEEDED=true
+[ "$CONSEC_PIVOTS" -ge "$PATIENCE" ] && PATIENCE_EXCEEDED=true
 
 TYPE_A_FIRES=false
-[ "$METRIC_MET" = "true" ] || [ "$BUDGET_EXHAUSTED" = "true" ] || [ "$PATIENCE_EXCEEDED" = "true" ] && TYPE_A_FIRES=true
+if [ "$METRIC_MET" = "true" ] || [ "$BUDGET_EXHAUSTED" = "true" ] || [ "$PATIENCE_EXCEEDED" = "true" ]; then
+    TYPE_A_FIRES=true
+fi
 ```
 
 ### Type-B: Codex verdict (dashboard fields only)
@@ -335,10 +505,18 @@ fi
 | false | true | Log "reviewer conservative" and continue |
 | false | false | Continue to Phase 5 |
 
-Update dashboard: `consecutive_pivots`, `stop_reason`, `status` ("stopped" if stop_reason set, else "running").
+Update dashboard: `consecutive_pivots`, `stop_reason`.
 
-If `stop_reason` is non-empty -> skip Phase 5, proceed to Phase 6.
-If `stop_reason` is empty -> proceed to Phase 5.
+If `stop_reason` is non-empty:
+  1. Set dashboard `status = "finishing"` (not `completed` — summary still pending).
+  2. Mark the `loop` run-state phase as done:
+     ```bash
+     node "$RUN_STATE" set "$ROOT" "$RUN_ID" loop done \
+         --artifact "$ROOT/$DASHBOARD"
+     ```
+  3. Proceed to Phase 6 (Summary).
+
+If `stop_reason` is empty → proceed to Phase 5.
 
 ---
 
@@ -348,47 +526,77 @@ When the compound gate does not fire, dispatch `/kill-argument` to identify unre
 
 | Input | Path |
 |-------|------|
-| results_dir | `$ROOT/refine-logs/` |
+| analysis | `$WORKERS_DIR/${ITERATION}-analyze-results/outputs/EXPERIMENT_RESULTS.md` |
+| tracker | `$WORKERS_DIR/${ITERATION}-experiment-bridge/outputs/EXPERIMENT_TRACKER.md` |
+| results | `$WORKERS_DIR/${ITERATION}-experiment-bridge/outputs/EXPERIMENT_RESULTS.md` |
 | gap_map | `$ROOT/research-wiki/gap_map.md` |
-| analysis | `$ROOT/refine-logs/ANALYSIS-iter-${ITERATION}.md` |
 
-Context: `gap_output` (`research-wiki/gap_map.md`), `plan_output` (`refine-logs/EXPERIMENT_PLAN-iter-${NEXT_ITERATION}.md`), `render_html` (false)
+Context: `gap_output` (`research-wiki/gap_map.md`), `plan_output` (relative: `EXPERIMENT_PLAN.md`), `render_html` (false)
 
-Dispatch: `/kill-argument -- manifest: $WORKER_DIR/input-manifest.json`
+Output: `EXPERIMENT_PLAN.md`, updated `gap_map.md` in `$WORKER_DIR/outputs/`
 
-**Dashboard patch fields:** `open_gaps`, `closed_gaps`, `plan_path`, `overall_verdict`
+Dispatch: `/kill-argument — manifest: $WORKER_DIR/input-manifest.json`
+
+**Dashboard patch fields:** `gaps.open`, `gaps.closed`, `gaps.total`, `plan_path`, `overall_verdict`
 
 **Post-receipt actions:**
-1. Merge gap updates into `dashboard.gaps`
-2. Rebuild query pack: `node "$WIKI_SCRIPT" rebuild_query_pack research-wiki/`
-3. Increment iteration: `dashboard.iteration = NEXT_ITERATION`
-4. Loop back to Phase 1
+1. Dashboard merge (already done in step 6 of dispatch pattern)
+2. Copy updated gap_map back to wiki: `cp "$WORKER_DIR/outputs/gap_map.md" "$ROOT/research-wiki/gap_map.md"`
+3. Rebuild query pack: `node "$WIKI_SCRIPT" rebuild_query_pack research-wiki/`
+4. Increment iteration: update dashboard `.iteration = ${NEXT_ITERATION}`, `.current_phase = "idea-discovery"`
+5. Loop back to Phase 1
 
 ---
 
 ## Phase 6: Summary (on stop)
 
-When the loop exits, dispatch `/render-html` with a narrative-report manifest.
+When the loop exits (`dashboard.status = "finishing"`), generate the narrative
+report. This is a **summary sub-agent** (not `/render-html` — that skill renders
+existing markdown but cannot generate new content).
+
+```bash
+WORKER_DIR="$WORKERS_DIR/summary"
+mkdir -p "$WORKER_DIR/outputs"
+```
+
+The orchestrator dispatches a claude sub-agent with a prompt to write
+`NARRATIVE_REPORT.md` from the dashboard and wiki state. The sub-agent reads
+the inputs, generates the report to `$WORKER_DIR/outputs/`, and writes its receipt.
 
 | Input | Path |
 |-------|------|
 | dashboard | `$ROOT/$DASHBOARD` |
-| wiki | `$ROOT/research-wiki/` |
+| wiki_index | `$ROOT/research-wiki/index.md` |
 | gap_map | `$ROOT/research-wiki/gap_map.md` |
+| last_analysis | `$WORKERS_DIR/${ITERATION}-analyze-results/outputs/EXPERIMENT_RESULTS.md` |
+| last_review | `$WORKERS_DIR/${ITERATION}-auto-review/outputs/AUTO_REVIEW.md` |
 
 Context: `stop_reason`, `total_iterations`, `final_metric`, `target_metric`, `metric_history` (all from dashboard)
 
-Output: `report` at `$ROOT/research-iteration/NARRATIVE_REPORT.md`
+Output: `NARRATIVE_REPORT.md` in `$WORKER_DIR/outputs/`
 
-Schema requirement: `required_sections = ["metric_trajectory", "stop_reason", "iteration_log", "open_gaps", "closed_gaps", "artifacts"]`
+Dispatch: summary sub-agent via `mcp__paseo__create_agent` with prompt:
+```
+Generate NARRATIVE_REPORT.md from the provided inputs. Required sections:
+metric_trajectory, stop_reason, iteration_log, open_gaps, closed_gaps, artifacts.
+Write to the output_dir specified in the manifest. Write receipt.json when done.
+```
 
-Dispatch: `/render-html -- manifest: $WORKER_DIR/input-manifest.json`
+**Post-receipt (optional):** If `RENDER_HTML=true`, dispatch `/render-html` to render
+the generated `NARRATIVE_REPORT.md` to HTML (non-blocking, failure is logged
+but does not block acceptance).
 
-**Post-receipt:** Mark dashboard `status = "completed"`. Run acceptance:
+**Run-state transitions:** Accept the `loop` phase (the iteration loop is now
+fully audited by the summary), then mark `summary` done + accepted:
 ```bash
-REVIEWER_ID=$(jq -r '.last_review.reviewer_id // "deterministic:research-iteration:max-iter-reached"' "$DASHBOARD")
-node "$RUN_STATE" accept "$ROOT" "$RUN_ID" research-iteration \
+REVIEWER_ID=$(jq -r '.last_review.reviewer_id // "deterministic:research-loop:completed"' "$DASHBOARD")
+node "$RUN_STATE" accept "$ROOT" "$RUN_ID" loop \
     --verdict-id "$REVIEWER_ID" --reviewer "$REVIEWER_ID"
+
+node "$RUN_STATE" set "$ROOT" "$RUN_ID" summary done \
+    --artifact "$WORKER_DIR/outputs/NARRATIVE_REPORT.md"
+node "$RUN_STATE" accept "$ROOT" "$RUN_ID" summary \
+    --verdict-id "deterministic:summary" --reviewer "deterministic:summary"
 ```
 
 ---
@@ -397,43 +605,85 @@ node "$RUN_STATE" accept "$ROOT" "$RUN_ID" research-iteration \
 
 Gate: `metric.current >= metric.target * (1 - tolerance)` AND `iteration >= 2`.
 
-If both conditions met and `AUTO_WRITE=true`, dispatch `/paper-writing`.
+**AUTO_WRITE=false (default):**
+```bash
+node "$RUN_STATE" set "$ROOT" "$RUN_ID" paper-writing skipped
+# Update dashboard status to completed
+jq '.status = "completed"' "$DASHBOARD" > "$DASHBOARD.tmp" && mv "$DASHBOARD.tmp" "$DASHBOARD"
+```
+Resume now reports COMPLETE (all 4 outer phases are terminal).
+
+**AUTO_WRITE=true AND gate passes:**
+Dispatch `/paper-writing` as a worker.
+
+```bash
+WORKER_DIR="$WORKERS_DIR/paper-writing"
+mkdir -p "$WORKER_DIR/outputs"
+```
 
 | Input | Path |
 |-------|------|
-| narrative_report | `$ROOT/research-iteration/NARRATIVE_REPORT.md` |
+| narrative_report | `$WORKERS_DIR/summary/outputs/NARRATIVE_REPORT.md` |
 | wiki | `$ROOT/research-wiki/` |
-| results | `$ROOT/refine-logs/EXPERIMENT_RESULTS.md` |
+| results | `$WORKERS_DIR/${ITERATION}-experiment-bridge/outputs/EXPERIMENT_RESULTS.md` |
 | dashboard | `$ROOT/$DASHBOARD` |
 
 Context: `metric_trajectory`, `final_metric`, `target_metric` (from dashboard)
 
-Output: `paper_dir` at `$ROOT/paper/`
+Output: `paper_dir` at `$WORKERS_DIR/paper-writing/outputs/paper/`
+
+Post-receipt:
+```bash
+node "$RUN_STATE" set "$ROOT" "$RUN_ID" paper-writing done \
+    --artifact "$WORKERS_DIR/paper-writing/outputs/paper/"
+# Accept only after the deterministic audit passes.
+verify_paper_audits.sh "$WORKERS_DIR/paper-writing/outputs/paper/" --assurance submission
+node "$RUN_STATE" accept "$ROOT" "$RUN_ID" paper-writing \
+    --verdict-id "deterministic:verify_paper_audits.sh" \
+    --reviewer "deterministic:verify_paper_audits.sh"
+jq '.status = "completed"' "$DASHBOARD" > "$DASHBOARD.tmp" && mv "$DASHBOARD.tmp" "$DASHBOARD"
+```
+
+**AUTO_WRITE=true BUT gate fails:**
+```bash
+node "$RUN_STATE" set "$ROOT" "$RUN_ID" paper-writing skipped
+jq '.status = "completed"' "$DASHBOARD" > "$DASHBOARD.tmp" && mv "$DASHBOARD.tmp" "$DASHBOARD"
+```
 
 ---
 
 ## Resume Protocol
 
+Resume uses two sources: **run-state** for the outer lifecycle and **dashboard**
+for intra-iteration progress.
+
 ```bash
-if [ -n "$ARG_RESUME" ]; then
-    RUN_ID="$ARG_RESUME"
-    DASHBOARD=".aris/runs/$RUN_ID/dashboard.json"
-    WORKERS_DIR=".aris/runs/$RUN_ID/workers"
-    ITERATION=$(jq -r '.iteration' "$DASHBOARD")
-    STATUS=$(jq -r '.status' "$DASHBOARD")
-
-    if [ "$STATUS" = "stopped" ] || [ "$STATUS" = "completed" ]; then
-        echo "Run $RUN_ID already completed (status: $STATUS). Nothing to resume."
-        exit 0
-    fi
-
-    # Determine last completed phase and jump to the next one
-    LAST_PHASE=$(jq -r '.phases_completed[-1] // "preconditions"' "$DASHBOARD")
-    echo "Resuming run $RUN_ID from iteration $ITERATION, after phase: $LAST_PHASE"
-fi
+# Outer lifecycle: which non-repeating phase to resume at
+RESUME_OUTER=$(node "$RUN_STATE" resume "$ROOT" "$RUN_ID")
+# Intra-iteration: which phase within the iteration was in progress
+ITERATION=$(jq -r '.iteration' "$DASHBOARD")
+CURRENT_PHASE=$(jq -r '.current_phase' "$DASHBOARD")
+STATUS=$(jq -r '.status' "$DASHBOARD")
 ```
 
-**Stale-state recovery:** If dashboard `updated_at` is older than 24h, start a fresh run instead of resuming.
+| `RESUME_OUTER` | `STATUS` | Action |
+|---|---|---|
+| `COMPLETE` | any | Nothing to do |
+| `init` | any | Restart from preconditions |
+| `loop` | `running` | Resume iteration at `CURRENT_PHASE` within iteration `ITERATION` |
+| `loop` | `finishing` | Skip loop, proceed to summary (stop gate already fired) |
+| `summary` | `finishing` | Resume summary |
+| `paper-writing` | `finishing` | Resume paper-writing |
+
+Within the iteration loop, `current_phase` tells the orchestrator which phase
+was last started. The orchestrator checks for existing `$WORKERS_DIR/${ITERATION}-<phase>/receipt.json`:
+- Receipt exists → phase completed, merge dashboard_patch if not already merged, advance
+- No receipt → re-dispatch the phase
+
+Never infer corruption from dashboard age. An old run remains resumable; use
+run-state, receipts, and live-agent checks to decide whether to re-attach or
+re-dispatch. Start a fresh run only when explicitly requested or when persisted
+state fails validation.
 
 ---
 

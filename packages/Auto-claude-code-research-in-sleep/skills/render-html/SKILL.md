@@ -114,6 +114,59 @@ The `--review` / `--no-review` flags are parsed by the SKILL orchestrator
 stdlib and never calls MCP. See § _HTML Review Gate_ below for the
 exact resolution and prompt.
 
+## Manifest Protocol (Worker Mode)
+
+When invoked with `— manifest: <path>`, this skill runs as a worker under an
+orchestrator (`/research-pipeline` or `/auto-research-loop`). The manifest
+provides all inputs; the skill writes its receipt to the manifest's directory.
+
+**Startup check:**
+```
+if "$ARGUMENTS" contains "— manifest:"; then
+    MANIFEST_PATH=<extracted path>
+    MANIFEST=$(cat "$MANIFEST_PATH")
+    WORKER_DIR=$(dirname "$MANIFEST_PATH")
+    OUTPUT_DIR=$(jq -r '.output_dir' <<< "$MANIFEST")
+    mkdir -p "$OUTPUT_DIR"
+    # Read inputs from manifest.inputs (file paths)
+    # Read context from manifest.context (scalar values)
+fi
+```
+
+**Receipt (write last to `$WORKER_DIR/receipt.json`):**
+```json
+{
+  "worker": "render-html",
+  "iteration": 1,
+  "status": "done",
+  "error": null,
+  "primary_output": "<generated-filename>.html",
+  "summary": { "template": "<academic|dashboard>", "source_file": "<input path>" },
+  "dashboard_patch": {
+    "html_rendered": true
+  },
+  "completed_at": "<ISO-8601>",
+  "has_errors": false,
+  "error_count": 0
+}
+```
+
+On failure, write receipt with `"status": "failed"` and structured `error` object
+per `worker-manifest.md`. Append system errors to `$WORKER_DIR/progress_error.md`.
+
+**Direct-call mode:** When invoked WITHOUT `— manifest:`, the skill operates
+normally using its own argument parsing. No receipt is written.
+
+**Output path mapping:** In worker mode, every hardcoded output path in this
+skill's body (listed below) maps to `$OUTPUT_DIR/<filename>`. The orchestrator's
+subsequent input-manifests reference prior workers' outputs using their full
+`$WORKERS_DIR/<iter>-<phase>/outputs/<file>` path. In direct-call mode, the
+paths below are project-root-relative as written.
+
+| Direct-call path | Worker-mode path |
+|---|---|
+| `<input>.html` (alongside source) | `$OUTPUT_DIR/<input>.html` |
+
 ## Workflow
 
 ### Step 1: Identify the artifact

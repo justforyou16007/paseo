@@ -4,7 +4,7 @@ A long ARIS workflow (`/research-pipeline`, `/paper-writing`, `/idea-discovery`)
 can fail mid-run — a rate limit, a crash, an overnight timeout. Today there is no
 record of _which phase finished_, so a resume restarts from scratch (this is the
 live complaint in issue #272: "the survey run failed — can it continue from the
-last task?"). `tools/run_state.py` fixes that: a run is an **ordered list of
+last task?"). `src/tools/run-state.ts` fixes that: a run is an **ordered list of
 phases with status**, persisted at `<root>/.aris/runs/<run_id>.json`.
 
 ## The one idea that makes this ARIS, not just "reopen the session"
@@ -29,10 +29,15 @@ silently skipped. This is `acceptance-gate.md` made operational: **a loop can
 DRIVE resume, it cannot ACQUIT a phase past itself.**
 
 The split is enforced in code, not just docs: `set_status()` may only write
-`running/done/failed`; only `accept()` writes `accepted`, and it **requires** a
-non-empty `verdict_id` + `reviewer` — you cannot mark a phase accepted without
-recording who acquitted it. (A `done`-but-never-`accepted` phase is therefore
-_structurally_ visible as an unmet acceptance obligation.)
+`running/done/failed/skipped`; only `start()` writes `pending`; only `accept()`
+writes `accepted`, and it **requires** a non-empty `verdict_id` + `reviewer` —
+you cannot mark a phase accepted without recording who acquitted it. (A
+`done`-but-never-`accepted` phase is therefore _structurally_ visible as an
+unmet acceptance obligation.)
+
+Terminal states are immutable. `set_status()` cannot move an `accepted` or
+`skipped` phase back into execution. Repeating `accept()` with the same verdict
+and reviewer is idempotent; conflicting acceptance provenance is rejected.
 
 ## Who may call `accept`
 
@@ -54,28 +59,37 @@ handle** — the reviewer thread/trace id, or the path/sha of the verifier's rep
 (e.g. `.aris/audit-verifier-report.json`) — not just a label, so the acceptance
 is auditable later.
 
-**Concurrency:** one orchestrator per run (single-writer contract). Mutations are
-load-modify-save under a best-effort `flock` with atomic temp-file replace, so a
-stray concurrent resumer can't corrupt the JSON — but a `/loop`/cron resumer must
-not deliberately double-run a run (per `external-cadence.md`, the scheduler
-triggers resume, it does not own the verdict).
+**Concurrency:** one orchestrator per run (single-writer contract). All mutations
+use an advisory file lock (`O_EXCL` lock file with ownership token) around a
+load-modify-save cycle with atomic temp-file rename. The lock contains a
+`PID:timestamp:random` token; release verifies ownership before unlinking.
+A lock held by a confirmed-dead local PID is broken immediately; a lock whose
+PID is alive is never broken regardless of age. Malformed locks older than 120s
+are broken as a last resort. PID ownership is host-local; do not place one run
+on a filesystem concurrently written by orchestrators on different hosts.
+Concurrent `set` calls from parallel phases on one host serialize correctly.
+JSON is validated on load (structure, types, run_id consistency, phase
+uniqueness, acceptance provenance) — corrupt state files raise a clear error
+instead of silently propagating bad data.
 
 ## Helper API / CLI
 
-```
-from run_state import start_run, set_status, accept, resume_point
-start_run(root, run_id, phases)                 # phases: ["W1","W1.5","W2","W3"]
-set_status(root, run_id, phase, "running"|"done"|"failed", artifact=path)
-accept(root, run_id, phase, verdict_id, reviewer)   # the ONLY path to `accepted`
-resume_point(root, run_id)  # -> first NON-TERMINAL phase ({accepted,skipped} skipped), or None
+TypeScript API (exported from `src/tools/run-state.ts`):
+```ts
+import { startRun, setStatus, accept, resumePoint } from "./run-state.js";
+startRun(root, runId, phases)                        // phases: ["W1","W1.5","W2","W3"]
+setStatus(root, runId, phase, "running"|"done"|"failed"|"skipped", artifact?)
+accept(root, runId, phase, verdictId, reviewer)      // the ONLY path to `accepted`
+resumePoint(root, runId)  // -> first NON-TERMINAL phase, or null
 ```
 
+CLI (via built `dist/tools/run-state.js`):
 ```
-python3 tools/run_state.py start  <root> <run_id> --phases "W1,W1.5,W2,W3"
-python3 tools/run_state.py set    <root> <run_id> W1 done --artifact idea-stage/IDEA_REPORT.md
-python3 tools/run_state.py accept <root> <run_id> W1 --verdict-id codex:019e... --reviewer codex-gpt-5.5
-python3 tools/run_state.py resume <root> <run_id>   # prints the resume-target phase name on stdout
-python3 tools/run_state.py status <root> <run_id>
+node dist/tools/run-state.js start  <root> <run_id> --phases "W1,W1.5,W2,W3"
+node dist/tools/run-state.js set    <root> <run_id> W1 done --artifact idea-stage/IDEA_REPORT.md
+node dist/tools/run-state.js accept <root> <run_id> W1 --verdict-id codex:019e... --reviewer codex-gpt-5.5
+node dist/tools/run-state.js resume <root> <run_id>   # prints the resume-target phase name on stdout
+node dist/tools/run-state.js status <root> <run_id>
 ```
 
 ## Integration pattern for a workflow skill
@@ -120,7 +134,7 @@ has one extra decision per phase — **is the phase's agent still alive?**
 The `verdict_id` durable handle recorded at `accept` is now the paseo codex
 agent-id (for codex-accepted phases) or the verifier-report path/sha (for
 deterministic phases) — both already fit the "durable handle string" contract,
-so `run_state.py` is unchanged. Resume resolves the agent-id the same way it
+so `run-state.ts` is unchanged. Resume resolves the agent-id the same way it
 resolved the codex thread id: it is an opaque string on disk; live-ness is the
 only new question, answered by `list_agents`.
 

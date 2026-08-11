@@ -41,6 +41,63 @@ Each phase builds on the previous one's output. The final deliverables are a val
 
 > 💡 These are defaults. Override by telling the skill, e.g., `/idea-discovery "topic" — ref paper: https://arxiv.org/abs/2406.04329` or `/idea-discovery "topic" — compact: true`.
 
+## Manifest Protocol (Worker Mode)
+
+When invoked with `— manifest: <path>`, this skill runs as a worker under an
+orchestrator (`/research-pipeline` or `/auto-research-loop`). The manifest
+provides all inputs; the skill writes its receipt to the manifest's directory.
+
+**Startup check:**
+```
+if "$ARGUMENTS" contains "— manifest:"; then
+    MANIFEST_PATH=<extracted path>
+    MANIFEST=$(cat "$MANIFEST_PATH")
+    WORKER_DIR=$(dirname "$MANIFEST_PATH")
+    OUTPUT_DIR=$(jq -r '.output_dir' <<< "$MANIFEST")
+    mkdir -p "$OUTPUT_DIR"
+    # Read inputs from manifest.inputs (file paths)
+    # Read context from manifest.context (scalar values)
+fi
+```
+
+**Receipt (write last to `$WORKER_DIR/receipt.json`):**
+```json
+{
+  "worker": "idea-discovery",
+  "iteration": 1,
+  "status": "done",
+  "error": null,
+  "primary_output": "IDEA_REPORT.md",
+  "summary": { "num_ideas": "<int>", "top_idea": "<title>" },
+  "dashboard_patch": {
+    "best_idea": {"id": "idea-1", "title": "top-ranked idea title", "metric": null, "iteration": 1},
+    "idea_ids": ["idea-1-id", "idea-2-id"]
+  },
+  "completed_at": "<ISO-8601>",
+  "has_errors": false,
+  "error_count": 0
+}
+```
+
+On failure, write receipt with `"status": "failed"` and structured `error` object
+per `worker-manifest.md`. Append system errors to `$WORKER_DIR/progress_error.md`.
+
+**Direct-call mode:** When invoked WITHOUT `— manifest:`, the skill operates
+normally using its own argument parsing. No receipt is written.
+
+**Output path mapping:** In worker mode, every hardcoded output path in this
+skill's body (listed below) maps to `$OUTPUT_DIR/<filename>`. The orchestrator's
+subsequent input-manifests reference prior workers' outputs using their full
+`$WORKERS_DIR/<iter>-<phase>/outputs/<file>` path. In direct-call mode, the
+paths below are project-root-relative as written.
+
+| Direct-call path | Worker-mode path |
+|---|---|
+| `idea-stage/IDEA_REPORT.md` | `$OUTPUT_DIR/IDEA_REPORT.md` |
+| `idea-stage/IDEA_REPORT.html` | `$OUTPUT_DIR/IDEA_REPORT.html` |
+| `refine-logs/FINAL_PROPOSAL.md` | `$OUTPUT_DIR/FINAL_PROPOSAL.md` |
+| `refine-logs/EXPERIMENT_PLAN.md` | `$OUTPUT_DIR/EXPERIMENT_PLAN.md` |
+
 ## Pipeline
 
 ### Phase 0: Load Research Brief (if available)

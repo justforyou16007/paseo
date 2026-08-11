@@ -46,6 +46,62 @@ This skill expects one or more of:
 
 If none exist, ask the user what experiments to implement.
 
+## Manifest Protocol (Worker Mode)
+
+When invoked with `— manifest: <path>`, this skill runs as a worker under an
+orchestrator (`/research-pipeline` or `/auto-research-loop`). The manifest
+provides all inputs; the skill writes its receipt to the manifest's directory.
+
+**Startup check:**
+```
+if "$ARGUMENTS" contains "— manifest:"; then
+    MANIFEST_PATH=<extracted path>
+    MANIFEST=$(cat "$MANIFEST_PATH")
+    WORKER_DIR=$(dirname "$MANIFEST_PATH")
+    OUTPUT_DIR=$(jq -r '.output_dir' <<< "$MANIFEST")
+    mkdir -p "$OUTPUT_DIR"
+    # Read inputs from manifest.inputs (file paths)
+    # Read context from manifest.context (scalar values)
+fi
+```
+
+**Receipt (write last to `$WORKER_DIR/receipt.json`):**
+```json
+{
+  "worker": "experiment-bridge",
+  "iteration": 1,
+  "status": "done",
+  "error": null,
+  "primary_output": "EXPERIMENT_RESULTS.md",
+  "summary": { "experiments_run": "<int>", "experiments_passed": "<int>" },
+  "dashboard_patch": {
+    "primary_metric": 0.82,
+    "experiment_ids": ["exp-1-id", "exp-2-id"]
+  },
+  "completed_at": "<ISO-8601>",
+  "has_errors": false,
+  "error_count": 0
+}
+```
+
+On failure, write receipt with `"status": "failed"` and structured `error` object
+per `worker-manifest.md`. Append system errors to `$WORKER_DIR/progress_error.md`.
+
+**Direct-call mode:** When invoked WITHOUT `— manifest:`, the skill operates
+normally using its own argument parsing. No receipt is written.
+
+**Output path mapping:** In worker mode, every hardcoded output path in this
+skill's body (listed below) maps to `$OUTPUT_DIR/<filename>`. The orchestrator's
+subsequent input-manifests reference prior workers' outputs using their full
+`$WORKERS_DIR/<iter>-<phase>/outputs/<file>` path. In direct-call mode, the
+paths below are project-root-relative as written.
+
+| Direct-call path | Worker-mode path |
+|---|---|
+| `refine-logs/EXPERIMENT_RESULTS.md` | `$OUTPUT_DIR/EXPERIMENT_RESULTS.md` |
+| `refine-logs/EXPERIMENT_TRACKER.md` | `$OUTPUT_DIR/EXPERIMENT_TRACKER.md` |
+| `EXPERIMENT_LOG.md` | `$OUTPUT_DIR/EXPERIMENT_LOG.md` |
+
 ## Workflow
 
 ### Phase 1: Parse the Experiment Plan
@@ -357,7 +413,7 @@ PROMPT="/analyze-results — project: $PROJECT"
 # mcp__paseo__create_agent with notifyOnFinish; await receipt
 ```
 
-Wait for the receipt at `.aris/runs/<run_id>.analyze-results.<project>.done.json`.
+Wait for the internal direct-call receipt at `.aris/runs/<run_id>.analyze-results.<project>.done.json`.
 The analysis output at `refine-logs/EXPERIMENT_RESULTS.md` becomes input to the
 subsequent review phase (W2), giving the reviewer structured data rather than
 raw tracker rows.

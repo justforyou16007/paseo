@@ -50,10 +50,11 @@ handshake is **push**, not request-response:
   2. **Wait** — parent calls `mcp__paseo__wait_for_agent` (or reacts to
      the push notification). Parent **MUST NOT** poll `get_agent_status`
      in a loop.
-  3. **Judge** — parent reads the child's receipt file
-     (`.aris/runs/<run_id>.<phase>.done.json`). The receipt is the
-     authoritative payload; `<agent-response>` text is convenience only
-     and can be lost to preemption (`replaceRunning: true`).
+  3. **Judge** — parent reads the child's `receipt.json` from the worker
+     directory (`.aris/runs/<run_id>/workers/<iter>-<phase>/receipt.json`
+     per `worker-manifest.md`). The receipt is the authoritative payload;
+     `<agent-response>` text is convenience only and can be lost to
+     preemption (`replaceRunning: true`).
   4. **Archive** — for fresh-purpose children, call
      `mcp__paseo__archive_agent` the moment the receipt is read
      ("用完即 archive"). For continuation children, keep alive until the
@@ -70,7 +71,7 @@ listed at `mcp__paseo__*` (see `paseo-tools.ts` in `packages/server`).
 The host `Skill` / `Task` / `Agent` tools are **forbidden** in ARIS workflows.
 
 **Strict mode**: if `mcp__paseo__list_agents` is unavailable at
-orchestrator startup, the run is **blocked** (`run_state.py` writes
+orchestrator startup, the run is **blocked** (`run-state.js` writes
 `status=BLOCKED` for the current phase) — it does **not** fall back to
 in-process `Skill` tool. The run stops and the user is asked to start
 the Paseo daemon.
@@ -246,22 +247,22 @@ Run context (this run, do not re-derive):
 
 Operating rules (non-negotiable):
   1. Resolve every helper via integration-contract.md §2 (.aris/tools → tools → $ARIS_REPO/tools). Never hardcode a path.
-  2. Write artifacts to the standard stage dir for this phase (per the SKILL's output protocol). Do NOT write elsewhere.
+  2. Write every artifact under the `output_dir` from the input manifest. Do NOT write elsewhere.
   3. When you need the GPT-5.5 reviewer, spawn/continue a paseo codex sub-agent per paseo-reviewer-dispatch.md.
-  4. Do NOT call run_state.py accept. You may `set done --artifact <path>`; acceptance is the orchestrator's job (acceptance-gate.md).
-  5. On completion, write the receipt file below and stop. Do not call accept, do not start the next phase.
+  4. Do NOT call run-state.js accept. You may `set done --artifact <path>`; acceptance is the orchestrator's job (acceptance-gate.md).
+  5. On completion, write the receipt per worker-manifest.md and stop. Do not call accept, do not start the next phase.
 
-Receipt (write this last, to .aris/runs/<run_id>.<phase>.done.json):
-  { "phase": "<phase>", "artifact_path": "<abs path>", "summary": "<1-3 lines>",
-    "next_step": "<suggested next phase or null>", "reviewer_used": "<codex-agent-id or null>" }
+Receipt (write last to the worker directory's receipt.json — path from your input-manifest):
+  Per worker-manifest.md schema: { worker, iteration, status, error,
+  primary_output (relative to output_dir), summary, dashboard_patch,
+  completed_at, has_errors, error_count }
 ```
 
 Why a receipt file (and not `<agent-response>`): the orchestrator reads the
 receipt in its SHORT notification turn, preemption-safe. The file is the
 observable side effect (`integration-contract.md` §3 — "the model said it
-ran" is not a receipt). `run_state.py` is unchanged; the orchestrator uses
-the receipt's `artifact_path` for `set done` and its own gate result for
-`accept`.
+ran" is not a receipt). The orchestrator uses the receipt's `primary_output`
+for `run-state.js set done` and its own gate result for `accept`.
 
 ## The two continuity modes (the core of the migration)
 
@@ -381,7 +382,7 @@ is warned before they hit it.
 On `/research-pipeline — resume <run_id>`, the orchestrator's job is to
 restore each phase's child agent if possible:
 
-1. `run_state.py resume <run_id>` → first non-terminal phase.
+1. `run-state.js resume <run_id>` → first non-terminal phase.
 2. `list_agents` — is that phase's W-agent (or reviewer) still alive?
    - **Alive** → re-attach: await its `notifyOnFinish` (do NOT re-prompt a
      verdict agent mid-run — the fence; only await).
@@ -393,8 +394,8 @@ restore each phase's child agent if possible:
      codex-server-restart; the trace files survive, the live thread may not).
 
 The orchestrator never judges quality on resume — it reads on-disk
-artifacts, runs the gate, calls `run_state.py accept`. The
-`run_state.py` self-acquittal tripwire (`accept` warns on a `claude*`
+artifacts, runs the gate, calls `run-state.js accept`. The
+`run-state.js` self-acquittal tripwire (`accept` warns on a `claude*`
 reviewer) is the backstop.
 
 ## Anti-patterns to refuse in review
@@ -478,7 +479,7 @@ assume**. The core principle:
 
 | Child state / log signal                                    | Parent action                                                                                                     |
 | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| Child completed its task (receipt file `.done.json` exists) | Read the receipt, `set done`, run the gate, `archive_agent`. This is the normal wait_for_agent path — no idle     |
+| Child completed its task (receipt.json exists in worker directory) | Read the receipt, `set done`, run the gate, `archive_agent`. This is the normal wait_for_agent path — no idle     |
 | Child is **idle and waiting for its OWN sub-agent**         | **Do nothing.** The child is supervising its sub-agent correctly. Wait for the child's notifyOnFinish.            |
 | (child has live sub-agents listed via `list_agents`)        | Do NOT send a continuation prompt — that would interrupt the child's own supervision loop.                        |
 | Child is **idle with no sub-agents, no receipt**            | The child may have stalled or hit a silent error. Send a **continuation prompt** via `send_agent_prompt`:         |
@@ -514,9 +515,10 @@ receipt file. The parent receives this signal by calling `wait_for_agent`.
    the child** to block until the child finishes or raises a permission
    request. `wait_for_agent` returns the child's completion signal;
    it does NOT poll — it awaits the push notification.
-3. **The child MUST write a receipt file** (`.aris/runs/<run_id>.<phase>.done.json`)
+3. **The child MUST write a receipt file** (`workers/<iter>-<phase>/receipt.json`)
    as its last action before stopping. The receipt is the authoritative
-   payload — preemption-safe, survives crashes.
+   payload — preemption-safe, survives crashes. Schema:
+   [`worker-manifest.md`](worker-manifest.md).
 4. **After `wait_for_agent` returns**, the parent reads the receipt file
    (NOT `<agent-response>`), runs the gate, and archives the child.
    The notification handler is SHORT: read → `set done` → gate → archive.
@@ -525,51 +527,47 @@ receipt file. The parent receives this signal by calling `wait_for_agent`.
    `wait_for_agent` pair per child). For parallel fan-out, see
    `fan-out-pattern.md`.
 
-### Receipt file format (standardized)
+### Receipt file format
 
-Written by the child agent as its final action:
+Workers dispatched with a manifest write `receipt.json` in the worker
+directory (same directory as `input-manifest.json`). The schema is defined
+once in [`worker-manifest.md`](worker-manifest.md) — this document does not
+duplicate it. Key fields the parent uses:
 
-```json
-{
-  "phase": "<phase-name>",
-  "run_id": "<run_id>",
-  "artifact_path": "<absolute-path-to-main-output>",
-  "summary": "<1-3 line summary of what was accomplished>",
-  "next_step": "<suggested next phase or null>",
-  "sub_agent_ids": ["<agent-id-1>", "<agent-id-2>"],
-  "completed_at": "<ISO-8601-timestamp>"
-}
-```
+- `status` — `"done"` or `"failed"`
+- `primary_output` — relative path within `output_dir`
+- `dashboard_patch` — merged into `dashboard.json` by the orchestrator
+- `has_errors` / `error_count` — system error tracking
 
-The parent reads this file after `wait_for_agent` returns. The
-`sub_agent_ids` array helps the parent understand if the child was
-managing sub-agents (for idle-supervision decision matrix above).
+Workers dispatched without a manifest (direct-call mode, e.g. internal
+sub-agent coordination within a skill) may use a skill-specific receipt format.
+These internal receipts are not read by orchestrators.
 
 ### Parent dispatch flow (pseudocode)
 
 ```
-# Dispatch a child agent
-child_id = create_agent(provider, initialPrompt, notifyOnFinish=true)
-
-# Wait for the child to complete (push notification via notifyOnFinish)
+# Dispatch via manifest protocol
+WORKER_DIR = ".aris/runs/<run_id>/workers/<iter>-<phase>"
+mkdir -p "$WORKER_DIR/outputs"
+# Write input-manifest.json ...
+child_id = create_agent(provider, "/<skill> — manifest: $WORKER_DIR/input-manifest.json",
+                        notifyOnFinish=true)
 result = wait_for_agent(child_id)
-# result contains the child's completion status / permission requests
 
-# Read the receipt file
-receipt_path = ".aris/runs/<run_id>.<phase>.done.json"
+receipt_path = "$WORKER_DIR/receipt.json"
 if receipt_path exists:
     receipt = read_json(receipt_path)
-    run_state.set(run_id, phase, "done", artifact=receipt.artifact_path)
-    if gate_passes(phase, receipt):
+    artifact = "$WORKER_DIR/outputs/" + receipt.primary_output
+    run_state.set(run_id, phase, "done", artifact=artifact)
+    merge(dashboard, receipt.dashboard_patch)
+    if gate_passes(phase, dashboard):
         run_state.accept(run_id, phase, verdict_id=..., reviewer=...)
-    archive_agent(child_id)  # 用完即 archive
+    archive_agent(child_id)
 else:
-    # Child finished but no receipt — check status
     status = get_agent_status(child_id)
     if status == "idle":
-        # Send continuation to write receipt
         send_agent_prompt(child_id,
-            "Write the completion receipt file and stop.")
+            "Write the completion receipt.json and stop.")
 ```
 
 > **Why `wait_for_agent` is needed even with `notifyOnFinish: true`:**
@@ -600,7 +598,7 @@ else:
 - [`reviewer-independence.md`](reviewer-independence.md) — reviewer
   children get file paths only; the executor child may carry run context
   but never a pre-digested quality verdict.
-- [`resumable-runs.md`](resumable-runs.md) — `run_state.py` done/accepted
+- [`resumable-runs.md`](resumable-runs.md) — `run-state.js` done/accepted
   machine; resume re-attaches a live child or recreates a dead one.
 - [`external-cadence.md`](external-cadence.md) — stall detection →
   forced structural pivot; heartbeat idle-supervision rules.

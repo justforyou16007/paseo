@@ -54,48 +54,162 @@ Each stage follows the same four-step cycle. All `create_agent` parameters come
 from `.aris/runs/<run_id>.paseo-config.json` (emitted once at startup, read as `$CFG`).
 Full manifest/receipt/dashboard schemas: [`worker-manifest.md`](../shared-references/worker-manifest.md).
 
-1. **Prepare manifest.** `mkdir -p $STAGE_DIR/outputs/`, write `$STAGE_DIR/input-manifest.json`
+Variables used throughout:
+```
+DASHBOARD=".aris/runs/$RUN_ID/dashboard.json"
+WORKERS_DIR=".aris/runs/$RUN_ID/workers"
+RENDER="$ARIS_REPO/skills/research-pipeline/scripts/render_w_agent_prompt.sh"
+RUN_STATE="$ARIS_REPO/dist/tools/run-state.js"   # resolved via integration-contract.md §2
+```
+
+1. **Prepare manifest.** `WORKER_DIR="$WORKERS_DIR/<phase>"`, then
+   `mkdir -p "$WORKER_DIR/outputs/"`, write `$WORKER_DIR/input-manifest.json`
    with the stage's inputs (table below) and context scalars.
-2. **Render prompt + dispatch.** `run-state.js set <run_id> <phase> running`, then:
+2. **Render prompt + dispatch.** `node "$RUN_STATE" set "$ROOT" "$RUN_ID" <phase> running`, then:
    ```bash
    PROMPT=$(bash "$RENDER" --phase <phase> --run-id "$RUN_ID" --root "$ROOT" \
-            --skill skills/<leaf>/SKILL.md --extra "<stage context> | manifest: $STAGE_DIR/input-manifest.json")
+            --skill skills/<leaf>/SKILL.md --extra "<stage context> | manifest: $WORKER_DIR/input-manifest.json")
    ```
    `mcp__paseo__create_agent` with `provider: $CFG.executor_provider`,
    `settings: {modeId: $CFG.executor_mode, thinkingOptionId: $CFG.executor_thinking}`,
    `notifyOnFinish: true`. Reviewer sub-agents (spawned by W-agents) use
    `$CFG.reviewer_provider` / `reviewer_mode` / `reviewer_thinking`.
-3. **On notifyOnFinish:** read `$STAGE_DIR/receipt.json`, apply `dashboard_patch`
-   to `dashboard.json`, `run-state.js set <run_id> <phase> done --artifact <receipt.artifact_path>`.
+3. **On notifyOnFinish:** read `$WORKER_DIR/receipt.json`. If its path is already
+   in `dashboard.applied_receipts`, skip the merge. Otherwise apply the
+   dot-aware `dashboard_patch`, append the receipt path, and atomically update
+   `current_phase` plus `updated_at`. Save artifact with full path:
+   `node "$RUN_STATE" set "$ROOT" "$RUN_ID" <phase> done --artifact "$WORKER_DIR/outputs/<receipt.primary_output>"`.
 
 **Error tracking:** If `receipt.has_errors == true`, update dashboard:
 `dashboard.system_errors.total += receipt.error_count` and
-`dashboard.system_errors.last = "<stage-name>"`. Do NOT read
+`dashboard.system_errors.last = "<phase>"`. Do NOT read
 `progress_error.md` (Rule 5).
 
-4. **Run the gate** (per acceptance table below). On pass: `run-state.js accept`,
+4. **Run the gate** (per acceptance table below). On pass:
+   `node "$RUN_STATE" accept "$ROOT" "$RUN_ID" <phase> --verdict-id <id> --reviewer <reviewer>`,
    then `archive_agent` the W-agent (用完即 archive).
 
 ## Startup
 
-1. **Probe paseo MCP.** If unavailable → fallback to synchronous Skill-tool path
-   (same verdicts and gates, only dispatch substrate changes).
-2. **Emit run config once** via `render_w_agent_prompt.sh --emit-config`:
-   ```bash
-   CONFIG=$(bash "$RENDER" --emit-config --run-id "$RUN_ID" --root "$ROOT")
-   ```
-   Writes all 12 paseo variables to `.aris/runs/<run_id>.paseo-config.json`.
-   Hold `$CFG` for the whole run — every `create_agent` reads from it.
-3. **Read AUTO_RESEARCH_ITERATIONS** from CLAUDE.md `## ARIS Paseo` block (default 0).
-   If >0, phases = `idea-discovery,research-iteration,experiment-bridge,auto-review-loop,summary,paper-writing`;
-   else phases = `idea-discovery,experiment-bridge,auto-review-loop,summary,paper-writing`.
-4. **Initialize dashboard** at `.aris/runs/$RUN_ID/dashboard.json` with fields per
-   the [`worker-manifest.md` dashboard schema](../shared-references/worker-manifest.md#dashboardjson-schema):
-   `run_id`, `project`, `status: running`, `current_stage: idea-discovery`,
-   `stages_completed: []`, `metric: {name, target, direction}`, `started_at`.
-5. **Resume** (`— resume <run_id>`): `run-state.js resume` returns the first
-   non-accepted phase. Re-attach live agents (list_agents); recreate dead ones.
-   See [Resume](#resume) below.
+```bash
+cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
+ROOT=$(pwd)
+
+# Resolve ARIS_REPO + helpers (integration-contract.md §2)
+if [ -f .aris/installed-skills.txt ]; then
+    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
+fi
+RUN_STATE="$ARIS_REPO/dist/tools/run-state.js"
+RENDER="$ARIS_REPO/skills/research-pipeline/scripts/render_w_agent_prompt.sh"
+```
+
+### 1. Probe paseo MCP
+
+If unavailable → fallback to synchronous Skill-tool path (same verdicts and
+gates, only dispatch substrate changes).
+
+### 2. Determine phases
+
+```bash
+# Read AUTO_RESEARCH_ITERATIONS from CLAUDE.md (default 0)
+ARI=$(awk '/^## ARIS Paseo/{f=1;next} f&&/^AUTO_RESEARCH_ITERATIONS:/{print $2;exit}' CLAUDE.md 2>/dev/null)
+ARI=${ARI:-0}
+if [ "$ARI" -gt 0 ] 2>/dev/null; then
+    PHASES="idea-discovery,research-iteration,experiment-bridge,auto-review-loop,summary,paper-writing"
+else
+    PHASES="idea-discovery,experiment-bridge,auto-review-loop,summary,paper-writing"
+fi
+```
+
+### 3. Fresh start vs Resume
+
+```bash
+if [ -n "$ARG_RESUME" ]; then
+    # ---- RESUME PATH ----
+    # Do NOT create/overwrite any files. Rehydrate from existing state.
+    RUN_ID="$ARG_RESUME"
+    DASHBOARD=".aris/runs/$RUN_ID/dashboard.json"
+    WORKERS_DIR=".aris/runs/$RUN_ID/workers"
+
+    if [ ! -f "$DASHBOARD" ]; then
+        echo "ERROR: No dashboard at $DASHBOARD. Cannot resume."
+        exit 1
+    fi
+
+    # Read run config (written at original startup)
+    CFG=".aris/runs/${RUN_ID}.paseo-config.json"
+    if [ ! -f "$CFG" ]; then
+        echo "ERROR: No paseo config at $CFG. Cannot resume."
+        exit 1
+    fi
+
+    ARI=$(jq -r '.config.auto_research_iterations // 0' "$DASHBOARD")
+    AUTO_WRITE=$(jq -r '.config.auto_write // false' "$DASHBOARD")
+    VENUE=$(jq -r '.config.venue // "ICLR"' "$DASHBOARD")
+    RENDER_HTML=$(jq -r '.config.render_html // true' "$DASHBOARD")
+
+    # Use run-state to find the resume point
+    RESUME_PHASE=$(node "$RUN_STATE" resume "$ROOT" "$RUN_ID")
+    if [ "$RESUME_PHASE" = "COMPLETE" ]; then
+        jq '.status = "completed" | .updated_at = (now | todateiso8601)' \
+            "$DASHBOARD" > "$DASHBOARD.tmp" && mv "$DASHBOARD.tmp" "$DASHBOARD"
+        echo "Run $RUN_ID: all phases accepted/skipped. Nothing to resume."
+        exit 0
+    fi
+    echo "Resuming run $RUN_ID at phase: $RESUME_PHASE"
+
+    # Re-attach live agents (list_agents); recreate dead ones.
+    # Jump to the phase returned by run-state resume.
+
+else
+    # ---- FRESH START PATH ----
+    RUN_ID=$(date +%Y%m%d-%H%M%S)-research-pipeline
+    DASHBOARD=".aris/runs/$RUN_ID/dashboard.json"
+    WORKERS_DIR=".aris/runs/$RUN_ID/workers"
+    mkdir -p "$WORKERS_DIR"
+    AUTO_WRITE=${AUTO_WRITE:-false}
+    VENUE=${VENUE:-ICLR}
+    RENDER_HTML=${RENDER_HTML:-true}
+
+    # Emit paseo run config (must happen after RUN_ID is assigned)
+    CFG=$(bash "$RENDER" --emit-config --run-id "$RUN_ID" --root "$ROOT")
+
+    # Initialize run-state
+    node "$RUN_STATE" start "$ROOT" "$RUN_ID" --phases "$PHASES"
+
+    # Initialize dashboard.json per worker-manifest.md schema
+    cat > "$DASHBOARD" <<DASH
+{
+  "run_id": "$RUN_ID",
+  "project": "$(basename "$ROOT")",
+  "status": "running",
+  "iteration": 1,
+  "max_iterations": 1,
+  "current_phase": "idea-discovery",
+  "config": {
+    "auto_research_iterations": $ARI,
+    "auto_write": $AUTO_WRITE,
+    "venue": "$VENUE",
+    "render_html": $RENDER_HTML
+  },
+  "metric": { "name": null, "target": null, "direction": "higher_better",
+              "tolerance": 0.01, "current": null, "baseline": null, "history": [] },
+  "best_idea": null,
+  "gaps": { "open": [], "closed": [], "total": 0 },
+  "last_review": { "verdict": null, "score": null, "iteration": null },
+  "stop_reason": null,
+  "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "updated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "system_errors": { "total": 0, "last": null },
+  "applied_receipts": []
+}
+DASH
+
+    RESUME_PHASE="idea-discovery"
+fi
+# From here: $RUN_ID, $DASHBOARD, $WORKERS_DIR, $CFG, $RESUME_PHASE are set.
+# Start executing from $RESUME_PHASE.
+```
 
 ## Pipeline
 
@@ -119,7 +233,7 @@ Dispatch → `skills/idea-discovery/SKILL.md`. W1 internally fans out `/research
 → `/idea-creator` → `/novelty-check` → `/research-review` → `/research-refine-pipeline`
 as paseo claude sub-agents with codex reviewers.
 
-**Output:** `idea-stage/IDEA_REPORT.md` with ranked, validated, pilot-tested ideas.
+**Output:** `IDEA_REPORT.md` in `$WORKERS_DIR/idea-discovery/outputs/`.
 
 **Gate 1 — Idea checkpoint.** Present top ideas to user.
 - **AUTO_PROCEED=false:** wait for user to approve / request changes / reject / stop.
@@ -145,7 +259,7 @@ Requires `## Metric Target` block in CLAUDE.md with `primary: <number> <unit>`.
 | Manifest inputs | |
 |---|---|
 | `idea_report` | `$WORKERS_DIR/idea-discovery/outputs/IDEA_REPORT.md` |
-| `experiment_plan` | `refine-logs/EXPERIMENT_PLAN.md` |
+| `experiment_plan` | `$WORKERS_DIR/idea-discovery/outputs/EXPERIMENT_PLAN.md` |
 | `dashboard` | `$DASHBOARD` |
 
 | Context | |
@@ -160,7 +274,7 @@ Dispatch → `skills/experiment-bridge/SKILL.md`. Queue routing is automatic:
 (codex sub-agent) → sanity check (smallest experiment, up to 3 auto-debug attempts)
 → deploy full experiments → collect results → auto-plan ablations if positive.
 
-**Output:** `refine-logs/EXPERIMENT_RESULTS.md`, `EXPERIMENT_TRACKER.md`,
+**Output:** `EXPERIMENT_RESULTS.md`, `EXPERIMENT_TRACKER.md` in `$WORKERS_DIR/experiment-bridge/outputs/`.
 `EXPERIMENT_LOG.md` (when COMPACT=true).
 
 **Gate:** jobs completed (deterministic). Accept with `--reviewer deterministic:experiment-bridge`.
@@ -186,7 +300,7 @@ continues it. Created once, never recreated by the heartbeat.
 deploy fixes → re-review → repeat until (score ≥ 6 AND verdict ∈ {ready, almost})
 or 4 rounds reached. If round 4 without positive assessment, stop and report.
 
-**Output:** `review-stage/AUTO_REVIEW.md`.
+**Output:** `AUTO_REVIEW.md` in `$WORKERS_DIR/auto-review-loop/outputs/`.
 
 **Gate:** codex positive STOP. Accept with `--verdict-id <codex-agent-id> --reviewer codex-gpt-5.5`.
 
@@ -200,20 +314,22 @@ or 4 rounds reached. If round 4 without positive assessment, stop and report.
 | `claude_md` | `CLAUDE.md` |
 | `dashboard` | `$DASHBOARD` |
 
-Dispatch a sub-agent with prompt: generate `NARRATIVE_REPORT.md` with required
+Dispatch a summary sub-agent to generate `NARRATIVE_REPORT.md` with required
 sections (Research Direction, Method Summary, Key Quantitative Results,
-Figure/Table Inventory, Limitations & Next Steps).
+Figure/Table Inventory, Limitations & Next Steps). The sub-agent writes all
+output to `$WORKERS_DIR/summary/outputs/`.
 
-If `RENDER_HTML=true`: invoke `/render-html "NARRATIVE_REPORT.md" --no-review`
-(internal handoff doc, not reviewer-facing — Stage 3 already reviewed claims).
-Non-blocking: log and continue on failure.
+**Output:** `NARRATIVE_REPORT.md` in `$WORKERS_DIR/summary/outputs/`.
+
+If `RENDER_HTML=true`: after summary receipt, dispatch `/render-html` to render
+`NARRATIVE_REPORT.md` to HTML (non-blocking — log and continue on failure).
 
 **Gate:** NARRATIVE_REPORT.md written (deterministic). Accept with `--reviewer deterministic:summary`.
 
 ### Stage 5: Paper Writing (W3 — optional)
 
 **Skip if AUTO_WRITE=false** (default). Present `/paper-writing` command for
-manual use, then `set <run_id> paper-writing skipped`.
+manual use, then `node "$RUN_STATE" set "$ROOT" "$RUN_ID" paper-writing skipped`.
 
 **If AUTO_WRITE=true:** check VENUE is set (stop and ask if missing), check for
 manual figures (pause and list if needed), then dispatch → `skills/paper-writing/SKILL.md`.
@@ -222,10 +338,13 @@ W3 handles `/paper-plan → /paper-figure → /paper-write → /paper-compile �
 /auto-paper-improvement-loop` as sub-agents, plus 3 mandatory audits
 (`/proof-checker`, `/paper-claim-audit`, `/citation-audit`) + `/kill-argument`.
 
-**Output:** `paper/` directory with LaTeX source, compiled PDF, `PAPER_IMPROVEMENT_LOG.md`.
+**Output:** `paper/` directory in `$WORKERS_DIR/paper-writing/outputs/`.
 
-**Gate:** `verify_paper_audits.sh paper/ --assurance submission` exit 0 (deterministic).
+**Gate:** `verify_paper_audits.sh "$WORKERS_DIR/paper-writing/outputs/paper/" --assurance submission` exit 0 (deterministic).
 Accept with `--reviewer deterministic:verify_paper_audits.sh`.
+
+After `paper-writing` is accepted, atomically set dashboard `status` to
+`completed`, `current_phase` to `paper-writing`, and refresh `updated_at`.
 
 ## Acceptance Authority Table
 
@@ -247,17 +366,19 @@ passes — never on the executor's own say-so.
 Resolve `run-state.js` via canonical chain: `.aris/dist/tools/run-state.js` →
 `dist/tools/run-state.js` → `$ARIS_REPO/dist/tools/run-state.js` (warn-and-skip if unresolved).
 
-- **At start:** `run-state.js resume <root> <run_id>` prints the first non-accepted
-  phase; begin at that stage.
-- **Per stage:** `set running` on entry; `set done --artifact <path>` on receipt.
+- **At start:** `node "$RUN_STATE" resume "$ROOT" "$RUN_ID"` prints the first
+  non-accepted phase; begin at that stage.
+- **Per stage:** `node "$RUN_STATE" set "$ROOT" "$RUN_ID" <phase> running` on entry;
+  `node "$RUN_STATE" set "$ROOT" "$RUN_ID" <phase> done --artifact <path>` on receipt.
 - **Re-attach vs recreate:** `list_agents` to check if the phase's W-agent is alive.
   Alive → await its notifyOnFinish (do NOT send_agent_prompt to a running verdict
   agent — the fence). Dead/archived → create_agent fresh (W-agent reads persisted
   state and resumes from saved round+1).
 - **Done-but-unaccepted:** a stage left `done` (gate failed or run crashed before gate)
   is re-validated on resume — the acceptance obligation is never skipped.
-- **AUTO_WRITE=false:** after summary is accepted, `set paper-writing skipped` so
-  resume reports COMPLETE.
+- **AUTO_WRITE=false:** after summary is accepted,
+  `node "$RUN_STATE" set "$ROOT" "$RUN_ID" paper-writing skipped`, then atomically
+  set dashboard `status=completed`, so resume and dashboard agree.
 
 ## The Fence (paseo driver)
 
