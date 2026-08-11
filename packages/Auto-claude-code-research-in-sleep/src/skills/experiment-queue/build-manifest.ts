@@ -4,6 +4,24 @@ import fs from "fs";
 import path from "path";
 import { createCli, runCli } from "../../lib/cli.js";
 
+interface FreeCheck {
+  cmd: string;
+  threshold: number;
+  unit?: string;
+  compare: "lt" | "gt" | "eq";
+  index_by?: "physical" | "positional";
+}
+
+interface ResourceConfig {
+  type: string;
+  ids: (number | string)[];
+  label?: string;
+  bind_env?: string;
+  bind_mode?: "env" | "prefix";
+  free_check?: FreeCheck;
+  exhaustion_patterns?: string[];
+}
+
 interface GridSpec {
   project?: string;
   cwd?: string;
@@ -11,6 +29,8 @@ interface GridSpec {
   gpus?: number[];
   max_parallel?: number;
   oom_retry?: { delay?: number; max_attempts?: number };
+  retry?: { delay?: number; max_attempts?: number };
+  resources?: ResourceConfig;
   phases?: PhaseSpec[];
 }
 
@@ -25,6 +45,15 @@ interface Job {
   id: string;
   cmd: string;
   expected_output?: string;
+  batch_size?: {
+    initial: number;
+    min: number;
+    max: number;
+    target_mem_pct?: number;
+    oom_reduction?: number;
+  };
+  gpu_scaling?: { min_gpus: number; max_gpus: number };
+  slot_scaling?: { min_slots: number; max_slots: number };
 }
 
 interface Phase {
@@ -40,6 +69,8 @@ interface Manifest {
   gpus: number[];
   max_parallel: number;
   oom_retry: { delay: number; max_attempts: number };
+  retry: { delay: number; max_attempts: number };
+  resources?: ResourceConfig;
   phases: Phase[];
 }
 
@@ -100,17 +131,23 @@ function* expandGrid(
 }
 
 function build(config: GridSpec): Manifest {
+  const retryConfig = config.retry ?? config.oom_retry;
+  const retry = retryConfig
+    ? { delay: retryConfig.delay ?? 120, max_attempts: retryConfig.max_attempts ?? 3 }
+    : { delay: 120, max_attempts: 3 };
   const out: Manifest = {
     project: config.project ?? "unknown",
     cwd: config.cwd ?? ".",
     conda: config.conda ?? "base",
     gpus: config.gpus ?? [0, 1, 2, 3, 4, 5, 6, 7],
     max_parallel: config.max_parallel ?? 8,
-    oom_retry: config.oom_retry
-      ? { delay: config.oom_retry.delay ?? 120, max_attempts: config.oom_retry.max_attempts ?? 3 }
-      : { delay: 120, max_attempts: 3 },
+    oom_retry: retry,
+    retry,
     phases: [],
   };
+  if (config.resources) {
+    out.resources = config.resources;
+  }
 
   for (const phase of config.phases ?? []) {
     const phaseOut: Phase = {
@@ -123,11 +160,18 @@ function build(config: GridSpec): Manifest {
     const template = phase.template ?? {};
 
     if (Object.keys(grid).length === 0) {
-      phaseOut.jobs.push({
+      const job: Job = {
         id: (template.id as string) ?? phase.name,
         cmd: template.cmd as string,
         expected_output: template.expected_output as string | undefined,
-      });
+      };
+      if (template.batch_size != null)
+        job.batch_size = template.batch_size as unknown as Job["batch_size"];
+      if (template.gpu_scaling != null)
+        job.gpu_scaling = template.gpu_scaling as unknown as Job["gpu_scaling"];
+      if (template.slot_scaling != null)
+        job.slot_scaling = template.slot_scaling as unknown as Job["slot_scaling"];
+      phaseOut.jobs.push(job);
     } else {
       for (const values of expandGrid(grid)) {
         const job: Job = {
@@ -137,6 +181,12 @@ function build(config: GridSpec): Manifest {
         if (template.expected_output != null) {
           job.expected_output = substitute(template.expected_output as string, values) as string;
         }
+        if (template.batch_size != null)
+          job.batch_size = template.batch_size as unknown as Job["batch_size"];
+        if (template.gpu_scaling != null)
+          job.gpu_scaling = template.gpu_scaling as unknown as Job["gpu_scaling"];
+        if (template.slot_scaling != null)
+          job.slot_scaling = template.slot_scaling as unknown as Job["slot_scaling"];
         phaseOut.jobs.push(job);
       }
     }

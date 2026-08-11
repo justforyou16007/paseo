@@ -1,6 +1,6 @@
 ---
 name: research-setup
-description: 'Interactive Q&A setup wizard for new ARIS research projects. Bootstraps CLAUDE.md, RESEARCH_BRIEF.md, and research-wiki from user answers; experiment environment configuration is delegated to /experiment-env-configuration. Resumable, bilingual (en/zh), smart defaults. Use when user says "研究项目初始化", "setup project", "初始化研究项目", "research setup", "new project", "配置项目", or wants to configure a new ARIS research workspace.'
+description: 'Interactive Q&A setup wizard for new ARIS research projects. Bootstraps CLAUDE.md, RESEARCH_BRIEF.md, and research-wiki from user answers; experiment environment configuration is delegated to /experiment-env-manager. Resumable, bilingual (en/zh), smart defaults. Use when user says "研究项目初始化", "setup project", "初始化研究项目", "research setup", "new project", "配置项目", or wants to configure a new ARIS research workspace.'
 argument-hint: "[project-name] [— language: en|zh]"
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, AskUserQuestion, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__wait_for_agent, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission
 ---
@@ -8,7 +8,7 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, AskUserQuestion, mcp__pas
 > **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in
 > [](shared-references/paseo-subagent-dispatch.md) (Rule 1: One Agent = One Skill;
 > Rule 4: Paseo MCP Only, Strict). Phase 7.5 dispatches
-> `/experiment-env-configuration` via `mcp__paseo__create_agent`.
+> `/experiment-env-manager` via `mcp__paseo__create_agent`.
 
 # Research Project Setup Wizard
 
@@ -24,13 +24,13 @@ Phase 0  Pre-flight & resume detection
 Phase 1  Project basics (name, language)
 Phase 2  Research background (field, sub-area, problem)
 Phase 3  Prior work & baselines (papers, experiments, results)  [skippable]
-Phase 4  Experiment environment (delegated to /experiment-env-configuration)
+Phase 4  Experiment environment (delegated to /experiment-env-manager)
 Phase 4.5  Early stop configuration
 Phase 5  Research goals (budget, timeline, venue, constraints)
 Phase 5.5  Reference knowledge (skills, documents, domain constraints) [skippable]
 Phase 6  Paseo substrate config (multi-agent orchestration)     [skippable]
 Phase 7  Artifact generation (CLAUDE.md, RESEARCH_BRIEF.md, research-wiki, .gitignore)
-Phase 7.5  Experiment environment configuration (in-session /experiment-env-configuration)
+Phase 7.5  Experiment environment configuration (delegated to /experiment-env-manager)
 Phase 8  Summary & next steps
 ```
 
@@ -214,7 +214,7 @@ If "Yes", use AskUserQuestion with 4 questions:
 ## Phase 4: Experiment Environment (delegated)
 
 This phase asks **no questions**. Environment configuration is owned exclusively
-by `/experiment-env-configuration`, invoked in Phase 7.5 (after CLAUDE.md exists).
+by `/experiment-env-manager`, invoked in Phase 7.5 (after CLAUDE.md exists).
 
 Save state with `completed_stages` including `4`. Do not write `answers.gpu_type`
 here — it is transcribed from the generated experiment skill after Phase 7.5.
@@ -441,7 +441,7 @@ Copy the template and fill in:
   - `tolerance: 0.01`
   If no target was specified, leave the section commented.
 - `## Experiment Environment` — leave the template's commented blocks as-is.
-  Phase 7.5 owns this section via `/experiment-env-configuration`.
+  Phase 7.5 owns this section via `/experiment-env-manager`.
 - In `## Early Stop Configuration`: if `answers.early_stop_enabled == true`, uncomment the block and fill in values from `answers.early_stop`. Otherwise leave it commented.
 - If `answers.paseo_configured == true`: append the Paseo section from `$TEMPLATES_DIR/CLAUDE_MD_PASEO_SECTION.md` with values filled in. Otherwise leave the Paseo section with defaults or commented.
 - `## Reference Knowledge` — fill `skills:` from `answers.reference_skills`, `documents:` from `answers.reference_documents`, `knowledge:` from `answers.reference_knowledge`. If all empty, leave with empty lists.
@@ -554,15 +554,24 @@ If not, append the ARIS entries at the end with a header comment:
 
 ### Phase 7.5: Experiment Environment Configuration (delegated)
 
-After CLAUDE.md exists, dispatch `/experiment-env-configuration` as a **paseo
-sub-agent** (Rule 1: One Agent = One Skill; Rule 4: Paseo MCP Only):
+After CLAUDE.md exists, dispatch `/experiment-env-manager` as a **paseo
+sub-agent** (Rule 1: One Agent = One Skill; Rule 4: Paseo MCP Only).
+env-manager is the sole entry point — it handles PRD generation,
+env-configuration dispatch, and env-audit validation internally.
+
+Derive the project slug for dispatch and readback using the same algorithm
+as env-manager:
+```bash
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+PROJECT_SLUG=$(basename "$ROOT" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\+/-/g; s/^-//; s/-$//')
+SKILL_DIR=".claude/skills/run-${PROJECT_SLUG}-experiment"
+```
 
 ```
 mcp__paseo__create_agent
-  title:    "experiment-env-configuration: <project_name>"
+  title:    "env-manager: setup $PROJECT_SLUG"
   provider: claude
-  cwd:      $ROOT
-  initialPrompt: "/experiment-env-configuration — project: <project_name>"
+  initialPrompt: "/experiment-env-manager — project: $PROJECT_SLUG — mode: setup"
   notifyOnFinish: true
 ```
 
@@ -572,17 +581,22 @@ as normal. Wait for `notifyOnFinish`, then `mcp__paseo__archive_agent`.
 
 After it completes, transcribe results (do NOT judge them):
 
-1. Read environment type from the generated skill:
+1. `SKILL_DIR` is already set above using `PROJECT_SLUG`.
+2. Read environment type from the generated skill:
    `sh "$SKILL_DIR/scripts/info.sh" 2>/dev/null | jq -r '.backend_hint // "none"'`
    → set `answers.gpu_type` to the result.
-2. Read `.claude/skills/run-<project>-experiment/env.json` → set
-   `answers.experiment_skill = "run-<project>-experiment"` and
-   `answers.env_config_status` to the `status` field (`complete` /
-   `audit_failed` / `incomplete` / `already_configured`).
+3. Read `$SKILL_DIR/env.json` → set
+   `answers.experiment_skill = "run-${PROJECT_SLUG}-experiment"` and
+   `answers.env_config_status` to the `status` field.
 
-If configuration did not succeed (`incomplete` / `audit_failed` / user abort):
-set `answers.gpu_type = "none"`, print the draft and audit report paths, and
-**continue to Phase 7g/8 — do not block setup**.
+   Valid statuses in env.json: `complete` (audit passed or user override),
+   `pending_audit` (env-manager did not finish or was interrupted).
+   Note: env.json is deleted (not set to `failed`) when configuration fails —
+   check for file existence first.
+
+If configuration did not succeed (env.json is missing or status is not
+`complete`): set `answers.gpu_type = "none"`, print the draft and audit report
+paths, and **continue to Phase 7g/8 — do not block setup**.
 
 ### 7g. Write final setup state
 
@@ -590,7 +604,7 @@ set `answers.gpu_type = "none"`, print the draft and audit report paths, and
 {
   "version": 1,
   "completed": true,
-  "completed_stages": [1, 2, 3, 4, 4.5, 5, 6],
+  "completed_stages": [1, 2, 3, 4, 4.5, 5, 5.5, 6, 7.5],
   "answers": { ... },
   "artifacts": [
     "CLAUDE.md",
@@ -617,7 +631,7 @@ Print a summary of what was created:
 ✅ Research project "{project_name}" initialized successfully.
 
 Created:
-  • CLAUDE.md — project dashboard (language: {language}, Environment: {answers.gpu_type} (configured by /experiment-env-configuration) or "not configured")
+  • CLAUDE.md — project dashboard (language: {language}, Environment: {answers.gpu_type} (configured by /experiment-env-manager) or "not configured")
   • RESEARCH_BRIEF.md — research direction brief
   • research-wiki/ — knowledge base (5 subdirs, 5 seed files)
   • .gitignore — updated with ARIS entries
@@ -627,7 +641,7 @@ Created:
 ✅ 研究项目「{project_name}」初始化成功。
 
 已创建：
-  • CLAUDE.md — 项目仪表盘（语言：{language}，环境：{answers.gpu_type}（由 /experiment-env-configuration 配置）或「未配置」）
+  • CLAUDE.md — 项目仪表盘（语言：{language}，环境：{answers.gpu_type}（由 /experiment-env-manager 配置）或「未配置」）
   • RESEARCH_BRIEF.md — 研究方向简报
   • research-wiki/ — 知识库（5 个子目录，5 个种子文件）
   • .gitignore — 已添加 ARIS 条目
@@ -683,6 +697,8 @@ Suggested next steps:
 7. **Wiki helper optional.** If `research-wiki.js` cannot be resolved, fall back to manual
    directory creation. Never block on a missing helper for an optional artifact.
 
-8. **Environment configuration goes exclusively through `/experiment-env-configuration`.**
+8. **Environment configuration goes exclusively through `/experiment-env-manager`.**
    This skill never asks about backend types, never writes `## Experiment Environment`
-   field values, and never reads `.aris/experiment-env.json` directly. The delegation happens in Phase 7.5.
+   field values, and never reads `.aris/experiment-env.json` directly. The delegation
+   happens in Phase 7.5, which dispatches `/experiment-env-manager` as the sole
+   entry point for environment lifecycle.

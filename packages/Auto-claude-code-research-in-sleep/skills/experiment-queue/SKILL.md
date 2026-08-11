@@ -54,25 +54,54 @@ All of these are pure engineering friction that can be orchestrated.
 ### Job Manifest
 
 > **Environment config source:** The manifest's `ssh`, `conda`/`conda_hook`,
-> and `cwd` fields are populated from the generated experiment skill's
-> `info.sh` output. Host preparation uses `prepare.sh`:
+> `cwd`, and `resources` fields are populated from the generated experiment
+> skill's `info.sh` output. Host preparation uses `prepare.sh`:
 >
 > ```bash
 > # --- resolve the project-level experiment skill ---
-> PROJECT=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')
+> PROJECT=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\+/-/g; s/^-//; s/-$//')
 > SKILL_DIR=".claude/skills/run-${PROJECT}-experiment"
-> [ -d "$SKILL_DIR/scripts" ] || { echo "ERROR: experiment skill not found — run /experiment-env-configuration first" >&2; exit 1; }
+> [ -d "$SKILL_DIR/scripts" ] || { echo "ERROR: experiment skill not found — run /experiment-env-manager — mode: setup first" >&2; exit 1; }
 >
-> # Read connection details from the atomic interface
+> # Read connection and resource details from the atomic interface
 > ENV_INFO=$(sh "$SKILL_DIR/scripts/info.sh")
 > SSH_ALIAS=$(echo "$ENV_INFO" | jq -r '.connection.ssh_alias')
 > CONDA_ENV=$(echo "$ENV_INFO" | jq -r '.connection.conda_env')
 > CONDA_HOOK=$(echo "$ENV_INFO" | jq -r '.connection.conda_hook')
 > REMOTE_PATH=$(echo "$ENV_INFO" | jq -r '.paths.remote_path')
-> GPU_FREE_THRESHOLD=$(echo "$ENV_INFO" | jq -r '.hardware.gpu_free_threshold_mib // 500')
+> RESOURCES_JSON=$(echo "$ENV_INFO" | jq -c '.resources // empty')
 >
 > # Prepare the host ONCE (replaces provision + preflight + sync)
-> sh "$SKILL_DIR/scripts/prepare.sh"
+> STDERR_FILE=$(mktemp)
+> sh "$SKILL_DIR/scripts/prepare.sh" 2>"$STDERR_FILE"; EXIT_CODE=$?
+> if [ $EXIT_CODE -ne 0 ]; then
+>   STDERR_TAIL=$(tail -20 "$STDERR_FILE" | jq -R . | jq -s .)
+>   rm -f "$STDERR_FILE"
+>   TS=$(date -u +%Y%m%dT%H%M%SZ)
+>   REPORT_PATH=".aris/env-config/$PROJECT/error-reports/${TS}.json"
+>   mkdir -p "$(dirname "$REPORT_PATH")"
+>   jq -n \
+>     --arg skill "experiment-queue" \
+>     --arg project "$PROJECT" \
+>     --argjson exit_code "$EXIT_CODE" \
+>     --argjson stderr_tail "$STDERR_TAIL" \
+>     --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+>     '{
+>       skill: $skill, project: $project, error_type: "prepare_failed",
+>       script: "prepare.sh", exit_code: $exit_code, stderr_tail: $stderr_tail,
+>       failure_patterns_matched: [], attempts: 1,
+>       context: { last_code_change: null, last_successful_run: null },
+>       timestamp: $ts
+>     }' > "$REPORT_PATH"
+>   # Dispatch env-manager with actual report path
+>   mcp__paseo__create_agent
+>     title: "env-manager: fix $PROJECT"
+>     provider: claude
+>     initialPrompt: "/experiment-env-manager — project: $PROJECT — mode: error-report — error-report: $REPORT_PATH"
+>     notifyOnFinish: true
+>   # Wait for receipt → if result == "fixed": retry prepare.sh
+>   # If result != "fixed": abort queue
+> fi
 > ```
 >
 > `queue-manager.js` itself is unchanged — it runs on the remote host and
@@ -100,10 +129,28 @@ preconditions:
   - type: checkpoint_exists
     path: checkpoints/transformer/teacher_L96_K500_N{N}.pt
 
-gpus: [0, 1, 2, 3, 4, 5, 6, 7]
+# Resource scheduling — generic slot model.
+# `resources` replaces the old `gpus` field. When `resources` is absent,
+# the scheduler falls back to `gpus` + `gpu_free_threshold_mib` (legacy).
+resources:
+  type: gpu
+  ids: [0, 1, 2, 3, 4, 5, 6, 7]
+  bind_env: CUDA_VISIBLE_DEVICES
+  free_check:
+    cmd: "nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits"
+    threshold: 500
+    unit: MiB
+    compare: lt
+  exhaustion_patterns:
+    - "CUDA out of memory"
+    - "torch.OutOfMemoryError"
+
+# Legacy GPU form (still accepted, equivalent to the above):
+# gpus: [0, 1, 2, 3, 4, 5, 6, 7]
+# gpu_free_threshold_mib: 500
+
 max_parallel: 8
-gpu_free_threshold_mib: 500 # optional, default 500; raise for shared servers, lower for tight packing
-oom_retry:
+retry:
   delay: 120
   max_attempts: 3
 
@@ -126,11 +173,11 @@ stale_screen_detected → cleaned → pending
 
 ### Wave Orchestration
 
-A "wave" is a batch of jobs that fit available GPUs. Next wave only starts when:
+A "wave" is a batch of jobs that fit available resource slots. Next wave only starts when:
 
 1. All current-wave python processes have exited
 2. No stale screens remain for current-wave tags
-3. GPU memory has dropped below threshold (≤500 MiB)
+3. Resource usage has dropped below the configured threshold (per `resources.free_check`)
 4. Precondition checks pass for next-wave jobs
 
 ## Workflow
@@ -316,12 +363,15 @@ phases:
 Scheduler enforces `depends_on`: `distill_students` jobs stay `pending` until all
 `train_teachers` jobs are `completed`.
 
-## OOM Handling
+## Resource Exhaustion Handling
 
-Detect OOM from stdout:
+The scheduler detects resource exhaustion from stdout using patterns defined
+in `resources.exhaustion_patterns` (defaults to CUDA OOM for GPU resources):
 
 ```regex
+# GPU default:
 torch\.OutOfMemoryError: CUDA out of memory
+# Custom resources define their own patterns via exhaustion_patterns[]
 ```
 
 On detection:
@@ -399,7 +449,7 @@ If scheduler crashes / is killed:
 
 ## Key Rules
 
-- **Never overlap screens on the same GPU** — always wait for `memory.used < 500 MiB` before launching new job
+- **Never overlap jobs on the same resource slot** — always wait for the free_check threshold to clear before launching a new job
 - **Always write state to disk** — every state change flushed to `queue_state.json`
 - **Idempotent scheduler** — safe to restart; picks up from state file
 - **Expected-output-based completion** — don't trust screen state alone; verify output file exists

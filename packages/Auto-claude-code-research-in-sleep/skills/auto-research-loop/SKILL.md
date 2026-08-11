@@ -114,8 +114,8 @@ if [ -z "$TARGET_METRIC" ]; then
 fi
 TARGET_UNIT=$(awk '/^## Metric Target/{flag=1; next} flag && /^primary:/{print $3; exit}' CLAUDE.md)
 
-# 0b. Check experiment environment
-PROJECT_NAME=$(basename "$ROOT")
+# 0b. Check experiment environment — dispatch env-manager if not configured
+PROJECT_NAME=$(basename "$ROOT" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\+/-/g; s/^-//; s/-$//')
 ENV_JSON=".claude/skills/run-${PROJECT_NAME}-experiment/env.json"
 ENV_CONFIGURED=false
 if [ -f "$ENV_JSON" ]; then
@@ -123,7 +123,26 @@ if [ -f "$ENV_JSON" ]; then
     [ "$STATUS" = "complete" ] && ENV_CONFIGURED=true
 fi
 if [ "$ENV_CONFIGURED" = "false" ]; then
-    echo "WARNING: Experiment environment not configured. Run /experiment-env-configuration."
+    # Dispatch env-manager for baseline setup (HARD STOP if not configured)
+    mcp__paseo__create_agent
+      title: "env-manager: setup $PROJECT_NAME"
+      provider: claude
+      initialPrompt: "/experiment-env-manager — project: $PROJECT_NAME — mode: setup"
+      notifyOnFinish: true
+
+    # Wait for completion, then verify env.json status directly
+    # (env-manager writes status=complete to env.json on success)
+    if [ -f "$ENV_JSON" ]; then
+        STATUS=$(jq -r '.status' "$ENV_JSON")
+        if [ "$STATUS" != "complete" ]; then
+            echo "ERROR: env-manager setup did not reach complete status (got: $STATUS). Cannot proceed."
+            exit 1
+        fi
+        ENV_CONFIGURED=true
+    else
+        echo "ERROR: env-manager did not produce experiment skill. Cannot proceed."
+        exit 1
+    fi
 fi
 
 # 0c. Locate baseline plan

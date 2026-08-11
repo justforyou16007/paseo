@@ -183,11 +183,53 @@ If sanity fails → **auto-debug before giving up** (max 3 attempts):
 4. **Attempt 2+ still failing? → Call in Codex rescue** (if Codex plugin installed):
    Before the next retry, dispatch a paseo claude sub-agent for `/codex:rescue` per `shared-references/paseo-subagent-dispatch.md` (Paseo claude sub-agent per `paseo-subagent-dispatch.md`) to get a second opinion on the root cause. The rescue sub-agent is a claude child that may itself spawn a codex reviewer; it independently reads the code and error logs — it may spot issues Claude missed (wrong tensor shapes, subtle import shadowing, config mismatches, etc.). Apply its suggested fix, then re-run.
    - If `/codex:rescue` is not available (plugin not installed), continue with Claude's own diagnosis
-5. **Still failing after 3 attempts?** → stop, report the failure with all attempted fixes and error logs. Do not proceed with broken code.
+5. **Still failing after 3 attempts?** → write structured error receipt and
+   dispatch `/experiment-env-manager` for diagnosis and repair.
 
-After 3 failed debug attempts, the root cause may be environment drift rather
-than code bugs. Suggest an environment audit:
-`/experiment-env-audit — project: <project> — target: promoted`
+   The failing command must redirect stderr so it can be captured:
+   ```bash
+   STDERR_FILE=$(mktemp)
+   sh "$SKILL_DIR/scripts/run.sh" <args> 2>"$STDERR_FILE"; EXIT_CODE=$?
+   ```
+
+   Then build the report with real stderr:
+   ```bash
+   STDERR_TAIL=$(tail -20 "$STDERR_FILE" | jq -R . | jq -s .)
+   rm -f "$STDERR_FILE"
+   LAST_CHANGED=$(git diff --name-only HEAD~1 2>/dev/null | head -1 || echo "null")
+   TS=$(date -u +%Y%m%dT%H%M%SZ)
+   REPORT_PATH=".aris/env-config/$PROJECT/error-reports/${TS}.json"
+   mkdir -p "$(dirname "$REPORT_PATH")"
+
+   jq -n \
+     --arg skill "experiment-bridge" \
+     --arg project "$PROJECT" \
+     --argjson exit_code "$EXIT_CODE" \
+     --argjson stderr_tail "$STDERR_TAIL" \
+     --arg last "$LAST_CHANGED" \
+     --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+     '{
+       skill: $skill, project: $project, error_type: "run_failed",
+       script: "run.sh", exit_code: $exit_code, stderr_tail: $stderr_tail,
+       failure_patterns_matched: [], attempts: 3,
+       context: { last_code_change: $last, last_successful_run: null },
+       timestamp: $ts
+     }' > "$REPORT_PATH"
+   ```
+
+   Dispatch env-manager:
+   ```
+   mcp__paseo__create_agent
+     title: "env-manager: fix $PROJECT"
+     provider: claude
+     initialPrompt: "/experiment-env-manager — project: $PROJECT — mode: error-report — error-report: $REPORT_PATH"
+     notifyOnFinish: true
+   ```
+
+   Wait for env-manager receipt:
+   - `result == "fixed"` → retry sanity from attempt 1
+   - `result == "not_env_issue"` → stop (code is genuinely broken, not env drift)
+   - `result == "escalated"` → stop, report to orchestrator
 
 > Never give up on the first failure. Most experiment crashes are fixable without human intervention.
 

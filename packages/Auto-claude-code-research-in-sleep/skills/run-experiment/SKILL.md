@@ -17,9 +17,9 @@ Deploy and run ML experiment: $ARGUMENTS
 
 ```bash
 # --- resolve the project-level experiment skill ---
-PROJECT=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')
+PROJECT=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\+/-/g; s/^-//; s/-$//')
 SKILL_DIR=".claude/skills/run-${PROJECT}-experiment"
-[ -d "$SKILL_DIR/scripts" ] || { echo "ERROR: experiment skill not found at $SKILL_DIR. Run /experiment-env-configuration first." >&2; exit 1; }
+[ -d "$SKILL_DIR/scripts" ] || { echo "ERROR: experiment skill not found at $SKILL_DIR. Run /experiment-env-manager — mode: setup first." >&2; exit 1; }
 ```
 
 ### Step 1: Read Environment Config
@@ -31,11 +31,47 @@ sh "$SKILL_DIR/scripts/info.sh" | jq '.'
 ```
 
 This returns the env type, backend, connection details, and all configured fields.
-If `info.sh` fails, the environment may have changed since configuration.
-Suggest running an environment audit:
-`/experiment-env-audit — project: <project> — target: promoted`
 
-The four env types map to: `gpu: local` → local, `gpu: remote` → remote, `gpu: vast` → vast (reuse `instance_id` if a running instance exists in `vast-instances.json`, else fresh rental in Step 4), `gpu: modal` → modal (serverless, no SSH/screen).
+**On failure:** if `info.sh` or `prepare.sh` exits non-zero, capture the
+exit code and stderr atomically:
+
+```bash
+STDERR_FILE=$(mktemp)
+sh "$SKILL_DIR/scripts/<script>" 2>"$STDERR_FILE"; EXIT_CODE=$?
+if [ $EXIT_CODE -ne 0 ]; then
+  # Build stderr_tail as a JSON array of the last 20 lines
+  STDERR_TAIL=$(tail -20 "$STDERR_FILE" | jq -R . | jq -s .)
+  rm -f "$STDERR_FILE"
+  TS=$(date -u +%Y%m%dT%H%M%SZ)
+  REPORT_PATH=".aris/env-config/$PROJECT/error-reports/${TS}.json"
+  mkdir -p "$(dirname "$REPORT_PATH")"
+
+  jq -n \
+    --arg skill "run-experiment" \
+    --arg project "$PROJECT" \
+    --arg error_type "<info_failed|prepare_failed>" \
+    --arg script "<info.sh|prepare.sh>" \
+    --argjson exit_code "$EXIT_CODE" \
+    --argjson stderr_tail "$STDERR_TAIL" \
+    --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{
+      skill: $skill, project: $project, error_type: $error_type,
+      script: $script, exit_code: $exit_code, stderr_tail: $stderr_tail,
+      failure_patterns_matched: [], attempts: 1,
+      context: { last_code_change: null, last_successful_run: null },
+      timestamp: $ts
+    }' > "$REPORT_PATH"
+fi
+
+# Dispatch env-manager with the actual report path
+mcp__paseo__create_agent
+  title: "env-manager: fix $PROJECT"
+  provider: claude
+  initialPrompt: "/experiment-env-manager — project: $PROJECT — mode: error-report — error-report: $REPORT_PATH"
+  notifyOnFinish: true
+
+# Wait for receipt → if result == "fixed": retry; else stop
+```
 
 ### Step 2: Pre-flight Check
 
@@ -43,7 +79,12 @@ The four env types map to: `gpu: local` → local, `gpu: remote` → remote, `gp
 sh "$SKILL_DIR/scripts/prepare.sh"
 ```
 
-Runs pre-flight checks and environment preparation. Free GPU = `memory.used < 500 MiB`. Pick a free GPU index for Step 4. Modal skips GPU preflight (it manages allocation automatically).
+**On failure:** if `prepare.sh` exits non-zero, write env error report
+(same pattern as Step 1 with `error_type: "prepare_failed"`, `script: "prepare.sh"`,
+capturing `EXIT_CODE=$?` immediately after the failing command, computing
+`TS` and `REPORT_PATH` as variables, and passing `$REPORT_PATH` in the dispatch
+prompt). If env-manager returns `"fixed"`, retry prepare.sh.
+If `"not_env_issue"` or `"escalated"`, stop.
 
 ### Step 3: Sync Code
 

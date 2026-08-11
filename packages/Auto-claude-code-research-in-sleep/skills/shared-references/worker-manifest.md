@@ -82,6 +82,7 @@ Written by the worker after completing its work.
   "worker": "<skill-name>",
   "iteration": <int>,
   "status": "done|failed",
+  "error": null,
   "primary_output": "<relative-path-within-output_dir>",
   "summary": {
     ...worker-specific scalar fields...
@@ -100,6 +101,29 @@ Written by the worker after completing its work.
 ### Fields
 
 - **`status`** — `done` or `failed`. On failure, include `error` field.
+- **`error`** — structured failure data (required when `status == "failed"`):
+  ```json
+  {
+    "category": "env_error|code_error|infra_error|unknown",
+    "script": "prepare.sh|run.sh|collect.sh|info.sh|null",
+    "exit_code": 1,
+    "stderr_tail": ["<last 20 lines of stderr>"],
+    "failure_patterns_matched": [],
+    "message": "<one-sentence description>",
+    "attempts": 1,
+    "recoverable": true
+  }
+  ```
+  - `category` routes the failure:
+    - `env_error` — environment problem (prepare.sh failed, conda broken, SSH down).
+      Caller routes to `/experiment-env-manager — mode: error-report`.
+    - `code_error` — experiment code bug (traceback, assertion error). Not an env issue.
+    - `infra_error` — ARIS infrastructure (helper missing, manifest malformed).
+      Also recorded in `progress_error.md`.
+    - `unknown` — cannot classify. Caller dispatches `/experiment-env-manager` for diagnosis.
+  - `recoverable` — `true` if the caller can retry or route to env-manager for repair.
+  - `stderr_tail` — last 20 lines of stderr from the failed command.
+  - `script` — which generated script failed (null if not script-related).
 - **`primary_output`** — the main output file path (relative to output_dir)
 - **`summary`** — worker-specific scalar data. The orchestrator reads these
   fields for gate arithmetic (e.g., `primary_metric`, `ideas_count`,

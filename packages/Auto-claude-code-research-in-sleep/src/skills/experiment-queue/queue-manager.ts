@@ -9,9 +9,26 @@ import { GpuSampleHistory } from "../../tools/gpu-sample-history.js";
 import type { GpuSample } from "../../tools/gpu-sample-history.js";
 import { EnvBackend } from "../../tools/experiment-env/env-backend.js";
 
-const OOM_RE = /CUDA out of memory|torch\.OutOfMemoryError/;
 const DEFAULT_GPU_FREE_THRESHOLD_MIB = 500;
 const POLL_INTERVAL_SEC = 60;
+
+interface FreeCheck {
+  cmd: string;
+  threshold: number;
+  unit?: string;
+  compare: "lt" | "gt" | "eq";
+  index_by?: "physical" | "positional";
+}
+
+interface ResourceConfig {
+  type: string;
+  ids: (number | string)[];
+  label?: string;
+  bind_env?: string;
+  bind_mode?: "env" | "prefix";
+  free_check?: FreeCheck;
+  exhaustion_patterns?: string[];
+}
 
 interface OomRetryConfig {
   delay?: number;
@@ -33,6 +50,10 @@ interface ManifestJob {
     min_gpus: number;
     max_gpus: number;
   };
+  slot_scaling?: {
+    min_slots: number;
+    max_slots: number;
+  };
 }
 
 interface ManifestPhase {
@@ -50,6 +71,8 @@ interface Manifest {
   max_parallel?: number;
   gpu_free_threshold_mib?: number;
   oom_retry?: OomRetryConfig;
+  retry?: OomRetryConfig;
+  resources?: ResourceConfig;
   phases?: ManifestPhase[];
   _path?: string;
 }
@@ -62,6 +85,8 @@ interface JobState {
   status: string;
   gpu: number | null;
   gpu_list: number[] | null;
+  slot: number | string | null;
+  slot_list: (number | string)[] | null;
   current_batch_size: number | null;
   screen_name: string | null;
   pid: number | null;
@@ -137,24 +162,106 @@ function resolveCondaHook(manifestHook?: string): string {
   return 'eval "$(conda shell.bash hook)"';
 }
 
-function gpuMemoryUsed(): number[] {
-  const { stdout, exitCode } = shellRun(
-    "nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits",
-  );
-  if (exitCode !== 0) return [];
-  return stdout
+function resolveResources(m: Manifest): ResourceConfig {
+  if (m.resources) return m.resources;
+  return {
+    type: "gpu",
+    ids: m.gpus ?? [0, 1, 2, 3, 4, 5, 6, 7],
+    bind_env: "CUDA_VISIBLE_DEVICES",
+    free_check: {
+      cmd: "nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits",
+      threshold: m.gpu_free_threshold_mib ?? DEFAULT_GPU_FREE_THRESHOLD_MIB,
+      compare: "lt",
+      index_by: "physical",
+    },
+    exhaustion_patterns: ["CUDA out of memory", "torch.OutOfMemoryError"],
+  };
+}
+
+function resourceUsage(rc: ResourceConfig): Map<number | string, number> {
+  const result = new Map<number | string, number>();
+  if (!rc.free_check) return result;
+  const { stdout, exitCode } = shellRun(rc.free_check.cmd);
+  if (exitCode !== 0) return result;
+  const values = stdout
     .trim()
     .split("\n")
     .filter((x) => x.trim())
-    .map((x) => parseInt(x.trim(), 10));
+    .map((x) => parseFloat(x.trim()));
+  if (rc.free_check.index_by === "physical") {
+    // Output line i corresponds to physical device i (e.g. nvidia-smi dumps all GPUs).
+    // Map by line index so non-contiguous ids like [2,3] read correct entries.
+    for (let i = 0; i < values.length; i++) {
+      result.set(i, values[i]);
+    }
+  } else {
+    // Output line i corresponds to rc.ids[i] (custom resources output one value per configured slot).
+    for (let i = 0; i < rc.ids.length && i < values.length; i++) {
+      result.set(rc.ids[i], values[i]);
+    }
+  }
+  return result;
 }
 
-function freeGpus(
-  allowed: number[],
-  thresholdMib: number = DEFAULT_GPU_FREE_THRESHOLD_MIB,
-): number[] {
-  const used = gpuMemoryUsed();
-  return allowed.filter((i) => i < used.length && used[i] < thresholdMib);
+function freeSlots(rc: ResourceConfig): (number | string)[] {
+  if (!rc.free_check) return [...rc.ids];
+  const usage = resourceUsage(rc);
+  const { threshold, compare } = rc.free_check;
+  return rc.ids.filter((id) => {
+    const val = usage.get(id);
+    if (val === undefined) return false;
+    switch (compare) {
+      case "lt":
+        return val < threshold;
+      case "gt":
+        return val > threshold;
+      case "eq":
+        return val === threshold;
+    }
+  });
+}
+
+function buildExhaustionRegex(rc: ResourceConfig): RegExp {
+  const patterns = rc.exhaustion_patterns?.filter((p) => p.length > 0);
+  if (!patterns || patterns.length === 0) {
+    return /CUDA out of memory|torch\.OutOfMemoryError/;
+  }
+  const escaped = patterns.map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return new RegExp(escaped.join("|"));
+}
+
+function detectExhaustionInLog(logPath: string | null, re: RegExp): boolean {
+  if (!logPath || !fs.existsSync(logPath)) return false;
+  try {
+    const escaped = logPath.replace(/'/g, "'\\''");
+    const { stdout } = shellRun(`tail -c 10000 '${escaped}'`);
+    return re.test(stdout);
+  } catch {
+    return false;
+  }
+}
+
+function allocateSlotsForJob(
+  manifestJob: ManifestJob | undefined,
+  available: (number | string)[],
+): (number | string)[] | null {
+  const scaling = manifestJob?.slot_scaling ?? manifestJob?.gpu_scaling;
+  const minSlots = scaling
+    ? ((scaling as { min_slots?: number; min_gpus?: number }).min_slots ??
+      (scaling as { min_gpus?: number }).min_gpus ??
+      1)
+    : 0;
+  const maxSlots = scaling
+    ? ((scaling as { max_slots?: number; max_gpus?: number }).max_slots ??
+      (scaling as { max_gpus?: number }).max_gpus ??
+      available.length)
+    : 0;
+  if (!scaling) {
+    return available.length > 0 ? [available[0]] : null;
+  }
+  if (available.length < minSlots) return null;
+  const count = Math.min(available.length, maxSlots);
+  return available.slice(0, count);
 }
 
 function screenExists(name: string): boolean {
@@ -164,17 +271,6 @@ function screenExists(name: string): boolean {
 
 function killScreen(name: string): void {
   shellRun(`screen -S ${name} -X quit`);
-}
-
-function detectOomInLog(logPath: string | null): boolean {
-  if (!logPath || !fs.existsSync(logPath)) return false;
-  try {
-    const escaped = logPath.replace(/'/g, "'\\''");
-    const { stdout } = shellRun(`tail -c 10000 '${escaped}'`);
-    return OOM_RE.test(stdout);
-  } catch {
-    return false;
-  }
 }
 
 function outputExists(pathPattern: string | null | undefined, cwd: string): boolean {
@@ -245,6 +341,8 @@ function assignJobsToPhases(manifest: Manifest, state: QueueState): void {
           status: "pending",
           gpu: null,
           gpu_list: null,
+          slot: null,
+          slot_list: null,
           current_batch_size: null,
           screen_name: null,
           pid: null,
@@ -260,15 +358,16 @@ function assignJobsToPhases(manifest: Manifest, state: QueueState): void {
 
 function launchJob(
   job: JobState,
-  gpus: number[],
+  slots: (number | string)[],
   condaEnv: string,
   cwd: string,
   logDir: string,
   condaHook: string,
+  rc: ResourceConfig,
   batchSize?: number | null,
 ): { screenName: string; pid: number | null } {
-  const primaryGpu = gpus[0] ?? 0;
-  const gpuList = gpus.join(",");
+  const primarySlot = slots[0] ?? 0;
+  const slotList = slots.map(String).join(",");
   const screenName = `EQ_${job.id}`;
   if (screenExists(screenName)) {
     killScreen(screenName);
@@ -276,30 +375,49 @@ function launchJob(
   }
 
   const logFile = path.join(logDir, `${job.id}.log`);
-  const cmdWithGpu = job.cmd.replace(/\$\{GPU\}/g, String(primaryGpu));
   const batchVal = batchSize ?? job.current_batch_size;
-  const cmdFinal = cmdWithGpu
-    .replace(/\$\{GPU_LIST\}/g, gpuList)
-    .replace(/\$\{NUM_GPUS\}/g, String(gpus.length))
+  const cmdWithSlot = job.cmd
+    .replace(/\$\{GPU\}/g, String(primarySlot))
+    .replace(/\$\{SLOT\}/g, String(primarySlot));
+  const cmdFinal = cmdWithSlot
+    .replace(/\$\{GPU_LIST\}/g, slotList)
+    .replace(/\$\{SLOT_LIST\}/g, slotList)
+    .replace(/\$\{NUM_GPUS\}/g, String(slots.length))
+    .replace(/\$\{NUM_SLOTS\}/g, String(slots.length))
     .replace(/\$\{BATCH_SIZE\}/g, batchVal != null ? String(batchVal) : "");
 
   const escapedCwd = cwd.replace(/'/g, "'\\''");
   const escapedLogFile = logFile.replace(/'/g, "'\\''");
+  // bind_mode "env" (default): VAR=val cmd  — environment variable injection
+  // bind_mode "prefix": cmd-prefix slotList cmd  — e.g. "taskset -c 0,1 python ..."
+  let bindPrefix = "";
+  if (rc.bind_env) {
+    if (rc.bind_mode === "prefix") {
+      bindPrefix = `${rc.bind_env} ${slotList} `;
+    } else {
+      bindPrefix = `${rc.bind_env}=${slotList} `;
+    }
+  }
   const full =
     `cd '${escapedCwd}' && ` +
     `${condaHook} && ` +
     `conda activate ${condaEnv} && ` +
-    `CUDA_VISIBLE_DEVICES=${gpuList} ${cmdFinal} 2>&1 | tee '${escapedLogFile}'`;
+    `${bindPrefix}${cmdFinal} 2>&1 | tee '${escapedLogFile}'`;
 
   const escapedFull = full.replace(/'/g, "'\\''");
   shellRun(`screen -dmS ${screenName} bash -c '${escapedFull}'`);
   execSync("sleep 2");
 
-  const { stdout: pidOut } = shellRun(
-    `ps -ef | grep 'CUDA_VISIBLE_DEVICES=${gpuList} ' | grep -v grep | grep python | awk '{print $2}' | head -1`,
-  );
-  const pidStr = pidOut.trim();
-  const pid = /^\d+$/.test(pidStr) ? parseInt(pidStr, 10) : null;
+  // Try to find PID. Env mode: grep for VAR=val in ps output.
+  // Prefix mode or no bind_env: fall back to screen-based detection only.
+  let pid: number | null = null;
+  if (rc.bind_env && rc.bind_mode !== "prefix") {
+    const { stdout: pidOut } = shellRun(
+      `ps -ef | grep '${rc.bind_env}=${slotList} ' | grep -v grep | awk '{print $2}' | head -1`,
+    );
+    const pidStr = pidOut.trim();
+    if (/^\d+$/.test(pidStr)) pid = parseInt(pidStr, 10);
+  }
 
   return { screenName, pid };
 }
@@ -308,6 +426,7 @@ function jobStatusCheck(
   job: JobState,
   logDir: string,
   cwd: string,
+  exhaustionRe: RegExp,
 ): { status: string; error: string | null } {
   const logFile = path.join(logDir, `${job.id}.log`);
 
@@ -315,8 +434,8 @@ function jobStatusCheck(
     return { status: "completed", error: null };
   }
 
-  if (detectOomInLog(logFile)) {
-    return { status: "failed_oom", error: "CUDA OOM detected" };
+  if (detectExhaustionInLog(logFile, exhaustionRe)) {
+    return { status: "failed_oom", error: "Resource exhaustion detected" };
   }
 
   if (job.screen_name && screenExists(job.screen_name)) {
@@ -346,19 +465,6 @@ function pendingJobsInActivePhases(state: QueueState, manifest: Manifest): JobSt
     }
   }
   return state.jobs.filter((j) => j.status === "pending" && activePhases.includes(j.phase));
-}
-
-function allocateGpusForJob(
-  manifestJob: ManifestJob | undefined,
-  available: number[],
-): number[] | null {
-  const scaling = manifestJob?.gpu_scaling;
-  if (!scaling) {
-    return available.length > 0 ? [available[0]] : null;
-  }
-  if (available.length < scaling.min_gpus) return null;
-  const count = Math.min(available.length, scaling.max_gpus);
-  return available.slice(0, count);
 }
 
 function selectBatchSize(
@@ -396,32 +502,36 @@ function step(
   const cwd = manifest.cwd ?? ".";
   const condaEnv = manifest.conda ?? "base";
   const condaHook = resolveCondaHook(manifest.conda_hook);
-  const allowedGpus = manifest.gpus ?? [0, 1, 2, 3, 4, 5, 6, 7];
-  const maxParallel = manifest.max_parallel ?? allowedGpus.length;
-  const gpuFreeThreshold = manifest.gpu_free_threshold_mib ?? DEFAULT_GPU_FREE_THRESHOLD_MIB;
-  const oomDelay = manifest.oom_retry?.delay ?? 120;
-  const maxOomAttempts = manifest.oom_retry?.max_attempts ?? 3;
+  const rc = resolveResources(manifest);
+  const maxParallel = manifest.max_parallel ?? rc.ids.length;
+  const retryConfig = manifest.retry ?? manifest.oom_retry;
+  const exhaustionDelay = retryConfig?.delay ?? 120;
+  const maxExhaustionAttempts = retryConfig?.max_attempts ?? 3;
+  const exhaustionRe = buildExhaustionRegex(rc);
 
-  // Sample GPU memory for adaptive batch size / node scaling
+  // Sample resource usage for adaptive batch size
   if (adaptive?.backend) {
-    const assignedGpus = [
+    const assignedSlots = [
       ...new Set(
         state.jobs
           .filter((j) => j.status === "running")
-          .flatMap((j) => j.gpu_list ?? (j.gpu != null ? [j.gpu] : [])),
+          .flatMap((j) => j.slot_list ?? j.gpu_list ?? (j.gpu != null ? [j.gpu] : [])),
       ),
     ];
-    if (assignedGpus.length > 0) {
-      const result = adaptive.backend.sampleGpuMemory(assignedGpus);
-      if (result.ok) {
-        adaptive.gpuHistory.add(result.samples as GpuSample[]);
+    if (assignedSlots.length > 0) {
+      const numericSlots = assignedSlots.filter((s): s is number => typeof s === "number");
+      if (numericSlots.length > 0) {
+        const result = adaptive.backend.sampleGpuMemory(numericSlots);
+        if (result.ok) {
+          adaptive.gpuHistory.add(result.samples as GpuSample[]);
+        }
       }
     }
   }
 
   for (const job of state.jobs) {
     if (job.status !== "running") continue;
-    const { status: newStatus, error: err } = jobStatusCheck(job, logDir, cwd);
+    const { status: newStatus, error: err } = jobStatusCheck(job, logDir, cwd, exhaustionRe);
     if (newStatus === "completed" || newStatus === "failed_oom" || newStatus === "failed_other") {
       job.status = newStatus;
       job.error = err;
@@ -432,15 +542,14 @@ function step(
 
   for (const job of state.jobs) {
     if (job.status !== "failed_oom") continue;
-    if (job.attempts >= maxOomAttempts) {
+    if (job.attempts >= maxExhaustionAttempts) {
       job.status = "stuck";
       continue;
     }
     if (job.completed) {
       const last = new Date(job.completed.replace(/Z$/, "")).getTime();
       const elapsed = (Date.now() - last) / 1000;
-      if (elapsed >= oomDelay) {
-        // Reduce batch size on OOM retry if configured
+      if (elapsed >= exhaustionDelay) {
         if (adaptive) {
           const manifestJob = adaptive.manifestJobMap.get(job.id);
           const bsCfg = manifestJob?.batch_size;
@@ -457,25 +566,42 @@ function step(
 
   const running = state.jobs.filter((j) => j.status === "running");
   const pending = pendingJobsInActivePhases(state, manifest);
-  const taken = new Set(running.flatMap((j) => j.gpu_list ?? (j.gpu != null ? [j.gpu] : [])));
-  const free = freeGpus(allowedGpus, gpuFreeThreshold).filter((g) => !taken.has(g));
+  const takenSet = new Set<string>(
+    running.flatMap((j) =>
+      (j.slot_list ?? j.gpu_list ?? (j.gpu != null ? [j.gpu] : [])).map(String),
+    ),
+  );
+  const free = freeSlots(rc).filter((s) => !takenSet.has(String(s)));
 
   let launched = 0;
-  const takenInCycle = new Set<number>();
+  const takenInCycle = new Set<string>();
   for (const job of pending) {
     if (running.length + launched >= maxParallel) break;
     const manifestJob = adaptive?.manifestJobMap.get(job.id);
-    const available = free.filter((g) => !takenInCycle.has(g));
-    const gpus = allocateGpusForJob(manifestJob, available);
-    if (!gpus) continue;
-    for (const g of gpus) takenInCycle.add(g);
-    const batchSize = adaptive
-      ? selectBatchSize(job, manifestJob?.batch_size, adaptive.gpuHistory, gpus)
-      : null;
-    const { screenName, pid } = launchJob(job, gpus, condaEnv, cwd, logDir, condaHook, batchSize);
+    const available = free.filter((s) => !takenInCycle.has(String(s)));
+    const slots = allocateSlotsForJob(manifestJob, available);
+    if (!slots) continue;
+    for (const s of slots) takenInCycle.add(String(s));
+    const numericSlots = slots.filter((s): s is number => typeof s === "number");
+    const batchSize =
+      adaptive && numericSlots.length > 0
+        ? selectBatchSize(job, manifestJob?.batch_size, adaptive.gpuHistory, numericSlots)
+        : null;
+    const { screenName, pid } = launchJob(
+      job,
+      slots,
+      condaEnv,
+      cwd,
+      logDir,
+      condaHook,
+      rc,
+      batchSize,
+    );
     job.status = "running";
-    job.gpu = gpus[0];
-    job.gpu_list = gpus;
+    job.slot = slots[0];
+    job.slot_list = slots;
+    job.gpu = typeof slots[0] === "number" ? slots[0] : null;
+    job.gpu_list = numericSlots.length > 0 ? numericSlots : null;
     if (batchSize != null) job.current_batch_size = batchSize;
     job.screen_name = screenName;
     job.pid = pid;
@@ -539,7 +665,9 @@ function main(): void {
             manifestJobMap.set(job.id, job);
           }
         }
-        const hasAdaptive = [...manifestJobMap.values()].some((j) => j.batch_size || j.gpu_scaling);
+        const hasAdaptive = [...manifestJobMap.values()].some(
+          (j) => j.batch_size || j.gpu_scaling || j.slot_scaling,
+        );
         let adaptive: AdaptiveOpts | undefined;
         if (hasAdaptive) {
           const envCfgPath = path.join(manifest.cwd ?? ".", ".aris", "experiment-env.json");
