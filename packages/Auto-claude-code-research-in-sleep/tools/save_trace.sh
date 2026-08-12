@@ -8,8 +8,7 @@
 # block then runs `bash "$TRACE_HELPER" --skill ... --purpose ... --model ...`.
 # Do NOT hard-code `bash tools/save_trace.sh` from a SKILL; the path is
 # only stable from inside the ARIS repo (manual smoke testing) and breaks
-# silently in downstream user projects that have only `.aris/tools/` or
-# `$ARIS_REPO/tools/`.
+# silently in downstream user projects that have only `.aris/tools/`.
 #
 # Usage (from inside the ARIS repo, smoke test):
 #   bash tools/save_trace.sh \
@@ -102,8 +101,13 @@ METAEOF
 fi
 
 # --- Determine call number ---
-CALL_NUM=$(ls "${RUN_DIR}/"*.request.json 2>/dev/null | wc -l | tr -d ' ')
-CALL_NUM=$((CALL_NUM + 1))
+# Do not use `ls <glob> | wc -l` here. With `set -euo pipefail`, the first
+# trace has no matching files, `ls` exits 2, and the helper aborts before it
+# can create call 001.
+shopt -s nullglob
+REQUEST_FILES=("${RUN_DIR}/"*.request.json)
+CALL_NUM=$((${#REQUEST_FILES[@]} + 1))
+shopt -u nullglob
 CALL_PREFIX=$(printf '%03d' $CALL_NUM)
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 

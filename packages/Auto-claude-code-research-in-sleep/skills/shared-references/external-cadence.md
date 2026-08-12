@@ -341,7 +341,10 @@ The heartbeat's stall-detection responsibility uses the
    matrix in [`paseo-subagent-dispatch.md`](paseo-subagent-dispatch.md)
    §"Idle agent supervision":
    - Child waiting for its own sub-agent → do nothing.
-   - Child stalled with no sub-agents → send continuation prompt.
+   - Child stalled with no sub-agents → the lifecycle owner sends a
+     continuation prompt and immediately calls `wait_for_agent` again.
+     A non-owner heartbeat nudges the owner; it never prompts the child
+     directly.
    - Child errored → report BLOCKED.
 4. **The heartbeat never does the child's work.** If a child is stalled,
    the heartbeat continues it or escalates — it never implements the

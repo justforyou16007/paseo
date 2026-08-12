@@ -47,9 +47,10 @@ handshake is **push**, not request-response:
   1. **Spawn** — `mcp__paseo__create_agent` with `notifyOnFinish: true`,
      `relationship: {kind: "subagent"}`, `workspace: {kind: "current"}`.
      Bind the child to one skill (Rule 1) and to the run's variables.
-  2. **Wait** — parent calls `mcp__paseo__wait_for_agent` (or reacts to
-     the push notification). Parent **MUST NOT** poll `get_agent_status`
-     in a loop.
+  2. **Wait** — parent immediately calls `mcp__paseo__wait_for_agent`.
+     Reacting to an earlier notification, polling status, or having waited
+     for a previous turn does not replace this call. Parent **MUST NOT**
+     poll `get_agent_status` in a loop.
   3. **Judge** — parent reads the child's `receipt.json` from the worker
      directory (`.aris/runs/<run_id>/workers/<iter>-<phase>/receipt.json`
      per `worker-manifest.md`). The receipt is the authoritative payload;
@@ -60,15 +61,31 @@ handshake is **push**, not request-response:
      ("用完即 archive"). For continuation children, keep alive until the
      loop terminates, then archive.
 
-Children **MUST NOT** spawn their parent (no cycles). Children are free
-to spawn their own sub-children (cascading sub-agent tree is fine;
-grandchild archives cascade with the child).
+**TURN_WAIT_INVARIANT:** every successful `mcp__paseo__create_agent` or
+`mcp__paseo__send_agent_prompt` that starts a child turn MUST be followed
+immediately by `mcp__paseo__wait_for_agent` for that same child before the
+owner advances its workflow. A wait consumes one child-turn completion;
+after a continuation prompt, the owner must wait again. This applies to
+initial dispatch, idle recovery, reviewer continuation, resume, and every
+fan-out child. Omitting the second wait loses the continuation turn's
+completion signal and can stop the pipeline with a completed child whose
+receipt was never collected.
+
+Children **MUST NOT** spawn their parent (no cycles). Children may create
+sub-children only with `mcp__paseo__create_agent`; cascading trees are fine
+and grandchild archives cascade with the child. Provider/harness-native
+`Skill`, `Task`, `Agent`, teams, sidecars, or equivalent spawn mechanisms
+are forbidden even when the host exposes them or they appear faster.
 
 ### Rule 4 — Paseo MCP Only (Strict, no graceful degradation)
 
 Agent lifecycle is **exclusively** managed by Paseo MCP — the 33 tools
 listed at `mcp__paseo__*` (see `paseo-tools.ts` in `packages/server`).
 The host `Skill` / `Task` / `Agent` tools are **forbidden** in ARIS workflows.
+The only operation that creates an ARIS child agent is
+`mcp__paseo__create_agent`; the only operation that starts another turn on
+that child is `mcp__paseo__send_agent_prompt`. Never use a provider-native
+sub-agent feature and never degrade to an in-process fallback.
 
 **Strict mode**: if `mcp__paseo__list_agents` is unavailable at
 orchestrator startup, the run is **blocked** (`run-state.js` writes
@@ -294,31 +311,28 @@ loop, and a continuation reviewer would drift toward confirming its own
 prior direction. This is the fence (`external-cadence.md`) made operational:
 the loop's internal round cadence is owned by one long-lived agent, not
 re-entered from the top on a timer.
-the top on a timer.
 
-## Parallel fan-out discipline
+## Fan-out discipline
 
 When a workflow fans out N independent units (idea lenses, audit layers,
-per-source retrieval), the parent spawns N children concurrently. The
-invariants below are the preemption-safe subset of `fan-out-pattern.md`:
+per-source retrieval), the parent executes N `create_agent` →
+`wait_for_agent` pairs sequentially. The invariants below are the
+preemption-safe subset of `fan-out-pattern.md`:
 
 1. **Each child writes its result to its OWN file** on the shared workspace
-   (`workspace:{kind:"current"}`). The parent reads files in its
-   notification turns — never the `<agent-response>` text. A later child's
-   notification can preempt the parent mid-turn (`replaceRunning:true`); a
-   file on disk survives that, an in-memory variable does not.
-2. **Parent notification turns are SHORT.** Read the artifact file, append
-   to a results manifest, return. Do not deliberate, do not call accept,
-   do not spawn more children from inside a notification turn. Long
-   notification turns raise the chance the next child's notify preempts
-   unfinished state.
+   (`workspace:{kind:"current"}`). After the matching wait returns, the
+   parent reads the file — never the `<agent-response>` text. A file on disk
+   survives restart or resume; an in-memory value does not.
+2. **One child turn is outstanding at a time.** Read the artifact and append
+   it to the results manifest before creating the next child. Every later
+   `send_agent_prompt` also gets its own immediate wait.
 3. **Fan out the search, never the bench.** Children GENERATE candidates
    (ideas, attack points, draft sections, audit findings); they NEVER
    render the acceptance verdict (`fan-out-pattern.md`). Quality/correctness
    verdicts stay a single cross-model codex sub-agent step per
    `paseo-reviewer-dispatch.md`.
-4. **Mechanical merge/dedup on the parent only.** After all N children
-   notify, the parent merges the candidate files and dedups
+4. **Mechanical merge/dedup on the parent only.** After all N child turns
+   have been awaited, the parent merges the candidate files and dedups
    judgment-free, exactly as today (`fan-out-pattern.md` §dedup). This is
    safe same-model work.
 5. **Cascade-archive cleans up.** Children spawned as `subagent` are
@@ -480,13 +494,13 @@ assume**. The core principle:
 | Child state / log signal                                    | Parent action                                                                                                     |
 | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | Child completed its task (receipt.json exists in worker directory) | Read the receipt, `set done`, run the gate, `archive_agent`. This is the normal wait_for_agent path — no idle     |
-| Child is **idle and waiting for its OWN sub-agent**         | **Do nothing.** The child is supervising its sub-agent correctly. Wait for the child's notifyOnFinish.            |
-| (child has live sub-agents listed via `list_agents`)        | Do NOT send a continuation prompt — that would interrupt the child's own supervision loop.                        |
+| Child is **idle and waiting for its OWN sub-agent**         | Do not prompt it. The child is supervising correctly; immediately call `wait_for_agent` again to keep receiving its next completion. |
+| (child has live sub-agents listed via `list_agents`)        | Do NOT send a continuation prompt — that would interrupt the child's own supervision loop. Keep the parent wait armed. |
 | Child is **idle with no sub-agents, no receipt**            | The child may have stalled or hit a silent error. Send a **continuation prompt** via `send_agent_prompt`:         |
-|                                                             | `"You appear to have stopped. Continue your task and write the receipt file when done."`                          |
-| Child is **idle with error logs**                           | Check the error. If recoverable (timeout, rate limit), send a continuation prompt with context. If fatal, archive |
+|                                                             | `"You appear to have stopped. Continue your task and write the receipt file when done."` Then immediately call `wait_for_agent` for the same child. |
+| Child is **idle with error logs**                           | Check the error. If recoverable, send a continuation prompt with context and immediately wait again. If fatal, archive |
 |                                                             | the child, report the error to the user, and mark the phase BLOCKED.                                              |
-| Child is **idle and its sub-agents are all archived/done**  | The child may have finished but failed to write its receipt. Send a continuation prompt to write the receipt.     |
+| Child is **idle and its sub-agents are all archived/done**  | Send a continuation prompt to write the receipt, then immediately call `wait_for_agent` for that child turn.      |
 
 ### Anti-patterns
 
@@ -511,10 +525,10 @@ receipt file. The parent receives this signal by calling `wait_for_agent`.
 1. **Every `create_agent` call MUST set `notifyOnFinish: true`** (the
    default in paseo). This configures the child to notify the parent
    when its run completes.
-2. **The parent MUST call `mcp__paseo__wait_for_agent` after creating
-   the child** to block until the child finishes or raises a permission
-   request. `wait_for_agent` returns the child's completion signal;
-   it does NOT poll — it awaits the push notification.
+2. **The parent MUST call `mcp__paseo__wait_for_agent` immediately after
+   every `create_agent` and every `send_agent_prompt`.** Each call starts a
+   distinct child turn and therefore requires a new wait. `wait_for_agent`
+   returns that turn's completion signal; it does NOT poll.
 3. **The child MUST write a receipt file** (`workers/<iter>-<phase>/receipt.json`)
    as its last action before stopping. The receipt is the authoritative
    payload — preemption-safe, survives crashes. Schema:
@@ -523,8 +537,9 @@ receipt file. The parent receives this signal by calling `wait_for_agent`.
    (NOT `<agent-response>`), runs the gate, and archives the child.
    The notification handler is SHORT: read → `set done` → gate → archive.
    Do NOT deliberate or spawn new children inside the handler.
-5. **Multiple children may be awaited sequentially** (one `create_agent` +
-   `wait_for_agent` pair per child). For parallel fan-out, see
+5. **Multiple children are dispatched and awaited sequentially** (one
+   `create_agent` + `wait_for_agent` pair per child). Fan-out describes how
+   work is sharded, not permission to leave a child turn unawaited; see
    `fan-out-pattern.md`.
 
 ### Receipt file format
@@ -568,6 +583,7 @@ else:
     if status == "idle":
         send_agent_prompt(child_id,
             "Write the completion receipt.json and stop.")
+        result = wait_for_agent(child_id)  # mandatory new wait for continuation turn
 ```
 
 > **Why `wait_for_agent` is needed even with `notifyOnFinish: true`:**
@@ -584,8 +600,8 @@ else:
   the `save_trace.sh` `--thread-id <codex-agent-id>` contract. The jury
   half of this migration.
 - [`fan-out-pattern.md`](fan-out-pattern.md) — fan-out is firepower; the
-  jury is the bench. Paseo parallel fan-out is the Tier-1/2 dispatch
-  mechanism; the verdict stays single and cross-model.
+  jury is the bench. Paseo fan-out uses sequential create-and-wait pairs;
+  the verdict stays single and cross-model.
 - [`external-cadence.md`](external-cadence.md) — the fence: do not wrap
   verdict-bearing loops in external cadence. Restated for the paseo driver:
   the heartbeat nudges Type-A only, never re-creates a running verdict agent.

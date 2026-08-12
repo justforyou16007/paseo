@@ -231,7 +231,7 @@ Operating rules (non-negotiable):
   1. Resolve every helper via integration-contract.md §2 (.aris/dist/tools -> dist/tools). Never hardcode a path.
   2. Read input-manifest.json from the additional run context and write every artifact under its output_dir. Do NOT write elsewhere.
   3. When you need the cross-model reviewer, spawn/continue a paseo codex sub-agent per skills/shared-references/paseo-reviewer-dispatch.md. Fresh review = create_agent; continuation = send_agent_prompt to the same agent. Reviewer provider/mode/thinking are fixed by the run's paseo-config.json — do not override.
-  4. Fan out sub-skills as paseo claude sub-agents per skills/shared-references/paseo-subagent-dispatch.md (fanout_subagents=${fanout_subagents}; if false, use in-process Skill-tool fallback).
+  4. Dispatch every sub-skill only through Paseo MCP per skills/shared-references/paseo-subagent-dispatch.md. Never use host Skill/Task/Agent or provider-native spawn mechanisms. After every create_agent or send_agent_prompt, immediately wait_for_agent for that child turn (fanout_subagents=${fanout_subagents}; false means sequential Paseo dispatch, never in-process fallback).
   5. Do NOT call run-state.js accept. You may 'set done --artifact <path>'; acceptance is the orchestrator's job (acceptance-gate.md).
   6. On completion, write the receipt per worker-manifest.md and stop. Do not call accept, do not start the next phase.
 

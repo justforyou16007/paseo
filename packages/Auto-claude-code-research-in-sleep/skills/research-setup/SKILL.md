@@ -390,8 +390,8 @@ Record `answers.reference_skills[]`, `answers.reference_documents[]`,
 
 **Question 0 (gate):**
 - **header**: "Paseo"
-- **question** (en): "Configure multi-agent orchestration (Paseo)? This enables parallel sub-agent dispatch for the research pipeline."
-  (zh): "是否配置多智能体编排（Paseo）？这将启用研究流水线的并行子智能体调度。"
+- **question** (en): "Configure multi-agent orchestration (Paseo)? This enables managed sub-agent dispatch for the research pipeline."
+  (zh): "是否配置多智能体编排（Paseo）？这将启用研究流水线的受管子智能体调度。"
 - **options**: `["Skip (use defaults)", "Yes, configure"]`
 
 If "Skip": set `answers.paseo_configured = false`, move to Phase 7.

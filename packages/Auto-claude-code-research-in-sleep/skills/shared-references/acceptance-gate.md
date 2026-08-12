@@ -221,7 +221,7 @@ the science is not.
 ## Tie to fan-out: breadth is same-family; the jury is not
 
 `fan-out-pattern.md` describes skill-layer fan-out — spawning multiple
-agents for breadth (parallel search branches, per-section drafting,
+agents for breadth (sharded search branches, per-section drafting,
 per-entry citation checks). Fan-out interacts with this contract in
 exactly one dangerous way:
 
@@ -251,7 +251,7 @@ jury.**
 Fan-out and this contract compose cleanly: fan-out (same family) does
 the broad _driving_; the loop always funnels into the identical
 cross-model _acquittal_ at the Type-B gate. Breadth degrades gracefully
-across runtimes (fewer parallel agents = slower, not unsafe); the
+across runtimes (fewer shards = less coverage, not an invalid verdict); the
 acquittal does not degrade — it is always the cross-family verdict, or
 the loop is unsafe.
 

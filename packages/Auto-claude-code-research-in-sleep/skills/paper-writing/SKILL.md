@@ -640,9 +640,9 @@ skipping audits while claiming to have run them.
 
 #### Invoking the three audits
 
-Each sub-audit dispatches a paseo claude sub-agent (per
-`shared-references/paseo-subagent-dispatch.md`; in-process `Skill` fallback if
-paseo MCP unavailable) that spawns a **FRESH paseo codex reviewer sub-agent**
+Each sub-audit dispatches a paseo claude sub-agent per
+`shared-references/paseo-subagent-dispatch.md`, immediately waits for it, and
+blocks if Paseo MCP is unavailable. That child spawns a **FRESH paseo codex reviewer sub-agent**
 per `shared-references/paseo-reviewer-dispatch.md` (never continuation —
 never pass prior audit output as context — this preserves reviewer
 independence per `shared-references/reviewer-independence.md`). Each writes its

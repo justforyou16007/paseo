@@ -136,8 +136,8 @@ count, time budget, claim-per-slide map) to the user and ask:
 
 Otherwise, dispatch a paseo claude sub-agent for `/paper-slides` Phase-1
 only (content extraction + slide outline generation) per
-`shared-references/paseo-subagent-dispatch.md` (in-process `Skill` fallback
-. `/paper-slides` writes the outline into its own
+`shared-references/paseo-subagent-dispatch.md`, then immediately wait for
+that child. `/paper-slides` writes the outline into its own
 state; we adopt it as `slides/SLIDE_OUTLINE.md`.
 
 The outline must contain, per slide:
@@ -157,9 +157,10 @@ running unattended.
 ### Phase 2: Build Baseline Deck
 
 Dispatch a paseo claude sub-agent for `/paper-slides` per
-`shared-references/paseo-subagent-dispatch.md` (in-process `Skill` fallback
-if paseo MCP unavailable) to generate Beamer source + PPTX from the approved
-outline.
+`shared-references/paseo-subagent-dispatch.md`, then immediately wait for
+that child, to generate Beamer source + PPTX from the approved outline. If
+Paseo MCP is unavailable, mark the phase BLOCKED; do not use a host-harness
+fallback.
 
 ```
 /paper-slides "<paper-dir>" — talk_type: <T> — minutes: <N> — venue: <V> — aspect: 16:9 — notes: true
@@ -184,9 +185,9 @@ exact paths.
 Skip when `assurance == draft`.
 
 Dispatch a paseo claude sub-agent for `/slides-polish` per
-`shared-references/paseo-subagent-dispatch.md` (in-process `Skill` fallback
-if paseo MCP unavailable) against the freshly generated PPTX, with a
-reference. If the user passed `— reference:`, use that. Otherwise, use the
+`shared-references/paseo-subagent-dispatch.md`, then immediately wait for
+that child, against the freshly generated PPTX. If Paseo MCP is unavailable,
+mark the phase BLOCKED. If the user passed `— reference:`, use that. Otherwise, use the
 Beamer compile (`slides/main.pdf`) as the visual reference — the Beamer is
 the design intent for the same talk, so it is the correct anchor when no
 external reference is available.
@@ -247,8 +248,8 @@ in Phase 6 unless the user passes `— keep-audit-input`.
 #### 4.1 Slide claim audit
 
 Dispatch a paseo claude sub-agent for `/paper-claim-audit` per
-`shared-references/paseo-subagent-dispatch.md` (in-process `Skill` fallback
-if paseo MCP unavailable) against the staged input. Scope is **slide
+`shared-references/paseo-subagent-dispatch.md`, then immediately wait for
+that child, against the staged input. Scope is **slide
 text + speaker notes + full talk script** — talks often smuggle
 unsupported claims into spoken parts that the visible bullets don't show.
 
@@ -267,8 +268,8 @@ verdict from `conference-ready` to `polished`.
 #### 4.2 Citation audit
 
 Dispatch a paseo claude sub-agent for `/citation-audit` per
-`shared-references/paseo-subagent-dispatch.md` (in-process `Skill` fallback
-if paseo MCP unavailable) over the staged input. Verify any `\cite{...}` in
+`shared-references/paseo-subagent-dispatch.md`, then immediately wait for
+that child, over the staged input. Verify any `\cite{...}` in
 slides + notes + script via DBLP / CrossRef; flag fabricated entries.
 
 ```

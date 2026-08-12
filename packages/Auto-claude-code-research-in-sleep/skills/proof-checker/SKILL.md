@@ -167,13 +167,14 @@ When the proof invokes any of the following, require explicit verification of AL
 
 ### Phase 0.5: Proof-Obligation Ledger
 
-> **Fan-out (Tier-aware) — build the ledger in parallel; never judge in
-> parallel.** For a large multi-theorem paper, ledger _construction_ is breadth
-> over independent sections. **Tier 1** (Workflow): spawn one Claude subagent
-> per section/theorem to extract that unit's symbols, assumptions, micro-claims,
-> and local quantified statements, each returning a structured ledger fragment.
-> **Tier 2**: the same subagents via the Agent tool. **Tier 3**: walk the
-> sections sequentially. This follows
+> **Paseo fan-out — build the ledger shard by shard; never judge in the
+> shards.** For a large multi-theorem paper, ledger _construction_ is breadth
+> over independent sections. Create one Claude subagent per section/theorem
+> through `mcp__paseo__create_agent`, then immediately call `wait_for_agent`
+> before dispatching the next section. Each child extracts that unit's symbols,
+> assumptions, micro-claims, and local quantified statements into a structured
+> ledger fragment. If Paseo MCP is unavailable, mark the phase BLOCKED; never
+> use host `Skill`, `Task`, or `Agent` tools or an in-process substitute. This follows
 > [`shared-references/fan-out-pattern.md`](../shared-references/fan-out-pattern.md).
 >
 > Two hard rules:
@@ -371,7 +372,7 @@ If the user passed `--deep-fix` on invocation, append the following block to the
     standard issue list, since that contaminates default-call output.
 ```
 
-**Save the threadId** (now a paseo codex agent-id when REVIEWER_BACKEND = `codex`; field name unchanged, semantics identical — `save_trace.sh --thread-id` passes this agent-id and the helper itself is unchanged). Parse into structured issue list. Write to `PROOF_AUDIT.md`.
+**Save the threadId** (now a paseo codex agent-id when REVIEWER_BACKEND = `codex`; field name unchanged, semantics identical — `save_trace.sh --thread-id` passes this agent-id). Parse into structured issue list. Write to `PROOF_AUDIT.md`.
 
 ### Phase 1.5: Counterexample Red Team
 

@@ -1,4 +1,6 @@
-import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -273,5 +275,118 @@ describe("ARIS runtime contract", () => {
 
     expect(content).toContain("runtime_file");
     expect(content).toContain("RUNTIME_FILES");
+  });
+
+  it("save_trace records the first and subsequent calls", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "aris-save-trace-"));
+    const helper = path.join(ARIS_ROOT, "tools", "save_trace.sh");
+    const args = [
+      helper,
+      "--skill",
+      "idea-discovery",
+      "--purpose",
+      "idea-review",
+      "--model",
+      "gpt-5.5",
+      "--thread-id",
+      "test-agent-id",
+      "--prompt",
+      "review prompt",
+      "--response",
+      "review response",
+    ];
+
+    try {
+      execFileSync("bash", args, { cwd: tempDir, stdio: "pipe" });
+      execFileSync("bash", args, { cwd: tempDir, stdio: "pipe" });
+
+      const skillTraceDir = path.join(tempDir, ".aris", "traces", "idea-discovery");
+      const runs = readdirSync(skillTraceDir, { withFileTypes: true }).filter((entry) =>
+        entry.isDirectory(),
+      );
+      expect(runs).toHaveLength(1);
+
+      const runDir = path.join(skillTraceDir, runs[0]!.name);
+      expect(existsSync(path.join(runDir, "001-idea-review.request.json"))).toBe(true);
+      expect(existsSync(path.join(runDir, "002-idea-review.request.json"))).toBe(true);
+      expect(existsSync(path.join(runDir, "001-idea-review.meta.json"))).toBe(true);
+      expect(existsSync(path.join(runDir, "002-idea-review.meta.json"))).toBe(true);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("forbids host-harness sub-agent dispatch and fallback in skill contracts", () => {
+    const violations: string[] = [];
+    const operationalFallbacks = [
+      /in-process\s+`?Skill`?\s+fallback/i,
+      /fallback to synchronous Skill-tool/i,
+      /via the Agent tool/i,
+      /Tier\s*2[^\n]*Agent tool/i,
+    ];
+
+    for (const { rel, content } of allFiles) {
+      if (path.basename(rel) !== "SKILL.md") continue;
+
+      const lines = content.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]!;
+        for (const pattern of operationalFallbacks) {
+          if (pattern.test(line)) {
+            violations.push(`${rel}:${i + 1}: ${line.trim().slice(0, 120)}`);
+          }
+        }
+      }
+
+      const allowedTools = lines.find((line) => line.startsWith("allowed-tools:"));
+      if (allowedTools) {
+        for (const tool of allowedTools
+          .slice("allowed-tools:".length)
+          .split(",")
+          .map((value) => value.trim())) {
+          if (/^(Agent|Task|Skill)(\(.*\))?$/.test(tool)) {
+            violations.push(`${rel}: allowed-tools grants forbidden host tool ${tool}`);
+          }
+        }
+      }
+    }
+
+    expect(
+      violations,
+      `Host-harness sub-agent dispatch remains in skill contracts:\n${violations.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  it("requires a new wait after every Paseo child turn", () => {
+    const dispatchContract = readFileSync(
+      path.join(SKILLS_DIR, "shared-references", "paseo-subagent-dispatch.md"),
+      "utf-8",
+    );
+    const reviewerContract = readFileSync(
+      path.join(SKILLS_DIR, "shared-references", "paseo-reviewer-dispatch.md"),
+      "utf-8",
+    );
+    const renderedWorkerContract = readFileSync(
+      path.join(SKILLS_DIR, "research-pipeline", "scripts", "render_w_agent_prompt.sh"),
+      "utf-8",
+    );
+
+    expect(dispatchContract).toContain("TURN_WAIT_INVARIANT");
+    expect(dispatchContract).toMatch(/every `create_agent` and every `send_agent_prompt`/);
+    expect(dispatchContract).toMatch(/send_agent_prompt[\s\S]{0,300}wait_for_agent/);
+    expect(reviewerContract).toMatch(
+      /every `send_agent_prompt` is immediately[\s\S]*new `wait_for_agent`/,
+    );
+    expect(renderedWorkerContract).toContain(
+      "After every create_agent or send_agent_prompt, immediately wait_for_agent",
+    );
+
+    const protocolCorpus = `${dispatchContract}\n${readFileSync(
+      path.join(SKILLS_DIR, "shared-references", "fan-out-pattern.md"),
+      "utf-8",
+    )}`;
+    expect(protocolCorpus).not.toMatch(/spawns? N children concurrently/i);
+    expect(protocolCorpus).not.toMatch(/Claude sub-agents run in parallel/i);
+    expect(protocolCorpus).not.toMatch(/parallel sub-agent dispatch/i);
   });
 });

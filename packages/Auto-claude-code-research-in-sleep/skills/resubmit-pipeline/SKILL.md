@@ -138,7 +138,7 @@ Search for `\revise{...}`, `\fix{...}`, `\new{...}`, `\todo{...}`, `\todonotes{.
 
 ### Phase 1: Audit (zero edits)
 
-Three audits in parallel, all detect-only. The new dir's source files are read; nothing is written except audit artifacts.
+Run three independent detect-only audits as sequential Paseo child turns. The new dir's source files are read; nothing is written except audit artifacts.
 
 | Skill                                                                                                                                                                                                           | Purpose                                                                                                           | Artifact                         |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | -------------------------------- |
@@ -148,7 +148,7 @@ Three audits in parallel, all detect-only. The new dir's source files are read; 
 
 **Critical**: the third audit MUST run with `— soft-only`. Without that flag, citation-audit emits `KEEP/FIX/REPLACE/REMOVE` verdicts that presuppose bib mutations — incompatible with resubmit's "no bib edits" constraint. With `--soft-only`, the same findings are translated to per-occurrence sentence-rewrite proposals consumable by Phase 2.
 
-**Atomize prior reviewer concerns** in parallel:
+**Atomize prior reviewer concerns** as independent sequential shards:
 
 ```
 For each file under $REVIEW_CORPUS:
@@ -217,8 +217,8 @@ The load-bearing phase. `/auto-paper-improvement-loop` is invoked with **two saf
          "$NEW_VENUE_DIR/" "$SNAPSHOT_DIR/"
 
    # Dispatch a paseo claude sub-agent for `auto-paper-improvement-loop` per
-   # shared-references/paseo-subagent-dispatch.md (in-process `Skill` fallback
-   #). Single dispatch; rounds + checkpoints are
+   # shared-references/paseo-subagent-dispatch.md, then immediately wait for
+   # that child. Single dispatch; rounds + checkpoints are
    # loop-internal. The child's initialPrompt binds the run context:
    #   paper dir:        $NEW_VENUE_DIR/
    #   --edit-whitelist: $NEW_VENUE_DIR/.aris/edit_whitelist.yaml
@@ -305,8 +305,8 @@ If extra round queue is non-empty AND user-budget allows: one extra Phase 2 roun
 ```bash
 # Dispatch a paseo claude sub-agent for `paper-compile`
 # ($NEW_VENUE_DIR/main.tex --venue $TARGET_VENUE) per
-# shared-references/paseo-subagent-dispatch.md (in-process `Skill` fallback
-#).
+# shared-references/paseo-subagent-dispatch.md, then immediately wait for
+# that child. If Paseo MCP is unavailable, mark the phase BLOCKED.
 ```
 
 `/paper-compile` checks page limit, font, bib resolve, figure overflow, and emits `COMPILE_REPORT.json`. If page limit exceeded → trigger page-shrink heuristic (see below).

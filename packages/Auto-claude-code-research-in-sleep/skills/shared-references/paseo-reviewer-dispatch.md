@@ -14,6 +14,11 @@ review = `send_agent_prompt` to the same codex agent.** Nothing else
 changes — the reviewer is still GPT-5.5, still `xhigh`, still receives file
 paths only, still writes a traceable verdict.
 
+Every reviewer turn has its own receive step: `create_agent` is immediately
+followed by `wait_for_agent`, and every `send_agent_prompt` is immediately
+followed by a new `wait_for_agent`. A wait for one round never covers the
+next round.
+
 ## Global Agent Rules (reviewer half)
 
 > Companion to [`paseo-subagent-dispatch.md`](paseo-subagent-dispatch.md)
@@ -292,7 +297,7 @@ Per-skill verdict files (paths unchanged from today):
 strings — **unchanged**. The values now hold paseo codex agent-ids instead
 of codex-MCP thread ids; both fit the "durable handle string" contract.
 
-## The trace contract (`save_trace.sh` — helper UNCHANGED)
+## The trace contract (`save_trace.sh`)
 
 After **every** reviewer round, the parent (the claude agent that spawned
 the reviewer) runs `save_trace.sh`, resolved via `integration-contract.md`
@@ -310,13 +315,16 @@ TRACE_HELPER=".aris/tools/save_trace.sh"
 
 # <codex_agent_id> is the paseo agent-id returned by create_agent / read from REVIEW_STATE.json
 if [ -n "$TRACE_HELPER" ]; then
-  bash "$TRACE_HELPER" \
+  if ! bash "$TRACE_HELPER" \
     --skill "<skill-name>" \
     --purpose "<purpose>" \
     --model "gpt-5.5" \
     --thread-id "<codex_agent_id>" \
     --prompt "<full prompt as sent>" \
-    --response "<full response content>"
+    --response "<full response content>"; then
+    echo "ERROR: resolved save_trace.sh failed; trace was not saved." >&2
+    exit 1
+  fi
 else
   # Policy C fallback: write run.meta.json + request.json + response.md + meta.json
   # directly per review-tracing.md schema. Do NOT silently skip.
@@ -326,8 +334,10 @@ fi
 
 The trace's `meta.json` `thread_id` field therefore holds a paseo codex
 agent-id; the `request.json` `tool` field is now `paseo:create_agent` (fresh)
-or `paseo:send_agent_prompt` (continuation). `save_trace.sh` itself is not modified — it
-treats `--thread-id` as an opaque string.
+or `paseo:send_agent_prompt` (continuation). `save_trace.sh` treats
+`--thread-id` as an opaque string. Policy C direct-write fallback applies
+only when the resolver cannot find the helper. A resolved helper returning
+non-zero is an execution error and MUST NOT be relabeled as "unresolved."
 
 ## Persisting the handle (state-schema adaptation, helpers UNCHANGED)
 
@@ -429,7 +439,8 @@ sub-agents ([paseo-subagent-dispatch.md](paseo-subagent-dispatch.md)
 
 - **Reviewer idle with no sub-agents, no verdict file written** → the
   reviewer may have stalled. Send a continuation prompt:
-  `"You were reviewing. Continue and write your verdict."`
+  `"You were reviewing. Continue and write your verdict."` Then immediately
+  call `mcp__paseo__wait_for_agent` again for that continuation turn.
 - **Reviewer idle waiting for its own sub-agent** (has live sub-agents)
   → do nothing. The reviewer is supervising correctly.
 - **Reviewer idle with verdict file written** → normal completion. Read
@@ -444,9 +455,10 @@ never writes its own review verdict. That would violate
 
 Reviewer verdicts follow the same notification-driven model:
 
-1. `create_agent` with `notifyOnFinish: true`.
-2. The parent calls `mcp__paseo__wait_for_agent` to await the reviewer's
-   completion notification.
+1. `create_agent` with `notifyOnFinish: true`, immediately followed by
+   `mcp__paseo__wait_for_agent` for that reviewer turn.
+2. Every later `send_agent_prompt` is immediately followed by another
+   `mcp__paseo__wait_for_agent`; the earlier wait has already been consumed.
 3. After `wait_for_agent` returns, the parent reads the verdict file
    (per the calling skill's schema — `REVIEW_STATE.json`,
    `AUDIT_RESULT.json`, etc.), runs `save_trace.sh`, and archives the
@@ -474,8 +486,7 @@ reads it before sending the next prompt).
   is file-paths-only; the continuation Exception (reviewer may reference
   its OWN prior feedback).
 - [`review-tracing.md`](review-tracing.md) — `save_trace.sh` after every
-  reviewer round; `--thread-id` now holds a paseo codex agent-id. Helper
-  unchanged.
+  reviewer round; `--thread-id` holds a paseo codex agent-id.
 - [`acceptance-gate.md`](acceptance-gate.md) — Type-A (execution, safe
   same-model) vs Type-B (quality, must be cross-model). The reviewer is the
   Type-B authority; the executor may mark `done` but never `accept`.

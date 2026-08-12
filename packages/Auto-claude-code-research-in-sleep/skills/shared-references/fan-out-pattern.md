@@ -3,21 +3,23 @@
 > **Compliance**: This file is governed by
 > [`paseo-subagent-dispatch.md`](paseo-subagent-dispatch.md) Global
 > Rule 1 (One Agent = One Skill) and Rule 4 (Paseo MCP Only, Strict).
-> The single fan-out primitive is `mcp__paseo__create_agent` × N. The
+> The single fan-out primitive is `mcp__paseo__create_agent` × N, executed
+> as N `create_agent` → `wait_for_agent` pairs. The
 > legacy 3-tier host-`Agent`-tool ladder is **removed**.
 
 When a skill needs **breadth** — many candidate ideas, many sources, many
 attack angles, many proof obligations, many draft sections — it may fan
-the generation step out across same-family subagents. This document is
+the generation step out across same-family subagents. The shards run one
+at a time so every started child turn has a matching wait. This document is
 the canonical convention for doing that **without** weakening the
 cross-model jury that the entire ARIS design rests on.
 
 Rule of thumb: **Fan-out is 火力 (firepower); the jury is 裁判席 (the
 bench). Subagents GENERATE candidates; they NEVER score them.** Fan-out
-multiplies how much breadth you can cover per unit time. It does not, and
+multiplies how much of the search space you cover. It does not, and
 must not, change _who renders the verdict_. The verdict stays a single,
 heterogeneous, cross-model step — identical whether you fanned out across
-8 parallel workers or ran one shard at a time on a slow night.
+eight shards or ran only one.
 
 ## Core principle: decouple FAN-OUT from JURY
 
@@ -55,26 +57,18 @@ judgment and are explicitly allowed on the executor — see
 
 ## The unified fan-out pattern: Paseo N-subagent
 
-Fan-out is a **single, substrate-agnostic pattern** under the Global
-Rules: spawn **N Paseo sub-agents** (one per shard) with
-`mcp__paseo__create_agent`, each with `notifyOnFinish: true`. The
-parent collects N push notifications, reads N receipt files, runs
-mechanical dedup, then forwards the deduped set to the cross-model
-jury. Per Global Rule 1, every shard is a separate agent executing
-exactly one skill.
+Fan-out is a **single Paseo pattern** under the Global Rules: shard the
+input into N independent units, then execute N Paseo child turns. For each
+shard, call `mcp__paseo__create_agent` with `notifyOnFinish: true`, immediately
+call `mcp__paseo__wait_for_agent`, read that shard's receipt, and only then
+create the next child. After all N receipts are collected, run mechanical
+dedup and forward the union to the cross-model jury. Per Global Rule 1,
+every shard is a separate agent executing exactly one skill.
 
-The dispatch substrate has **two** runtime properties (NOT tiers):
-
-  - **Claude sub-agents** can run in parallel. The Paseo MCP allows
-    concurrent `create_agent` calls; each child runs in its own
-    context; the parent receives N `notifyOnFinish` events and reads
-    N receipt files.
-  - **Codex sub-agents** must run sequentially. Concurrent codex
-    sub-agents hang on shared resources (see
-    [`skills/kill-argument/SKILL.md`](../kill-argument/SKILL.md) line
-    165-170). For codex-shard fan-out, the parent issues
-    `create_agent` calls one at a time and waits for each receipt
-    before issuing the next.
+Do not issue concurrent `create_agent` calls. A completion notification is
+delivered to the owner through its matching `wait_for_agent`; leaving several
+turns outstanding makes completion ownership ambiguous and can strand a
+finished shard. This sequential turn protocol applies to Claude and Codex.
 
 The legacy 3-tier ladder (ultracode / `Agent` tool / sequential) is
 **removed**. Per Global Rule 4, the host `Agent` tool is forbidden in
@@ -91,15 +85,12 @@ shards ──┘  │     (executor-side, NOT judgment)        │      (identic
 ```
 
 **The jury invariant is strictly orthogonal to whether subagents
-exist.** A single sequential pass that runs each shard in a fresh
-context (e.g. for codex serial fan-out) must produce a verdict from
-the _same_ cross-model jury as a parallel Claude fan-out across
-N workers. The dispatch substrate changes; the jury step does not.
-Degrading the dispatch is free; degrading the verdict is a breach.
+exist.** A sequential series that runs each shard in a fresh context must
+produce a verdict from the _same_ cross-model jury regardless of shard
+count. The shard count changes; the jury step does not.
 
-Known failure mode: a skill author "optimizes" by letting the
-single sequential pass _also_ pick the winner, because there is no
-parallel orchestrator to do it. That is self-acquittal smuggled in
+Known failure mode: a skill author "optimizes" by letting a shard
+_also_ pick the winner. That is self-acquittal smuggled in
 through the substrate. Even sequential fan-out still ends at the
 cross-model jury; the sequential pass only generates.
 
@@ -217,17 +208,16 @@ never fan out the bench.**
 
 ## Worked examples (real ARIS skills)
 
-### `/kill-argument` — sequential codex sub-agent fan-out (substrate property, not a tier)
+### `/kill-argument` — sequential codex sub-agent fan-out
 
 `/kill-argument` is the canonical proof that fan-out is a prompt pattern,
 not a harness feature. It runs **two** fresh `mcp__paseo__create_agent`
 codex sub-agents in series — Thread 1 writes the strongest 200-word
 rejection memo; Thread 2 (independent, no `send_agent_prompt` to the
 same agent) decomposes that memo into 3-7 atomic rejection points and
-adjudicates each. The sequential ordering is mandated by the
-**substrate property** that concurrent codex sub-agents hang (see
-`skills/kill-argument/SKILL.md:165-170`); the parent issues the second
-`create_agent` only after reading the first sub-agent's receipt file.
+adjudicates each. The parent immediately waits after the first
+`create_agent`, reads that child's receipt, then issues and waits for the
+second child.
 The "fan" is the decomposition into per-point obligations, run
 sequentially with context reset between sub-agents. The jury here is
 cross-model by construction — both sub-agents are GPT-5.5 adjudicating
@@ -244,11 +234,11 @@ lives in the skill, not the model.
 (structural gaps: method-in-A-not-B, contradictory findings, untested
 assumptions, unexplored scaling regimes — Phase 1). The parent spawns
 5 Paseo sub-agents (one per lens) via `mcp__paseo__create_agent` with
-`notifyOnFinish: true`. Claude sub-agents run in parallel (the Paseo
-MCP allows concurrent `create_agent` calls); the parent collects 5
-push notifications, reads 5 receipt files, then runs **mechanical
-dedup only** (cluster near-identical ideas; never drop one for being
-"weak"). The **jury** is the already-existing Phase-4 cross-model
+`notifyOnFinish: true`. After each creation, the parent immediately calls
+`wait_for_agent`, reads that child's receipt, and only then dispatches the
+next lens. After all 5 receipts arrive, the parent runs **mechanical dedup
+only** (cluster near-identical ideas; never drop one for being "weak").
+The **jury** is the already-existing Phase-4 cross-model
 devil's-advocate pass: a fresh paseo codex sub-agent
 (`provider: "codex/gpt-5.5"`) reads the deduped set cold and emits the
 strongest reviewer objection per idea.
@@ -282,7 +272,7 @@ fetchers), but the acceptance gate is a deterministic external verifier,
 so there is no same-family-self-judgment risk to begin with. When the
 "jury" is a deterministic check rather than a model verdict, the
 cross-model-family rule is automatically satisfied (a process is not a
-model family). Fan out freely.
+model family). Shard freely, while retaining the sequential turn protocol.
 
 ## Shard safety invariants
 
@@ -292,8 +282,7 @@ Two invariants keep a fan-out from manufacturing or laundering errors:
   return its findings; it must NOT write shared state, mutate files the executor or other
   shards also touch, or rank/drop another shard's output. The _only_ write is the
   post-merge executor write, after dedup. This forecloses silent world-model divergence
-  (parallel agents mutating a shared workspace and integrating into conflicts only
-  discovered at composition time).
+  when agent writes are later integrated.
 - **Don't inherit the upstream premise unchecked.** When a phase's jury reviews work built
   on a load-bearing upstream artifact (a prior phase's claim, a cited number, an earlier
   agent's conclusion), give the jury the _path to that upstream artifact_ and ask it to
@@ -328,10 +317,10 @@ Two invariants keep a fan-out from manufacturing or laundering errors:
 A SKILL that fans out must specify all of:
 
 1. **Paseo N-subagent dispatch.** State the parent dispatches N
-   `mcp__paseo__create_agent` calls with `notifyOnFinish: true`; each
-   sub-agent runs exactly one skill (per Global Rule 1). Identify which
-   sub-agent type is used (Claude: parallel; codex: serial substrate
-   property). Cite
+   `mcp__paseo__create_agent` calls with `notifyOnFinish: true`; every call
+   is immediately paired with `mcp__paseo__wait_for_agent` before the next
+   child is created. Each sub-agent runs exactly one skill (per Global Rule 1).
+   Cite
    [`paseo-subagent-dispatch.md`](paseo-subagent-dispatch.md) in the
    skill body.
 2. **Per-shard structured output.** Each shard returns a structured object
@@ -347,8 +336,8 @@ A SKILL that fans out must specify all of:
 4. **A single cross-model jury step** (per
    [`paseo-reviewer-dispatch.md`](paseo-reviewer-dispatch.md) +
    [`reviewer-independence.md`](reviewer-independence.md)) — OR a
-   deterministic verifier gate — that is **identical** regardless of
-   whether fan-out is parallel (Claude) or sequential (codex).
+   deterministic verifier gate — that is **identical** regardless of shard
+   count or child provider.
 5. **A breadth-bound justification.** State why this task benefits from
    breadth. If the deliverable IS a verdict, do not fan out the verdict;
    fan out only the evidence that feeds it.
@@ -365,9 +354,8 @@ The host `Agent` tool is **forbidden** in ARIS workflows per Global
 Rule 4. A skill that previously granted `Agent` for the legacy Tier-2
 form MUST be migrated to the Paseo primitive. As of this rewrite the
 three fan-out skills (`idea-creator`, `research-lit`, `proof-checker`)
-all already have `mcp__paseo__create_agent` in their `allowed-tools`;
-the legacy `Agent` grant becomes a no-op and is being removed (see
-follow-up commit).
+all already have `mcp__paseo__create_agent` and
+`mcp__paseo__wait_for_agent` in their `allowed-tools`.
 
 **Re-granting rule.** A skill that adds genuine fan-out introduces
 `mcp__paseo__create_agent` to its `allowed-tools` **in the same change

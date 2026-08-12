@@ -153,8 +153,11 @@ required to leave behind (e.g. `save_trace.sh`). The fallback is
   echo "WARN: save_trace.sh not resolved; writing trace files directly per review-tracing.md schema." >&2
 }
 if [ -n "$TRACE_HELPER" ]; then
-  bash "$TRACE_HELPER" --skill "$SKILL" --purpose "$PURPOSE" --model "$MODEL" \
-       --thread-id "$THREAD" --prompt "$PROMPT" --response "$RESPONSE"
+  if ! bash "$TRACE_HELPER" --skill "$SKILL" --purpose "$PURPOSE" --model "$MODEL" \
+       --thread-id "$THREAD" --prompt "$PROMPT" --response "$RESPONSE"; then
+    echo "ERROR: resolved save_trace.sh failed; trace was not saved." >&2
+    exit 1
+  fi
 else
   # Required fallback: write run.meta.json, request.json, response.md, meta.json
   # directly per review-tracing.md schema. Do NOT silently skip unless
@@ -162,6 +165,10 @@ else
   ...
 fi
 ```
+
+Policy C fallback is selected only when resolution leaves `TRACE_HELPER`
+empty. A resolved helper that exits non-zero has failed during execution;
+do not hide that defect by switching to the unresolved-helper fallback.
 
 **D1. Primary helper with first-success cascade — try N sources in
 priority order, accept first success.** Use when the SKILL needs

@@ -179,7 +179,7 @@ Phase 1 and Phase 2 will use `idea-stage/REF_PAPER_SUMMARY.md` as additional con
 
 ### Phase 1: Literature Survey
 
-Dispatch a paseo claude sub-agent for `/research-lit` (per `shared-references/paseo-subagent-dispatch.md`; in-process `Skill` fallback) to map the research landscape. Idea discovery is exactly the place where Gemini's AI-driven broad coverage adds value, so include `gemini` as a source by default unless the user already specified an explicit `— sources:` directive in their idea-discovery invocation:
+Dispatch a paseo claude sub-agent for `/research-lit` per `shared-references/paseo-subagent-dispatch.md`; after dispatch, immediately wait for that child. No host-harness fallback is allowed. Idea discovery is exactly the place where Gemini's AI-driven broad coverage adds value, so include `gemini` as a source by default unless the user already specified an explicit `— sources:` directive in their idea-discovery invocation:
 
 ```
 # If $ARGUMENTS already contains "— sources:", pass through unchanged
@@ -217,7 +217,7 @@ Does this match your understanding? Should I adjust the scope before generating 
 
 ### Phase 2: Idea Generation + Filtering + Pilots
 
-Dispatch a paseo claude sub-agent for `/idea-creator` (per `shared-references/paseo-subagent-dispatch.md`; in-process `Skill` fallback) with the landscape context (and `idea-stage/REF_PAPER_SUMMARY.md` if available):
+Dispatch a paseo claude sub-agent for `/idea-creator` per `shared-references/paseo-subagent-dispatch.md`, then immediately wait for it, with the landscape context (and `idea-stage/REF_PAPER_SUMMARY.md` if available):
 
 ```
 /idea-creator "$ARGUMENTS" — composed: idea-stage/IDEA_REPORT.md
@@ -261,7 +261,7 @@ Which ideas should I validate further? Or should I regenerate with different con
 
 ### Phase 3: Deep Novelty Verification
 
-For each top idea (positive pilot signal), dispatch a paseo claude sub-agent for `/novelty-check` (per `shared-references/paseo-subagent-dispatch.md`; in-process `Skill` fallback) to run a thorough novelty check:
+For each top idea (positive pilot signal), dispatch a paseo claude sub-agent for `/novelty-check` per `shared-references/paseo-subagent-dispatch.md`, immediately waiting for each dispatched turn, to run a thorough novelty check:
 
 ```
 /novelty-check "[top idea 1 description]"
@@ -279,7 +279,7 @@ For each top idea (positive pilot signal), dispatch a paseo claude sub-agent for
 
 ### Phase 4: External Critical Review
 
-For the surviving top idea(s), dispatch a paseo claude sub-agent for `/research-review` (per `shared-references/paseo-subagent-dispatch.md`; in-process `Skill` fallback) to get brutal feedback:
+For the surviving top idea(s), dispatch a paseo claude sub-agent for `/research-review` per `shared-references/paseo-subagent-dispatch.md`, then immediately wait for it, to get brutal feedback:
 
 ```
 /research-review "[top idea with hypothesis + pilot results]" — composed: idea-stage/IDEA_REPORT.md
@@ -297,7 +297,7 @@ In composed mode `/research-review` folds its conclusions into `idea-stage/IDEA_
 
 ### Phase 4.5: Method Refinement + Experiment Planning
 
-After review, dispatch a paseo claude sub-agent for `/research-refine-pipeline` (per `shared-references/paseo-subagent-dispatch.md`; in-process `Skill` fallback) to refine the top idea into a concrete proposal and plan experiments:
+After review, dispatch a paseo claude sub-agent for `/research-refine-pipeline` per `shared-references/paseo-subagent-dispatch.md`, then immediately wait for it, to refine the top idea into a concrete proposal and plan experiments:
 
 ```
 /research-refine-pipeline "[top idea description + pilot results + reviewer feedback]"

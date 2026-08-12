@@ -168,7 +168,7 @@ Map the research area to understand what exists and where the gaps are.
    - Scaling regimes that haven't been explored
    - Diagnostic questions that nobody has asked
 
-### Phase 1.5: Parallel lens fan-out (Tier-aware) — breadth, not verdict
+### Phase 1.5: Lens fan-out — breadth, not verdict
 
 Idea generation benefits from **breadth**: more independent analytic angles
 surface more candidate ideas. This skill fans out _candidate generation_
@@ -188,22 +188,20 @@ nobody tested) · `scaling-regime` (unexplored regime) · `diagnostic`
 (question nobody asked). This set is a floor, not a ceiling — add a
 domain-specific lens when the direction warrants.
 
-**Tier-portable dispatch** (the Phase-4 jury downstream is identical on every tier):
-
-- **Tier 1** (Workflow available): spawn one **Claude subagent per lens**;
-  each runs the Phase-1 survey _through its lens_ and the Phase-2 generation
-  prompt _restricted to that lens_, returning candidates as structured output.
-- **Tier 2** (Agent tool, no Workflow): spawn the same per-lens subagents via
-  the Agent tool.
-- **Tier 3** (no spawning): enumerate the lenses sequentially in one pass —
-  the original single-thread behavior, made explicit. No capability assumed.
+**Paseo dispatch:** create one **Claude subagent per lens** through
+`mcp__paseo__create_agent`. Each runs the Phase-1 survey _through its lens_
+and the Phase-2 generation prompt _restricted to that lens_, returning
+candidates as structured output. Immediately call `wait_for_agent` after
+each creation before dispatching the next lens. If Paseo MCP is unavailable,
+mark the phase BLOCKED; do not use the host `Skill`, `Task`, or `Agent` tools
+and do not execute the shard in-process.
 
 > **Why the lens shards are Claude, not Codex.** Generation is candidate
 > production, not a verdict, so same-family is safe — and Codex MCP is
 > **serial** (concurrent codex calls hang), so spending its scarce capacity
 > on parallel generation is both unsafe-to-parallelize and wasteful. Reserve
 > Codex exclusively for the Phase-4 cross-model jury (novelty/quality verdict).
-> On Tier 1/2 the lens subagents are the generators; Phase 2 runs one more
+> The lens subagents are the generators; Phase 2 runs one more
 > Claude generation pass over the merged landscape. Every idea pool then
 > enters Phase 4's cross-model reviewer — no same-family acquittal ever.
 

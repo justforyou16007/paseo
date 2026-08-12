@@ -108,8 +108,9 @@ RENDER=".claude/skills/research-pipeline/scripts/render_w_agent_prompt.sh"
 
 ### 1. Probe paseo MCP
 
-If unavailable → fallback to synchronous Skill-tool path (same verdicts and
-gates, only dispatch substrate changes).
+If unavailable, mark the current phase `BLOCKED`, report that Paseo MCP is
+required, and stop. The host harness `Skill` / `Task` / `Agent` mechanisms
+are not an ARIS dispatch substrate and there is no synchronous fallback.
 
 ### 2. Determine phases
 

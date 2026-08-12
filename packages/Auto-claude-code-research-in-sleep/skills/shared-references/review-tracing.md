@@ -14,7 +14,7 @@ After **every** cross-model reviewer call that serves a reviewer/critique functi
 
 Do NOT trace: purely informational LLM calls (e.g., `codex exec` for code generation that is not a review).
 
-> **Paseo note (`save_trace.sh` itself is unchanged).** On the paseo substrate,
+> **Paseo note.** On the paseo substrate,
 > `--thread-id` holds the **paseo codex agent-id** (returned by `create_agent`
 > or read from `REVIEW_STATE.json`'s `threadId` field, which now holds an
 > agent-id). The trace's `request.json` `tool` field is `paseo:create_agent`
@@ -53,13 +53,16 @@ TRACE_HELPER=".aris/tools/save_trace.sh"
 [ -f "$TRACE_HELPER" ] || TRACE_HELPER=""
 
 if [ -n "$TRACE_HELPER" ]; then
-  bash "$TRACE_HELPER" \
+  if ! bash "$TRACE_HELPER" \
     --skill "<skill-name>" \
     --purpose "<purpose>" \
     --model "<model>" \
     --thread-id "<threadId from response>" \
     --prompt "<full prompt as sent>" \
-    --response "<full response content>"
+    --response "<full response content>"; then
+    echo "ERROR: resolved save_trace.sh failed; trace was not saved." >&2
+    exit 1
+  fi
 else
   # Required fallback: the resolver exhausted both layers and
   # save_trace.sh is unreachable, but trace artifacts are still
@@ -81,7 +84,9 @@ fi
 The helper, when present, handles directory creation, run numbering,
 and file writing. The fallback branch above documents what to do
 when the helper is unreachable — the trace is forensic evidence, so
-"helper missing" never means "skip the trace."
+"helper missing" never means "skip the trace." A non-zero exit from a
+resolved helper is not an unresolved-helper condition and must not switch
+to Policy C inline fallback; report the helper failure and stop that gate.
 
 ## File Schemas
 
