@@ -16,6 +16,7 @@ const discriminatedUnionPath = resolve(
   zodAotRoot,
   "dist/core/codegen/schemas/discriminated-union.js",
 );
+const unionExtractorPath = resolve(zodAotRoot, "dist/core/extract/extractors/union.js");
 
 async function ensureZodAotRuntimeImportExtensionPatch() {
   const emitter = await readFile(emitterPath, "utf8");
@@ -30,6 +31,70 @@ async function ensureZodAotRuntimeImportExtensionPatch() {
     throw new Error("zod-aot emitter shape changed; update the runtime import extension patch");
   }
   await writeFile(emitterPath, emitter.replace(before, after));
+}
+
+async function ensureZodAotBooleanDiscriminatorExtractorPatch() {
+  let extractor = await readFile(unionExtractorPath, "utf8");
+  if (extractor.includes("typeof v +")) {
+    return;
+  }
+
+  const storeBefore = "mapping[String(v)] = i;";
+  const storeAfter = 'mapping[typeof v + ":" + String(v)] = i;';
+
+  if (!extractor.includes(storeBefore)) {
+    throw new Error(
+      "zod-aot union extractor shape changed; update the boolean discriminator patch",
+    );
+  }
+
+  extractor = extractor.replace(storeBefore, storeAfter);
+  await writeFile(unionExtractorPath, extractor);
+}
+
+async function ensureZodAotBooleanDiscriminatorCodegenPatch() {
+  let codegen = await readFile(discriminatedUnionPath, "utf8");
+  if (codegen.includes("emitCaseValue")) {
+    return;
+  }
+
+  const helperInsertBefore = "export function slowDiscriminatedUnion(ir, g) {";
+  const helperInsertAfter = `function emitCaseValue(typedKey) {
+    var sep = typedKey.indexOf(":");
+    if (sep === -1) return escapeString(typedKey);
+    var t = typedKey.slice(0, sep);
+    var v = typedKey.slice(sep + 1);
+    if (t === "boolean" || t === "number") return v;
+    return escapeString(v);
+}
+export function slowDiscriminatedUnion(ir, g) {`;
+
+  const slowCaseBefore = "case ${escapeString(value)}:";
+  const slowCaseAfter = "case ${emitCaseValue(value)}:";
+
+  const slowOptionsBefore = ".map((v) => escapeString(v))";
+  const slowOptionsAfter = ".map((v) => emitCaseValue(v))";
+
+  const fastCaseBefore = "cases.push(`case ${escapeString(value)}:return ${check};`);";
+  const fastCaseAfter = "cases.push(`case ${emitCaseValue(value)}:return ${check};`);";
+
+  if (
+    !codegen.includes(helperInsertBefore) ||
+    !codegen.includes(slowCaseBefore) ||
+    !codegen.includes(slowOptionsBefore) ||
+    !codegen.includes(fastCaseBefore)
+  ) {
+    throw new Error(
+      "zod-aot discriminated-union codegen shape changed; update the boolean discriminator patch",
+    );
+  }
+
+  codegen = codegen
+    .replace(helperInsertBefore, helperInsertAfter)
+    .replace(slowCaseBefore, slowCaseAfter)
+    .replace(slowOptionsBefore, slowOptionsAfter)
+    .replace(fastCaseBefore, fastCaseAfter);
+  await writeFile(discriminatedUnionPath, codegen);
 }
 
 async function ensureZodAotDiscriminatedUnionOutputPatch() {
@@ -69,8 +134,11 @@ async function ensureZodAotDiscriminatedUnionOutputPatch() {
 
 await Promise.all([
   ensureZodAotRuntimeImportExtensionPatch(),
-  ensureZodAotDiscriminatedUnionOutputPatch(),
+  ensureZodAotBooleanDiscriminatorExtractorPatch(),
 ]);
+// These two patch the same file — run sequentially to avoid write races.
+await ensureZodAotDiscriminatedUnionOutputPatch();
+await ensureZodAotBooleanDiscriminatorCodegenPatch();
 
 const [{ discoverSchemas }, { compileSchemas }, { generateCompiledFileContent }] =
   await Promise.all([

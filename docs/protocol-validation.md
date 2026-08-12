@@ -29,9 +29,11 @@ Generation runs from protocol-owned lifecycle hooks: `prebuild`, `pretypecheck`,
 zod-aot is exact-pinned and young enough that compiler patches are treated as part of this package. `packages/protocol/tests/validation/ws-outbound.test.ts` keeps small regression tests for the patched cases:
 
 - discriminated-union branch output must propagate `.default()` fields
+- boolean discriminated-union branches must emit `case true:`/`case false:`, not string comparisons
 - current sequential item routing must accept `tool_call`-like status branches
 - generated runtime imports must keep `.js` extensions for packaged Node ESM
 - the generated WebSocket envelope accepts a minimal valid message and rejects a corrupted one
+- ARIS wiki, wiki entity, and experiments response envelopes validate with boolean `ok` discriminator
 
 ## Schema Purity
 

@@ -291,4 +291,130 @@ const SourceSchema = z.object({
     });
     expect(result.success).toBe(true);
   });
+
+  it("routes boolean discriminated-union branches (true and false)", async () => {
+    const schema = await compileInlineSchema(`
+const SourceSchema = z.discriminatedUnion("ok", [
+  z.object({
+    ok: z.literal(true),
+    data: z.string(),
+  }),
+  z.object({
+    ok: z.literal(false),
+    error: z.string(),
+  }),
+]);
+`);
+
+    expect(schema.safeParse({ ok: true, data: "hello" })).toMatchObject({
+      success: true,
+      data: { ok: true, data: "hello" },
+    });
+    expect(schema.safeParse({ ok: false, error: "fail" })).toMatchObject({
+      success: true,
+      data: { ok: false, error: "fail" },
+    });
+    expect(schema.safeParse({ ok: "true", data: "hello" }).success).toBe(false);
+  });
+
+  it("distinguishes boolean true from string 'true' in the same discriminated union", async () => {
+    const schema = await compileInlineSchema(`
+const SourceSchema = z.discriminatedUnion("ok", [
+  z.object({
+    ok: z.literal(true),
+    data: z.string(),
+  }),
+  z.object({
+    ok: z.literal(false),
+    error: z.string(),
+  }),
+  z.object({
+    ok: z.literal("true"),
+    label: z.string(),
+  }),
+]);
+`);
+
+    expect(schema.safeParse({ ok: true, data: "hello" })).toMatchObject({
+      success: true,
+      data: { ok: true, data: "hello" },
+    });
+    expect(schema.safeParse({ ok: false, error: "fail" })).toMatchObject({
+      success: true,
+      data: { ok: false, error: "fail" },
+    });
+    expect(schema.safeParse({ ok: "true", label: "tag" })).toMatchObject({
+      success: true,
+      data: { ok: "true", label: "tag" },
+    });
+    expect(schema.safeParse({ ok: true, label: "tag" }).success).toBe(false);
+    expect(schema.safeParse({ ok: "true", data: "hello" }).success).toBe(false);
+  });
+
+  it("accepts an aris.wiki.read.response success envelope", () => {
+    const result = GeneratedWSOutboundMessageSchema.safeParse({
+      type: "session",
+      message: {
+        type: "aris.wiki.read.response",
+        payload: {
+          requestId: "wiki-1",
+          ok: true,
+          papers: [],
+          ideas: [],
+          experiments: [],
+          claims: [],
+          edges: [],
+          findings: null,
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts an aris.wiki.read.response error envelope", () => {
+    const result = GeneratedWSOutboundMessageSchema.safeParse({
+      type: "session",
+      message: {
+        type: "aris.wiki.read.response",
+        payload: {
+          requestId: "wiki-2",
+          ok: false,
+          error: "not found",
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts an aris.wiki.entity.read.response success envelope", () => {
+    const result = GeneratedWSOutboundMessageSchema.safeParse({
+      type: "session",
+      message: {
+        type: "aris.wiki.entity.read.response",
+        payload: {
+          requestId: "entity-1",
+          ok: true,
+          content: "# Paper\nContent here",
+          entityType: "paper",
+          entityId: "p-1",
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts an aris.experiments.read.response success envelope", () => {
+    const result = GeneratedWSOutboundMessageSchema.safeParse({
+      type: "session",
+      message: {
+        type: "aris.experiments.read.response",
+        payload: {
+          requestId: "exp-1",
+          ok: true,
+          experiments: [],
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
 });
