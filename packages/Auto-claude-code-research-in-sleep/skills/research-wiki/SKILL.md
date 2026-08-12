@@ -48,7 +48,7 @@ operational noise that would harden into a self-cited falsehood (see
 [`shared-references/capture-antipatterns.md`](../shared-references/capture-antipatterns.md)).
 Resolve the helper via the canonical chain (integration-contract §2):
 `.aris/dist/tools/capture-filter.js` → `dist/tools/capture-filter.js` →
-`$ARIS_REPO/dist/tools/capture-filter.js` (warn-and-skip if unresolved). Run
+(warn-and-skip if unresolved). Run
 `node <capture_filter> -` on the note text; if it flags **env-failure /
 transient-error / negative-tool-claim**, do NOT store it as a durable node —
 rewrite it to the _fix / missing config / workaround_, or drop it. Never store
@@ -90,16 +90,13 @@ install puts helpers in `.aris/`), which is exactly the failure mode that left a
 `research-wiki/` empty for a week.
 
 ```bash
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-ARIS_REPO="${ARIS_REPO:-$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null)}"
+_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
 WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
 [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
-[ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/dist/tools/research-wiki.js"; }
 [ -f "$WIKI_SCRIPT" ] || {
-  echo "ERROR: research-wiki.js not found at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
-  echo "       Fix one of:" >&2
-  echo "         1. export ARIS_REPO=<path-to-ARIS-repo>" >&2
-  echo "         2. cp <ARIS-repo>/dist/tools/research-wiki.js tools/" >&2
+  echo "ERROR: research-wiki.js not found at .aris/dist/tools/ or dist/tools/." >&2
+  echo "       Fix: run /aris-update to refresh the project runtime." >&2
   exit 1
 }
 ```
@@ -339,7 +336,7 @@ if research-wiki/ exists AND $WIKI_SCRIPT resolved (chain at top of this SKILL):
                 --evidence "..."
     log "research-lit ingested N papers"
 elif research-wiki/ exists but $WIKI_SCRIPT did not resolve:
-    warn "wiki update skipped — research-wiki.js unreachable; set ARIS_REPO"
+    warn "wiki update skipped — research-wiki.js unreachable; run /aris-update"
 ```
 
 Each paper-reading skill ships its own Step "Update Research Wiki (if

@@ -24,7 +24,7 @@ Determine the output language using this priority:
 - JSON state files — keys and structure remain English
 - **Machine-parsed markers** — never localize the following, regardless of language setting:
   - Markdown frontmatter keys (e.g., `outcome:`, `node_id:`, `title:`, `type:`)
-  - Research Wiki schema fields parsed by `tools/research_wiki.py` (e.g., `outcome: negative`, `outcome: positive`, `node_id:`)
+  - Research Wiki schema fields parsed by `.aris/dist/tools/research-wiki.js` (e.g., `outcome: negative`, `outcome: positive`, `node_id:`)
   - `MANIFEST.md` column headers and table structure
   - Any field that downstream tools or scripts read programmatically
 

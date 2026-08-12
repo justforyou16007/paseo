@@ -26,7 +26,7 @@ and the agent cites it against itself long after the real cause is gone.
 
 ## Mechanical vs judgment
 
-- **Mechanical** (deterministic, `tools/capture_filter.py`): the unambiguous
+- **Mechanical** (deterministic, `tools/capture-filter.js`): the unambiguous
   classes — raw error output (`No module named`, `command not found`,
   `ModuleNotFoundError`, `Permission denied`), transient errors (rate-limit / OOM
   / network), and explicitly-broken-tool phrasing anchored on ARIS infrastructure
@@ -51,12 +51,12 @@ never enough to _accept_ into the load-bearing set.
 ## Helper
 
 ```
-from capture_filter import screen, reason_detail
-screen(text)  # -> [reason, ...]  ([] = clean);  reason ∈ {env_failure, transient_error, negative_tool_claim}
+const { screen, reasonDetail } = require("./capture-filter.js");
+screen(text)  // -> [reason, ...]  ([] = clean);  reason in {env_failure, transient_error, negative_tool_claim}
 ```
 
 ```
-python3 tools/capture_filter.py <file|->   # exit 1 + reasons if anti-pattern found
+node .aris/dist/tools/capture-filter.js <file|->   # exit 1 + reasons if anti-pattern found
 ```
 
 ## Where ARIS uses it

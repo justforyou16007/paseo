@@ -228,7 +228,7 @@ re-derive them:
   re-prompted by the heartbeat — the fence forbids it; recovery is a
   human/cron decision, as below.
 
-The watchdog + `iteration_log.py` machinery is identical: the heartbeat
+The watchdog + `iteration-log.js` machinery is identical: the heartbeat
 writes its state file first each tick, registers with the watchdog, and
 records new-finding counts via the canonical resolver chain. The paseo
 substrate changes **where the tick comes from**, not what the tick may do.
@@ -247,8 +247,7 @@ A `/loop` or `CronCreate` heartbeat is parasitic on a living session; if it dies
    # on completion: node "$WATCHDOG" --unregister "<run_id>"
    ```
    where `WATCHDOG` resolves through the canonical chain (integration-contract §2):
-   `[ -f "$WATCHDOG" ] || WATCHDOG="dist/tools/watchdog.js"`
-   `[ -f "$WATCHDOG" ] || WATCHDOG="${ARIS_REPO:-}/dist/tools/watchdog.js"`.
+   `.aris/dist/tools/watchdog.js` → `dist/tools/watchdog.js` (2 layers only).
    `stale_after_seconds` is the loop's OWN tolerance — set it to **comfortably exceed
    the longest single iteration/operation** (≈ a few × the tick interval), **never** the
    watchdog poll interval. The watchdog writes **STALE** to `summary.txt` + `alerts.log`
@@ -266,9 +265,9 @@ tuning of the same frame.
 - **Count, don't vibe.** Each iteration, record the number of NEW findings (concrete
   added entries — new evidence, a falsified hypothesis, a candidate direction — _not_ a
   subjective "valuable result"). Resolve the helper via the canonical chain
-  (integration-contract §2): `.aris/tools/iteration_log.py` → `tools/iteration_log.py` →
-  `$ARIS_REPO/tools/iteration_log.py` (warn-and-skip if unresolved), then
-  `python3 "$ITER_LOG" note <root> <run_id> <phase> <new_findings> [--direction "..."]`.
+  (integration-contract §2): `.aris/dist/tools/iteration-log.js` → `dist/tools/iteration-log.js`
+  (warn-and-skip if unresolved), then
+  `node "$ITER_LOG" note <root> <run_id> <phase> <new_findings> [--direction "..."]`.
   Consecutive zero-finding iterations accumulate a `stale_count` in
   `.aris/runs/<run_id>.iterations.jsonl` — a sidecar that does **not** touch run_state's
   done/accepted state.

@@ -56,8 +56,9 @@ The agent's only role here is to print the user instruction:
 ```
 Run this in your own terminal (NOT through me):
 
-    bash <ARIS_REPO>/tools/overleaf_setup.sh <project-id-or-url>
+    bash .aris/tools/overleaf_setup.sh <project-id-or-url>
 
+(If .aris/tools/ does not exist, run /aris-update first.)
 When it finishes, tell me "setup done" and I'll verify.
 ```
 
@@ -69,7 +70,9 @@ git remote -v                    # must show URL WITHOUT token
 git config --get credential.helper
 git fetch && git log --oneline -3   # must succeed without prompting
 ls .git/hooks/pre-commit         # must exist
-bash <ARIS_REPO>/tools/overleaf_audit.sh .   # must report "Audit clean"
+AUDIT_HELPER=".aris/tools/overleaf_audit.sh"
+[ -f "$AUDIT_HELPER" ] || AUDIT_HELPER="tools/overleaf_audit.sh"
+bash "$AUDIT_HELPER" .   # must report "Audit clean"
 ```
 
 If `paper-overleaf/` exists but is empty (new Overleaf project), the agent then mirrors local `paper/` into it (see `push` workflow).

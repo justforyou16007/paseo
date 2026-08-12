@@ -66,13 +66,10 @@ is unresolved — never block the audit):
 ```bash
 # Policy B = warn-and-skip: nothing here may abort the audit. cd is non-fatal, the
 # helper run is explicitly non-blocking, no pipefail-fragile pipe.
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" 2>/dev/null || true
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
-fi
+_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" 2>/dev/null || true
 EVIDENCE_CHECK=".aris/dist/tools/evidence-check.js"
 [ -f "$EVIDENCE_CHECK" ] || EVIDENCE_CHECK="dist/tools/evidence-check.js"
-[ -f "$EVIDENCE_CHECK" ] || { [ -n "${ARIS_REPO:-}" ] && EVIDENCE_CHECK="$ARIS_REPO/dist/tools/evidence-check.js"; }
 [ -f "$EVIDENCE_CHECK" ] || EVIDENCE_CHECK=""
 
 mkdir -p .aris
@@ -88,9 +85,9 @@ if [ -n "$EVIDENCE_CHECK" ]; then
         echo "      pre-check skipped (Policy B); the Codex jury still runs." >&2
     fi
 else
-    echo "WARN: evidence-check.js not resolved at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
-    echo "      Pre-check skipped (Policy B); the Codex jury still runs. Fix: rerun" >&2
-    echo "      export ARIS_REPO, or copy the helper to tools/." >&2
+    echo "WARN: evidence-check.js not resolved at .aris/dist/tools/ or dist/tools/." >&2
+    echo "      Pre-check skipped (Policy B); the Codex jury still runs." >&2
+    echo "      Fix: run /aris-update to refresh the project runtime." >&2
 fi
 ```
 
@@ -234,13 +231,12 @@ query-pack rebuild, and the log line do. **This skill never edits a claim's
 proof `status` set) by `/proof-checker`; here we only attach experiment edges.
 
 ```bash
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-ARIS_REPO="${ARIS_REPO:-$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null)}"
+_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
 WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
 [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
-[ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/dist/tools/research-wiki.js"; }
 [ -f "$WIKI_SCRIPT" ] || {
-  echo "WARN: research-wiki.js not found; verdict will be reported but wiki edges/query-pack/log will be skipped. Fix: export ARIS_REPO, or cp <ARIS-repo>/dist/tools/research-wiki.js tools/." >&2
+  echo "WARN: research-wiki.js not found; verdict will be reported but wiki edges/query-pack/log will be skipped. Fix: run /aris-update to refresh the project runtime." >&2
   WIKI_SCRIPT=""
 }
 ```

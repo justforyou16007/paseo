@@ -274,7 +274,7 @@ Scholar, OpenAlex, Exa, DeepXiv, Zotero, web) under integration-contract
 **Policy D2** (multi-source aggregate: invoke every resolved source,
 warn-and-continue on per-source failure, proceed if ≥1 contributed).
 Here the "jury" is **not** an LLM at all — it is the **deterministic**
-`verify_papers.py` gate (Policy D1: 3-layer arXiv / CrossRef / S2
+`verify-papers.js` gate (Policy D1: 3-layer arXiv / CrossRef / S2
 cross-check), which decides KEEP / `[UNVERIFIED]` by mechanical
 cross-reference, not by taste. This is the **near-zero-risk** corner of
 the design space: the candidate generators are same-family (or just API

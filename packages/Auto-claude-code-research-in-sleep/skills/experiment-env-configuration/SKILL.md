@@ -874,7 +874,7 @@ When `— patch: <path>` is provided:
 - **DEFAULT_EXCLUDES** = `.git, __pycache__, results/, logs/, checkpoints/, *.pt, *.ckpt, data/`
 - **DEFAULT_FAILURE_PATTERNS** = `Traceback`, `CUDA out of memory`, `Killed`, `AssertionError`, `RuntimeError`, `No such file`
 - **MAX_VERIFY_RETRIES** = 3
-- **REF_DIR_TEMPLATE** = `$CLAUDE_SKILL_DIR/references` → `.claude/skills/experiment-env-configuration/references` → `$ARIS_REPO/skills/experiment-env-configuration/references`
+- **REF_DIR_TEMPLATE** = `$CLAUDE_SKILL_DIR/references` → `.claude/skills/experiment-env-configuration/references`
 - **MOCK_DIR_TEMPLATE** = `.aris/env-config/<project>/mock`
 - **HANDLE_DIR** = `handles/` (inside the generated skill directory)
 

@@ -246,7 +246,7 @@ Run context (this run, do not re-derive):
   - CLAUDE.md vars: read the ## ARIS Paseo + ## ARIS sections of ./CLAUDE.md
 
 Operating rules (non-negotiable):
-  1. Resolve every helper via integration-contract.md §2 (.aris/tools → tools → $ARIS_REPO/tools). Never hardcode a path.
+  1. Resolve every helper via integration-contract.md §2 (.aris/dist/tools → dist/tools (see integration-contract.md §2)). Never hardcode a path.
   2. Write every artifact under the `output_dir` from the input manifest. Do NOT write elsewhere.
   3. When you need the GPT-5.5 reviewer, spawn/continue a paseo codex sub-agent per paseo-reviewer-dispatch.md.
   4. Do NOT call run-state.js accept. You may `set done --artifact <path>`; acceptance is the orchestrator's job (acceptance-gate.md).

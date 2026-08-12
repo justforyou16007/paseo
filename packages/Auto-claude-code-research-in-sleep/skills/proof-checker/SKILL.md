@@ -612,14 +612,11 @@ warn-and-skips — the audit is already complete and is never affected:
 ```bash
 grep -q '"verdict"[[:space:]]*:[[:space:]]*"NOT_APPLICABLE"' PROOF_AUDIT.json 2>/dev/null \
   && { echo "verdict NOT_APPLICABLE (no theorems); skipping claim ledger" >&2; exit 0; }
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 0
+_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 0
 [ -d research-wiki ] || { echo "no research-wiki/ at project root; skipping claim ledger (audit complete)" >&2; exit 0; }
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
-fi
 WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
 [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
-[ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/dist/tools/research-wiki.js"; }
 [ -f "$WIKI_SCRIPT" ] || { echo "WARN: research-wiki.js not resolved; skipping claim ledger (audit unaffected)" >&2; exit 0; }
 ```
 

@@ -87,16 +87,13 @@ fetcher), so unresolved helper means the SKILL cannot produce its
 primary output — fail with explicit remediation.
 
 ```bash
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
-fi
+_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
 EXA_FETCHER=".aris/dist/tools/exa-search.js"
 [ -f "$EXA_FETCHER" ] || EXA_FETCHER="dist/tools/exa-search.js"
-[ -f "$EXA_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && EXA_FETCHER="$ARIS_REPO/dist/tools/exa-search.js"; }
 [ -f "$EXA_FETCHER" ] || {
-  echo "ERROR: exa-search.js not resolved at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
-  echo "       Fix: export ARIS_REPO, or copy the helper to tools/." >&2
+  echo "ERROR: exa-search.js not resolved at .aris/dist/tools/ or dist/tools/." >&2
+  echo "       Fix: run /aris-update to refresh the project runtime." >&2
   echo "       Also ensure 'exa-py' is installed: pip install exa-py" >&2
   exit 1
 }
@@ -177,13 +174,12 @@ use `--arxiv-id`. Otherwise fall back to manual metadata:
 
 ```bash
 if [ -d research-wiki/ ] and query category was "research paper":
-    cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-    ARIS_REPO="${ARIS_REPO:-$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null)}"
+    _pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
     WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
     [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
-    [ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/dist/tools/research-wiki.js"; }
     [ -f "$WIKI_SCRIPT" ] || {
-      echo "WARN: research-wiki.js not found; exa-search results delivered, wiki ingest skipped. Fix: export ARIS_REPO, or cp <ARIS-repo>/dist/tools/research-wiki.js tools/." >&2
+      echo "WARN: research-wiki.js not found; exa-search results delivered, wiki ingest skipped. Fix: run /aris-update to refresh the project runtime." >&2
       WIKI_SCRIPT=""
     }
     [ -n "$WIKI_SCRIPT" ] && for each research-paper hit in results:

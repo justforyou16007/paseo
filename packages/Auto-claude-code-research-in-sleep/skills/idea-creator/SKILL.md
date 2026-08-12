@@ -117,17 +117,16 @@ shared resolution chain (see `../research-wiki/SKILL.md` for the
 contract):
 
 ```bash
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
+_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
 
-ARIS_REPO="${ARIS_REPO:-$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null)}"
 WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
 [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
-[ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/dist/tools/research-wiki.js"; }
 [ -f "$WIKI_SCRIPT" ] || {
-  echo "WARN: research-wiki.js not found at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
+  echo "WARN: research-wiki.js not found at .aris/dist/tools/ or dist/tools/." >&2
   echo "      The idea-creation primary output (idea ranking) will still be produced." >&2
   echo "      Wiki integration (load query_pack, write idea pages, add edges, rebuild query_pack) will be skipped." >&2
-  echo "      Fix: export ARIS_REPO, or 'cp <ARIS-repo>/dist/tools/research-wiki.js tools/'." >&2
+  echo "      Fix: run /aris-update to refresh the project runtime." >&2
   WIKI_SCRIPT=""
 }
 ```
@@ -501,7 +500,7 @@ index + query_pack in a single call. **Default skip-on-exist**: a re-ideation
 run records NEW ideas without clobbering an existing idea whose `outcome`
 `/result-to-claim` may already have enriched. If `$WIKI_SCRIPT` is empty
 (helper unreachable) the ideas are **NOT** recorded and a single WARN prints
-(fix: `export ARIS_REPO`).
+(fix: run `/aris-update`).
 
 ```
 if research-wiki/ exists AND [ -n "$WIKI_SCRIPT" ]:
@@ -518,7 +517,7 @@ if research-wiki/ exists AND [ -n "$WIKI_SCRIPT" ]:
           || echo "WARN: upsert_idea failed for <id> (continuing; audit/report unaffected)" >&2
     node "$WIKI_SCRIPT" log research-wiki/ "idea-creator wrote N ideas (M recommended, K eliminated)"
 elif research-wiki/ exists AND [ -z "$WIKI_SCRIPT" ]:
-    echo "WARN: ideas NOT recorded — research-wiki.js unreachable (see Phase 0). Fix: export ARIS_REPO." >&2
+    echo "WARN: ideas NOT recorded — research-wiki.js unreachable (see Phase 0). Fix: run /aris-update to refresh the project runtime." >&2
 ```
 
 ## Output Protocols

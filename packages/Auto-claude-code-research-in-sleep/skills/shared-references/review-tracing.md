@@ -46,13 +46,10 @@ The full invocation:
 
 ```bash
 # Resolve $TRACE_HELPER (canonical strict-safe chain; see integration-contract.md §2).
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
-fi
+_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
 TRACE_HELPER=".aris/tools/save_trace.sh"
 [ -f "$TRACE_HELPER" ] || TRACE_HELPER="tools/save_trace.sh"
-[ -f "$TRACE_HELPER" ] || { [ -n "${ARIS_REPO:-}" ] && TRACE_HELPER="$ARIS_REPO/tools/save_trace.sh"; }
 [ -f "$TRACE_HELPER" ] || TRACE_HELPER=""
 
 if [ -n "$TRACE_HELPER" ]; then
@@ -64,7 +61,7 @@ if [ -n "$TRACE_HELPER" ]; then
     --prompt "<full prompt as sent>" \
     --response "<full response content>"
 else
-  # Required fallback: the resolver exhausted all three layers and
+  # Required fallback: the resolver exhausted both layers and
   # save_trace.sh is unreachable, but trace artifacts are still
   # required (unless `--- trace: off` was explicitly set on this
   # SKILL invocation). Write the four files below directly per the

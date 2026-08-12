@@ -301,14 +301,11 @@ unresolved). The only thing that changes is the `--thread-id` value: it now
 holds the **paseo codex agent-id**.
 
 ```bash
-# Resolve $TRACE_HELPER (canonical strict-safe chain; see integration-contract.md §2).
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
-fi
+# Resolve $TRACE_HELPER (canonical 2-layer chain; see integration-contract.md §2).
+_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
 TRACE_HELPER=".aris/tools/save_trace.sh"
 [ -f "$TRACE_HELPER" ] || TRACE_HELPER="tools/save_trace.sh"
-[ -f "$TRACE_HELPER" ] || { [ -n "${ARIS_REPO:-}" ] && TRACE_HELPER="$ARIS_REPO/tools/save_trace.sh"; }
 [ -f "$TRACE_HELPER" ] || TRACE_HELPER=""
 
 # <codex_agent_id> is the paseo agent-id returned by create_agent / read from REVIEW_STATE.json
@@ -366,7 +363,7 @@ timer. For the reviewer specifically:
   the loop's own claude agent creates it when round 2 begins (bias guard
   preserved).
 
-The heartbeat is Type-A only: touch `run_state`, `iteration_log.py note`,
+The heartbeat is Type-A only: touch `run_state`, `iteration-log.js note`,
 nudge stalled Type-A sub-phases. It never renders a quality verdict.
 
 ## Reviewer backend selection (passes through `— reviewer:`)

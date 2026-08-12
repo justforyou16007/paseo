@@ -44,9 +44,9 @@ Phase 8  Summary & next steps
 ## Constants
 
 - **STATE_FILE** = `.aris/setup-state.json`
-- **TEMPLATES_DIR** — resolved via: `$CLAUDE_SKILL_DIR/../../templates/` (layer 0),
-  then `$ARIS_REPO/templates/` (layer 3). Gate: if both fail, error and exit —
-  templates are required.
+- **TEMPLATES_DIR** — resolved via: `.aris/templates/` (installed project),
+  then `templates/` (dev: running from ARIS repo). Gate: if both fail, error
+  and exit — templates are required.
 
 ## Output Language
 
@@ -66,22 +66,25 @@ YAML field names are always English regardless of language.
 ### 0a. Resolve ARIS repo and templates
 
 ```bash
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
+_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
 
-# Resolve ARIS repo
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
-fi
-
-# Resolve templates directory
+# Resolve templates directory (project-local only)
 TEMPLATES_DIR=""
 if [ -n "${CLAUDE_SKILL_DIR:-}" ]; then
-  _ARIS_ROOT="${CLAUDE_SKILL_DIR%/skills/*}"
-  [ -d "$_ARIS_ROOT/templates" ] && TEMPLATES_DIR="$_ARIS_ROOT/templates"
+  # Installed: <project>/.claude/skills/<skill>/
+  _PROJECT_ROOT="${CLAUDE_SKILL_DIR%/.claude/skills/*}"
+  if [ "$_PROJECT_ROOT" = "$CLAUDE_SKILL_DIR" ]; then
+    # Dev: <repo>/skills/<skill>/
+    _PROJECT_ROOT="${CLAUDE_SKILL_DIR%/skills/*}"
+  fi
+  [ -d "$_PROJECT_ROOT/.aris/templates" ] && TEMPLATES_DIR="$_PROJECT_ROOT/.aris/templates"
+  [ -z "$TEMPLATES_DIR" ] && [ -d "$_PROJECT_ROOT/templates" ] && TEMPLATES_DIR="$_PROJECT_ROOT/templates"
 fi
-[ -z "$TEMPLATES_DIR" ] && [ -n "${ARIS_REPO:-}" ] && [ -d "$ARIS_REPO/templates" ] && TEMPLATES_DIR="$ARIS_REPO/templates"
+[ -z "$TEMPLATES_DIR" ] && [ -d ".aris/templates" ] && TEMPLATES_DIR=".aris/templates"
+[ -z "$TEMPLATES_DIR" ] && [ -d "templates" ] && TEMPLATES_DIR="templates"
 [ -z "$TEMPLATES_DIR" ] && {
-  echo "ERROR: ARIS templates directory not found. Ensure ARIS is installed or set ARIS_REPO." >&2
+  echo "ERROR: ARIS templates directory not found. Fix: run /aris-update to refresh the project runtime." >&2
   exit 1
 }
 ```
@@ -500,14 +503,9 @@ Use AskUserQuestion:
 Resolve `$WIKI_SCRIPT` via the canonical chain:
 
 ```bash
-# --- resolve research-wiki helper ---
-WIKI_SCRIPT=""
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
-fi
+# --- resolve research-wiki helper (integration-contract.md §2) ---
 WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
 [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
-[ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/dist/tools/research-wiki.js"; }
 [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT=""
 ```
 

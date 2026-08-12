@@ -9,7 +9,7 @@ You should not need a model call to catch that.
 ## Two stages — and `verified` ≠ `correct`
 
 ```
-stage 1  tools/evidence_check.py   deterministic · no model · fail-closed
+stage 1  tools/evidence-check.js   deterministic · no model · fail-closed
          catches HALLUCINATION — cited path missing, or cited value not in source.
 stage 2  the cross-model jury      codex/gemini
          catches WRONG-BUT-REAL — the number IS in the file, but it doesn't
@@ -46,14 +46,14 @@ normalized substring.
 ## API / CLI
 
 ```
-from evidence_check import check_claim, check_batch
-check_claim(value, source, root=".")   # -> {status: verified|path_missing|value_not_found, ...}
-check_batch([{value, source, id?}, ...], root)  # -> {results:[...], summary:{status: n}}
+const { checkClaim, checkBatch } = require("./evidence-check.js");
+checkClaim(value, source, root=".")   // -> {status: "verified"|"path_missing"|"value_not_found", ...}
+checkBatch([{value, source, id?}, ...], root)  // -> {results:[...], summary:{status: n}}
 ```
 
 ```
-python3 tools/evidence_check.py <root> --value 73.2 --source results/eval.json   # exit 0 verified
-python3 tools/evidence_check.py <root> --batch claims.json   # exit 1 if any claim hallucinated
+node .aris/dist/tools/evidence-check.js <root> --value 73.2 --source results/eval.json   # exit 0 verified
+node .aris/dist/tools/evidence-check.js <root> --batch claims.json   # exit 1 if any claim hallucinated
 ```
 
 ## Cross-references

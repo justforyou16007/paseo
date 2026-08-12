@@ -228,7 +228,7 @@ Run context (this run, do not re-derive):
                    and the ## ARIS / pipeline-status sections (research context)
 ${extra_block}
 Operating rules (non-negotiable):
-  1. Resolve every helper via integration-contract.md §2 (.aris/tools -> tools -> \$ARIS_REPO/tools). Never hardcode a path.
+  1. Resolve every helper via integration-contract.md §2 (.aris/dist/tools -> dist/tools). Never hardcode a path.
   2. Read input-manifest.json from the additional run context and write every artifact under its output_dir. Do NOT write elsewhere.
   3. When you need the cross-model reviewer, spawn/continue a paseo codex sub-agent per skills/shared-references/paseo-reviewer-dispatch.md. Fresh review = create_agent; continuation = send_agent_prompt to the same agent. Reviewer provider/mode/thinking are fixed by the run's paseo-config.json — do not override.
   4. Fan out sub-skills as paseo claude sub-agents per skills/shared-references/paseo-subagent-dispatch.md (fanout_subagents=${fanout_subagents}; if false, use in-process Skill-tool fallback).

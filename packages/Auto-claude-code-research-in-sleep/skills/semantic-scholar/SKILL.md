@@ -69,13 +69,10 @@ Resolve `$S2_FETCHER` via the canonical strict-safe chain (see
 [`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2):
 
 ```bash
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
-fi
+_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
 S2_FETCHER=".aris/dist/tools/semantic-scholar-fetch.js"
 [ -f "$S2_FETCHER" ] || S2_FETCHER="dist/tools/semantic-scholar-fetch.js"
-[ -f "$S2_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && S2_FETCHER="$ARIS_REPO/dist/tools/semantic-scholar-fetch.js"; }
 [ -f "$S2_FETCHER" ] || S2_FETCHER=""
 ```
 
@@ -178,13 +175,12 @@ common for IEEE/ACM), fall back to manual metadata:
 
 ```bash
 if [ -d research-wiki/ ]; then
-  cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-  ARIS_REPO="${ARIS_REPO:-$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null)}"
+  _pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
   WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
   [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
-  [ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/dist/tools/research-wiki.js"; }
   [ -f "$WIKI_SCRIPT" ] || {
-    echo "WARN: research-wiki.js not found; semantic-scholar results delivered, wiki ingest skipped. Fix: export ARIS_REPO, or cp <ARIS-repo>/dist/tools/research-wiki.js tools/." >&2
+    echo "WARN: research-wiki.js not found; semantic-scholar results delivered, wiki ingest skipped. Fix: run /aris-update to refresh the project runtime." >&2
     WIKI_SCRIPT=""
   }
   [ -n "$WIKI_SCRIPT" ] && for each paper in results:

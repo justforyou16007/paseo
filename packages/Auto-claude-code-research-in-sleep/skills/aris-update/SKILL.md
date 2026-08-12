@@ -80,6 +80,23 @@ MANIFEST=".aris/installed-skills.txt"
      echo "Specify with: /aris-update — aris-repo: /path/to/aris"
      exit 1
    }
+
+   # Runtime preflight: every src/**/*.ts must have dist/**/*.js; deps must exist
+   PREFLIGHT_MISSING=()
+   while IFS= read -r ts; do
+     js="dist/${ts#src/}"; js="${js%.ts}.js"
+     [ -f "$ARIS_REPO/$js" ] || PREFLIGHT_MISSING+=("$js")
+   done < <(find "$ARIS_REPO/src" -name '*.ts' ! -name '*.d.ts')
+   # Check direct dependencies
+   for dep in $(jq -r '.dependencies // {} | keys[]' "$ARIS_REPO/package.json" 2>/dev/null); do
+     [ -d "$ARIS_REPO/node_modules/$dep" ] || PREFLIGHT_MISSING+=("node_modules/$dep")
+   done
+   if [ ${#PREFLIGHT_MISSING[@]} -gt 0 ]; then
+     echo "ERROR: source checkout has ${#PREFLIGHT_MISSING[@]} missing build outputs."
+     printf '  %s\n' "${PREFLIGHT_MISSING[@]:0:5}"
+     echo "Run 'npm run build && npm install' in the ARIS checkout first."
+     exit 1
+   fi
    ```
 
 3. Read manifest metadata:
@@ -98,14 +115,14 @@ MANIFEST=".aris/installed-skills.txt"
 ### 1a. Parse installed entries from manifest
 
 ```bash
-# Read entries after the header (lines after "kind\tname\t...")
-# Each line: kind\tname\tsource_rel\ttarget_rel\tmode
+# Read entries filtering by known kind values (skill, support, agent).
+# Does NOT use NR-based line skipping — the manifest may have variable header rows.
 INSTALLED_ENTRIES=()
 while IFS=$'\t' read -r kind name source_rel target_rel mode; do
-  [ "$kind" = "kind" ] && continue  # skip header
-  [ -z "$kind" ] && continue
-  INSTALLED_ENTRIES+=("$kind|$name|$source_rel|$target_rel")
-done < <(awk -F'\t' 'NR>4' "$MANIFEST")
+  case "$kind" in
+    skill|support|agent) INSTALLED_ENTRIES+=("$kind|$name|$source_rel|$target_rel") ;;
+  esac
+done < "$MANIFEST"
 ```
 
 ### 1b. Scan upstream skills
@@ -221,6 +238,7 @@ Also check support directories for changes:
 TOOLS_CHANGED=false
 DIST_CHANGED=false
 TEMPLATES_CHANGED=false
+NODE_MODULES_CHANGED=false
 
 [ -d "$ARIS_REPO/tools" ] && [ -d ".aris/tools" ] && \
   diff -rq "$ARIS_REPO/tools" ".aris/tools" >/dev/null 2>&1 || TOOLS_CHANGED=true
@@ -228,6 +246,8 @@ TEMPLATES_CHANGED=false
   diff -rq "$ARIS_REPO/dist" ".aris/dist" >/dev/null 2>&1 || DIST_CHANGED=true
 [ -d "$ARIS_REPO/templates" ] && [ -d ".aris/templates" ] && \
   diff -rq "$ARIS_REPO/templates" ".aris/templates" >/dev/null 2>&1 || TEMPLATES_CHANGED=true
+[ -d "$ARIS_REPO/node_modules" ] && [ -d ".aris/node_modules" ] && \
+  diff -rq "$ARIS_REPO/node_modules" ".aris/node_modules" >/dev/null 2>&1 || NODE_MODULES_CHANGED=true
 ```
 
 ---
@@ -256,9 +276,10 @@ Removed from upstream (${#REMOVED_LIST[@]}):
 Unchanged: ${#UNCHANGED_LIST[@]}
 
 Support directories:
-  tools/     $([ "$TOOLS_CHANGED" = "true" ] && echo "~ changed" || echo "✓ up to date")
-  dist/      $([ "$DIST_CHANGED" = "true" ] && echo "~ changed" || echo "✓ up to date")
-  templates/ $([ "$TEMPLATES_CHANGED" = "true" ] && echo "~ changed" || echo "✓ up to date")
+  tools/         $([ "$TOOLS_CHANGED" = "true" ] && echo "~ changed" || echo "✓ up to date")
+  dist/          $([ "$DIST_CHANGED" = "true" ] && echo "~ changed" || echo "✓ up to date")
+  templates/     $([ "$TEMPLATES_CHANGED" = "true" ] && echo "~ changed" || echo "✓ up to date")
+  node_modules/  $([ "$NODE_MODULES_CHANGED" = "true" ] && echo "~ changed" || echo "✓ up to date")
 ```
 
 If nothing to update (all lists empty and no dir changes), print "Already up
@@ -342,16 +363,29 @@ for entry in "${UPSTREAM_ENTRIES[@]}"; do
   ALL_ENTRIES+=("$kind\t$name\t$source_rel\t$target_rel\tcopy")
 done
 
+# Build runtime_file inventory from the synced .aris/ content
+RUNTIME_FILES=()
+for dir in dist tools templates node_modules; do
+  if [ -d ".aris/$dir" ]; then
+    while IFS= read -r -d '' f; do
+      RUNTIME_FILES+=("${f#.aris/}")
+    done < <(find ".aris/$dir" -type f -print0)
+  fi
+done
+
 # Write atomically (same pattern as auto-install)
 TMP_MANIFEST="$MANIFEST.tmp.$$"
 {
-  printf 'version\t1\n'
+  printf 'version\t2\n'
   printf 'repo_root\t%s\n' "$ARIS_REPO"
   printf 'project_root\t%s\n' "$ROOT"
   printf 'generated\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'kind\tname\tsource_rel\ttarget_rel\tmode\n'
   for entry_line in "${ALL_ENTRIES[@]}"; do
     printf '%b\n' "$entry_line"
+  done
+  for rf in "${RUNTIME_FILES[@]}"; do
+    printf 'runtime_file\t%s\n' "$rf"
   done
 } > "$TMP_MANIFEST"
 mv "$TMP_MANIFEST" "$MANIFEST"

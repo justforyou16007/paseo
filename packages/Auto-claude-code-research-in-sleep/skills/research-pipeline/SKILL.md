@@ -58,8 +58,8 @@ Variables used throughout:
 ```
 DASHBOARD=".aris/runs/$RUN_ID/dashboard.json"
 WORKERS_DIR=".aris/runs/$RUN_ID/workers"
-RENDER="$ARIS_REPO/skills/research-pipeline/scripts/render_w_agent_prompt.sh"
-RUN_STATE="$ARIS_REPO/dist/tools/run-state.js"   # resolved via integration-contract.md §2
+RENDER=".claude/skills/research-pipeline/scripts/render_w_agent_prompt.sh"
+RUN_STATE=".aris/dist/tools/run-state.js"   # resolved via integration-contract.md §2
 ```
 
 1. **Prepare manifest.** `WORKER_DIR="$WORKERS_DIR/<phase>"`, then
@@ -92,15 +92,18 @@ RUN_STATE="$ARIS_REPO/dist/tools/run-state.js"   # resolved via integration-cont
 ## Startup
 
 ```bash
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
+_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
 ROOT=$(pwd)
 
-# Resolve ARIS_REPO + helpers (integration-contract.md §2)
-if [ -f .aris/installed-skills.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
-fi
-RUN_STATE="$ARIS_REPO/dist/tools/run-state.js"
-RENDER="$ARIS_REPO/skills/research-pipeline/scripts/render_w_agent_prompt.sh"
+# Resolve helpers (integration-contract.md §2 — project-local only)
+RUN_STATE=".aris/dist/tools/run-state.js"
+[ -f "$RUN_STATE" ] || RUN_STATE="dist/tools/run-state.js"
+[ -f "$RUN_STATE" ] || RUN_STATE=""
+# Render script lives alongside this skill
+RENDER=".claude/skills/research-pipeline/scripts/render_w_agent_prompt.sh"
+[ -f "$RENDER" ] || RENDER="skills/research-pipeline/scripts/render_w_agent_prompt.sh"
+[ -f "$RENDER" ] || RENDER=""
 ```
 
 ### 1. Probe paseo MCP
@@ -364,7 +367,7 @@ passes — never on the executor's own say-so.
 ## Resume
 
 Resolve `run-state.js` via canonical chain: `.aris/dist/tools/run-state.js` →
-`dist/tools/run-state.js` → `$ARIS_REPO/dist/tools/run-state.js` (warn-and-skip if unresolved).
+`dist/tools/run-state.js` (warn-and-skip if unresolved).
 
 - **At start:** `node "$RUN_STATE" resume "$ROOT" "$RUN_ID"` prints the first
   non-accepted phase; begin at that stage.

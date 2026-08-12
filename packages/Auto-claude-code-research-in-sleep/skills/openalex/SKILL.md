@@ -111,16 +111,13 @@ fetcher script encapsulates pagination, throttling, and per-source
 parameters), so unresolved helper terminates with explicit remediation.
 
 ```bash
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
-fi
+_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
 OPENALEX_FETCHER=".aris/dist/tools/openalex-fetch.js"
 [ -f "$OPENALEX_FETCHER" ] || OPENALEX_FETCHER="dist/tools/openalex-fetch.js"
-[ -f "$OPENALEX_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && OPENALEX_FETCHER="$ARIS_REPO/dist/tools/openalex-fetch.js"; }
 [ -f "$OPENALEX_FETCHER" ] || {
-  echo "ERROR: openalex-fetch.js not resolved at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
-  echo "       Fix: export ARIS_REPO, or copy the helper to tools/." >&2
+  echo "ERROR: openalex-fetch.js not resolved at .aris/dist/tools/ or dist/tools/." >&2
+  echo "       Fix: run /aris-update to refresh the project runtime." >&2
   echo "       Also ensure 'requests' is installed: pip install requests" >&2
   exit 1
 }

@@ -9,7 +9,7 @@ to influence future runs:
 2. **Is auto-curation even allowed to touch this file?** (or is it a hand-written
    canonical skill / a user's own note, which automation must never rewrite?)
 
-`tools/provenance.py` is the primitive that answers both. This is the
+`tools/provenance.js` is the primitive that answers both. This is the
 **provenance-as-authorization boundary**: a provenance record is not just metadata,
 it _is_ the authorization to auto-curate.
 
@@ -33,7 +33,7 @@ it _is_ the authorization to auto-curate.
   **a loop can DRIVE, it cannot ACQUIT itself.**
 
 - **A deterministic verifier is a valid reviewer.** A reviewer named
-  `deterministic:<verifier>` (e.g. `deterministic:evidence_check`,
+  `deterministic:<verifier>` (e.g. `deterministic:evidence-check`,
   `deterministic:pytest`) passes the gate regardless of the author — a process is
   not a model family. This is the same Type-A escape hatch as in
   [`acceptance-gate.md`](acceptance-gate.md): an execution-completeness / mechanical

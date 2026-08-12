@@ -51,50 +51,65 @@ The business logic lives in **exactly one place** — a script under
 `dist/tools/` (compiled from `src/tools/`, canonical name in kebab-case `.js`),
 or a single subcommand of an existing helper. Every caller invokes the same
 entrypoint, but every caller must also resolve **where** that entrypoint lives,
-because the helper may sit at any of:
+because the helper may sit at either of:
 
 - `<project>/.aris/dist/tools/<helper>` — placed by the ARIS install
 - `<project>/dist/tools/<helper>` — running from inside the ARIS repo (after `npm run build`)
-- `$ARIS_REPO/dist/tools/<helper>` — env var or auto-resolved from the install manifest
 
 Every caller — including those primarily exercised from inside the
-ARIS repo — MUST use the resolution chain. The chain's middle layer
+ARIS repo — MUST use the resolution chain. The chain's second layer
 (`dist/tools/<helper>`) covers the in-repo case at the same code path,
-with no special-casing needed. The exception that used to live here
-("helpers run from inside ARIS repo may stay plain `tools/...`")
-caused the canonical user-report bug: `/paper-writing` invoked from
-a downstream paper project could not find `verify_paper_audits.sh`
-because the prose endorsed the hardcoded form.
+with no special-casing needed.
 
 #### Resolver block (lookup only — failure policy is separate)
 
+Two layers, both project-local. `ARIS_REPO` and `repo_root` are
+**never** read at runtime — they exist only for the installer
+(`aris-auto-install.ts`) and the updater (`/aris-update`).
+
+**Project root discovery** (unified, works in non-git deep subdirs):
+
 ```bash
-# Canonical strict-safe variant: works whether or not the caller has
-# `set -e` enabled. The manifest read only runs when the file exists,
-# and `|| true` consumes a non-zero awk exit so chain evaluation
-# continues. Run `chmod +x` not required: the block uses `[ -f ]`.
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
-fi
+# Find project root: CLAUDE_SKILL_DIR > git toplevel > walk up for .aris/
+_find_project_root() {
+  if [ -n "${CLAUDE_SKILL_DIR:-}" ]; then
+    local r="${CLAUDE_SKILL_DIR%/.claude/skills/*}"
+    [ "$r" != "$CLAUDE_SKILL_DIR" ] && { echo "$r"; return; }
+    r="${CLAUDE_SKILL_DIR%/skills/*}"
+    [ "$r" != "$CLAUDE_SKILL_DIR" ] && { echo "$r"; return; }
+  fi
+  local r; r=$(git rev-parse --show-toplevel 2>/dev/null) && { echo "$r"; return; }
+  local d; d=$(pwd)
+  while [ "$d" != "/" ]; do
+    [ -f "$d/.aris/installed-skills.txt" ] && { echo "$d"; return; }
+    d=$(dirname "$d")
+  done
+  pwd
+}
+cd "$(_find_project_root)" || exit 1
+```
+
+**Helper resolution** (after `cd` to project root):
+
+```bash
 HELPER=".aris/dist/tools/<helper>"
 [ -f "$HELPER" ] || HELPER="dist/tools/<helper>"
-[ -f "$HELPER" ] || { [ -n "${ARIS_REPO:-}" ] && HELPER="$ARIS_REPO/dist/tools/<helper>"; }
 [ -f "$HELPER" ] || HELPER=""
 ```
 
-After the resolver runs, `$HELPER` is either the resolved absolute or
-relative path, or the empty string. Use a semantic variable name in
-real callers (`AUDIT_VERIFIER`, `TRACE_HELPER`, `WIKI_SCRIPT`,
-`IMAGE2_HELPER`, …) so a single SKILL that resolves multiple helpers
-does not clobber one with another.
+| Layer | Path | When it resolves |
+|-------|------|-----------------|
+| 1 | `.aris/dist/tools/<helper>` | Installed project (Paseo copied from source checkout) |
+| 2 | `dist/tools/<helper>` | Dev: running from inside the ARIS repo after `npm run build` |
 
-If the SKILL is invoked from a subdirectory of a non-git project (no
-`.git/` anywhere up the tree), `git rev-parse --show-toplevel` fails
-and the `|| pwd` fallback keeps the resolver in the current directory.
-SKILLs that need to discover `.aris/` from a deeper subdirectory MUST
-either run from project root or set `$ARIS_REPO` explicitly — the
-resolver intentionally does not walk parent directories.
+After the resolver runs, `$HELPER` is either the resolved path or
+the empty string. Use a semantic variable name in real callers
+(`AUDIT_VERIFIER`, `TRACE_HELPER`, `WIKI_SCRIPT`, `IMAGE2_HELPER`, …)
+so a single SKILL that resolves multiple helpers does not clobber one
+with another.
+
+Shell helpers (`.sh`) follow the same pattern:
+`.aris/tools/<helper>` → `tools/<helper>`.
 
 #### Failure policy (chosen per integration)
 
@@ -108,8 +123,9 @@ verifiers whose exit code gates submission readiness (e.g.
 
 ```bash
 [ -n "$AUDIT_VERIFIER" ] || {
-  echo "ERROR: verify_paper_audits.sh not resolved at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
+  echo "ERROR: verify_paper_audits.sh not resolved at .aris/tools/ or tools/." >&2
   echo "       assurance=submission requires the verifier; aborting Final Report." >&2
+  echo "       Fix: run /aris-update to refresh the project runtime." >&2
   exit 1
 }
 ```
@@ -122,7 +138,7 @@ gets produced, only the wiki side-effect is missed).
 ```bash
 [ -n "$WIKI_SCRIPT" ] || {
   echo "WARN: research-wiki.js not resolved; primary output unaffected, wiki side-effect skipped." >&2
-  echo "      Fix: export ARIS_REPO, or copy the helper to tools/." >&2
+  echo "      Fix: run /aris-update to refresh the project runtime." >&2
 }
 [ -n "$WIKI_SCRIPT" ] && node "$WIKI_SCRIPT" ingest_paper research-wiki/ --arxiv-id "$id"
 ```
@@ -255,19 +271,27 @@ of this generic resolver, and is the precedent for everything in §2.
 Single-owner helpers have their TypeScript source in the owning SKILL's
 `src/skills/<skill-name>/` directory and compile to
 `dist/skills/<skill-name>/`. When an owner SKILL invokes its own helper,
-it resolves from the ARIS repo root's `dist/` first, then falls through
-to the canonical 3-layer chain:
+it resolves from the project root's `dist/` first, then falls through
+to the canonical 2-layer chain:
 
 ```bash
 # Layer 0 (owner SKILL only): compiled TS at dist/skills/<skill-name>/.
+# Uses _find_project_root from the resolver block above.
 HELPER=""
 if [ -n "${CLAUDE_SKILL_DIR:-}" ]; then
-  _ARIS_ROOT="${CLAUDE_SKILL_DIR%/skills/*}"
-  [ -f "$_ARIS_ROOT/dist/skills/<skill-name>/<helper>" ] && HELPER="$_ARIS_ROOT/dist/skills/<skill-name>/<helper>"
+  _PROJECT_ROOT="${CLAUDE_SKILL_DIR%/.claude/skills/*}"
+  if [ "$_PROJECT_ROOT" = "$CLAUDE_SKILL_DIR" ]; then
+    _PROJECT_ROOT="${CLAUDE_SKILL_DIR%/skills/*}"
+  fi
+  [ -f "$_PROJECT_ROOT/.aris/dist/skills/<skill-name>/<helper>" ] && HELPER="$_PROJECT_ROOT/.aris/dist/skills/<skill-name>/<helper>"
+  [ -z "$HELPER" ] && [ -f "$_PROJECT_ROOT/dist/skills/<skill-name>/<helper>" ] && HELPER="$_PROJECT_ROOT/dist/skills/<skill-name>/<helper>"
 fi
-# Layers 1-3: fall through to the standard chain.
+# Fall through to shared-runtime chain.
 if [ -z "$HELPER" ]; then
-  # ... canonical strict-safe resolver block from above ...
+  cd "$(_find_project_root)" || exit 1
+  HELPER=".aris/dist/skills/<skill-name>/<helper>"
+  [ -f "$HELPER" ] || HELPER="dist/skills/<skill-name>/<helper>"
+  [ -f "$HELPER" ] || HELPER=""
 fi
 ```
 
@@ -283,11 +307,11 @@ Three properties of layer 0:
    and layer 0 is skipped — the SKILL silently falls through to the
    standard chain.
 
-3. **Backwards-compatible.** The canonical 3-layer chain still works
+3. **Backwards-compatible.** The canonical 2-layer chain still works
    because compiled JS exists at `dist/tools/<helper>` (layer 2). So
-   `.aris/dist/tools/<helper>` (layer 1), `dist/tools/<helper>` (layer 2),
-   and `$ARIS_REPO/dist/tools/<helper>` (layer 3) all resolve to a working
-   compiled JS tool after `npm run build`.
+   `.aris/dist/tools/<helper>` (layer 1) and `dist/tools/<helper>`
+   (layer 2) both resolve to a working compiled JS tool after
+   `npm run build`.
 
 The per-helper policy table at the end of §2 marks Phase 3 moves
 with a "Phase 3.N move" note pointing at the new canonical location.

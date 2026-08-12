@@ -222,21 +222,22 @@ The canonical scheduler implementation is compiled from `src/skills/experiment-q
 # Layer 0: compiled TS (CC 1.0+ exposes $CLAUDE_SKILL_DIR).
 QUEUE_TOOLS=""
 if [ -n "${CLAUDE_SKILL_DIR:-}" ]; then
-  _ARIS_ROOT="${CLAUDE_SKILL_DIR%/skills/*}"
-  [ -f "$_ARIS_ROOT/dist/skills/experiment-queue/queue-manager.js" ] && QUEUE_TOOLS="$_ARIS_ROOT/dist/skills/experiment-queue"
-fi
-# Layers 1-3: shared-runtime chain.
-if [ -z "$QUEUE_TOOLS" ]; then
-  cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-  if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-      ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
+  _PROJECT_ROOT="${CLAUDE_SKILL_DIR%/.claude/skills/*}"
+  if [ "$_PROJECT_ROOT" = "$CLAUDE_SKILL_DIR" ]; then
+    _PROJECT_ROOT="${CLAUDE_SKILL_DIR%/skills/*}"
   fi
+  [ -f "$_PROJECT_ROOT/.aris/dist/skills/experiment-queue/queue-manager.js" ] && QUEUE_TOOLS="$_PROJECT_ROOT/.aris/dist/skills/experiment-queue"
+  [ -z "$QUEUE_TOOLS" ] && [ -f "$_PROJECT_ROOT/dist/skills/experiment-queue/queue-manager.js" ] && QUEUE_TOOLS="$_PROJECT_ROOT/dist/skills/experiment-queue"
+fi
+# Layers 1-2: shared-runtime chain.
+if [ -z "$QUEUE_TOOLS" ]; then
+  _pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
   QUEUE_TOOLS=".aris/dist/skills/experiment-queue"
   [ -f "$QUEUE_TOOLS/queue-manager.js" ] || QUEUE_TOOLS="dist/skills/experiment-queue"
-  [ -f "$QUEUE_TOOLS/queue-manager.js" ] || { [ -n "${ARIS_REPO:-}" ] && QUEUE_TOOLS="$ARIS_REPO/dist/skills/experiment-queue"; }
   [ -f "$QUEUE_TOOLS/queue-manager.js" ] || QUEUE_TOOLS=""
 fi
-[ -z "$QUEUE_TOOLS" ] && { echo "ERROR: experiment-queue helpers not found (layer 0: \$CLAUDE_SKILL_DIR dist/; layers 1-3: .aris/dist/, dist/, \$ARIS_REPO/dist/). Run npm run build in the ARIS repo." >&2; exit 1; }
+[ -z "$QUEUE_TOOLS" ] && { echo "ERROR: experiment-queue helpers not found (layer 0: \$CLAUDE_SKILL_DIR; layers 1-2: .aris/dist/, dist/). Fix: run /aris-update or npm run build in the ARIS repo." >&2; exit 1; }
 ```
 
 After Phase 4 (TypeScript migration), the compiled JS lives at `dist/skills/experiment-queue/`. The `npm run build` step compiles from `src/skills/experiment-queue/` into `dist/`.

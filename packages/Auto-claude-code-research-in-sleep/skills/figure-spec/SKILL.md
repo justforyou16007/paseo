@@ -42,7 +42,7 @@ The TypeScript implementation lives at
 `dist/skills/figure-spec/figure-renderer.js`.
 
 Resolve `$FIGURE_RENDERER` with the hybrid chain (layer 0 resolves
-from the ARIS repo's `dist/` via `$CLAUDE_SKILL_DIR`; layers 1-3 are the
+from the project's `.aris/dist/` via `$CLAUDE_SKILL_DIR`; layers 1-2 are the
 shared-runtime chain documented in
 [`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2,
 Policy A — skill-local gate):
@@ -51,23 +51,26 @@ Policy A — skill-local gate):
 # Layer 0: compiled TS (CC 1.0+ exposes $CLAUDE_SKILL_DIR).
 FIGURE_RENDERER=""
 if [ -n "${CLAUDE_SKILL_DIR:-}" ]; then
-  _ARIS_ROOT="${CLAUDE_SKILL_DIR%/skills/*}"
-  [ -f "$_ARIS_ROOT/dist/skills/figure-spec/figure-renderer.js" ] && FIGURE_RENDERER="$_ARIS_ROOT/dist/skills/figure-spec/figure-renderer.js"
-fi
-# Layers 1-3: shared-runtime chain (legacy compatibility + non-CC hosts).
-if [ -z "$FIGURE_RENDERER" ]; then
-  cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-  if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-      ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
+  # Installed: strip /.claude/skills/<name> to get project root
+  _PROJECT_ROOT="${CLAUDE_SKILL_DIR%/.claude/skills/*}"
+  if [ "$_PROJECT_ROOT" = "$CLAUDE_SKILL_DIR" ]; then
+    # Dev: strip /skills/<name> to get ARIS repo root
+    _PROJECT_ROOT="${CLAUDE_SKILL_DIR%/skills/*}"
   fi
+  [ -f "$_PROJECT_ROOT/.aris/dist/skills/figure-spec/figure-renderer.js" ] && FIGURE_RENDERER="$_PROJECT_ROOT/.aris/dist/skills/figure-spec/figure-renderer.js"
+  [ -z "$FIGURE_RENDERER" ] && [ -f "$_PROJECT_ROOT/dist/skills/figure-spec/figure-renderer.js" ] && FIGURE_RENDERER="$_PROJECT_ROOT/dist/skills/figure-spec/figure-renderer.js"
+fi
+# Layers 1-2: shared-runtime chain (legacy compatibility + non-CC hosts).
+if [ -z "$FIGURE_RENDERER" ]; then
+  _pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
   FIGURE_RENDERER=".aris/dist/skills/figure-spec/figure-renderer.js"
   [ -f "$FIGURE_RENDERER" ] || FIGURE_RENDERER="dist/skills/figure-spec/figure-renderer.js"
-  [ -f "$FIGURE_RENDERER" ] || { [ -n "${ARIS_REPO:-}" ] && FIGURE_RENDERER="$ARIS_REPO/dist/skills/figure-spec/figure-renderer.js"; }
   [ -f "$FIGURE_RENDERER" ] || FIGURE_RENDERER=""
 fi
 [ -z "$FIGURE_RENDERER" ] && {
-  echo "ERROR: figure-renderer.js not resolved (layer 0: \$CLAUDE_SKILL_DIR dist/; layers 1-3: .aris/dist/, dist/, \$ARIS_REPO/dist/)." >&2
-  echo "       /figure-spec cannot produce SVG output. Fix: run npm run build in the ARIS repo." >&2
+  echo "ERROR: figure-renderer.js not resolved (layer 0: \$CLAUDE_SKILL_DIR; layers 1-2: .aris/dist/, dist/)." >&2
+  echo "       /figure-spec cannot produce SVG output. Fix: run /aris-update or npm run build in the ARIS repo." >&2
   exit 1
 }
 ```

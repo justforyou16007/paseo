@@ -43,29 +43,30 @@ allowed-tools: Bash(*), Read, Write
 
 Arch C self-contained: the canonical implementation lives at `skills/render-html/scripts/render-html.js` (this SKILL's own `scripts/` subdirectory), together with its templates at `skills/render-html/scripts/templates/{academic,dashboard}.html`. The helper is new — no legacy `tools/` shim exists.
 
-Resolve `$RENDER_HTML` with the hybrid chain (Layer 0 prefers the self-contained location for the owning SKILL; Layers 1-3 are the shared-runtime chain documented in [`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2, **Policy A — skill-local gate**):
+Resolve `$RENDER_HTML` with the hybrid chain (Layer 0 prefers the self-contained location for the owning SKILL; Layers 1-2 are the shared-runtime chain documented in [`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2, **Policy A — skill-local gate**):
 
 ```bash
 # Layer 0: compiled TS (CC 1.0+ exposes $CLAUDE_SKILL_DIR).
 RENDER_HTML=""
 if [ -n "${CLAUDE_SKILL_DIR:-}" ]; then
-  _ARIS_ROOT="${CLAUDE_SKILL_DIR%/skills/*}"
-  [ -f "$_ARIS_ROOT/dist/skills/render-html/render-html.js" ] && RENDER_HTML="$_ARIS_ROOT/dist/skills/render-html/render-html.js"
-fi
-# Layers 1-3: shared-runtime chain (non-CC hosts + manual installs).
-if [ -z "$RENDER_HTML" ]; then
-  cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-  if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-      ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
+  _PROJECT_ROOT="${CLAUDE_SKILL_DIR%/.claude/skills/*}"
+  if [ "$_PROJECT_ROOT" = "$CLAUDE_SKILL_DIR" ]; then
+    _PROJECT_ROOT="${CLAUDE_SKILL_DIR%/skills/*}"
   fi
+  [ -f "$_PROJECT_ROOT/.aris/dist/skills/render-html/render-html.js" ] && RENDER_HTML="$_PROJECT_ROOT/.aris/dist/skills/render-html/render-html.js"
+  [ -z "$RENDER_HTML" ] && [ -f "$_PROJECT_ROOT/dist/skills/render-html/render-html.js" ] && RENDER_HTML="$_PROJECT_ROOT/dist/skills/render-html/render-html.js"
+fi
+# Layers 1-2: shared-runtime chain (non-CC hosts + manual installs).
+if [ -z "$RENDER_HTML" ]; then
+  _pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
   RENDER_HTML=".aris/dist/skills/render-html/render-html.js"
   [ -f "$RENDER_HTML" ] || RENDER_HTML="dist/skills/render-html/render-html.js"
-  [ -f "$RENDER_HTML" ] || { [ -n "${ARIS_REPO:-}" ] && RENDER_HTML="$ARIS_REPO/dist/skills/render-html/render-html.js"; }
   [ -f "$RENDER_HTML" ] || RENDER_HTML=""
 fi
 [ -z "$RENDER_HTML" ] && {
-  echo "ERROR: render-html.js not resolved (layer 0: \$CLAUDE_SKILL_DIR dist/; layers 1-3: .aris/dist/, dist/, \$ARIS_REPO/dist/)." >&2
-  echo "       /render-html cannot produce HTML output. Fix: run npm run build in the ARIS repo." >&2
+  echo "ERROR: render-html.js not resolved (layer 0: \$CLAUDE_SKILL_DIR; layers 1-2: .aris/dist/, dist/)." >&2
+  echo "       /render-html cannot produce HTML output. Fix: run /aris-update or npm run build in the ARIS repo." >&2
   exit 1
 }
 ```

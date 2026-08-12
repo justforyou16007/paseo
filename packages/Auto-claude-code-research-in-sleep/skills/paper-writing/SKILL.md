@@ -57,17 +57,14 @@ When `— style-ref: <source>` is in `$ARGUMENTS`, run the helper FIRST, before 
 # Resolve $STYLE_HELPER via the canonical strict-safe chain (see
 # shared-references/integration-contract.md §2). Policy A — gate:
 # unresolved helper means --style-ref cannot be satisfied, so abort.
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
+_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
 
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
-fi
 STYLE_HELPER=".aris/dist/tools/extract-paper-style.js"
 [ -f "$STYLE_HELPER" ] || STYLE_HELPER="dist/tools/extract-paper-style.js"
-[ -f "$STYLE_HELPER" ] || { [ -n "${ARIS_REPO:-}" ] && STYLE_HELPER="$ARIS_REPO/dist/tools/extract-paper-style.js"; }
 [ -f "$STYLE_HELPER" ] || {
-  echo "ERROR: extract-paper-style.js not resolved at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
-  echo "       Fix: export ARIS_REPO, or copy the helper to tools/." >&2
+  echo "ERROR: extract-paper-style.js not resolved at .aris/dist/tools/ or dist/tools/." >&2
+  echo "       Fix: run /aris-update to refresh the project runtime." >&2
   echo "       --style-ref cannot be satisfied; aborting." >&2
   exit 1
 }
@@ -638,11 +635,8 @@ skipping audits while claiming to have run them.
 
 > The resolver in "Running the verifier" below tries
 > `.aris/tools/verify_paper_audits.sh` (placed by the ARIS install),
-> then `tools/verify_paper_audits.sh` (in-repo run), then
-> `$ARIS_REPO/tools/verify_paper_audits.sh` (env-var-set path). The
-> chain always tries layers 1 → 2 → 3 in order; setting
-> `export ARIS_REPO=~/…` only ensures layer 3 has a valid target if
-> layers 1 and 2 are absent.
+> then `tools/verify_paper_audits.sh` (in-repo run). The chain always
+> tries layers 1 then 2 in order.
 
 #### Invoking the three audits
 
@@ -683,17 +677,14 @@ Report rather than producing an unverified `submission-ready` claim.
 
 ```bash
 # Resolve the audit verifier (Policy A — gate).
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
-fi
+_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
 AUDIT_VERIFIER=".aris/tools/verify_paper_audits.sh"
 [ -f "$AUDIT_VERIFIER" ] || AUDIT_VERIFIER="tools/verify_paper_audits.sh"
-[ -f "$AUDIT_VERIFIER" ] || { [ -n "${ARIS_REPO:-}" ] && AUDIT_VERIFIER="$ARIS_REPO/tools/verify_paper_audits.sh"; }
 [ -f "$AUDIT_VERIFIER" ] || {
-  echo "ERROR: verify_paper_audits.sh not resolved at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
+  echo "ERROR: verify_paper_audits.sh not resolved at .aris/tools/ or tools/." >&2
   echo "       assurance=submission requires the verifier; aborting Final Report." >&2
-  echo "       Fix: export ARIS_REPO, or copy the helper to tools/." >&2
+  echo "       Fix: run /aris-update to refresh the project runtime." >&2
   exit 1
 }
 
@@ -724,7 +715,7 @@ in `~/.claude/settings.json`:
 {
   "hooks": {
     "Stop": [
-      { "command": "bash <ARIS_REPO>/tools/verify_paper_audits.sh paper/ --assurance submission" }
+      { "command": "bash \"$AUDIT_VERIFIER\" paper/ --assurance submission" }
     ]
   }
 }

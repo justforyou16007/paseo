@@ -172,14 +172,11 @@ source contributes to the multi-source aggregate; warn-and-continue
 on failure, never abort the whole aggregate):
 
 ```bash
-# Canonical strict-safe resolver (see shared-references/integration-contract.md §2).
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
-fi
+# Resolve arxiv-fetch.js: installed project → dev ARIS repo → skip.
+_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
 ARXIV_FETCHER=".aris/dist/tools/arxiv-fetch.js"
 [ -f "$ARXIV_FETCHER" ] || ARXIV_FETCHER="dist/tools/arxiv-fetch.js"
-[ -f "$ARXIV_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && ARXIV_FETCHER="$ARIS_REPO/dist/tools/arxiv-fetch.js"; }
 [ -f "$ARXIV_FETCHER" ] || ARXIV_FETCHER=""
 
 if [ -n "$ARXIV_FETCHER" ]; then
@@ -213,15 +210,11 @@ The arXiv API returns structured metadata (title, abstract, full author list, ca
 When the user explicitly requests `— sources: semantic-scholar` (or `— sources: web, semantic-scholar`), search for published venue papers beyond arXiv:
 
 ```bash
-# Re-resolve $ARIS_REPO (SKILL bash blocks may run in separate shells).
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
-fi
-# Resolve $S2_FETCHER (Policy D2 — warn-and-skip on missing).
+# Resolve semantic-scholar-fetch.js: installed project → dev ARIS repo → skip.
+_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
 S2_FETCHER=".aris/dist/tools/semantic-scholar-fetch.js"
 [ -f "$S2_FETCHER" ] || S2_FETCHER="dist/tools/semantic-scholar-fetch.js"
-[ -f "$S2_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && S2_FETCHER="$ARIS_REPO/dist/tools/semantic-scholar-fetch.js"; }
 [ -f "$S2_FETCHER" ] || S2_FETCHER=""
 
 if [ -n "$S2_FETCHER" ]; then
@@ -252,15 +245,11 @@ If `$S2_FETCHER` is empty (canonical chain exhausted), skip silently — D2 mult
 When the user explicitly requests `— sources: deepxiv` (or includes `deepxiv` in a combined source list), use the DeepXiv adapter for progressive retrieval:
 
 ```bash
-# Re-resolve $ARIS_REPO (SKILL bash blocks may run in separate shells).
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
-fi
-# Resolve $DEEPXIV_FETCHER (Policy D2 — warn-and-skip on missing).
+# Resolve deepxiv-fetch.js: installed project → dev ARIS repo → skip.
+_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
 DEEPXIV_FETCHER=".aris/dist/tools/deepxiv-fetch.js"
 [ -f "$DEEPXIV_FETCHER" ] || DEEPXIV_FETCHER="dist/tools/deepxiv-fetch.js"
-[ -f "$DEEPXIV_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && DEEPXIV_FETCHER="$ARIS_REPO/dist/tools/deepxiv-fetch.js"; }
 [ -f "$DEEPXIV_FETCHER" ] || DEEPXIV_FETCHER=""
 
 if [ -n "$DEEPXIV_FETCHER" ] && command -v deepxiv >/dev/null 2>&1; then
@@ -296,15 +285,11 @@ If `$DEEPXIV_FETCHER` is empty or the `deepxiv` CLI is unavailable, skip this so
 When the user explicitly requests `— sources: exa` (or includes `exa` in a combined source list), use the Exa tool for broad AI-powered web search with content extraction:
 
 ```bash
-# Re-resolve $ARIS_REPO (SKILL bash blocks may run in separate shells).
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
-fi
-# Resolve $EXA_FETCHER (Policy D2 — warn-and-skip on missing).
+# Resolve exa-search.js: installed project → dev ARIS repo → skip.
+_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
 EXA_FETCHER=".aris/dist/tools/exa-search.js"
 [ -f "$EXA_FETCHER" ] || EXA_FETCHER="dist/tools/exa-search.js"
-[ -f "$EXA_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && EXA_FETCHER="$ARIS_REPO/dist/tools/exa-search.js"; }
 [ -f "$EXA_FETCHER" ] || EXA_FETCHER=""
 
 if [ -n "$EXA_FETCHER" ]; then
@@ -386,15 +371,11 @@ If both MCP and CLI are unavailable, skip this source gracefully and continue wi
 When the user explicitly requests `— sources: openalex` (or includes `openalex` in a combined source list), use OpenAlex API for comprehensive academic metadata:
 
 ```bash
-# Re-resolve $ARIS_REPO (SKILL bash blocks may run in separate shells).
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
-fi
-# Resolve $OPENALEX_FETCHER (Policy D2 — warn-and-skip on missing).
+# Resolve openalex-fetch.js: installed project → dev ARIS repo → skip.
+_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
 OPENALEX_FETCHER=".aris/dist/tools/openalex-fetch.js"
 [ -f "$OPENALEX_FETCHER" ] || OPENALEX_FETCHER="dist/tools/openalex-fetch.js"
-[ -f "$OPENALEX_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && OPENALEX_FETCHER="$ARIS_REPO/dist/tools/openalex-fetch.js"; }
 [ -f "$OPENALEX_FETCHER" ] || OPENALEX_FETCHER=""
 
 # Preflight: skip OpenAlex silently if the helper is unresolved OR the
@@ -469,14 +450,11 @@ web") and proceed.
 After all sources are searched and papers are ranked by relevance:
 
 ```bash
-# Re-resolve $ARXIV_FETCHER (SKILL bash blocks may run in separate shells).
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
-fi
+# Resolve arxiv-fetch.js for PDF download: installed project → dev ARIS repo → skip.
+_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
 ARXIV_FETCHER=".aris/dist/tools/arxiv-fetch.js"
 [ -f "$ARXIV_FETCHER" ] || ARXIV_FETCHER="dist/tools/arxiv-fetch.js"
-[ -f "$ARXIV_FETCHER" ] || { [ -n "${ARIS_REPO:-}" ] && ARXIV_FETCHER="$ARIS_REPO/dist/tools/arxiv-fetch.js"; }
 [ -f "$ARXIV_FETCHER" ] || ARXIV_FETCHER=""
 
 # Download top N most relevant arXiv papers; skip silently if helper unresolved.
@@ -501,14 +479,11 @@ downstream analysis proceeds with audit-visible degraded output
 rather than silently dropping candidates.
 
 ```bash
-# 1. Resolve $VERIFY_PAPERS via the canonical strict-safe chain (§2).
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
-fi
+# 1. Resolve verify-papers.js: installed project → dev ARIS repo → skip.
+_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
 VERIFY_PAPERS=".aris/dist/tools/verify-papers.js"
 [ -f "$VERIFY_PAPERS" ] || VERIFY_PAPERS="dist/tools/verify-papers.js"
-[ -f "$VERIFY_PAPERS" ] || { [ -n "${ARIS_REPO:-}" ] && VERIFY_PAPERS="$ARIS_REPO/dist/tools/verify-papers.js"; }
 [ -f "$VERIFY_PAPERS" ] || VERIFY_PAPERS=""
 
 # 2. Emit candidates as JSON. Verification scratch lives under .aris/
@@ -538,8 +513,8 @@ if [ -n "$VERIFY_PAPERS" ]; then
     echo "WARN: verify-papers.js invocation failed (resolved at $VERIFY_PAPERS); falling back to [UNVERIFIED] tagging." >&2
   fi
 else
-  echo "WARN: verify-papers.js not resolved at .aris/tools/, tools/, or \$ARIS_REPO/tools/." >&2
-  echo "      Fix: export ARIS_REPO, or copy the helper to tools/." >&2
+  echo "WARN: verify-papers.js not resolved at .aris/dist/tools/ or dist/tools/." >&2
+  echo "      Fix: run /aris-update to refresh the project runtime." >&2
 fi
 if [ "$verify_ok" = "false" ]; then
   if ! command -v node >/dev/null 2>&1; then
@@ -684,13 +659,12 @@ chain documented in
 (Variant B — warn-and-skip):
 
 ```bash
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-ARIS_REPO="${ARIS_REPO:-$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null)}"
+_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
 WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
 [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
-[ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/dist/tools/research-wiki.js"; }
 [ -f "$WIKI_SCRIPT" ] || {
-  echo "WARN: research-wiki.js not found; literature synthesis will be reported but wiki ingest will be skipped. Fix: export ARIS_REPO, or cp <ARIS-repo>/dist/tools/research-wiki.js tools/." >&2
+  echo "WARN: research-wiki.js not found; literature synthesis will be reported but wiki ingest will be skipped. Fix: run /aris-update to refresh the project runtime." >&2
   WIKI_SCRIPT=""
 }
 ```

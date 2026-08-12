@@ -148,15 +148,17 @@ Dashboard schema: see `shared-references/worker-manifest.md` section "dashboard.
 ## Phase 0: Preconditions + Initialize
 
 ```bash
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
+_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
 ROOT=$(pwd)
 
-# Resolve ARIS_REPO
-if [ -f .aris/installed-skills.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
-fi
-WIKI_SCRIPT="$ARIS_REPO/dist/tools/research-wiki.js"
-RUN_STATE="$ARIS_REPO/dist/tools/run-state.js"
+# Resolve helpers (integration-contract.md §2 — project-local only)
+WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
+[ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
+[ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT=""
+RUN_STATE=".aris/dist/tools/run-state.js"
+[ -f "$RUN_STATE" ] || RUN_STATE="dist/tools/run-state.js"
+[ -f "$RUN_STATE" ] || RUN_STATE=""
 
 # Preconditions are a callable step. Fresh start calls it once; resume calls it
 # only when run-state reports the unfinished `init` phase.

@@ -53,14 +53,13 @@ This contradicts the Karpathy LLM-wiki design (https://gist.github.com/karpathy/
 Resolve `$WIKI_ROOT` and `$WIKI_SCRIPT` (canonical chain — see `shared-references/wiki-helper-resolution.md`):
 
 ```bash
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
+_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
 [ -d research-wiki/ ] || { echo "ERROR: research-wiki/ not found. Run /research-wiki init first." >&2; exit 1; }
 
-ARIS_REPO="${ARIS_REPO:-$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null)}"
 WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
 [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
-[ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/dist/tools/research-wiki.js"; }
-[ -f "$WIKI_SCRIPT" ] || { echo "ERROR: research-wiki.js not found." >&2; exit 1; }
+[ -f "$WIKI_SCRIPT" ] || { echo "ERROR: research-wiki.js not found. Fix: run /aris-update to refresh the project runtime." >&2; exit 1; }
 ```
 
 If either fails, **hard-fail** — this skill manipulates wiki state and must not run blind.

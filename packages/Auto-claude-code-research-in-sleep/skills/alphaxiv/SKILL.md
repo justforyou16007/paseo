@@ -135,17 +135,16 @@ If the user only asks for one specific detail, answer it directly — skip the f
 
 **You MUST always run the bash block below — it checks for `research-wiki/` internally and exits silently when absent.** Do NOT skip this step based on your own directory check; the bash block handles that for you.
 
-Substitute only `<paper_arxiv_id>` and `<thesis>`; keep `${ARIS_REPO:-...}` as-is so an already-set env var is preserved.
+Substitute only `<paper_arxiv_id>` and `<thesis>`.
 
 ```bash
 if [ -d research-wiki/ ]; then
-  cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-  ARIS_REPO="${ARIS_REPO:-$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null)}"
+  _pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
   WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
   [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
-  [ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/dist/tools/research-wiki.js"; }
   [ -f "$WIKI_SCRIPT" ] || {
-    echo "WARN: research-wiki.js not found; paper summary delivered, wiki ingest skipped. Fix: export ARIS_REPO, or cp <ARIS-repo>/dist/tools/research-wiki.js tools/." >&2
+    echo "WARN: research-wiki.js not found; paper summary delivered, wiki ingest skipped. Fix: run /aris-update to refresh the project runtime." >&2
     WIKI_SCRIPT=""
   }
   [ -n "$WIKI_SCRIPT" ] && node "$WIKI_SCRIPT" ingest_paper research-wiki/ \

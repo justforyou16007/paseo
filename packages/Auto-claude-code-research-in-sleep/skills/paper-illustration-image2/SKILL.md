@@ -85,23 +85,24 @@ and a **local Codex app-server MCP bridge** as the raster renderer.
   # Layer 0: compiled TS (CC 1.0+ exposes $CLAUDE_SKILL_DIR).
   IMAGE2_HELPER=""
   if [ -n "${CLAUDE_SKILL_DIR:-}" ]; then
-    _ARIS_ROOT="${CLAUDE_SKILL_DIR%/skills/*}"
-    [ -f "$_ARIS_ROOT/dist/skills/paper-illustration-image2/paper-illustration-image2.js" ] && IMAGE2_HELPER="$_ARIS_ROOT/dist/skills/paper-illustration-image2/paper-illustration-image2.js"
-  fi
-  # Layers 1-3: shared-runtime chain.
-  if [ -z "$IMAGE2_HELPER" ]; then
-    cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-    if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-        ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
+    _PROJECT_ROOT="${CLAUDE_SKILL_DIR%/.claude/skills/*}"
+    if [ "$_PROJECT_ROOT" = "$CLAUDE_SKILL_DIR" ]; then
+      _PROJECT_ROOT="${CLAUDE_SKILL_DIR%/skills/*}"
     fi
+    [ -f "$_PROJECT_ROOT/.aris/dist/skills/paper-illustration-image2/paper-illustration-image2.js" ] && IMAGE2_HELPER="$_PROJECT_ROOT/.aris/dist/skills/paper-illustration-image2/paper-illustration-image2.js"
+    [ -z "$IMAGE2_HELPER" ] && [ -f "$_PROJECT_ROOT/dist/skills/paper-illustration-image2/paper-illustration-image2.js" ] && IMAGE2_HELPER="$_PROJECT_ROOT/dist/skills/paper-illustration-image2/paper-illustration-image2.js"
+  fi
+  # Layers 1-2: shared-runtime chain.
+  if [ -z "$IMAGE2_HELPER" ]; then
+    _pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
+cd "${_pr:-$(pwd)}" || exit 1
     IMAGE2_HELPER=".aris/dist/skills/paper-illustration-image2/paper-illustration-image2.js"
     [ -f "$IMAGE2_HELPER" ] || IMAGE2_HELPER="dist/skills/paper-illustration-image2/paper-illustration-image2.js"
-    [ -f "$IMAGE2_HELPER" ] || { [ -n "${ARIS_REPO:-}" ] && IMAGE2_HELPER="$ARIS_REPO/dist/skills/paper-illustration-image2/paper-illustration-image2.js"; }
     [ -f "$IMAGE2_HELPER" ] || IMAGE2_HELPER=""
   fi
   [ -z "$IMAGE2_HELPER" ] && {
-    echo "ERROR: paper-illustration-image2.js not resolved (layer 0: \$CLAUDE_SKILL_DIR dist/; layers 1-3: .aris/dist/, dist/, \$ARIS_REPO/dist/)." >&2
-    echo "       /paper-illustration-image2 cannot proceed. Fix: run npm run build in the ARIS repo." >&2
+    echo "ERROR: paper-illustration-image2.js not resolved (layer 0: \$CLAUDE_SKILL_DIR; layers 1-2: .aris/dist/, dist/)." >&2
+    echo "       /paper-illustration-image2 cannot proceed. Fix: run /aris-update or npm run build in the ARIS repo." >&2
     exit 1
   }
   ```

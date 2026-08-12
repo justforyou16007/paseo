@@ -45,9 +45,9 @@ Only:
 
 - a **cross-model reviewer** verdict (codex/gemini, per `reviewer-independence.md`)
   — `reviewer="codex-gpt-5.5"`, `verdict_id=<thread/trace id>`; or
-- a **deterministic verifier** — `verify_papers.py`, a passing test suite, a
+- a **deterministic verifier** — `verify-papers.js`, a passing test suite, a
   compile that exits 0, a file-exists check for a purely mechanical phase.
-  Record it as `reviewer="deterministic:verify_papers.py"` so the audit trail
+  Record it as `reviewer="deterministic:verify-papers.js"` so the audit trail
   shows acceptance was not a model self-report (per `fan-out-pattern.md`: a
   deterministic verifier is a valid jury; a process is not a model family).
 
