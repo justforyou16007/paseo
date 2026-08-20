@@ -8,6 +8,11 @@ const ciWorkflowPath = new URL(".github/workflows/ci.yml", repoRoot);
 const dockerWorkflowPath = new URL(".github/workflows/docker.yml", repoRoot);
 const nixWorkflowPath = new URL(".github/workflows/nix.yml", repoRoot);
 const filtersPath = new URL(".github/ci-paths.yml", repoRoot);
+const rootPackagePath = new URL("package.json", repoRoot);
+const arisPackagePath = new URL(
+  "packages/Auto-claude-code-research-in-sleep/package.json",
+  repoRoot,
+);
 const serverTsconfigPath = new URL("packages/server/tsconfig.server.json", repoRoot);
 const desktopPackagePath = new URL("packages/desktop/package.json", repoRoot);
 
@@ -133,6 +138,22 @@ test("server builds exclude test utilities at every domain depth", () => {
   const tsconfig = JSON.parse(readFileSync(serverTsconfigPath, "utf8"));
   assert.ok(tsconfig.exclude.includes("src/server/**/test-utils/**"));
   assert.ok(!tsconfig.exclude.includes("src/server/test-utils/**"));
+});
+
+test("server build and dev watch include the ARIS runtime workspace", () => {
+  const rootPackage = JSON.parse(readFileSync(rootPackagePath, "utf8"));
+  const arisPackage = JSON.parse(readFileSync(arisPackagePath, "utf8"));
+  const rootScripts = rootPackage.scripts;
+
+  assert.match(rootScripts["build:server"], /npm run build:server-deps/);
+  assert.match(rootScripts["build:server:clean"], /npm run build:server-deps:clean/);
+  assert.match(rootScripts["build:server-deps"], /npm run build:aris/);
+  assert.match(rootScripts["build:server-deps:clean"], /npm run build:aris:clean/);
+  assert.match(rootScripts["dev:server:watch"], /npm run watch:aris/);
+  assert.equal(rootScripts["build:aris"], "npm run build --workspace=@getpaseo/aris");
+  assert.equal(rootScripts["build:aris:clean"], "npm run build:clean --workspace=@getpaseo/aris");
+  assert.equal(arisPackage.scripts.watch, "tsc -p tsconfig.json --watch --preserveWatchOutput");
+  assert.doesNotMatch(arisPackage.scripts.clean, /rm -rf/);
 });
 
 test("PR routing declares stable behavior ownership", () => {

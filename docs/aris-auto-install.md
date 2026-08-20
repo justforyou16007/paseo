@@ -58,7 +58,8 @@ manifest is written — the project will retry on next add.
 
 A bare `git clone` of the ARIS repo has neither `dist/` nor `node_modules/`.
 Run `npm install && npm run build` in the checkout before the daemon can
-install from it.
+install from it. When the checkout is inside Paseo, `npm run build:server` and
+`npm run dev:server` build ARIS as part of the server dependency chain.
 
 ## Repair
 

@@ -414,13 +414,17 @@ The desktop-managed daemon disables the bundled web UI by default (`PASEO_WEB_UI
 
 Package imports resolve through package exports to compiled `dist/` output, not sibling `src/` files. This is true in local dev and in published packages: the app, daemon, CLI, and SDK consumers should all exercise the same runtime paths.
 
-`npm run dev:server` builds the server-side workspace packages once, then keeps `@getpaseo/protocol` and `@getpaseo/client` fresh with TypeScript watch builds while the daemon runs. If you change protocol schemas or client code outside that watch workflow, rebuild the producer before trusting runtime behavior.
+`npm run dev:server` builds the server-side workspace packages once, then keeps
+`@getpaseo/aris`, `@getpaseo/protocol`, and `@getpaseo/client` fresh with
+TypeScript watch builds while the daemon runs. If you change protocol schemas,
+client code, or ARIS tools outside that watch workflow, rebuild the producer
+before trusting runtime behavior.
 
 Use the named root build targets instead of remembering workspace dependency chains:
 
 ```bash
 npm run build:client       # protocol -> client
-npm run build:server-deps  # highlight -> relay -> protocol -> client
+npm run build:server-deps  # highlight + relay + ARIS; protocol -> client
 npm run build:server       # server-deps -> server -> cli
 npm run build:app-deps     # highlight -> protocol -> client -> expo-two-way-audio
 ```

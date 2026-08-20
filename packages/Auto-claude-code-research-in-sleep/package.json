@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "audit:skill-flow": "npx tsx src/tools/skill-flow-audit.ts",
-    "build": "npm run clean && tsc -p tsconfig.json",
-    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "build": "npm run build:clean",
+    "build:clean": "npm run clean && tsc -p tsconfig.json",
+    "clean": "node ../../scripts/clean-package-dist.mjs && node -e \"require('node:fs').rmSync('tsconfig.tsbuildinfo', { force: true })\"",
+    "watch": "tsc -p tsconfig.json --watch --preserveWatchOutput",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && ARIS_TEST_DIST=1 npx tsx tests/test_run_state.ts",
     "test:source": "npx tsx tests/test_run_state.ts"
