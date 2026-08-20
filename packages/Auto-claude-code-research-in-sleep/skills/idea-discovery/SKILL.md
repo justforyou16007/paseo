@@ -47,6 +47,17 @@ When invoked with `— manifest: <path>`, this skill runs as a worker under an
 orchestrator (`/research-pipeline` or `/auto-research-loop`). The manifest
 provides all inputs; the skill writes its receipt to the manifest's directory.
 
+**Metric-gap constrained mode.** `/auto-research-loop` iteration 2+ sets
+`manifest.context.metric_gap_constrained: true` and passes the latest final
+experiment evidence, the previously persisted gap map, and metric context.
+This is a separate short branch: generate a few concrete methods, run one fresh
+cross-model method audit, write `IDEA_REPORT.md` and the receipt, then return.
+Gap ids mentioned here are provisional references; `/gap-planner`, which runs
+next, owns all merge, close, add, and priority rulings. This branch never enters
+the literature, open-ended ideation, pilot, checkpoint, method-refinement,
+experiment-planning, or rendering phases below. `/research-pipeline` and direct
+calls omit this flag and retain the normal pipeline unchanged.
+
 **Startup check:**
 ```
 if "$ARGUMENTS" contains "— manifest:"; then
@@ -65,6 +76,7 @@ fi
 {
   "worker": "idea-discovery",
   "iteration": 1,
+  "run_id": "<run-id>",
   "status": "done",
   "error": null,
   "primary_output": "IDEA_REPORT.md",
@@ -73,11 +85,31 @@ fi
     "best_idea": {"id": "idea-1", "title": "top-ranked idea title", "metric": null, "iteration": 1},
     "idea_ids": ["idea-1-id", "idea-2-id"]
   },
+  "ranked_ideas": [
+    {"id": "idea-1", "title": "top-ranked idea title", "rank": 1, "score": 8.5},
+    {"id": "idea-2", "title": "second idea title", "rank": 2, "score": 7.2}
+  ],
+  "gate1_provenance": {
+    "novelty_verdict": "pass",
+    "novelty_agent_id": "<paseo-codex-agent-id from /novelty-check>",
+    "review_verdict": "pass",
+    "review_agent_id": "<paseo-codex-agent-id from /research-review>",
+    "reviewer_model": "codex-gpt-5.5"
+  },
   "completed_at": "<ISO-8601>",
   "has_errors": false,
   "error_count": 0
 }
 ```
+
+The `gate1_provenance` block carries the cross-model verdict ids that the
+orchestrator's Gate 1 accept step needs for `--verdict-id` and `--reviewer`.
+Without it, Gate 1 acceptance has no verifiable provenance chain.
+
+The `ranked_ideas` array provides the orchestrator with structured data
+for the Gate 1 checkpoint display (AUTO_PROCEED=false). The orchestrator
+reads this from the receipt — it does not read worker output files or
+parse IDEA_REPORT.md (Rule 5).
 
 On failure, write receipt with `"status": "failed"` and structured `error` object
 per `worker-manifest.md`. Append system errors to `$WORKER_DIR/progress_error.md`.
@@ -97,6 +129,74 @@ paths below are project-root-relative as written.
 | `idea-stage/IDEA_REPORT.html` | `$OUTPUT_DIR/IDEA_REPORT.html` |
 | `refine-logs/FINAL_PROPOSAL.md` | `$OUTPUT_DIR/FINAL_PROPOSAL.md` |
 | `refine-logs/EXPERIMENT_PLAN.md` | `$OUTPUT_DIR/EXPERIMENT_PLAN.md` |
+
+### Metric-gap constrained branch (iteration 2+ only)
+
+When `manifest.context.metric_gap_constrained == true`, execute only this
+branch and **return immediately after writing its receipt**:
+
+1. Require `inputs.prior_gap_map`, `inputs.analysis`, `inputs.tracker`,
+   `inputs.results`, and `inputs.review`. Require
+   `context.source_iteration == iteration - 1`. Read metric name, target,
+   direction, current value, and history only from manifest context.
+2. Generate 3-5 implementation-ready candidate methods from those supplied
+   artifacts and the current codebase. Prefer unresolved ids already present in
+   the prior gap map, but describe newly observed issues with evidence paths
+   instead of assigning authoritative new ids. Do not merge, close, add,
+   refute, defer, or reprioritize gaps; `/gap-planner` does that after this
+   worker finishes.
+3. Do not search the web or invoke `/research-lit`, `/idea-creator`,
+   `/novelty-check`, `/research-review`, `/research-refine-pipeline`, or any
+   pilot/experiment skill. This prohibition applies to every retry in this
+   branch.
+4. For every candidate record: existing target gap ids or provisional target
+   descriptions, evidence paths, mechanism, exact code/config change, command,
+   dataset/split, seeds, metric, closing threshold, expected artifact, runtime
+   estimate, and main risk. Reject a candidate missing any field; gap-planner is
+   forbidden to invent it.
+5. Read `.aris/runs/<run_id>.paseo-config.json` and create one fresh reviewer
+   using its reviewer provider/mode/thinking. The reviewer sees the candidate
+   report, prior gap map, and final experiment evidence. It checks evidence fit,
+   feasibility, isolation of cause, measurement quality, and whether each
+   proposed threshold is testable. Its prompt must forbid web search, literature
+   lookup, and any literature or novelty skill; it judges only the supplied
+   artifacts and current code. It does not make novelty claims or gap-state
+   rulings.
+6. If the reviewer fails the candidates, make one bounded correction using
+   only its stated issues and re-audit with a fresh reviewer. On a second fail,
+   write a failed receipt. On pass/warn, rank the candidates, mark exactly one
+   `selected_idea_id`, and write only `$OUTPUT_DIR/IDEA_REPORT.md`.
+7. Do not ask the user a checkpoint, run pilots, write `EXPERIMENT_PLAN.md` or
+   `FINAL_PROPOSAL.md`, or continue into Phase 0 below.
+
+Constrained receipt:
+
+```json
+{
+  "worker": "idea-discovery",
+  "iteration": 3,
+  "run_id": "<run-id>",
+  "status": "done",
+  "error": null,
+  "primary_output": "IDEA_REPORT.md",
+  "summary": {"num_ideas": 3, "top_idea": "<title>", "mode": "metric-gap-constrained"},
+  "dashboard_patch": {
+    "best_idea": {"id": "idea-3-1", "title": "<title>", "metric": null, "iteration": 3},
+    "idea_ids": ["idea-3-1", "idea-3-2", "idea-3-3"]
+  },
+  "ranked_ideas": [
+    {"id": "idea-3-1", "title": "<title>", "rank": 1, "score": 8.4}
+  ],
+  "method_review": {
+    "verdict": "pass|warn",
+    "review_agent_id": "<fresh-reviewer-id>",
+    "reviewer_provider": "<provider>"
+  },
+  "completed_at": "<ISO-8601>",
+  "has_errors": false,
+  "error_count": 0
+}
+```
 
 ## Pipeline
 

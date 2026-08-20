@@ -44,7 +44,6 @@ End-to-end autonomous research workflow for: **$ARGUMENTS**
 | VENUE | ICLR | Target venue (ICLR/NeurIPS/ICML/CVPR/ACL/AAAI/ACM/IEEE_CONF/IEEE_JOURNAL) |
 | RENDER_HTML | true | Auto-render NARRATIVE_REPORT.md to HTML at Stage 4 (non-blocking) |
 | RESUMABLE | true | Record per-stage state for `— resume <run_id>` recovery |
-| AUTO_RESEARCH_ITERATIONS | 0 | When >0, insert research-iteration stage between W1 and W1.5 |
 
 > Override via argument: `/research-pipeline "topic" — AUTO_PROCEED: false, difficulty: nightmare, auto_write: true, venue: NeurIPS`.
 
@@ -58,7 +57,7 @@ Variables used throughout:
 ```
 DASHBOARD=".aris/runs/$RUN_ID/dashboard.json"
 WORKERS_DIR=".aris/runs/$RUN_ID/workers"
-RENDER=".claude/skills/research-pipeline/scripts/render_w_agent_prompt.sh"
+RENDER=".aris/tools/render_w_agent_prompt.sh"  # resolved via integration-contract.md §2 (shell helpers)
 RUN_STATE=".aris/dist/tools/run-state.js"   # resolved via integration-contract.md §2
 ```
 
@@ -100,9 +99,9 @@ ROOT=$(pwd)
 RUN_STATE=".aris/dist/tools/run-state.js"
 [ -f "$RUN_STATE" ] || RUN_STATE="dist/tools/run-state.js"
 [ -f "$RUN_STATE" ] || RUN_STATE=""
-# Render script lives alongside this skill
-RENDER=".claude/skills/research-pipeline/scripts/render_w_agent_prompt.sh"
-[ -f "$RENDER" ] || RENDER="skills/research-pipeline/scripts/render_w_agent_prompt.sh"
+# Render script is a shared substrate helper (integration-contract.md §2)
+RENDER=".aris/tools/render_w_agent_prompt.sh"
+[ -f "$RENDER" ] || RENDER="tools/render_w_agent_prompt.sh"
 [ -f "$RENDER" ] || RENDER=""
 ```
 
@@ -115,14 +114,9 @@ are not an ARIS dispatch substrate and there is no synchronous fallback.
 ### 2. Determine phases
 
 ```bash
-# Read AUTO_RESEARCH_ITERATIONS from CLAUDE.md (default 0)
-ARI=$(awk '/^## ARIS Paseo/{f=1;next} f&&/^AUTO_RESEARCH_ITERATIONS:/{print $2;exit}' CLAUDE.md 2>/dev/null)
-ARI=${ARI:-0}
-if [ "$ARI" -gt 0 ] 2>/dev/null; then
-    PHASES="idea-discovery,research-iteration,experiment-bridge,auto-review-loop,summary,paper-writing"
-else
-    PHASES="idea-discovery,experiment-bridge,auto-review-loop,summary,paper-writing"
-fi
+# Fixed single-pass phase list. The iterative metric-target flow lives in
+# /auto-research-loop (a separate top-level skill, never dispatched here).
+PHASES="idea-discovery,experiment-bridge,auto-review-loop,summary,paper-writing"
 ```
 
 ### 3. Fresh start vs Resume
@@ -147,10 +141,21 @@ if [ -n "$ARG_RESUME" ]; then
         exit 1
     fi
 
-    ARI=$(jq -r '.config.auto_research_iterations // 0' "$DASHBOARD")
     AUTO_WRITE=$(jq -r '.config.auto_write // false' "$DASHBOARD")
+    RESEARCH_DIRECTION=$(jq -r '.config.research_direction // empty' "$DASHBOARD")
+    if [ -z "$RESEARCH_DIRECTION" ]; then
+        echo "ERROR: dashboard is missing config.research_direction. Cannot resume."
+        exit 1
+    fi
     VENUE=$(jq -r '.config.venue // "ICLR"' "$DASHBOARD")
     RENDER_HTML=$(jq -r '.config.render_html // true' "$DASHBOARD")
+    AUTO_PROCEED=$(jq -r '.config.auto_proceed // true' "$DASHBOARD")
+    ARXIV_DOWNLOAD=$(jq -r '.config.arxiv_download // false' "$DASHBOARD")
+    HUMAN_CHECKPOINT=$(jq -r '.config.human_checkpoint // false' "$DASHBOARD")
+    REVIEWER_DIFFICULTY=$(jq -r '.config.reviewer_difficulty // "medium"' "$DASHBOARD")
+    CODE_REVIEW=$(jq -r '.config.code_review // true' "$DASHBOARD")
+    BASE_REPO=$(jq -r '.config.base_repo // "false"' "$DASHBOARD")
+    COMPACT=$(jq -r '.config.compact // false' "$DASHBOARD")
 
     # Use run-state to find the resume point
     RESUME_PHASE=$(node "$RUN_STATE" resume "$ROOT" "$RUN_ID")
@@ -174,6 +179,23 @@ else
     AUTO_WRITE=${AUTO_WRITE:-false}
     VENUE=${VENUE:-ICLR}
     RENDER_HTML=${RENDER_HTML:-true}
+    AUTO_PROCEED=${AUTO_PROCEED:-true}
+    ARXIV_DOWNLOAD=${ARXIV_DOWNLOAD:-false}
+    HUMAN_CHECKPOINT=${HUMAN_CHECKPOINT:-false}
+    REVIEWER_DIFFICULTY=${REVIEWER_DIFFICULTY:-medium}
+    CODE_REVIEW=${CODE_REVIEW:-true}
+    BASE_REPO=${BASE_REPO:-false}
+    COMPACT=${COMPACT:-false}
+    # The research direction is a run input: persist it once so every later
+    # stage (and resume) reads it from the dashboard, not from shell state.
+    RESEARCH_DIRECTION="$ARGUMENTS"
+    if [ -z "$RESEARCH_DIRECTION" ]; then
+        echo "ERROR: research direction is required: /research-pipeline \"<direction>\""
+        exit 1
+    fi
+    # JSON-safe interpolation (the direction is free text).
+    RESEARCH_DIRECTION_JSON=$(jq -Rn --arg v "$RESEARCH_DIRECTION" '$v')
+    BASE_REPO_JSON=$(jq -Rn --arg v "$BASE_REPO" '$v')
 
     # Emit paseo run config (must happen after RUN_ID is assigned)
     CFG=$(bash "$RENDER" --emit-config --run-id "$RUN_ID" --root "$ROOT")
@@ -181,7 +203,9 @@ else
     # Initialize run-state
     node "$RUN_STATE" start "$ROOT" "$RUN_ID" --phases "$PHASES"
 
-    # Initialize dashboard.json per worker-manifest.md schema
+    # Initialize dashboard.json per worker-manifest.md schema.
+    # Every constant that a later stage reads from its manifest context is
+    # persisted here so resume never depends on the user re-passing overrides.
     cat > "$DASHBOARD" <<DASH
 {
   "run_id": "$RUN_ID",
@@ -191,10 +215,17 @@ else
   "max_iterations": 1,
   "current_phase": "idea-discovery",
   "config": {
-    "auto_research_iterations": $ARI,
+    "research_direction": ${RESEARCH_DIRECTION_JSON},
     "auto_write": $AUTO_WRITE,
     "venue": "$VENUE",
-    "render_html": $RENDER_HTML
+    "render_html": $RENDER_HTML,
+    "auto_proceed": $AUTO_PROCEED,
+    "arxiv_download": $ARXIV_DOWNLOAD,
+    "human_checkpoint": $HUMAN_CHECKPOINT,
+    "reviewer_difficulty": "$REVIEWER_DIFFICULTY",
+    "code_review": $CODE_REVIEW,
+    "base_repo": ${BASE_REPO_JSON},
+    "compact": $COMPACT
   },
   "metric": { "name": null, "target": null, "direction": "higher_better",
               "tolerance": 0.01, "current": null, "baseline": null, "history": [] },
@@ -229,7 +260,7 @@ If `RESEARCH_BRIEF.md` exists, it is loaded as detailed context (replaces one-li
 
 | Context | |
 |---|---|
-| `direction` | `$ARGUMENTS` |
+| `direction` | `dashboard.config.research_direction` |
 | `arxiv_download`, `compact` | from constants |
 | `reference_skills/docs/knowledge` | from CLAUDE.md `## Reference Knowledge` |
 
@@ -239,24 +270,24 @@ as paseo claude sub-agents with codex reviewers.
 
 **Output:** `IDEA_REPORT.md` in `$WORKERS_DIR/idea-discovery/outputs/`.
 
-**Gate 1 — Idea checkpoint.** Present top ideas to user.
-- **AUTO_PROCEED=false:** wait for user to approve / request changes / reject / stop.
-- **AUTO_PROCEED=true:** present results, wait 10s, auto-select #1 ranked idea.
+**Gate 1 — Idea checkpoint.** Read `gate1_provenance` from W1's receipt
+(the receipt is the authoritative payload per Rule 2; the orchestrator never
+reads worker output files). Present top ideas from `receipt.ranked_ideas`
+to the user:
+- **AUTO_PROCEED=false:** present `ranked_ideas` (id/title/rank/score from
+  the receipt — not from worker output text) and wait for user to approve /
+  request changes / reject / stop.
+- **AUTO_PROCEED=true:** present `ranked_ideas`, wait 10s, auto-select
+  the rank-1 idea.
 
-On positive gate (novelty-check + research-review passed inside W1 as codex sub-agents):
-`accept idea-discovery --verdict-id <codex-agent-id> --reviewer codex-gpt-5.5`.
-
-### Stage 1.7: Auto Research Loop (optional)
-
-**Skip if AUTO_RESEARCH_ITERATIONS = 0** (default).
-
-When >0, dispatch `/auto-research-loop` as a single long-lived W-agent that loops
-iterations 1→N internally with a fresh codex reviewer per round (baseline reproduction
-→ problem diagnosis → hypothesis → experiment → review).
-
-**Compound gate:** (Type-A: `current_metric >= target * 0.99` OR `iteration >= MAX`)
-AND (Type-B: codex verdict=stop with `score>=9` AND `metric_progress=met target`).
-Requires `## Metric Target` block in CLAUDE.md with `primary: <number> <unit>`.
+On positive gate: read `receipt.gate1_provenance.review_agent_id` and
+`receipt.gate1_provenance.reviewer_model` as the cross-model verdict:
+```bash
+REVIEW_AGENT_ID=$(jq -r '.gate1_provenance.review_agent_id' "$WORKER_DIR/receipt.json")
+REVIEWER_MODEL=$(jq -r '.gate1_provenance.reviewer_model' "$WORKER_DIR/receipt.json")
+node "$RUN_STATE" accept "$ROOT" "$RUN_ID" idea-discovery \
+    --verdict-id "$REVIEW_AGENT_ID" --reviewer "$REVIEWER_MODEL"
+```
 
 ### Stage 2: Experiment Bridge (W1.5)
 
@@ -264,11 +295,12 @@ Requires `## Metric Target` block in CLAUDE.md with `primary: <number> <unit>`.
 |---|---|
 | `idea_report` | `$WORKERS_DIR/idea-discovery/outputs/IDEA_REPORT.md` |
 | `experiment_plan` | `$WORKERS_DIR/idea-discovery/outputs/EXPERIMENT_PLAN.md` |
+| `experiment_skill` | `$ROOT/.claude/skills/run-<project>-experiment/env.json` |
 | `dashboard` | `$DASHBOARD` |
 
 | Context | |
 |---|---|
-| `chosen_idea` | `$CHOSEN_IDEA_TITLE` |
+| `chosen_idea` | `dashboard.best_idea.title` (patched by W1's receipt) |
 | `code_review`, `base_repo`, `compact` | from constants |
 
 Dispatch → `skills/experiment-bridge/SKILL.md`. Queue routing is automatic:
@@ -287,13 +319,17 @@ Dispatch → `skills/experiment-bridge/SKILL.md`. Queue routing is automatic:
 
 | Manifest inputs | |
 |---|---|
-| `experiment_results` | `$WORKERS_DIR/experiment-bridge/outputs/EXPERIMENT_RESULTS.md` |
+| `analysis` | `$WORKERS_DIR/experiment-bridge/outputs/analysis/EXPERIMENT_RESULTS.md` |
+| `tracker` | `$WORKERS_DIR/experiment-bridge/outputs/EXPERIMENT_TRACKER.md` |
+| `results` | `$WORKERS_DIR/experiment-bridge/outputs/EXPERIMENT_RESULTS.md` |
+| `experiment_plan` | `$WORKERS_DIR/idea-discovery/outputs/EXPERIMENT_PLAN.md` |
+| `experiment_skill` | `$ROOT/.claude/skills/run-<project>-experiment/env.json` |
 | `idea_report` | `$WORKERS_DIR/idea-discovery/outputs/IDEA_REPORT.md` |
 | `dashboard` | `$DASHBOARD` |
 
 | Context | |
 |---|---|
-| `chosen_idea` | `$CHOSEN_IDEA_TITLE` |
+| `chosen_idea` | `dashboard.best_idea.title` (patched by W1's receipt) |
 | `reviewer_difficulty`, `human_checkpoint` | from constants |
 
 Dispatch → `skills/auto-review-loop/SKILL.md`. **W2 is one long-lived claude agent**
@@ -354,8 +390,7 @@ After `paper-writing` is accepted, atomically set dashboard `status` to
 
 | Phase | What sets `accepted` | Reviewer |
 |---|---|---|
-| `idea-discovery` | Gate 1 cross-model jury / novelty-check (codex sub-agents inside W1) | `codex-gpt-5.5` + codex agent-id |
-| `research-iteration` | Compound gate (metric within 1% of target OR max iterations) AND (codex verdict=stop, score≥9) | `codex-gpt-5.5` + codex agent-id (or `deterministic:research-iteration:max-iter-reached`) |
+| `idea-discovery` | Gate 1: `receipt.gate1_provenance.review_agent_id` (read from receipt, not worker text) | `receipt.gate1_provenance.reviewer_model` |
 | `experiment-bridge` | Jobs completed — deterministic | `deterministic:experiment-bridge` |
 | `auto-review-loop` | Codex positive STOP (score≥6 AND verdict∈{ready,almost}) | `codex-gpt-5.5` + codex agent-id |
 | `summary` | NARRATIVE_REPORT.md written (+ HTML if RENDER_HTML) | `deterministic:summary` |

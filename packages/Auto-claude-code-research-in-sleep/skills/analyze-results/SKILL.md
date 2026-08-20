@@ -62,18 +62,38 @@ if "$ARGUMENTS" contains "— manifest:"; then
 fi
 ```
 
+**Worker input authority:** require `manifest.inputs.results` and
+`manifest.inputs.tracker`. Accept optional `experiment_plan`,
+`experiment_skill`, and `error_report` paths. In worker mode:
+
+- analyze exactly the supplied results and tracker, plus any supplemental files
+  created during this invocation;
+- write the analysis only to `$OUTPUT_DIR/EXPERIMENT_RESULTS.md`;
+- use the supplied plan for coverage checks when present; when absent, mark
+  plan-coverage as not applicable;
+- do not replace these inputs with project-root `results/`, `logs/`,
+  `refine-logs/`, or an older analysis file.
+
+Direct-call mode retains the project-root discovery behavior below.
+
 **Receipt (write last to `$WORKER_DIR/receipt.json`):**
+
+When dispatched by `/auto-research-loop`, this skill writes the authoritative metric
+value to `metric.current`. `dashboard-merge.js apply` appends the per-iteration
+`metric.history` entry from `metric.current` in a single atomic write.
+
 ```json
 {
   "worker": "analyze-results",
   "iteration": 1,
+  "run_id": "<run-id>",
   "status": "done",
   "error": null,
   "primary_output": "EXPERIMENT_RESULTS.md",
   "summary": { "verdict": "<pass|warn|user_override>", "iterations": "<int>" },
   "dashboard_patch": {
-    "primary_metric": 0.82,
-    "metric_delta": 0.05,
+    "metric.current": 0.82,
+    "metric.delta": 0.05,
     "statistical_significance": true
   },
   "completed_at": "<ISO-8601>",
@@ -103,6 +123,13 @@ paths below are project-root-relative as written.
 
 ## Phase 0: Resolve Project
 
+In worker mode, resolve `PROJECT` from manifest context or the repository name.
+If `inputs.experiment_skill` names an `env.json`, derive `SKILL_DIR` from its
+parent and read that exact file. Do not search for another generated experiment
+skill. Then continue with the worker input authority above.
+
+In direct-call mode:
+
 1. **Derive project slug.**
    ```bash
    ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -128,6 +155,14 @@ paths below are project-root-relative as written.
 The first analysis run uses either the user's existing method or the standard
 analyze.sh path.
 
+**Worker mode:** start from `manifest.inputs.results` and
+`manifest.inputs.tracker`. An `analyze.sh` or user method may add calculations,
+but it must be pointed at those exact inputs and must not substitute files found
+under project-root result directories. Keep supplemental outputs under
+`$OUTPUT_DIR`.
+
+**Direct-call mode:** use the branches below.
+
 **If `— method: <path-or-command>` is provided:**
 
 - Execute the user's specified method/script/command
@@ -145,8 +180,9 @@ analyze.sh path.
 - Read `<output_dir>/error_report.md` (Stage 1 error collection)
 - Read the Stage 2 analysis output at `feedback.analysis.output_path`
 
-In both cases, collect all result files from `results/`, `logs/`, and any
-other directories referenced in `env.json`.
+In direct-call mode, collect all result files from `results/`, `logs/`, and any
+other directories referenced in `env.json`. This project-wide scan is forbidden
+in worker mode.
 
 ---
 
@@ -180,7 +216,9 @@ For each finding, structure as:
 
 ### Step 2d: Write Analysis Artifact
 
-Write to `feedback.analysis.output_path` (default `refine-logs/EXPERIMENT_RESULTS.md`).
+In worker mode, write to `$OUTPUT_DIR/EXPERIMENT_RESULTS.md`. In direct-call
+mode, write to `feedback.analysis.output_path` (default
+`refine-logs/EXPERIMENT_RESULTS.md`).
 
 ---
 
@@ -190,29 +228,36 @@ Write to `feedback.analysis.output_path` (default `refine-logs/EXPERIMENT_RESULT
 the same reasoning that finds its own work adequate would also miss its own
 blind spots. A fresh cross-model verifier evaluates completeness.
 
-Dispatch a **paseo sub-agent** per Rule 1 / Rule 4:
+Dispatch a **paseo sub-agent** per Rule 1 / Rule 4. The verifier MUST be
+cross-model (Type-B gate per `acceptance-gate.md`): use a codex reviewer, not
+claude. Per `paseo-reviewer-dispatch.md`, pass explicit `settings.modeId`
+for cross-provider dispatch.
 
 ```
 mcp__paseo__create_agent
   title:    "analysis completeness audit: <project>"
-  provider: claude
+  provider: codex/gpt-5.5
+  settings:
+    modeId: "full-access"
+    thinkingOptionId: "xhigh"
   cwd:      $ROOT
   initialPrompt: |
     Review the experiment analysis for completeness and rigor.
 
     Artifacts to read (paths only — read them yourself):
-      Analysis output:     <feedback.analysis.output_path>
-      Error report:        <output_dir>/error_report.md
-      Experiment plan:     refine-logs/EXPERIMENT_PLAN.md
-      Experiment tracker:  refine-logs/EXPERIMENT_TRACKER.md
-      Result files:        results/
-      analyze.sh:          <SKILL_DIR>/scripts/analyze.sh
-      env.json:            <SKILL_DIR>/env.json
+      Analysis output:     <resolved analysis output>
+      Error report:        <manifest input/output path, or "not supplied">
+      Experiment plan:     <manifest input path, or "not supplied">
+      Experiment tracker:  <manifest input path in worker mode; direct path otherwise>
+      Result files:        <manifest input path in worker mode; direct paths otherwise>
+      analyze.sh:          <resolved SKILL_DIR>/scripts/analyze.sh, if present
+      env.json:            <manifest experiment_skill path, if supplied>
 
     Evaluate against these criteria — report each as PASS | WARN | FAIL:
 
     A. Coverage — are all planned experiments represented in results?
-       FAIL if experiment plan exists and >20% of entries have no result.
+       FAIL if a supplied experiment plan exists and >20% of entries have no
+       result. Mark not applicable when no plan was supplied.
     B. Statistical rigor — do claims have sufficient statistical support?
        FAIL if single-seed results are presented as conclusive.
     C. Comparison completeness — are all critical baselines compared?

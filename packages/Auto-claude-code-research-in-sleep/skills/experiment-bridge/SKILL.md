@@ -52,6 +52,14 @@ When invoked with `— manifest: <path>`, this skill runs as a worker under an
 orchestrator (`/research-pipeline` or `/auto-research-loop`). The manifest
 provides all inputs; the skill writes its receipt to the manifest's directory.
 
+`/auto-research-loop` iteration 2+ passes `manifest.inputs.idea_report`
+alongside `manifest.inputs.experiment_plan`: `experiment_plan` is
+gap-planner's output (what gap, what to measure, what closes it) and
+`idea_report` is idea-discovery's `IDEA_REPORT.md` (the method to implement).
+This skill consumes both together — the plan supplies the target and
+measurement, the idea report supplies the method. Iteration 1 omits
+`idea_report` (no idea-discovery ran yet); implement the baseline plan alone.
+
 **Startup check:**
 ```
 if "$ARGUMENTS" contains "— manifest:"; then
@@ -66,23 +74,63 @@ fi
 ```
 
 **Receipt (write last to `$WORKER_DIR/receipt.json`):**
+
+In worker mode, the internal analyze-results receipt is the source of
+`metric.current`, `metric.delta`, and `statistical_significance`. Propagate
+those values into this final receipt. On the baseline iteration, also set
+`metric.baseline` to the same reproduced value; omit it later.
+
 ```json
 {
   "worker": "experiment-bridge",
   "iteration": 1,
+  "run_id": "<run-id>",
   "status": "done",
   "error": null,
-  "primary_output": "EXPERIMENT_RESULTS.md",
-  "summary": { "experiments_run": "<int>", "experiments_passed": "<int>" },
+  "primary_output": "analysis/EXPERIMENT_RESULTS.md",
+  "summary": { "experiments_run": 2, "experiments_passed": 2, "analysis_verdict": "pass" },
   "dashboard_patch": {
-    "primary_metric": 0.82,
-    "experiment_ids": ["exp-1-id", "exp-2-id"]
+    "metric.baseline": 0.65,
+    "metric.current": 0.65,
+    "metric.delta": 0.0,
+    "statistical_significance": false,
+    "experiment_ids": ["iter-1-baseline", "iter-1-main"]
   },
+  "experiments": [
+    {
+      "slug": "iter-1-baseline",
+      "title": "Confirmed baseline reproduction",
+      "idea": "",
+      "verdict": "yes",
+      "confidence": "high",
+      "metrics": "F1=0.65",
+      "reasoning": "Reproduced within the plan's tolerance.",
+      "provenance": ".aris/runs/<run-id>/workers/1-experiment-bridge/outputs/analysis/EXPERIMENT_RESULTS.md",
+      "tags": ["iteration-1", "baseline"]
+    },
+    {
+      "slug": "iter-1-main",
+      "title": "Iteration 1 main run",
+      "idea": "",
+      "verdict": "partial",
+      "confidence": "medium",
+      "metrics": "F1=0.65",
+      "reasoning": "Initial evidence collected; review may request fixes.",
+      "provenance": ".aris/runs/<run-id>/workers/1-experiment-bridge/outputs/analysis/EXPERIMENT_RESULTS.md",
+      "tags": ["iteration-1"]
+    }
+  ],
   "completed_at": "<ISO-8601>",
   "has_errors": false,
   "error_count": 0
 }
 ```
+
+For iteration 2+, keep `metric.current`, `metric.delta`,
+`statistical_significance`, `experiment_ids`, and `experiments`, but omit
+`metric.baseline`. `dashboard_patch.experiment_ids` must exactly equal the
+ordered `experiments[].slug` list. The orchestrator uses the bounded
+`experiments` records for research-wiki writes and never reads result files.
 
 On failure, write receipt with `"status": "failed"` and structured `error` object
 per `worker-manifest.md`. Append system errors to `$WORKER_DIR/progress_error.md`.
@@ -101,6 +149,7 @@ paths below are project-root-relative as written.
 | `refine-logs/EXPERIMENT_RESULTS.md` | `$OUTPUT_DIR/EXPERIMENT_RESULTS.md` |
 | `refine-logs/EXPERIMENT_TRACKER.md` | `$OUTPUT_DIR/EXPERIMENT_TRACKER.md` |
 | `EXPERIMENT_LOG.md` | `$OUTPUT_DIR/EXPERIMENT_LOG.md` |
+| structured analysis | `$OUTPUT_DIR/analysis/EXPERIMENT_RESULTS.md` |
 
 ## Workflow
 
@@ -403,24 +452,41 @@ This structured log survives session recovery — downstream skills read it inst
 
 ### Phase 5.6: Structured Analysis
 
-After all experiments complete and results are collected, dispatch
-`/analyze-results — project: <project>` as a paseo sub-agent to perform
-structured analysis (comparison tables, statistics, insights) with
-cross-model completeness verification.
+After results are collected, always run structured analysis.
 
-```bash
-PROMPT="/analyze-results — project: $PROJECT"
-# mcp__paseo__create_agent with notifyOnFinish; await receipt
+**Worker mode:** create
+`$WORKER_DIR/internal/analyze-results/input-manifest.json` with the same
+`run_id` and `iteration`, inputs pointing to this worker's
+`EXPERIMENT_TRACKER.md` and raw `EXPERIMENT_RESULTS.md`. Also pass through the
+outer manifest's `experiment_plan` and `experiment_skill` paths, plus this
+worker's `error_report.md` when it exists. Use metric history from the outer
+manifest context and output_dir
+`$OUTPUT_DIR/analysis`. Dispatch exactly:
+
+```
+/analyze-results — manifest: <internal-manifest-path>
 ```
 
-Wait for the internal direct-call receipt at `.aris/runs/<run_id>.analyze-results.<project>.done.json`.
-The analysis output at `refine-logs/EXPERIMENT_RESULTS.md` becomes input to the
-subsequent review phase (W2), giving the reviewer structured data rather than
-raw tracker rows.
+Read executor provider/mode/thinking from
+`.aris/runs/<run_id>.paseo-config.json`, wait for the child notification, then
+read `$WORKER_DIR/internal/analyze-results/receipt.json` and archive the child.
+If analyze-results' verifier fails and asks the user what to supplement or
+whether to accept, keep waiting for that choice; do not answer on the user's
+behalf or turn the failure into an automatic override.
+Require `status=done`, matching run/iteration, an existing
+`analysis/EXPERIMENT_RESULTS.md`, and finite `dashboard_patch.metric.current`.
+The analyzer must use those manifest-bound tracker/results paths; reject an
+analysis that substituted project-root `results/`, `logs/`, or stale
+`refine-logs/` files.
+Propagate the analyzer's metric current/delta/significance and verdict into the
+experiment-bridge receipt. Do not apply the nested receipt to the dashboard;
+only the final experiment-bridge receipt crosses the worker boundary. A missing
+or failed analyzer is a failed experiment-bridge receipt, never a warning or a
+fallback to raw rows.
 
-If the analyze-results skill is not installed (receipt missing after timeout),
-log a warning and continue with the current behavior — the review phase can
-still work from raw EXPERIMENT_TRACKER.md.
+**Direct-call mode:** retain the existing direct analyze-results invocation and
+legacy direct-call receipt path. The manifest receipt rule above applies only
+when experiment-bridge itself is a worker.
 
 ### Phase 5.7: Auto Ablation Planning
 

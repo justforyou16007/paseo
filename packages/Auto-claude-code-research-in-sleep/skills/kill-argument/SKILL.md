@@ -87,6 +87,7 @@ fi
 {
   "worker": "kill-argument",
   "iteration": 1,
+  "run_id": "<run-id>",
   "status": "done",
   "error": null,
   "primary_output": "KILL_ARGUMENT.json",

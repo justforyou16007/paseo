@@ -114,26 +114,43 @@ if "$ARGUMENTS" contains "— manifest:"; then
 fi
 ```
 
+In worker mode, begin from `manifest.inputs.results`,
+`manifest.inputs.tracker`, and `manifest.inputs.analysis`. These are the
+experiment-bridge artifacts for the current iteration. Do not treat files
+under this worker's own future `final-inputs/` or `final-analysis/` directories
+as startup inputs; those paths are created only during termination after all
+review fixes and reruns finish.
+
 **Receipt (write last to `$WORKER_DIR/receipt.json`):**
 ```json
 {
   "worker": "auto-review-loop",
   "iteration": 1,
+  "run_id": "<run-id>",
   "status": "done",
   "error": null,
   "primary_output": "AUTO_REVIEW.md",
-  "summary": { "rounds": "<int>", "final_score": "<float>", "final_verdict": "<string>" },
+  "summary": { "rounds": 2, "final_score": 7.0, "final_verdict": "ready", "analysis_verdict": "pass" },
   "dashboard_patch": {
-    "last_review.verdict": "continue",
+    "last_review.verdict": "ready",
     "last_review.score": 7,
-    "last_review.metric_progress": "improving",
-    "last_review.reviewer_id": "codex-agent-id"
+    "last_review.reviewer_id": "codex-agent-id",
+    "metric.current": 0.84,
+    "metric.delta": 0.07,
+    "statistical_significance": true
   },
   "completed_at": "<ISO-8601>",
   "has_errors": false,
   "error_count": 0
 }
 ```
+
+> **Boundary note.** `dashboard_patch` carries the iteration's quality verdict
+> (`verdict` ∈ {ready, almost, not ready}, `score`, `reviewer_id`) and, for a
+> metric-target run, the final metric copied from the termination analysis. It does
+> **not** include `metric_progress`, `stop`, `continue`, or `pivot` - those
+> concepts do not exist in this skill's vocabulary. The loop-stop decision is
+> made by the research-loop orchestrator based on dashboard arithmetic alone.
 
 On failure, write receipt with `"status": "failed"` and structured `error` object
 per `worker-manifest.md`. Append system errors to `$WORKER_DIR/progress_error.md`.
@@ -152,6 +169,9 @@ paths below are project-root-relative as written.
 | `review-stage/AUTO_REVIEW.md` | `$OUTPUT_DIR/AUTO_REVIEW.md` |
 | `review-stage/AUTO_REVIEW.html` | `$OUTPUT_DIR/AUTO_REVIEW.html` |
 | `review-stage/REVIEW_STATE.json` | `$OUTPUT_DIR/REVIEW_STATE.json` |
+| final result snapshot | `$OUTPUT_DIR/final-inputs/EXPERIMENT_RESULTS.md` |
+| final tracker snapshot | `$OUTPUT_DIR/final-inputs/EXPERIMENT_TRACKER.md` |
+| final structured analysis | `$OUTPUT_DIR/final-analysis/EXPERIMENT_RESULTS.md` |
 
 ## Workflow
 
@@ -558,13 +578,40 @@ When loop ends (positive assessment or max rounds):
 2. Write final summary to `review-stage/AUTO_REVIEW.md`
 3. Update project notes with conclusions
 4. **Write method/pipeline description** to `review-stage/AUTO_REVIEW.md` under a `## Method Description` section — a concise 1-2 paragraph description of the final method, its architecture, and data flow. This serves as input for `/paper-illustration` in Workflow 3 (so it can generate architecture diagrams automatically).
-5. **Generate claims from results** — dispatch a paseo claude sub-agent for `/result-to-claim` per `shared-references/paseo-subagent-dispatch.md` (Paseo claude sub-agent per `paseo-subagent-dispatch.md`) to convert experiment results from `review-stage/AUTO_REVIEW.md` into structured paper claims. Output: `CLAIMS_FROM_RESULTS.md`. This bridges Workflow 2 → Workflow 3 so `/paper-plan` can directly use validated claims instead of extracting them from scratch. If `/result-to-claim` is not available, skip silently.
-6. If stopped at max rounds without positive assessment:
+5. **Publish the final metric in worker mode.** This step is mandatory before
+   writing the outer receipt, even when no fix launched a new experiment:
+   - Copy the latest result and tracker snapshots to
+     `$OUTPUT_DIR/final-inputs/EXPERIMENT_RESULTS.md` and
+     `$OUTPUT_DIR/final-inputs/EXPERIMENT_TRACKER.md`. If no review round changed
+     them, copy the two corresponding manifest inputs unchanged.
+   - Write `$WORKER_DIR/internal/final-analyze/input-manifest.json` for
+     `/analyze-results`, using the same run id and iteration, the final-inputs
+     paths, the outer manifest's `experiment_plan` and `experiment_skill`
+     inputs, prior metric history, and output_dir `$OUTPUT_DIR/final-analysis`.
+     Pass a final error report path too when one exists.
+   - Read executor provider/mode/thinking from the run's
+     `.paseo-config.json`, dispatch `/analyze-results — manifest: <path>`, wait,
+     read its receipt, and archive it. Do not merge this nested receipt.
+   - Preserve analyze-results' existing behavior when its verifier fails: it
+     asks the user what to supplement or whether to accept. This parent waits;
+     it must not auto-override that question.
+   - Require a done receipt with matching run/iteration and finite
+     `metric.current`. Copy metric current/delta/significance verbatim into the
+     auto-review receipt. A failed or missing final analysis makes this worker
+     fail. Reject an analysis that used project-root result files instead of the
+     final-inputs paths in its manifest.
+
+   The outer dashboard therefore receives two same-iteration metric writes:
+   experiment-bridge's initial analyzed value, then auto-review-loop's final
+   value. `dashboard-merge` replaces that iteration's history entry instead of
+   appending another one, so resume cannot double-count it.
+6. **Generate claims from results** — dispatch a paseo claude sub-agent for `/result-to-claim` per `shared-references/paseo-subagent-dispatch.md` (Paseo claude sub-agent per `paseo-subagent-dispatch.md`) to convert experiment results from `review-stage/AUTO_REVIEW.md` into structured paper claims. Output: `CLAIMS_FROM_RESULTS.md`. This bridges Workflow 2 → Workflow 3 so `/paper-plan` can directly use validated claims instead of extracting them from scratch. If `/result-to-claim` is not available, skip silently.
+7. If stopped at max rounds without positive assessment:
    - List remaining blockers
    - Estimate effort needed for each
    - Suggest whether to continue manually or pivot
-7. **Feishu notification** (if configured): Send `pipeline_done` with final score progression table
-8. **Render HTML view** (if `RENDER_HTML = true`, default): dispatch a paseo claude sub-agent for `/render-html` per `shared-references/paseo-subagent-dispatch.md` (Paseo claude sub-agent per `paseo-subagent-dispatch.md`) on the cumulative review log:
+8. **Feishu notification** (if configured): Send `pipeline_done` with final score progression table
+9. **Render HTML view** (if `RENDER_HTML = true`, default): dispatch a paseo claude sub-agent for `/render-html` per `shared-references/paseo-subagent-dispatch.md` (Paseo claude sub-agent per `paseo-subagent-dispatch.md`) on the cumulative review log:
    ```
    /render-html "review-stage/AUTO_REVIEW.md" --no-review --state review-stage/REVIEW_STATE.json
    ```

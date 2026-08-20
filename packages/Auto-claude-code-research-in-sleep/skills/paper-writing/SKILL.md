@@ -116,6 +116,7 @@ fi
 {
   "worker": "paper-writing",
   "iteration": 1,
+  "run_id": "<run-id>",
   "status": "done",
   "error": null,
   "primary_output": "paper/",

@@ -1,7 +1,7 @@
 ---
 name: experiment-env-manager
 description: 'Sole entry point for experiment environment lifecycle: baseline creation, runtime error handling, and on-demand audit. Dispatches /experiment-env-configuration for script generation and /experiment-env-audit for validation. Manages repair loops until the environment passes or requires human intervention. Use when user says "set up experiment environment", "fix experiment env", "env error", "环境管理", "环境出错", "configure environment", or when experiment agents report environment failures.'
-argument-hint: "[— project: <name>] [— mode: setup|error-report|audit] [— error-report: <path>]"
+argument-hint: "[— project: <name>] [— mode: setup|error-report|audit] [— error-report: <path>] [— run-id: <id>] [— paseo-config: <path>]"
 allowed-tools: Bash(*), Read, Write, Grep, Glob, AskUserQuestion, WebSearch, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__wait_for_agent, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission
 ---
 
@@ -65,11 +65,13 @@ specifies what differs (inputs, dispatch prompt, post-processing).
 ```
 1. Write state to .aris/env-config/<project>/env-manager-state.json
 
-2. Dispatch via mcp__paseo__create_agent:
+2. Dispatch via mcp__paseo__create_agent using the resolved run config:
    title:          "env-<mode>: <project> round <N>"
-   provider:       "claude/claude-sonnet-4-6"
+   provider:       $ENV_EXECUTOR_PROVIDER
+   settings:       { modeId: $ENV_EXECUTOR_MODE,
+                     thinkingOptionId: $ENV_EXECUTOR_THINKING }
    initialPrompt:  "/<skill-name> <arguments>"
-   notifyOnFinish: true
+   notifyOnFinish: $ENV_NOTIFY_ON_FINISH
 
 3. Wait for completion notification.
 
@@ -89,6 +91,28 @@ specifies what differs (inputs, dispatch prompt, post-processing).
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$ROOT" || exit 1
 ```
+
+Resolve the dispatch configuration once:
+
+```bash
+RUN_ID="${ARG_RUN_ID:-$(date +%Y%m%d-%H%M%S)-env-manager}"
+PASEO_CONFIG="${ARG_PASEO_CONFIG:-.aris/runs/${RUN_ID}.paseo-config.json}"
+if [ ! -f "$PASEO_CONFIG" ]; then
+  RENDER=".aris/tools/render_w_agent_prompt.sh"
+  [ -f "$RENDER" ] || RENDER="tools/render_w_agent_prompt.sh"
+  [ -f "$RENDER" ] || { echo "ERROR: paseo config and config emitter are missing"; exit 1; }
+  PASEO_CONFIG=$(bash "$RENDER" --emit-config --run-id "$RUN_ID" --root "$ROOT")
+fi
+ENV_EXECUTOR_PROVIDER=$(jq -er '.executor_provider' "$PASEO_CONFIG") || exit 1
+ENV_EXECUTOR_MODE=$(jq -er '.executor_mode' "$PASEO_CONFIG") || exit 1
+ENV_EXECUTOR_THINKING=$(jq -r '.executor_thinking // empty' "$PASEO_CONFIG")
+ENV_NOTIFY_ON_FINISH=$(jq -er '.notify_on_finish' "$PASEO_CONFIG") || exit 1
+```
+
+Every create-agent call in every mode uses these values. Omit
+`thinkingOptionId` when `ENV_EXECUTOR_THINKING` is empty. Never hardcode a
+provider in this skill. When called by auto-research-loop, preserve its
+`run-id` so the completion receipt path is known before dispatch.
 
 1. **Derive project slug** using the slug algorithm above.
    Override with `— project: <name>`.
@@ -396,14 +420,15 @@ DISPATCH_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 ```
 mcp__paseo__create_agent
   title:          "env-config: <project>"
-  provider:       "claude/claude-sonnet-4-6"
+  provider:       $ENV_EXECUTOR_PROVIDER
+  settings:       { modeId: $ENV_EXECUTOR_MODE, thinkingOptionId: $ENV_EXECUTOR_THINKING }
   initialPrompt:  |
     /experiment-env-configuration — project: <project> — prd: <CONFIG_DIR>/prd.json
 
     This dispatch comes from /experiment-env-manager. Read the PRD file
     for the complete requirements (all fields are filled — no interactive
     Q&A needed). Generate the experiment skill bundle.
-  notifyOnFinish: true
+  notifyOnFinish: $ENV_NOTIFY_ON_FINISH
 ```
 
 Wait --> read receipt --> archive.
@@ -445,7 +470,8 @@ rm -f "$CONFIG_DIR/ENV_CONFIG_AUDIT.md" \
 ```
 mcp__paseo__create_agent
   title:          "env-audit: <project> round <current_round>"
-  provider:       "claude/claude-sonnet-4-6"
+  provider:       $ENV_EXECUTOR_PROVIDER
+  settings:       { modeId: $ENV_EXECUTOR_MODE, thinkingOptionId: $ENV_EXECUTOR_THINKING }
   initialPrompt:  |
     /experiment-env-audit — project: <project> — target: promoted — report-format: structured
 
@@ -457,7 +483,7 @@ mcp__paseo__create_agent
       .aris/env-config/<project>/ENV_CONFIG_AUDIT_STRUCTURED.json
 
     Reply with the file paths only.
-  notifyOnFinish: true
+  notifyOnFinish: $ENV_NOTIFY_ON_FINISH
 ```
 
 Wait --> read receipt --> archive.
@@ -563,13 +589,14 @@ WHILE TRUE:
          d. Dispatch /experiment-env-configuration (patch mode):
             mcp__paseo__create_agent
               title:          "env-config-patch: <project> round <N>"
-              provider:       "claude/claude-sonnet-4-6"
+              provider:       $ENV_EXECUTOR_PROVIDER
+              settings:       { modeId: $ENV_EXECUTOR_MODE, thinkingOptionId: $ENV_EXECUTOR_THINKING }
               initialPrompt:  |
                 /experiment-env-configuration — project: <project> — patch: <CONFIG_DIR>/patch-round-<N>.json
 
                 Apply the patch described in the patch file. Do not re-run
                 interactive Q&A. Fix only the items listed in changes[].
-              notifyOnFinish: true
+              notifyOnFinish: $ENV_NOTIFY_ON_FINISH
 
             Wait → archive.
 
@@ -579,10 +606,11 @@ WHILE TRUE:
 
             mcp__paseo__create_agent
               title:          "env-audit: <project> round <N>"
-              provider:       "claude/claude-sonnet-4-6"
+              provider:       $ENV_EXECUTOR_PROVIDER
+              settings:       { modeId: $ENV_EXECUTOR_MODE, thinkingOptionId: $ENV_EXECUTOR_THINKING }
               initialPrompt:  |
                 /experiment-env-audit — project: <project> — target: promoted — report-format: structured — patch-id: <CURRENT_PATCH_ID>
-              notifyOnFinish: true
+              notifyOnFinish: $ENV_NOTIFY_ON_FINISH
 
             Wait → archive.
 
@@ -630,10 +658,11 @@ WHILE TRUE:
 
              mcp__paseo__create_agent
                title:          "env-audit: <project> re-audit after user fix"
-               provider:       "claude/claude-sonnet-4-6"
+               provider:       $ENV_EXECUTOR_PROVIDER
+               settings:       { modeId: $ENV_EXECUTOR_MODE, thinkingOptionId: $ENV_EXECUTOR_THINKING }
                initialPrompt:  |
                  /experiment-env-audit — project: <project> — target: promoted — report-format: structured — patch-id: <CURRENT_PATCH_ID>
-               notifyOnFinish: true
+               notifyOnFinish: $ENV_NOTIFY_ON_FINISH
 
              Wait → archive → loop back to step 1.
 
@@ -680,6 +709,7 @@ env-audit writes `complete`.
    ```json
    {
      "skill": "experiment-env-manager",
+     "run_id": "<run-id>",
      "project": "<project>",
      "mode": "setup",
      "result": "complete|user_override",
@@ -848,7 +878,8 @@ done
    ```
    mcp__paseo__create_agent
      title:          "env-config-repair: <project>"
-     provider:       "claude/claude-sonnet-4-6"
+     provider:       $ENV_EXECUTOR_PROVIDER
+     settings:       { modeId: $ENV_EXECUTOR_MODE, thinkingOptionId: $ENV_EXECUTOR_THINKING }
      initialPrompt:  |
        /experiment-env-configuration — project: <project> — patch: $CONFIG_DIR/error-repair-<TS>.json
 
@@ -858,7 +889,7 @@ done
 
        Read the error report for full context. Fix only the failing
        component.
-     notifyOnFinish: true
+     notifyOnFinish: $ENV_NOTIFY_ON_FINISH
    ```
 
    Wait --> archive.
@@ -870,10 +901,11 @@ done
 
    mcp__paseo__create_agent
      title:          "env-audit: <project> post-error-repair"
-     provider:       "claude/claude-sonnet-4-6"
+     provider:       $ENV_EXECUTOR_PROVIDER
+     settings:       { modeId: $ENV_EXECUTOR_MODE, thinkingOptionId: $ENV_EXECUTOR_THINKING }
      initialPrompt:  |
        /experiment-env-audit — project: <project> — target: promoted — report-format: structured — patch-id: <CURRENT_PATCH_ID>
-     notifyOnFinish: true
+     notifyOnFinish: $ENV_NOTIFY_ON_FINISH
    ```
 
    Wait --> archive.
@@ -899,7 +931,8 @@ AUDIT_DISPATCH_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 mcp__paseo__create_agent
   title:          "env-audit-diagnosis: <project>"
-  provider:       "claude/claude-sonnet-4-6"
+  provider:       $ENV_EXECUTOR_PROVIDER
+  settings:       { modeId: $ENV_EXECUTOR_MODE, thinkingOptionId: $ENV_EXECUTOR_THINKING }
   initialPrompt:  |
     /experiment-env-audit — project: <project> — target: promoted — report-format: structured
 
@@ -909,7 +942,7 @@ mcp__paseo__create_agent
     Run a full audit to diagnose whether this is an environment issue.
     Write structured verdict to:
     .aris/env-config/<project>/ENV_CONFIG_AUDIT_STRUCTURED.json
-  notifyOnFinish: true
+  notifyOnFinish: $ENV_NOTIFY_ON_FINISH
 ```
 
 Wait --> read structured verdict --> re-classify from the failing checks
@@ -1002,6 +1035,7 @@ When user chooses "强制标记已修复":
 ```json
 {
   "skill": "experiment-env-manager",
+  "run_id": "<run-id>",
   "project": "<project>",
   "mode": "error-report",
   "result": "fixed|not_env_issue|escalated|aborted|user_override",
@@ -1038,7 +1072,8 @@ AUDIT_DISPATCH_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 mcp__paseo__create_agent
   title:          "env-audit: <project> (on-demand)"
-  provider:       "claude/claude-sonnet-4-6"
+  provider:       $ENV_EXECUTOR_PROVIDER
+  settings:       { modeId: $ENV_EXECUTOR_MODE, thinkingOptionId: $ENV_EXECUTOR_THINKING }
   initialPrompt:  |
     /experiment-env-audit — project: <project> — target: promoted — report-format: structured
 
@@ -1052,7 +1087,7 @@ mcp__paseo__create_agent
     .aris/env-config/<project>/ENV_CONFIG_AUDIT.md
 
     Reply with the file paths only.
-  notifyOnFinish: true
+  notifyOnFinish: $ENV_NOTIFY_ON_FINISH
 ```
 
 Wait --> archive.
@@ -1115,6 +1150,7 @@ This ensures a Mode C patch does not leave the bundle at `pending_audit`.
 ```json
 {
   "skill": "experiment-env-manager",
+  "run_id": "<run-id>",
   "project": "<project>",
   "mode": "audit",
   "result": "complete|fixed|escalated|aborted|user_override",
@@ -1157,6 +1193,7 @@ All modes write to `.aris/runs/<run_id>.experiment-env-manager.<project>.done.js
 ```json
 {
   "skill": "experiment-env-manager",
+  "run_id": "<run-id>",
   "project": "<project>",
   "mode": "setup|error-report|audit",
   "result": "complete|fixed|not_env_issue|escalated|aborted|user_override",

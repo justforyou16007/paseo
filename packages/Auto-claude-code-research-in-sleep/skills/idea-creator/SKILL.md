@@ -75,6 +75,7 @@ fi
 {
   "worker": "idea-creator",
   "iteration": 1,
+  "run_id": "<run-id>",
   "status": "done",
   "error": null,
   "primary_output": "IDEA_REPORT.md",

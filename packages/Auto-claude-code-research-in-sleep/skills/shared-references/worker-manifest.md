@@ -81,6 +81,7 @@ Written by the worker after completing its work.
 {
   "worker": "<skill-name>",
   "iteration": <int>,
+  "run_id": "<run-id>",
   "status": "done|failed",
   "error": null,
   "primary_output": "<relative-path-within-output_dir>",
@@ -100,6 +101,8 @@ Written by the worker after completing its work.
 
 ### Fields
 
+- **`run_id`** — required and must match both the input manifest and target
+  dashboard. A receipt without it has no run ownership and is rejected.
 - **`status`** — `done` or `failed`. On failure, include `error` field.
 - **`error`** — structured failure data (required when `status == "failed"`):
   ```json
@@ -135,30 +138,49 @@ Written by the worker after completing its work.
   reads this scalar; it does NOT read the error file itself (Rule 5).
 - **`error_count`** — number of lines in `progress_error.md`.
 
+All fields shown above are required. A failed receipt sets
+`primary_output: null`, `summary: {}`, and `dashboard_patch: {}`, supplies the
+structured `error`, and still includes `completed_at`, `has_errors`, and
+`error_count`. A done receipt sets `error: null`; its primary output must exist
+inside the manifest's `output_dir` before the receipt is written.
+
 ### `dashboard_patch` merge algorithm
 
 The orchestrator applies `dashboard_patch` from `receipt.json` to `dashboard.json`
 using a **dot-notation-aware, idempotent merge**:
 
-1. For each key in `dashboard_patch`:
-   - If the key contains dots (e.g. `"metric.current"`), split on `.` and
-     traverse/create nested objects. Set the leaf value.
-   - If the key is a plain name, set the top-level field directly.
-2. Array fields: the patch provides the **full new value**, not an append.
-   The orchestrator does assignment (`=`), never append (`+=`).
-3. **Idempotency guard for `metric.history`:** The orchestrator checks
-   `receipt.iteration` against existing history entries before appending.
-   If an entry for this iteration already exists (from a prior crash+resume
-   that already merged), skip the append. Concretely:
+1. Validate run ownership before applying anything: safe run id, dashboard
+   schema, sibling input manifest, matching run/worker/iteration, receipt under
+   `.aris/runs/<run_id>/workers/`, matching `current_phase`, and an existing
+   primary output under that worker's `outputs/` directory.
+2. Check the worker-specific allowlist and value types. A worker may update
+   only fields it owns. Core state (`run_id`, `status`, `config`, metric target/
+   direction/tolerance, `current_phase`, `iteration`, `stop_reason`,
+   `applied_receipts`, and error bookkeeping) is never worker-writable.
+3. Reject any patch or nested value containing `__proto__`, `constructor`, or
+   `prototype` before dot-path traversal.
+4. For each allowed key in `dashboard_patch`, set the leaf value. Array fields
+   are full replacement, never append.
+5. **Metric-history ownership:** When a receipt writes `metric.current`, upsert
+   one history row for `receipt.iteration`. A later authoritative write in the
+   same iteration replaces that row. This is how auto-review-loop publishes
+   the post-fix metric after experiment-bridge's initial analysis without
+   double-counting history. A baseline-only write never downgrades an existing
+   current value. Concretely:
    ```
-   if not any(h.iter == receipt.iteration for h in dashboard.metric.history):
-       dashboard.metric.history.append({iter: receipt.iteration, value: patch.primary_metric, ...})
+   if patch has metric.current:
+       upsert history[receipt.iteration] = patch["metric.current"]
+   else if patch has metric.baseline and iteration is absent:
+       append baseline history row
    ```
-4. **Receipt tracking:** After merging, the orchestrator records the receipt
+6. **Receipt tracking:** After merging, the orchestrator records the receipt
    path in `dashboard.applied_receipts` (an array of strings). On resume,
    if a receipt path is already in `applied_receipts`, skip the merge.
    This is the primary crash-safety mechanism for idempotent resume.
-5. Only set fields the worker is authoritative for.
+The executable definition for `/auto-research-loop` is `dashboard-merge.js`;
+that orchestrator must use it instead of reimplementing these checks with
+`jq`. Other orchestrators adopt it only after their phase and worker ownership
+rules are wired into the helper.
 
 ## `progress_error.md`
 
@@ -202,7 +224,7 @@ The orchestrator's single state source. ~50 lines, ~300 tokens.
 {
   "run_id": "...",
   "project": "...",
-  "status": "running|finishing|completed",
+  "status": "running|finishing|completed|invalid",
   "iteration": 3,
   "max_iterations": 5,
   "current_phase": "experiment-bridge",
@@ -240,9 +262,9 @@ The orchestrator's single state source. ~50 lines, ~300 tokens.
   },
 
   "last_review": {
-    "verdict": "continue",
+    "verdict": "ready",
     "score": 7,
-    "iteration": 2
+    "reviewer_id": "reviewer-agent-id"
   },
 
   "stop_reason": null,
@@ -268,9 +290,11 @@ omit the object.
 | `running` | The orchestrator loop is actively dispatching phases |
 | `finishing` | The stop gate fired; the loop exited but summary/paper-writing are still pending |
 | `completed` | All terminal actions done; nothing to resume |
+| `invalid` | Metric state is malformed; downstream summary and paper phases are skipped |
 
 On resume, `finishing` means: skip the iteration loop, continue from summary.
-Only `completed` means nothing to do. There is no `stopped` status.
+Only `completed` means successful completion. `invalid` is terminal failure,
+not successful completion. There is no `stopped` status.
 
 ### `primary_output` and `output_dir` path semantics
 
