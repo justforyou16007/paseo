@@ -9,6 +9,10 @@ latest update; new skills land via PR and get added to the table below.
 - `Requires` lists external dependencies beyond ARIS core (Codex MCP, Gemini
   API, Modal account, LaTeX toolchain, etc.). `None` means it works out of
   the box on a standard install.
+- [`Program execution flow audit`](aris-skill-flow.html) shows execution order,
+  decisions, branches, loop-backs, side-expanded sub-skill calls, file handoffs,
+  and exact source lines. Regenerate it with `npm run audit:skill-flow` after
+  changing a skill or helper.
 
 > The table below tracks the main-tree canonical files.
 

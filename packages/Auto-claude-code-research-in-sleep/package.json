@@ -4,8 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "audit:skill-flow": "npx tsx src/tools/skill-flow-audit.ts",
     "build": "npm run clean && tsc -p tsconfig.json",
-    "clean": "rm -rf dist",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && ARIS_TEST_DIST=1 npx tsx tests/test_run_state.ts",
     "test:source": "npx tsx tests/test_run_state.ts"
