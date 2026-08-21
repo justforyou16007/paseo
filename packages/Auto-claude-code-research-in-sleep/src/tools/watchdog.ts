@@ -31,6 +31,7 @@ interface Paths {
   tasks: string;
   status: string;
   alerts: string;
+  heartbeat: string;
 }
 
 interface TaskDef {
@@ -71,7 +72,41 @@ function getPaths(baseDir: string): Paths {
     tasks: path.join(baseDir, "tasks.json"),
     status: path.join(baseDir, "status"),
     alerts: path.join(baseDir, "alerts.log"),
+    heartbeat: path.join(baseDir, "watchdog.heartbeat"),
   };
+}
+
+// Write-via-temp-then-rename so a reader never sees a half-written file and a
+// writer killed mid-write never leaves a truncated one behind. tasks.json is
+// read by the daemon every tick; a truncated JSON there would silence the
+// daemon permanently (tick's parse failure path).
+function writeFileAtomic(filePath: string, content: string): void {
+  const tmp = `${filePath}.tmp.${process.pid}`;
+  fs.writeFileSync(tmp, content);
+  fs.renameSync(tmp, filePath);
+}
+
+function appendAlert(alertsPath: string, message: string): void {
+  try {
+    fs.mkdirSync(path.dirname(alertsPath), { recursive: true });
+    fs.appendFileSync(alertsPath, `[${nowStr()}] watchdog: ${message}\n`);
+  } catch {
+    // The alert channel itself is broken (disk full, permissions); nothing
+    // else we can do from here.
+  }
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err: unknown) {
+    // EPERM means the process exists but belongs to another user.
+    if (err && typeof err === "object" && (err as { code?: string }).code === "EPERM") {
+      return true;
+    }
+    return false;
+  }
 }
 
 function nowStr(): string {
@@ -140,7 +175,7 @@ function registerTask(baseDir: string, taskJson: string): void {
   task.registered_epoch = Date.now() / 1000;
   tasks.push(task);
 
-  fs.writeFileSync(paths.tasks, JSON.stringify(tasks, null, 2));
+  writeFileAtomic(paths.tasks, JSON.stringify(tasks, null, 2));
   const detail =
     task.type === "loop" ? `stale_after=${task.stale_after_seconds}s` : task.session_type;
   console.log(`registered: ${task.name} (${task.type}, ${detail})`);
@@ -159,7 +194,7 @@ function unregisterTask(baseDir: string, name: string): void {
     return;
   }
   tasks = tasks.filter((t) => t.name !== name);
-  fs.writeFileSync(paths.tasks, JSON.stringify(tasks, null, 2));
+  writeFileAtomic(paths.tasks, JSON.stringify(tasks, null, 2));
   const statusFile = path.join(paths.status, `${name}.json`);
   if (fs.existsSync(statusFile)) {
     fs.unlinkSync(statusFile);
@@ -229,7 +264,7 @@ function getPathSize(targetPath: string): number {
 // ── Status output ────────────────────────────────────────────────
 
 function writeStatus(statusPath: string, data: StatusData): StatusData {
-  fs.writeFileSync(statusPath, JSON.stringify(data));
+  writeFileAtomic(statusPath, JSON.stringify(data));
 
   const status = data.status;
   if (["DEAD", "STALLED", "STALE", "MISSING", "IDLE", "ERROR"].includes(status)) {
@@ -546,7 +581,11 @@ function writeSummary(statusDir: string): string {
   }
 
   const summary = lines.length > 0 ? lines.join("\n") : "no tasks";
-  fs.writeFileSync(path.join(statusDir, "summary.txt"), summary);
+  try {
+    writeFileAtomic(path.join(statusDir, "summary.txt"), summary);
+  } catch {
+    // Status dir vanished mid-tick; runWatchdog's tick guard recreates it.
+  }
   return summary;
 }
 
@@ -556,6 +595,16 @@ function runWatchdog(baseDir: string, interval: number): void {
   const paths = getPaths(baseDir);
   fs.mkdirSync(paths.base, { recursive: true });
   fs.mkdirSync(paths.status, { recursive: true });
+
+  // Single instance: refuse to stomp a live daemon's pid file (a second
+  // daemon would interleave status writes with the first).
+  if (fs.existsSync(paths.pid)) {
+    const prev = parseInt(fs.readFileSync(paths.pid, "utf-8").trim(), 10);
+    if (Number.isInteger(prev) && prev !== process.pid && pidAlive(prev)) {
+      console.error(`watchdog already running (pid=${prev}) at ${baseDir}; exiting`);
+      process.exit(0);
+    }
+  }
 
   fs.writeFileSync(paths.pid, String(process.pid));
 
@@ -571,15 +620,78 @@ function runWatchdog(baseDir: string, interval: number): void {
   process.on("SIGTERM", handleSignal);
   process.on("SIGINT", handleSignal);
 
+  // A crash must leave a trace: an uncaught error kills the daemon with no
+  // supervisor to restart it, so log it to alerts.log before dying. Without
+  // this a long-running watchdog disappears silently mid-experiment.
+  process.on("uncaughtException", (err: Error) => {
+    try {
+      fs.mkdirSync(paths.base, { recursive: true });
+      fs.appendFileSync(
+        paths.alerts,
+        `[${nowStr()}] watchdog: FATAL uncaught exception, daemon exiting — ${err.stack ?? err.message}\n`,
+      );
+    } catch {
+      // even the alert channel is broken; nothing more we can do
+    }
+    handleSignal();
+  });
+
   console.log(`watchdog started (pid=${process.pid}, base=${baseDir}, interval=${interval}s)`);
 
+  let parseFailures = 0;
+
+  const writeHeartbeat = (taskCount: number): void => {
+    // The watchdog checks everyone's liveness but nothing checked its own.
+    // An external poller reads this file's mtime to detect a dead or
+    // wedged daemon (pid alone can't tell alive from zombie).
+    try {
+      writeFileAtomic(
+        paths.heartbeat,
+        JSON.stringify({ ts: nowStr(), epoch: Date.now() / 1000, tasks: taskCount }),
+      );
+    } catch {
+      // ignore — tick guard recreates dirs next round
+    }
+  };
+
   const tick = (): void => {
-    if (!fs.existsSync(paths.tasks)) return;
+    // Self-heal: /tmp cleanup or manual removal can delete the base dir
+    // mid-run. Recreate every tick so a missing dir degrades to "no tasks"
+    // instead of an ENOENT that kills the daemon.
+    fs.mkdirSync(paths.base, { recursive: true });
+    fs.mkdirSync(paths.status, { recursive: true });
+
+    if (!fs.existsSync(paths.tasks)) {
+      // tasks.json gone (tmp cleanup / reboot): recreating an empty file is
+      // better than silently no-op'ing forever — summary.txt becomes
+      // visible "no tasks" and alerts.log records the loss.
+      appendAlert(
+        paths.alerts,
+        "tasks.json missing (tmp cleanup or manual removal); recreated empty — re-register tasks",
+      );
+      writeFileAtomic(paths.tasks, "[]");
+    }
 
     let tasks: TaskDef[];
     try {
       tasks = JSON.parse(fs.readFileSync(paths.tasks, "utf-8"));
+      parseFailures = 0;
     } catch {
+      // Corrupt tasks.json (e.g. a register process killed mid-write).
+      // Never silently skip: count and surface it, then retry next tick.
+      parseFailures += 1;
+      appendAlert(
+        paths.alerts,
+        `tasks.json unparseable (${parseFailures} consecutive ticks); daemon idle until it is fixed or re-registered`,
+      );
+      writeStatus(path.join(paths.status, "_watchdog.json"), {
+        status: "DEGRADED",
+        task: "watchdog",
+        type: "watchdog",
+        msg: `tasks.json unparseable for ${parseFailures} consecutive ticks`,
+        ts: nowStr(),
+      });
+      writeHeartbeat(0);
       return;
     }
 
@@ -589,21 +701,44 @@ function runWatchdog(baseDir: string, interval: number): void {
         else if (task.type === "training") checkTraining(task, paths.status);
         else if (task.type === "loop") checkLoop(task, paths.status);
       } catch (e: unknown) {
-        writeStatus(path.join(paths.status, `${task.name}.json`), {
-          status: "ERROR",
-          task: task.name,
-          type: task.type,
-          msg: e instanceof Error ? e.message : String(e),
-          ts: nowStr(),
-        });
+        try {
+          writeStatus(path.join(paths.status, `${task.name}.json`), {
+            status: "ERROR",
+            task: task.name,
+            type: task.type,
+            msg: e instanceof Error ? e.message : String(e),
+            ts: nowStr(),
+          });
+        } catch {
+          // the error-status write itself failed (dir gone / disk full);
+          // don't let it escape the interval callback and kill the daemon
+        }
       }
     }
 
+    writeStatus(path.join(paths.status, "_watchdog.json"), {
+      status: "OK",
+      task: "watchdog",
+      type: "watchdog",
+      msg: `monitoring ${tasks.length} task(s)`,
+      ts: nowStr(),
+    });
     writeSummary(paths.status);
+    writeHeartbeat(tasks.length);
   };
 
-  tick();
-  setInterval(tick, interval * 1000);
+  // Wrap tick so no exception can escape into the setInterval callback and
+  // crash the daemon (uncaught exceptions in timers kill the process).
+  const safeTick = (): void => {
+    try {
+      tick();
+    } catch (e: unknown) {
+      appendAlert(paths.alerts, `tick failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  safeTick();
+  setInterval(safeTick, interval * 1000);
 }
 
 // ── CLI ──────────────────────────────────────────────────────────

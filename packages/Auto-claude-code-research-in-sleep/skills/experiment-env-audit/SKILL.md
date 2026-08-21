@@ -2,7 +2,7 @@
 name: experiment-env-audit
 description: 'Cross-model audit of a project''s experiment environment configuration with real execution verification. Static checks (G-K): command provenance, metric key agreement, failure detectability, environment reachability, analysis honesty. Execution checks (L-N): actually run prepare.sh/run.sh/collect.sh/info.sh and verify real results are produced. Dynamic checks (O): simulate agent workflow with source modifications. Patch regression (P): verify patch did not break existing functionality. Dispatched exclusively by /experiment-env-manager.'
 argument-hint: "[— project: <name>] [— reviewer: codex|oracle-pro|manual] [— target: draft|promoted] [— report-format: standard|structured] [— patch-id: <id>]"
-allowed-tools: Bash(*), Read, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__wait_for_agent, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission
+allowed-tools: Bash(*), Read, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission
 ---
 
 > **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in
@@ -148,7 +148,7 @@ mcp__paseo__create_agent
     Reply with the two file paths only.
 ```
 
-Then `mcp__paseo__wait_for_agent`, read the receipt file, and
+Then end the turn, resume on the finish notification, read the receipt file, and
 `mcp__paseo__archive_agent` (用完即 archive). **Never poll `get_agent_status`.**
 
 ### Type-A self-check: did the audit produce a verdict?

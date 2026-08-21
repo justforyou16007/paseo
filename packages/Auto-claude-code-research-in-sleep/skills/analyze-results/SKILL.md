@@ -2,7 +2,7 @@
 name: analyze-results
 description: 'Iterative experiment analysis driver. Runs analyze.sh to collect results, dispatches a cross-model verifier to evaluate completeness, then iterates: modifying analyze.sh and/or triggering supplementary experiments until the verifier passes. Produces comparison tables, statistical tests, insights, and a completeness verdict. Use when user says "analyze results", "分析结果", "compare experiments", "结果分析", or after experiments complete and results need interpretation.'
 argument-hint: "[— project: <name>] [— max-rounds: N] [— method: <existing-analysis-script-or-command>]"
-allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, AskUserQuestion, WebSearch, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__wait_for_agent, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission
+allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, AskUserQuestion, WebSearch, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission
 ---
 
 > **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in
@@ -284,7 +284,7 @@ mcp__paseo__create_agent
     Reply with the two file paths only.
 ```
 
-Then `mcp__paseo__wait_for_agent`, read the receipt, `mcp__paseo__archive_agent`.
+Then end the turn; on the finish notification read the receipt and `mcp__paseo__archive_agent`.
 
 **Type-A self-check:** `ANALYSIS_AUDIT.json` exists and parses.
 **Type-B read:** transcribe `overall_verdict` and `gaps[]` verbatim.

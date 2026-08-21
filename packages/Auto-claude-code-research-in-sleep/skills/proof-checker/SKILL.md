@@ -2,7 +2,7 @@
 name: proof-checker
 description: Rigorous mathematical proof verification and fixing workflow. Reads a LaTeX proof, identifies gaps via cross-model review (external reviewer backend, xhigh reasoning), fixes each gap with full derivations, re-reviews, and generates an audit report. Use when user says "检查证明", "verify proof", "proof check", "审证明", "check this proof", or wants rigorous mathematical verification of a theory paper.
 argument-hint: "[path-to-tex-file or proof-description] [--deep-fix] [--restatement-check]"
-allowed-tools: Bash(*), Read, Grep, Glob, Write, Edit, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__wait_for_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent, mcp__manual_review__review, mcp__manual_review__review_reply
+allowed-tools: Bash(*), Read, Grep, Glob, Write, Edit, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent, mcp__manual_review__review, mcp__manual_review__review_reply
 ---
 
 > **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in [](shared-references/paseo-subagent-dispatch.md) (Rule 1: One Agent = One Skill; Rule 4: Paseo MCP Only, Strict). Spawn any sub-skill or sub-phase via `mcp__paseo__create_agent` — do **not** use the host `Skill` / `Agent` / `Task` tools.
@@ -170,8 +170,8 @@ When the proof invokes any of the following, require explicit verification of AL
 > **Paseo fan-out — build the ledger shard by shard; never judge in the
 > shards.** For a large multi-theorem paper, ledger _construction_ is breadth
 > over independent sections. Create one Claude subagent per section/theorem
-> through `mcp__paseo__create_agent`, then immediately call `wait_for_agent`
-> before dispatching the next section. Each child extracts that unit's symbols,
+> through `mcp__paseo__create_agent`, then end the turn; resume on that
+> child's finish notification before dispatching the next section. Each child extracts that unit's symbols,
 > assumptions, micro-claims, and local quantified statements into a structured
 > ledger fragment. If Paseo MCP is unavailable, mark the phase BLOCKED; never
 > use host `Skill`, `Task`, or `Agent` tools or an in-process substitute. This follows

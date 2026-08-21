@@ -2,7 +2,7 @@
 name: idea-creator
 description: Generate and rank research ideas given a broad direction. Use when user says "找idea", "brainstorm ideas", "generate research ideas", "what can we work on", or wants to explore a research area for publishable directions.
 argument-hint: [research-direction]
-allowed-tools: Bash(*), Read, Write, Grep, Glob, WebSearch, WebFetch, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__wait_for_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent, mcp__manual_review__review, mcp__manual_review__review_reply
+allowed-tools: Bash(*), Read, Write, Grep, Glob, WebSearch, WebFetch, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent, mcp__manual_review__review, mcp__manual_review__review_reply
 ---
 
 > **Paseo substrate.** This skill runs inside a paseo claude sub-agent; its lens fan-out dispatches as paseo sub-agents and its Phase-4 devil's-advocate reviewer is a paseo codex sub-agent (fresh first pass, continued triage). See `shared-references/paseo-subagent-dispatch.md` + `paseo-reviewer-dispatch.md` + `fan-out-pattern.md`..
@@ -192,7 +192,8 @@ domain-specific lens when the direction warrants.
 **Paseo dispatch:** create one **Claude subagent per lens** through
 `mcp__paseo__create_agent`. Each runs the Phase-1 survey _through its lens_
 and the Phase-2 generation prompt _restricted to that lens_, returning
-candidates as structured output. Immediately call `wait_for_agent` after
+candidates as structured output. End the turn after dispatching; the child's
+finish notification re-invokes this agent
 each creation before dispatching the next lens. If Paseo MCP is unavailable,
 mark the phase BLOCKED; do not use the host `Skill`, `Task`, or `Agent` tools
 and do not execute the shard in-process.
@@ -260,7 +261,7 @@ mcp__paseo__create_agent:
   notifyOnFinish: true
 ```
 
-On completion (`wait_for_agent`), read the bundle's internal receipt file from
+On the finish notification, read the bundle's internal receipt file from
 `.aris/runs/<run_id>.idea-generation.done.json` (direct-call internal sub-agent receipt only;
 in worker mode the orchestrator reads `receipt.json` instead). The authoritative payload
 is the file; `<agent-response>` is at most a one-line status.

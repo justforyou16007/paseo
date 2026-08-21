@@ -2,7 +2,7 @@
 name: auto-research-loop
 description: 'Metric-target-driven iterative research loop. A standalone top-level flow that repeats experiment-bridge (including structured analysis), auto-review-loop (including final re-analysis), deterministic metric evaluation, constrained idea-discovery, and one post-idea gap-planner audit that also composes the next plan. Iteration 1 reproduces a confirmed baseline. Iteration 2+ executes the current iteration''s IDEA_REPORT and EXPERIMENT_PLAN. Use when the user asks for an auto research loop or autonomous quantitative improvement toward a configured Metric Target.'
 argument-hint: "[— baseline: <experiment-plan-path>] [— resume <run_id>] [— max-iterations: N]"
-allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__wait_for_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent, mcp__paseo__create_heartbeat
+allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent, mcp__paseo__create_heartbeat
 ---
 
 # Auto Research Loop - Dashboard + Manifest Architecture
@@ -76,7 +76,8 @@ For the full manifest and receipt JSON schemas, see `shared-references/worker-ma
    initialPrompt: "/<skill-name> — manifest: $WORKER_DIR/input-manifest.json"
    notifyOnFinish: true
 
-5. Wait for completion notification (wait_for_agent; never poll).
+5. Wait for the completion notification - end the turn and let the child's
+   finish notification re-invoke this agent (never poll).
 
 6. Read $WORKER_DIR/receipt.json:
    - If status=failed -> log and decide (retry or stop)
@@ -240,8 +241,8 @@ if [ "$ENV_CONFIGURED" = "false" ]; then
       initialPrompt: "/experiment-env-manager — project: $PROJECT_NAME — mode: setup — run-id: $RUN_ID — paseo-config: $CFG"
       notifyOnFinish: "$NOTIFY_ON_FINISH"
 
-    # This wait is mandatory. Never inspect env.json immediately after create.
-    mcp__paseo__wait_for_agent: agentId="$ENV_AGENT_ID"
+    # Waiting is mandatory: end the turn and resume on the env-manager's
+    # finish notification. Never inspect env.json immediately after create.
 
     # The known receipt is checked when present; env.json remains the final
     # authority because an older env-manager may only signal completion.

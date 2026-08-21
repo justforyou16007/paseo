@@ -173,8 +173,8 @@ same pattern.
 artifacts + `.aris/runs/` + `.aris/traces/` land together) and
 `relationship:{kind:"subagent"}` (cascade-archive). Claude executor agents
 default to `modeId:"bypassPermissions"`; codex reviewer agents default to
-`modeId:"full-access"`. `notifyOnFinish:true` (default); the parent does NOT
-`wait_for_agent` on notify agents.
+`modeId:"full-access"`. `notifyOnFinish:true` (default); the parent ends its
+turn and is re-invoked by the child's finish notification.
 
 ## Resume model
 
@@ -329,8 +329,9 @@ See [`paseo-subagent-dispatch.md`](../skills/shared-references/paseo-subagent-di
 
 ### 3. Notification-driven feedback loop
 
-All agents use `notifyOnFinish: true` (push model). The parent never
-calls `wait_for_agent` on a notify-enabled child. Each child writes a
+All agents use `notifyOnFinish: true` (push model). The parent ends its
+turn after dispatching and is re-invoked by the child's finish
+notification. Each child writes a
 `.done.json` receipt file as its last action. The parent's notification
 handler is SHORT: read receipt → `set done` → run gate → archive child.
 

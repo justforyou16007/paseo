@@ -47,10 +47,12 @@ handshake is **push**, not request-response:
   1. **Spawn** — `mcp__paseo__create_agent` with `notifyOnFinish: true`,
      `relationship: {kind: "subagent"}`, `workspace: {kind: "current"}`.
      Bind the child to one skill (Rule 1) and to the run's variables.
-  2. **Wait** — parent immediately calls `mcp__paseo__wait_for_agent`.
-     Reacting to an earlier notification, polling status, or having waited
-     for a previous turn does not replace this call. Parent **MUST NOT**
-     poll `get_agent_status` in a loop.
+  2. **Wait** — the parent ends its turn and lets the child's finish
+     notification re-invoke it. Agent-scoped `create_agent` always runs the
+     child in the background and returns immediately; the completion signal
+     arrives as a system notification prompt. There is no `wait_for_agent`
+     tool. Parent **MUST NOT** poll `get_agent_status` in a loop, and MUST
+     NOT advance its workflow before the notification arrives.
   3. **Judge** — parent reads the child's `receipt.json` from the worker
      directory (`.aris/runs/<run_id>/workers/<iter>-<phase>/receipt.json`
      per `worker-manifest.md`). The receipt is the authoritative payload;
@@ -61,15 +63,18 @@ handshake is **push**, not request-response:
      ("用完即 archive"). For continuation children, keep alive until the
      loop terminates, then archive.
 
-**TURN_WAIT_INVARIANT:** every successful `mcp__paseo__create_agent` or
-`mcp__paseo__send_agent_prompt` that starts a child turn MUST be followed
-immediately by `mcp__paseo__wait_for_agent` for that same child before the
-owner advances its workflow. A wait consumes one child-turn completion;
-after a continuation prompt, the owner must wait again. This applies to
-initial dispatch, idle recovery, reviewer continuation, resume, and every
-fan-out child. Omitting the second wait loses the continuation turn's
-completion signal and can stop the pipeline with a completed child whose
-receipt was never collected.
+**TURN_NOTIFICATION_INVARIANT:** every successful `mcp__paseo__create_agent`
+or background `mcp__paseo__send_agent_prompt` that starts a child turn MUST
+be completed via that child's finish notification before the owner advances
+its workflow — the owner ends its turn (or does unrelated bookkeeping only)
+and resumes when the notification re-invokes it. After a continuation prompt,
+the owner awaits the next notification again. This applies to initial
+dispatch, idle recovery, reviewer continuation, resume, and every fan-out
+child. Advancing without the notification loses the turn's completion signal
+and can stop the pipeline with a completed child whose receipt was never
+collected. The only synchronous wait is `mcp__paseo__send_agent_prompt` with
+`background: false` (blocking continuation of a prompted turn);
+`create_agent` cannot block.
 
 Children **MUST NOT** spawn their parent (no cycles). Children may create
 sub-children only with `mcp__paseo__create_agent`; cascading trees are fine
@@ -105,13 +110,12 @@ against that child, for the child's full lifetime. This is the same
 (`relationship: {kind: "subagent"}`) already implies; this sub-rule makes
 it explicit and exhaustive.
 
-**The 13 LIFECYCLE tools** (the lifecycle-sensitive subset of the 33
-`mcp__paseo__*` tools; the other ~20 — terminals, worktrees, schedules,
+**The LIFECYCLE tools** (the lifecycle-sensitive subset of the
+`mcp__paseo__*` tools; the rest — terminals, worktrees, schedules,
 provider discovery — are adjacent but are NOT lifecycle ownership) are
 reserved to the owner of the child they target. For any child the
 owner spawned, only that owner may call:
 
-  - `wait_for_agent` — receive the child's `notifyOnFinish` signal
   - `send_agent_prompt` — continuation (e.g. round 2+ reviewer, stalled
     child recovery per `Idle agent supervision`)
   - `get_agent_status` / `get_agent_activity` — supervision / idle
@@ -207,12 +211,12 @@ foundation everything below rests on:
   read/write the same `paper/`, `idea-stage/`, `.aris/runs/`,
   `.aris/traces/` paths the parent uses. Use `current` unless a child
   needs isolation (experiments that mutate the repo — see `subagent_workspace`).
-- **`notifyOnFinish: true` + `wait_for_agent` is the notification contract.**
-  The child sends a push notification via `notifyOnFinish`; the parent
-  receives it by calling `wait_for_agent`, which blocks until the child
-  completes or raises a permission request. The parent then reads the
-  child's receipt file from disk. This is a push model — the parent does
-  NOT poll the child's status.
+- **`notifyOnFinish: true` + end-of-turn is the notification contract.**
+  Agent-scoped `create_agent` always returns immediately (background); the
+  child's completion is pushed to the parent as a system notification prompt
+  that re-invokes the parent agent. The parent then reads the child's
+  receipt file from disk. This is a push model — the parent does NOT poll
+  the child's status and has no wait tool to call.
 - **`replaceRunning: true` on notifications.** A child's
   `notifyOnFinish` turn can preempt the parent's in-flight turn. So the
   parent's notification-handling turn must be SHORT (read the artifact
@@ -241,7 +245,7 @@ mcp__paseo__create_agent:
     thinkingOptionId: "<executor_thinking>"  # model default; "xhigh" only when the skill demands
   initialPrompt: |
     <rendered prompt — see contract below>
-  notifyOnFinish: true                    # push; parent calls wait_for_agent
+  notifyOnFinish: true                    # push; completion re-invokes the parent
 ```
 
 ### The `initialPrompt` contract
@@ -316,13 +320,14 @@ re-entered from the top on a timer.
 ## Fan-out discipline
 
 When a workflow fans out N independent units (idea lenses, audit layers,
-per-source retrieval), the parent executes N `create_agent` →
-`wait_for_agent` pairs sequentially. The invariants below are the
+per-source retrieval), the parent runs N dispatch cycles sequentially:
+`create_agent`, end turn, resume on that child's finish notification, read
+its file, dispatch the next. The invariants below are the
 preemption-safe subset of `fan-out-pattern.md`:
 
 1. **Each child writes its result to its OWN file** on the shared workspace
-   (`workspace:{kind:"current"}`). After the matching wait returns, the
-   parent reads the file — never the `<agent-response>` text. A file on disk
+   (`workspace:{kind:"current"}`). After the matching finish notification
+   arrives, the parent reads the file — never the `<agent-response>` text. A file on disk
    survives restart or resume; an in-memory value does not.
 2. **One child turn is outstanding at a time.** Read the artifact and append
    it to the results manifest before creating the next child. Every later
@@ -378,7 +383,7 @@ grandchildren the child had spawned.
   artifacts.
 
 When `executor_mode: auto` and a child raises a permission request, the
-parent is notified (`wait_for_agent` returns the pending request). The
+parent is notified (the finish notification carries the pending request). The
 parent should respond promptly so the child is not blocked overnight — but
 must NOT use permission approval as a covert way to inject guidance into a
 reviewer child (that violates `reviewer-independence.md`).
@@ -423,9 +428,9 @@ reviewer) is the backstop.
   Violates `reviewer-independence.md`. Reviewer children get file paths
   only; executor children may receive run context but not pre-digested
   verdicts about quality.
-- **"Poll the child's status instead of using `wait_for_agent`."** The
-  parent must call `wait_for_agent` on a notify-enabled child to receive
-  its completion signal. Polling burns tokens and delays reaction time.
+- **"Poll the child's status instead of ending the turn."** The parent
+  must let the notify-enabled child's finish signal re-invoke it. Polling
+  burns tokens and delays reaction time.
 - **"Read the verdict from `<agent-response>`."** Not preemption-safe and
   only the last contiguous run. The verdict lives in a file the child
   writes; `<agent-response>` is a convenience for short status, not the
@@ -494,14 +499,14 @@ assume**. The core principle:
 
 | Child state / log signal                                    | Parent action                                                                                                     |
 | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| Child completed its task (receipt.json exists in worker directory) | Read the receipt, `set done`, run the gate, `archive_agent`. This is the normal wait_for_agent path — no idle     |
-| Child is **idle and waiting for its OWN sub-agent**         | Do not prompt it. The child is supervising correctly; immediately call `wait_for_agent` again to keep receiving its next completion. |
+| Child completed its task (receipt.json exists in worker directory) | Read the receipt, `set done`, run the gate, `archive_agent`. This is the normal notification path — no idle     |
+| Child is **idle and waiting for its OWN sub-agent**         | Do not prompt it. The child is supervising correctly; end the turn again so the next completion notification can arrive. |
 | (child has live sub-agents listed via `list_agents`)        | Do NOT send a continuation prompt — that would interrupt the child's own supervision loop. Keep the parent wait armed. |
 | Child is **idle with no sub-agents, no receipt**            | The child may have stalled or hit a silent error. Send a **continuation prompt** via `send_agent_prompt`:         |
-|                                                             | `"You appear to have stopped. Continue your task and write the receipt file when done."` Then immediately call `wait_for_agent` for the same child. |
+|                                                             | `"You appear to have stopped. Continue your task and write the receipt file when done."` Then end the turn; the same child's next finish notification re-invokes the parent. |
 | Child is **idle with error logs**                           | Check the error. If recoverable, send a continuation prompt with context and immediately wait again. If fatal, archive |
 |                                                             | the child, report the error to the user, and mark the phase BLOCKED.                                              |
-| Child is **idle and its sub-agents are all archived/done**  | Send a continuation prompt to write the receipt, then immediately call `wait_for_agent` for that child turn.      |
+| Child is **idle and its sub-agents are all archived/done**  | Send a continuation prompt to write the receipt, then end the turn and await that child turn's finish notification. |
 
 ### Anti-patterns
 
@@ -515,31 +520,33 @@ assume**. The core principle:
   grandchild agents would be orphaned (unless cascade-archive handles
   them — but the loss of state may be expensive).
 
-## Notification-driven feedback loop (notifyOnFinish + wait_for_agent)
+## Notification-driven feedback loop (notifyOnFinish)
 
 The parent-child communication model is **notification-driven**: the
 child pushes its completion signal via `notifyOnFinish` and writes a
-receipt file. The parent receives this signal by calling `wait_for_agent`.
+receipt file. The parent receives this signal as a system notification
+prompt that re-invokes it after it ends its turn.
 
 ### Contract
 
 1. **Every `create_agent` call MUST set `notifyOnFinish: true`** (the
    default in paseo). This configures the child to notify the parent
    when its run completes.
-2. **The parent MUST call `mcp__paseo__wait_for_agent` immediately after
-   every `create_agent` and every `send_agent_prompt`.** Each call starts a
-   distinct child turn and therefore requires a new wait. `wait_for_agent`
-   returns that turn's completion signal; it does NOT poll.
+2. **The parent MUST complete every `create_agent` and every background
+   `send_agent_prompt` child turn via its finish notification.** Each call
+   starts a distinct child turn and therefore requires its own notification
+   before the workflow advances. There is no wait tool to call and no
+   polling; the parent ends its turn and the notification re-invokes it.
 3. **The child MUST write a receipt file** (`workers/<iter>-<phase>/receipt.json`)
    as its last action before stopping. The receipt is the authoritative
    payload — preemption-safe, survives crashes. Schema:
    [`worker-manifest.md`](worker-manifest.md).
-4. **After `wait_for_agent` returns**, the parent reads the receipt file
+4. **After the notification arrives**, the parent reads the receipt file
    (NOT `<agent-response>`), runs the gate, and archives the child.
    The notification handler is SHORT: read → `set done` → gate → archive.
    Do NOT deliberate or spawn new children inside the handler.
 5. **Multiple children are dispatched and awaited sequentially** (one
-   `create_agent` + `wait_for_agent` pair per child). Fan-out describes how
+   `create_agent` per awaited notification). Fan-out describes how
    work is sharded, not permission to leave a child turn unawaited; see
    `fan-out-pattern.md`.
 
@@ -568,7 +575,8 @@ mkdir -p "$WORKER_DIR/outputs"
 # Write input-manifest.json ...
 child_id = create_agent(provider, "/<skill> — manifest: $WORKER_DIR/input-manifest.json",
                         notifyOnFinish=true)
-result = wait_for_agent(child_id)
+# end turn; the child's finish notification re-invokes the parent
+# --- on the finish notification: ---
 
 receipt_path = "$WORKER_DIR/receipt.json"
 if receipt_path exists:
@@ -584,15 +592,14 @@ else:
     if status == "idle":
         send_agent_prompt(child_id,
             "Write the completion receipt.json and stop.")
-        result = wait_for_agent(child_id)  # mandatory new wait for continuation turn
+        # end turn; the continuation turn's notification re-invokes the parent
 ```
 
-> **Why `wait_for_agent` is needed even with `notifyOnFinish: true`:**
-> `notifyOnFinish` configures the child to notify the parent, but the
-> parent must actively await that notification via `wait_for_agent`.
-> Without it, the parent would have to poll or risk missing the signal.
-> `wait_for_agent` blocks until the notification arrives — it is the
-> **receiver** side of the push model.
+> **Why the parent must end its turn even with `notifyOnFinish: true`:**
+> The notification is delivered as a prompt to the parent agent - it only
+> lands when the parent is between turns. A parent that keeps working (or
+> polls in a loop) delays or preempts its own wake-up signal. Ending the
+> turn IS the receive side of the push model.
 
 ## Cross-references
 

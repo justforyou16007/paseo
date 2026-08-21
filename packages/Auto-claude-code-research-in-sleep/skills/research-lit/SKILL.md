@@ -2,13 +2,13 @@
 name: research-lit
 description: Search and analyze research papers, find related work, summarize key ideas. Use when user says "find papers", "related work", "literature review", "what does this paper say", or needs to understand academic papers.
 argument-hint: [paper-topic-or-url]
-allowed-tools: Bash(*), Read, Glob, Grep, WebSearch, WebFetch, Write, mcp__zotero__*, mcp__obsidian-vault__*, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__wait_for_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent
+allowed-tools: Bash(*), Read, Glob, Grep, WebSearch, WebFetch, Write, mcp__zotero__*, mcp__obsidian-vault__*, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent
 ---
 
 > **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in
 > `shared-references/paseo-subagent-dispatch.md`. Every child is created only
 > through Paseo MCP, and each create or continuation prompt is immediately
-> followed by `mcp__paseo__wait_for_agent` for that child turn.
+> that child turn's finish notification re-invokes this agent.
 
 # Research Literature Review
 
@@ -568,8 +568,8 @@ CrossRef rate limits to the polite pool.
 
 > **Paseo fan-out.** Per-paper extraction is pure breadth — each paper is
 > independent. Create one Claude subagent per paper (or small batch) through
-> `mcp__paseo__create_agent`, then immediately call `wait_for_agent` before
-> dispatching the next shard. If Paseo MCP is unavailable, mark the phase
+> `mcp__paseo__create_agent`, then end the turn; resume on that child's
+> finish notification before dispatching the next shard. If Paseo MCP is unavailable, mark the phase
 > BLOCKED; never use host `Skill`, `Task`, or `Agent` tools or an in-process
 > substitute. This follows the
 > _extraction_ shard schema from

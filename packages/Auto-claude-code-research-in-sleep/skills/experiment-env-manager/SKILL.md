@@ -2,7 +2,7 @@
 name: experiment-env-manager
 description: 'Sole entry point for experiment environment lifecycle: baseline creation, runtime error handling, and on-demand audit. Dispatches /experiment-env-configuration for script generation and /experiment-env-audit for validation. Manages repair loops until the environment passes or requires human intervention. Use when user says "set up experiment environment", "fix experiment env", "env error", "环境管理", "环境出错", "configure environment", or when experiment agents report environment failures.'
 argument-hint: "[— project: <name>] [— mode: setup|error-report|audit] [— error-report: <path>] [— run-id: <id>] [— paseo-config: <path>]"
-allowed-tools: Bash(*), Read, Write, Grep, Glob, AskUserQuestion, WebSearch, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__wait_for_agent, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission
+allowed-tools: Bash(*), Read, Write, Grep, Glob, AskUserQuestion, WebSearch, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission
 ---
 
 > **Paseo dispatch contract (Rules 1-5).** This skill is a thin orchestrator.

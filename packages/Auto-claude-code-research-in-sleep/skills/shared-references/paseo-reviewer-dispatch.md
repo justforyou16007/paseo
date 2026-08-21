@@ -14,10 +14,10 @@ review = `send_agent_prompt` to the same codex agent.** Nothing else
 changes — the reviewer is still GPT-5.5, still `xhigh`, still receives file
 paths only, still writes a traceable verdict.
 
-Every reviewer turn has its own receive step: `create_agent` is immediately
-followed by `wait_for_agent`, and every `send_agent_prompt` is immediately
-followed by a new `wait_for_agent`. A wait for one round never covers the
-next round.
+Every reviewer turn has its own receive step: after `create_agent` (and
+after every `send_agent_prompt`) the parent ends its turn and resumes on
+that reviewer turn's finish notification. One round's notification never
+covers the next round.
 
 ## Global Agent Rules (reviewer half)
 
@@ -91,8 +91,8 @@ of the spawned child — for the reviewer's two sides:
   - **The reviewer is itself an owned child.** A codex reviewer agent
     is created by its parent W-agent (e.g. `auto-review-loop` round 1,
     `proof-checker`, `paper-claim-audit`). That W-agent — and only that
-    W-agent — is the reviewer's owner. The 13 LIFECYCLE tools against
-    the reviewer (`wait_for_agent`, `send_agent_prompt` for round 2+
+    W-agent — is the reviewer's owner. The LIFECYCLE tools against
+    the reviewer (`send_agent_prompt` for round 2+
     continuation, `get_agent_status` / `get_agent_activity`,
     `archive_agent` for 用完即 archive, etc.) are reserved to the
     owning W-agent. The heartbeat, the orchestrator, and any other
@@ -439,8 +439,8 @@ sub-agents ([paseo-subagent-dispatch.md](paseo-subagent-dispatch.md)
 
 - **Reviewer idle with no sub-agents, no verdict file written** → the
   reviewer may have stalled. Send a continuation prompt:
-  `"You were reviewing. Continue and write your verdict."` Then immediately
-  call `mcp__paseo__wait_for_agent` again for that continuation turn.
+  `"You were reviewing. Continue and write your verdict."` Then end the
+  turn; that continuation turn's finish notification re-invokes the parent.
 - **Reviewer idle waiting for its own sub-agent** (has live sub-agents)
   → do nothing. The reviewer is supervising correctly.
 - **Reviewer idle with verdict file written** → normal completion. Read
@@ -455,11 +455,11 @@ never writes its own review verdict. That would violate
 
 Reviewer verdicts follow the same notification-driven model:
 
-1. `create_agent` with `notifyOnFinish: true`, immediately followed by
-   `mcp__paseo__wait_for_agent` for that reviewer turn.
-2. Every later `send_agent_prompt` is immediately followed by another
-   `mcp__paseo__wait_for_agent`; the earlier wait has already been consumed.
-3. After `wait_for_agent` returns, the parent reads the verdict file
+1. `create_agent` with `notifyOnFinish: true`, then end the turn; that
+   reviewer turn's finish notification re-invokes the parent.
+2. Every later `send_agent_prompt` likewise completes via its own finish
+   notification; one round's notification never covers the next.
+3. After the notification arrives, the parent reads the verdict file
    (per the calling skill's schema — `REVIEW_STATE.json`,
    `AUDIT_RESULT.json`, etc.), runs `save_trace.sh`, and archives the
    reviewer (fresh-purpose) or keeps it alive (continuation reviewer,
@@ -469,8 +469,8 @@ Reviewer verdicts follow the same notification-driven model:
 
 For continuation reviewers (W2 round 2+), the parent keeps the codex
 agent alive between rounds. The parent does NOT re-create — it calls
-`send_agent_prompt` to continue the same agent, then `wait_for_agent`
-again. The reviewer's verdict file is overwritten each round (the parent
+`send_agent_prompt` to continue the same agent, then ends its turn and
+awaits the next finish notification. The reviewer's verdict file is overwritten each round (the parent
 reads it before sending the next prompt).
 
 ## Cross-references

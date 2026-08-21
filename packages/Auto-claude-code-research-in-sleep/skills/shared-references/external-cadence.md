@@ -334,15 +334,16 @@ The heartbeat's stall-detection responsibility uses the
    the expected window** (configurable via `max_phase_idle` in CLAUDE.md
    `## ARIS Paseo`).
 2. It does NOT poll on a fixed sub-interval — it relies on the push
-   notification as the primary signal. If `wait_for_agent` has not
-   returned by the time `max_phase_idle` expires, the heartbeat
+   notification as the primary signal. If no finish notification has
+   arrived by the time `max_phase_idle` expires, the heartbeat
    investigates.
 3. When checking an agent that appears idle, it follows the decision
    matrix in [`paseo-subagent-dispatch.md`](paseo-subagent-dispatch.md)
    §"Idle agent supervision":
    - Child waiting for its own sub-agent → do nothing.
    - Child stalled with no sub-agents → the lifecycle owner sends a
-     continuation prompt and immediately calls `wait_for_agent` again.
+     continuation prompt, ends its turn, and awaits that child's next
+     finish notification.
      A non-owner heartbeat nudges the owner; it never prompts the child
      directly.
    - Child errored → report BLOCKED.

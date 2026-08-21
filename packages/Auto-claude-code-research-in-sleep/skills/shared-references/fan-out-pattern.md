@@ -4,7 +4,8 @@
 > [`paseo-subagent-dispatch.md`](paseo-subagent-dispatch.md) Global
 > Rule 1 (One Agent = One Skill) and Rule 4 (Paseo MCP Only, Strict).
 > The single fan-out primitive is `mcp__paseo__create_agent` × N, executed
-> as N `create_agent` → `wait_for_agent` pairs. The
+> as N sequential dispatch cycles (create, end turn, resume on that child's
+> finish notification, read its receipt). The
 > legacy 3-tier host-`Agent`-tool ladder is **removed**.
 
 When a skill needs **breadth** — many candidate ideas, many sources, many
@@ -59,16 +60,15 @@ judgment and are explicitly allowed on the executor — see
 
 Fan-out is a **single Paseo pattern** under the Global Rules: shard the
 input into N independent units, then execute N Paseo child turns. For each
-shard, call `mcp__paseo__create_agent` with `notifyOnFinish: true`, immediately
-call `mcp__paseo__wait_for_agent`, read that shard's receipt, and only then
-create the next child. After all N receipts are collected, run mechanical
+shard, call `mcp__paseo__create_agent` with `notifyOnFinish: true`, end the
+turn, resume on that shard's finish notification, read its receipt, and only
+then create the next child. After all N receipts are collected, run mechanical
 dedup and forward the union to the cross-model jury. Per Global Rule 1,
 every shard is a separate agent executing exactly one skill.
 
 Do not issue concurrent `create_agent` calls. A completion notification is
-delivered to the owner through its matching `wait_for_agent`; leaving several
-turns outstanding makes completion ownership ambiguous and can strand a
-finished shard. This sequential turn protocol applies to Claude and Codex.
+delivered to the owner between its turns; leaving several turns outstanding
+makes completion ownership ambiguous and can strand a finished shard. This sequential turn protocol applies to Claude and Codex.
 
 The legacy 3-tier ladder (ultracode / `Agent` tool / sequential) is
 **removed**. Per Global Rule 4, the host `Agent` tool is forbidden in
@@ -234,9 +234,9 @@ lives in the skill, not the model.
 (structural gaps: method-in-A-not-B, contradictory findings, untested
 assumptions, unexplored scaling regimes — Phase 1). The parent spawns
 5 Paseo sub-agents (one per lens) via `mcp__paseo__create_agent` with
-`notifyOnFinish: true`. After each creation, the parent immediately calls
-`wait_for_agent`, reads that child's receipt, and only then dispatches the
-next lens. After all 5 receipts arrive, the parent runs **mechanical dedup
+`notifyOnFinish: true`. After each creation, the parent ends its turn,
+resumes on that child's finish notification, reads its receipt, and only then
+dispatches the next lens. After all 5 receipts arrive, the parent runs **mechanical dedup
 only** (cluster near-identical ideas; never drop one for being "weak").
 The **jury** is the already-existing Phase-4 cross-model
 devil's-advocate pass: a fresh paseo codex sub-agent
@@ -317,9 +317,9 @@ Two invariants keep a fan-out from manufacturing or laundering errors:
 A SKILL that fans out must specify all of:
 
 1. **Paseo N-subagent dispatch.** State the parent dispatches N
-   `mcp__paseo__create_agent` calls with `notifyOnFinish: true`; every call
-   is immediately paired with `mcp__paseo__wait_for_agent` before the next
-   child is created. Each sub-agent runs exactly one skill (per Global Rule 1).
+   `mcp__paseo__create_agent` calls with `notifyOnFinish: true`; every
+   child turn completes via its finish notification before the next child
+   is created. Each sub-agent runs exactly one skill (per Global Rule 1).
    Cite
    [`paseo-subagent-dispatch.md`](paseo-subagent-dispatch.md) in the
    skill body.
@@ -354,8 +354,7 @@ The host `Agent` tool is **forbidden** in ARIS workflows per Global
 Rule 4. A skill that previously granted `Agent` for the legacy Tier-2
 form MUST be migrated to the Paseo primitive. As of this rewrite the
 three fan-out skills (`idea-creator`, `research-lit`, `proof-checker`)
-all already have `mcp__paseo__create_agent` and
-`mcp__paseo__wait_for_agent` in their `allowed-tools`.
+all already have `mcp__paseo__create_agent` in their `allowed-tools`.
 
 **Re-granting rule.** A skill that adds genuine fan-out introduces
 `mcp__paseo__create_agent` to its `allowed-tools` **in the same change

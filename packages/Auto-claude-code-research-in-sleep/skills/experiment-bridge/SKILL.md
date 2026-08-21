@@ -3,7 +3,7 @@ name: experiment-bridge
 description: 'Workflow 1.5: Bridge between idea discovery and auto review. Reads EXPERIMENT_PLAN.md, implements experiment code, deploys to GPU, collects initial results. Use when user says "实现实验", "implement experiments", "bridge", "从计划到跑实验", "deploy the plan", or has an experiment plan ready to execute.'
 argument-hint: [experiment-plan-path-or-topic]
 
-allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__wait_for_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent
+allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent
 ---
 
 > **Paseo substrate.** This workflow runs as a paseo claude sub-agent; its sub-skills dispatch as paseo sub-agents and its cross-model code reviewer as a paseo codex sub-agent. See `shared-references/paseo-subagent-dispatch.md` + `paseo-reviewer-dispatch.md`.. **Strict mode**: Paseo MCP is required; if unavailable, the run BLOCKS (per `paseo-subagent-dispatch.md`).
@@ -250,26 +250,54 @@ mcp__paseo__create_agent:
   notifyOnFinish: true
 ```
 
-**On review results:**
+**Wait for the review before deploying.** After `create_agent`, end the turn;
+the reviewer's finish notification re-invokes this agent. "Unfinished" is not
+"unavailable" - never proceed to Phase 3 while the review is merely still
+running. Then:
 
 - **No CRITICAL issues** → proceed to Phase 3
 - **CRITICAL issues found** → fix them, then re-submit for review (max 2 rounds)
-- **Codex MCP unavailable** → skip silently, proceed to Phase 3 (graceful degradation)
+- **`create_agent` itself fails** (provider/codex unavailable) → skip silently, proceed to Phase 3 (graceful degradation applies ONLY to spawn failure, not to an in-flight review)
 
 ### Phase 3: Sanity Check (if SANITY_FIRST = true)
 
-Before deploying the full experiment suite, run the sanity-stage experiment — dispatch a paseo claude sub-agent for `/run-experiment` per `shared-references/paseo-subagent-dispatch.md` (Paseo claude sub-agent per `paseo-subagent-dispatch.md`):
+Before deploying the full experiment suite, run the sanity-stage experiment.
+
+**Pre-check the project experiment skill.** `/run-experiment` hard-fails at its
+Step 1 when `.claude/skills/run-<project>-experiment/scripts/` does not exist.
+If that directory is missing, dispatch a paseo claude sub-agent for
+`/experiment-env-manager - mode: setup` first (same spawn shape as below),
+wait for its finish notification, then continue. Never run the experiments
+inline as a shortcut.
+
+Dispatch the sanity run to a paseo claude sub-agent (never run it yourself):
 
 ```
-/run-experiment [sanity experiment command]
+mcp__paseo__create_agent:
+  title: "run-experiment :: sanity :: <run_id>"
+  provider: $CFG.executor_provider            # from .aris/runs/<run_id>.paseo-config.json
+  settings:
+    modeId: $CFG.executor_mode
+    thinkingOptionId: $CFG.executor_thinking   # omit when empty
+  initialPrompt: |
+    /run-experiment <sanity experiment command>
+    Run context: run_id=<run_id>, project root=<cwd> (shared workspace).
+    Deploy via the project's generated experiment skill scripts; do not
+    re-implement deployment yourself.
+  notifyOnFinish: true
 ```
 
-Wait for completion. Verify:
+**Wait semantics (there is no wait_for_agent tool):** `create_agent` returns
+immediately. Do NOT run the experiment yourself while waiting, and do NOT poll
+`get_agent_status`. End the current turn — the child's finish notification
+re-invokes this agent. On the notification, verify:
 
 - Training loop runs without errors
 - Metrics are computed and saved correctly
 - GPU memory usage is within bounds
 - Output format matches expectations
+
+Then `mcp__paseo__archive_agent` the sanity child and proceed.
 
 If sanity fails → **auto-debug before giving up** (max 3 attempts):
 
@@ -286,7 +314,7 @@ If sanity fails → **auto-debug before giving up** (max 3 attempts):
    > Otherwise fall back to these defaults.
 3. **Fix and re-run** — apply the fix, re-run sanity
 4. **Attempt 2+ still failing? → Call in Codex rescue** (if Codex plugin installed):
-   Before the next retry, dispatch a paseo claude sub-agent for `/codex:rescue` per `shared-references/paseo-subagent-dispatch.md` (Paseo claude sub-agent per `paseo-subagent-dispatch.md`) to get a second opinion on the root cause. The rescue sub-agent is a claude child that may itself spawn a codex reviewer; it independently reads the code and error logs — it may spot issues Claude missed (wrong tensor shapes, subtle import shadowing, config mismatches, etc.). Apply its suggested fix, then re-run.
+   Before the next retry, dispatch a paseo claude sub-agent for `/codex:rescue` per `shared-references/paseo-subagent-dispatch.md` to get a second opinion on the root cause. The rescue sub-agent is a claude child that may itself spawn a codex reviewer; it independently reads the code and error logs — it may spot issues Claude missed (wrong tensor shapes, subtle import shadowing, config mismatches, etc.). Apply its suggested fix, then re-run.
    - If `/codex:rescue` is not available (plugin not installed), continue with Claude's own diagnosis
 5. **Still failing after 3 attempts?** → write structured error receipt and
    dispatch `/experiment-env-manager` for diagnosis and repair.
@@ -342,16 +370,36 @@ If sanity fails → **auto-debug before giving up** (max 3 attempts):
 
 Deploy experiments following the plan's milestone order. **Route by job count**:
 
-**Small batch (≤5 jobs per milestone)** → dispatch a paseo claude sub-agent for `/run-experiment` per `shared-references/paseo-subagent-dispatch.md` (Paseo claude sub-agent per `paseo-subagent-dispatch.md`):
+**Small batch (≤5 jobs per milestone)** → dispatch a paseo claude sub-agent for `/run-experiment` per `shared-references/paseo-subagent-dispatch.md`:
 
 ```
-/run-experiment [experiment commands]
+mcp__paseo__create_agent:
+  title: "run-experiment :: <milestone> :: <run_id>"
+  provider: $CFG.executor_provider            # from .aris/runs/<run_id>.paseo-config.json
+  settings:
+    modeId: $CFG.executor_mode
+    thinkingOptionId: $CFG.executor_thinking   # omit when empty
+  initialPrompt: |
+    /run-experiment <milestone experiment commands>
+    Run context: run_id=<run_id>, project root=<cwd> (shared workspace).
+    Launch the milestone's jobs in parallel (up to MAX_PARALLEL_RUNS) via the
+    project's generated experiment skill scripts.
+  notifyOnFinish: true
 ```
 
-**Large batch (≥10 jobs, multi-seed sweeps, or phase dependencies)** → dispatch a paseo claude sub-agent for `/experiment-queue` per `shared-references/paseo-subagent-dispatch.md` (Paseo claude sub-agent per `paseo-subagent-dispatch.md`) for proper orchestration:
+**Large batch (≥10 jobs, multi-seed sweeps, or phase dependencies)** → dispatch a paseo claude sub-agent for `/experiment-queue` per `shared-references/paseo-subagent-dispatch.md` for proper orchestration:
 
 ```
-/experiment-queue [grid spec or manifest]
+mcp__paseo__create_agent:
+  title: "experiment-queue :: <milestone> :: <run_id>"
+  provider: $CFG.executor_provider
+  settings:
+    modeId: $CFG.executor_mode
+    thinkingOptionId: $CFG.executor_thinking   # omit when empty
+  initialPrompt: |
+    /experiment-queue <grid spec or manifest>
+    Run context: run_id=<run_id>, project root=<cwd> (shared workspace).
+  notifyOnFinish: true
 ```
 
 Auto-routing rule: if any milestone in `EXPERIMENT_PLAN.md` declares ≥10 jobs (e.g., `seeds: [42, 200, 201, ...]` × `N: [64, 128, 256]` × `n: [50K, 150K, 500K, 652K]` = 36 jobs) or declares teacher→student phase dependencies, route that milestone to `/experiment-queue`. Otherwise use `/run-experiment`.
@@ -360,8 +408,25 @@ Auto-routing rule: if any milestone in `EXPERIMENT_PLAN.md` declares ≥10 jobs 
 
 For each milestone:
 
-1. Deploy experiments in parallel (up to MAX_PARALLEL_RUNS for `/run-experiment`, or `max_parallel` from manifest for `/experiment-queue`)
-2. Dispatch a paseo claude sub-agent for `/monitor-experiment` per `shared-references/paseo-subagent-dispatch.md` (Paseo claude sub-agent per `paseo-subagent-dispatch.md`) to track progress (reads from queue_state.json if `/experiment-queue` is active)
+1. Dispatch the `/run-experiment` (or `/experiment-queue`) sub-agent above, then wait for its finish notification (end the turn; one child turn outstanding at a time). Do NOT launch the jobs yourself from this agent.
+2. Dispatch a paseo claude sub-agent for `/monitor-experiment` per `shared-references/paseo-subagent-dispatch.md` to track progress (reads from queue_state.json if `/experiment-queue` is active):
+
+```
+mcp__paseo__create_agent:
+  title: "monitor-experiment :: <milestone> :: <run_id>"
+  provider: $CFG.executor_provider
+  settings:
+    modeId: $CFG.executor_mode
+    thinkingOptionId: $CFG.executor_thinking   # omit when empty
+  initialPrompt: |
+    /monitor-experiment <exp names or server alias>
+    Run context: run_id=<run_id>, project root=<cwd> (shared workspace).
+    Report per-job status, collected metrics, and any failures; then stop.
+  notifyOnFinish: true
+```
+
+   When monitoring reports jobs still running, end the turn and re-dispatch
+   `/monitor-experiment` on the next wake-up - do not busy-poll from this agent.
 3. Collect results as experiments complete
 
 **🚦 Checkpoint (if AUTO_DEPLOY = false):**
@@ -384,7 +449,7 @@ Deploy now? Or review the code first?
 As experiments complete:
 
 1. **Parse output files** (JSON/CSV/logs) for key metrics
-2. **Training quality check** — if W&B data is available (CLAUDE.md has `wandb: true` and `wandb_project`), dispatch a paseo claude sub-agent for `/training-check` per `shared-references/paseo-subagent-dispatch.md` (Paseo claude sub-agent per `paseo-subagent-dispatch.md`) to detect NaN, loss divergence, plateaus, or overfitting. If W&B is not configured, skip silently.
+2. **Training quality check** — if W&B data is available (CLAUDE.md has `wandb: true` and `wandb_project`), dispatch a paseo claude sub-agent for `/training-check` per `shared-references/paseo-subagent-dispatch.md` to detect NaN, loss divergence, plateaus, or overfitting. If W&B is not configured, skip silently.
 
    > When `run-<project>-experiment` exists, check W&B from:
    > `sh .claude/skills/run-<project>-experiment/scripts/info.sh | jq '.wandb.enabled'`
@@ -490,7 +555,7 @@ when experiment-bridge itself is a worker.
 
 ### Phase 5.7: Auto Ablation Planning
 
-After main experiments (M2) complete with positive results, dispatch a paseo claude sub-agent for `/ablation-planner` per `shared-references/paseo-subagent-dispatch.md` (Paseo claude sub-agent per `paseo-subagent-dispatch.md`) to design ablation studies:
+After main experiments (M2) complete with positive results, dispatch a paseo claude sub-agent for `/ablation-planner` per `shared-references/paseo-subagent-dispatch.md` to design ablation studies:
 
 - Read the main results and method description
 - Generate a claim-driven ablation plan: which components to remove, what to compare, expected outcomes
