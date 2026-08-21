@@ -1,6 +1,6 @@
 /* eslint-disable jsx-no-new-object-as-prop -- ARIS visualization views use inline styles for rapid prototyping */
-import { useCallback, useMemo } from "react";
-import { ScrollView, Text, View } from "react-native";
+import { useCallback } from "react";
+import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type {
   ArisIteration,
@@ -14,9 +14,7 @@ import type { ArisEventsReadResult } from "./use-aris-events-query";
 import type { ArisWikiData } from "./types";
 import { ReviewView } from "./ReviewView.web";
 import { KnowledgeGraphView, type GraphNodeType } from "./KnowledgeGraphView.web";
-import { WorkflowGraphView } from "./views/WorkflowGraphView.web";
 import { ChartKitEmpty } from "./chart-kit";
-import { ARIS_KNOWLEDGE_GRAPH_NODE_COLORS } from "./charts/color-palette";
 import { usePaneContext } from "@/panels/pane-context";
 
 import type { ArisWikiEntityType } from "./use-aris-wiki-entity";
@@ -110,11 +108,15 @@ export function ArisCockpitView({ review, wiki, activeView = "cockpit" }: ArisCo
 
   if (activeView === "graph") {
     return (
-      <KnowledgeGraphView
-        data={review ?? null}
-        wikiGraph={wikiGraph}
-        onOpenDetail={handleOpenDetail}
-      />
+      <View style={styles.screen}>
+        <View style={styles.content}>
+          <KnowledgeGraphView
+            data={review ?? null}
+            wikiGraph={wikiGraph}
+            onOpenDetail={handleOpenDetail}
+          />
+        </View>
+      </View>
     );
   }
   if (activeView === "review") {
@@ -150,100 +152,17 @@ function ArisCockpitBody({
     0;
   return (
     <View style={styles.screen}>
-      <ScrollView contentContainerStyle={styles.content}>
-        <CockpitHeader wiki={wiki} hasWiki={hasWiki} />
-        <WorkflowGraphView />
-        <KnowledgeGraphSection
-          review={review}
-          wikiGraph={wikiGraph}
-          hasWiki={hasWiki}
-          onOpenDetail={onOpenDetail}
-        />
-      </ScrollView>
-    </View>
-  );
-}
-
-type WikiStatKind = "papers" | "ideas" | "experiments" | "claims";
-
-const WIKI_STAT_KINDS: { key: WikiStatKind; label: string; color: string }[] = [
-  { key: "papers", label: "papers", color: ARIS_KNOWLEDGE_GRAPH_NODE_COLORS.paper },
-  { key: "ideas", label: "ideas", color: ARIS_KNOWLEDGE_GRAPH_NODE_COLORS.idea },
-  { key: "experiments", label: "experiments", color: ARIS_KNOWLEDGE_GRAPH_NODE_COLORS.experiment },
-  { key: "claims", label: "claims", color: ARIS_KNOWLEDGE_GRAPH_NODE_COLORS.claim },
-];
-
-function CockpitHeader({
-  wiki,
-  hasWiki,
-}: {
-  wiki: ArisWikiData | null | undefined;
-  hasWiki: boolean;
-}) {
-  const counts = {
-    papers: wiki?.papers?.length ?? 0,
-    ideas: wiki?.ideas?.length ?? 0,
-    experiments: wiki?.experiments?.length ?? 0,
-    claims: wiki?.claims?.length ?? 0,
-  };
-  const total = counts.papers + counts.ideas + counts.experiments + counts.claims;
-  return (
-    <View style={styles.header}>
-      <View style={styles.headerTop}>
-        <Text style={styles.title}>ARIS Cockpit</Text>
-        {hasWiki ? <Text style={styles.headerCount}>{total} entities</Text> : null}
+      <View style={styles.content}>
+        {hasWiki ? (
+          <KnowledgeGraphView
+            data={review ?? null}
+            wikiGraph={wikiGraph}
+            onOpenDetail={onOpenDetail}
+          />
+        ) : (
+          <ChartKitEmpty message="Research-wiki is empty for this run. Run /idea-discovery, /research-lit, or /run-experiment to populate the knowledge graph." />
+        )}
       </View>
-      {hasWiki ? (
-        <View style={styles.statRow}>
-          {WIKI_STAT_KINDS.map((kind) => (
-            <StatMetric
-              key={kind.key}
-              label={kind.label}
-              count={counts[kind.key]}
-              color={kind.color}
-            />
-          ))}
-        </View>
-      ) : null}
-    </View>
-  );
-}
-
-function StatMetric({ label, count, color }: { label: string; count: number; color: string }) {
-  const dotStyle = useMemo(() => [styles.statDot, { backgroundColor: color }], [color]);
-  return (
-    <View style={styles.statMetric}>
-      <View style={styles.statMetricRow}>
-        <View style={dotStyle} />
-        <Text style={styles.statCount}>{count}</Text>
-      </View>
-      <Text style={styles.statLabel}>{label}</Text>
-    </View>
-  );
-}
-
-function KnowledgeGraphSection({
-  review,
-  wikiGraph,
-  hasWiki,
-  onOpenDetail,
-}: {
-  review: ArisReviewReadResult | null | undefined;
-  wikiGraph: ArisKnowledgeGraph;
-  hasWiki: boolean;
-  onOpenDetail: (entityId: string, entityType: GraphNodeType) => void;
-}) {
-  return (
-    <View style={styles.section}>
-      {hasWiki ? (
-        <KnowledgeGraphView
-          data={review ?? null}
-          wikiGraph={wikiGraph}
-          onOpenDetail={onOpenDetail}
-        />
-      ) : (
-        <ChartKitEmpty message="Research-wiki is empty for this run. Run /idea-discovery, /research-lit, or /run-experiment to populate the knowledge graph." />
-      )}
     </View>
   );
 }
@@ -254,54 +173,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface0,
   },
   content: {
+    flex: 1,
     padding: theme.spacing[6],
-    gap: theme.spacing[8],
-  },
-  header: {
-    gap: theme.spacing[3],
-  },
-  headerTop: {
-    flexDirection: "row",
-    alignItems: "baseline",
-    justifyContent: "space-between",
-  },
-  title: {
-    fontSize: theme.fontSize.lg,
-    fontWeight: theme.fontWeight.medium,
-    color: theme.colors.foreground,
-  },
-  headerCount: {
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foregroundMuted,
-  },
-  statRow: {
-    flexDirection: "row",
-    gap: theme.spacing[6],
-  },
-  statMetric: {
-    gap: theme.spacing[0],
-  },
-  statMetricRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1.5],
-  },
-  statDot: {
-    width: 6,
-    height: 6,
-    borderRadius: theme.borderRadius.full,
-  },
-  statCount: {
-    fontSize: theme.fontSize.lg,
-    fontWeight: theme.fontWeight.normal,
-    color: theme.colors.foreground,
-  },
-  statLabel: {
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foregroundMuted,
-    marginLeft: 14,
-  },
-  section: {
-    gap: theme.spacing[3],
   },
 }));

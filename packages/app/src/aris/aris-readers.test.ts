@@ -81,4 +81,45 @@ describe("buildLayeredKnowledgeGraphLayout", () => {
     expect(ids.has("iso")).toBe(true);
     expect(layout.nodes).toHaveLength(3);
   });
+
+  // The largest rendered node has radius 40, so anything under 80 units of
+  // centre-to-centre distance draws as overlapping circles.
+  test("keeps every pair of nodes far enough apart to not overlap", () => {
+    const groups = ["paper", "idea", "experiment", "claim"];
+    const count = 60;
+    const nodes = Array.from({ length: count }, (_, i) => ({
+      id: `n${i}`,
+      label: `Node ${i}`,
+      group: groups[i % groups.length],
+    }));
+    // Dense, deterministic edge set — group cohesion plus attraction is what
+    // used to pile same-group nodes on top of each other.
+    const edges = Array.from({ length: count }, (_, i) => ({
+      source: `n${i}`,
+      target: `n${(i * 7 + 3) % count}`,
+      relation: "supports",
+    })).filter((edge) => edge.source !== edge.target);
+
+    const layout = buildLayeredKnowledgeGraphLayout({ edges, width: 700, height: 400, nodes });
+
+    let minDistance = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < layout.nodes.length; i++) {
+      for (let j = i + 1; j < layout.nodes.length; j++) {
+        const dx = layout.nodes[i].x - layout.nodes[j].x;
+        const dy = layout.nodes[i].y - layout.nodes[j].y;
+        minDistance = Math.min(minDistance, Math.sqrt(dx * dx + dy * dy));
+      }
+    }
+
+    expect(layout.nodes).toHaveLength(count);
+    expect(minDistance).toBeGreaterThan(80);
+  });
+
+  test("grows the canvas beyond the requested size as nodes are added", () => {
+    const nodes = Array.from({ length: 40 }, (_, i) => ({ id: `n${i}`, label: `Node ${i}` }));
+    const layout = buildLayeredKnowledgeGraphLayout({ edges: [], width: 700, height: 400, nodes });
+
+    expect(layout.width).toBeGreaterThan(700);
+    expect(layout.height).toBeGreaterThan(400);
+  });
 });

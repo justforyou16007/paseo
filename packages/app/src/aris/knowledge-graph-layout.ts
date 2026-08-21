@@ -45,13 +45,23 @@ export interface KnowledgeGraphLayoutInput {
   nodes?: KnowledgeGraphNodeInput[];
 }
 
-const PAD = 50;
-const REPULSION = 8000;
+const PAD = 60;
+const REPULSION = 60000;
 const ATTRACTION = 0.004;
-const GROUP_PULL = 0.015;
+/**
+ * Pull toward the group centroid. Keep this well below the repulsion an
+ * average pair sees — cohesion grows with distance while repulsion decays, so
+ * a strong pull collapses every group into one stack of overlapping nodes.
+ */
+const GROUP_PULL = 0.006;
 const DAMPING = 0.82;
-const ITERATIONS = 200;
-const MIN_DIST = 90;
+const ITERATIONS = 260;
+/** Repulsion falloff is capped below this distance so touching pairs get a strong, finite push. */
+const REPULSION_MIN_DIST = 130;
+/** Hard centre-to-centre minimum. The largest rendered node has radius 40. */
+const MIN_SEPARATION = 130;
+/** Per-iteration displacement cap — keeps the strong repulsion from oscillating. */
+const MAX_STEP = 40;
 
 function seededRandom(seed: number): () => number {
   let s = seed;
@@ -82,19 +92,34 @@ interface SimState {
   height: number;
 }
 
+/**
+ * Two nodes seeded at (nearly) the same spot have no direction to push along.
+ * Derive one from the pair indices so separation stays deterministic.
+ */
+function fallbackDirection(i: number, j: number): [number, number] {
+  const angle = ((i * 97 + j * 31) % 360) * (Math.PI / 180);
+  return [Math.cos(angle), Math.sin(angle)];
+}
+
 function applyRepulsion(state: SimState, fx: Float64Array, fy: Float64Array): void {
   const { n, posX, posY } = state;
   for (let i = 0; i < n; i++) {
     for (let j = i + 1; j < n; j++) {
       const dx = posX[i] - posX[j];
       const dy = posY[i] - posY[j];
-      let dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < MIN_DIST) {
-        dist = MIN_DIST;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      let ux: number;
+      let uy: number;
+      if (dist < 1e-6) {
+        [ux, uy] = fallbackDirection(i, j);
+      } else {
+        ux = dx / dist;
+        uy = dy / dist;
       }
-      const force = REPULSION / (dist * dist);
-      const fdx = (dx / dist) * force;
-      const fdy = (dy / dist) * force;
+      const falloff = Math.max(dist, REPULSION_MIN_DIST);
+      const force = REPULSION / (falloff * falloff);
+      const fdx = ux * force;
+      const fdy = uy * force;
       fx[i] += fdx;
       fy[i] += fdy;
       fx[j] -= fdx;
@@ -102,6 +127,9 @@ function applyRepulsion(state: SimState, fx: Float64Array, fy: Float64Array): vo
     }
   }
 }
+
+/** Edges pull toward this length rather than toward zero, so a linked pair settles apart. */
+const EDGE_REST_LENGTH = 180;
 
 function applyEdgeAttraction(
   state: SimState,
@@ -122,7 +150,7 @@ function applyEdgeAttraction(
     if (dist < 1) {
       continue;
     }
-    const force = ATTRACTION * dist;
+    const force = ATTRACTION * (dist - EDGE_REST_LENGTH);
     const fdx = (dx / dist) * force;
     const fdy = (dy / dist) * force;
     fx[si] += fdx;
@@ -162,8 +190,53 @@ function integrateForces(state: SimState, fx: Float64Array, fy: Float64Array): v
   for (let i = 0; i < n; i++) {
     velX[i] = (velX[i] + fx[i]) * DAMPING;
     velY[i] = (velY[i] + fy[i]) * DAMPING;
+    const speed = Math.sqrt(velX[i] * velX[i] + velY[i] * velY[i]);
+    if (speed > MAX_STEP) {
+      velX[i] = (velX[i] / speed) * MAX_STEP;
+      velY[i] = (velY[i] / speed) * MAX_STEP;
+    }
     posX[i] = Math.max(PAD, Math.min(width - PAD, posX[i] + velX[i]));
     posY[i] = Math.max(PAD, Math.min(height - PAD, posY[i] + velY[i]));
+  }
+}
+
+/**
+ * Final pass: push apart any pair still closer than MIN_SEPARATION. Forces
+ * alone leave overlaps when the bounds clamp crowds nodes onto an edge, and
+ * overlapping circles are the one failure a viewer notices immediately.
+ */
+function separateOverlaps(state: SimState): void {
+  const { n, posX, posY, width, height } = state;
+  const passes = 80;
+  for (let pass = 0; pass < passes; pass++) {
+    let moved = false;
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const dx = posX[i] - posX[j];
+        const dy = posY[i] - posY[j];
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist >= MIN_SEPARATION) {
+          continue;
+        }
+        let ux: number;
+        let uy: number;
+        if (dist < 1e-6) {
+          [ux, uy] = fallbackDirection(i, j);
+        } else {
+          ux = dx / dist;
+          uy = dy / dist;
+        }
+        const shift = (MIN_SEPARATION - dist) / 2;
+        posX[i] = Math.max(PAD, Math.min(width - PAD, posX[i] + ux * shift));
+        posY[i] = Math.max(PAD, Math.min(height - PAD, posY[i] + uy * shift));
+        posX[j] = Math.max(PAD, Math.min(width - PAD, posX[j] - ux * shift));
+        posY[j] = Math.max(PAD, Math.min(height - PAD, posY[j] - uy * shift));
+        moved = true;
+      }
+    }
+    if (!moved) {
+      return;
+    }
   }
 }
 
@@ -237,8 +310,11 @@ export function buildLayeredKnowledgeGraphLayout(
     return { nodes: [], edges, width: input.width, height: input.height };
   }
 
-  const width = Math.max(input.width, Math.round(200 * Math.sqrt(n)));
-  const height = Math.max(input.height, Math.round(160 * Math.sqrt(n)));
+  // Grow the canvas with node count so every node has room to sit at least
+  // MIN_SEPARATION from its neighbours. These are floors — the caller's
+  // requested size wins when it is larger.
+  const width = Math.max(input.width, Math.round(260 * Math.sqrt(n)));
+  const height = Math.max(input.height, Math.round(200 * Math.sqrt(n)));
   const ids = Array.from(nodeIds);
 
   const state = initSimulation(ids, groupById, width, height);
@@ -251,6 +327,8 @@ export function buildLayeredKnowledgeGraphLayout(
     applyGroupCohesion(state, fx, fy);
     integrateForces(state, fx, fy);
   }
+
+  separateOverlaps(state);
 
   const nodes: KnowledgeGraphNode[] = ids.map((id, i) => ({
     id,

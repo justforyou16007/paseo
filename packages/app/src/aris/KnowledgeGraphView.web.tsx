@@ -1,6 +1,7 @@
 /* eslint-disable jsx-no-new-object-as-prop -- ARIS visualization views use inline styles for rapid prototyping */
 import { memo, useCallback, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import type { LayoutChangeEvent } from "react-native";
 import { Pressable, View, Text } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import Svg, { Circle, Line, Polygon, Rect, G, Text as SvgText } from "react-native-svg";
@@ -31,7 +32,6 @@ export interface KnowledgeGraphViewProps {
 
 const GRAPH_WIDTH = 700;
 const GRAPH_HEIGHT = 400;
-const CANVAS_VIEW_HEIGHT = 460;
 const DEFAULT_EDGE_STROKE = "#94a3b8";
 const DEFAULT_EDGE_WIDTH = 1.5;
 const FOCUS_FADE_OPACITY = 0.3;
@@ -119,7 +119,8 @@ function graphNodeTypeFromGroup(group: string | undefined): GraphNodeType {
 
 interface NodeViewProps {
   node: GraphCanvasNode;
-  zoom: number;
+  /** Screen pixels per layout unit. Pointer deltas are divided by this when dragging. */
+  pointerScale: number;
   onSelect: ((id: string) => void) | undefined;
   onOpen: ((id: string) => void) | undefined;
   onDrag: ((id: string, x: number, y: number) => void) | undefined;
@@ -129,7 +130,7 @@ const DRAG_THRESHOLD = 5;
 
 const GraphCanvasNodeView = memo(function GraphCanvasNodeView({
   node,
-  zoom,
+  pointerScale,
   onSelect,
   onOpen,
   onDrag,
@@ -178,11 +179,11 @@ const GraphCanvasNodeView = memo(function GraphCanvasNodeView({
         clearLongPressTimer();
       }
       if (isDragging.current) {
-        const z = zoom || 1;
-        onDrag?.(node.id, dragStart.current.nodeX + dx / z, dragStart.current.nodeY + dy / z);
+        const s = pointerScale || 1;
+        onDrag?.(node.id, dragStart.current.nodeX + dx / s, dragStart.current.nodeY + dy / s);
       }
     },
-    [clearLongPressTimer, node.id, zoom, onDrag],
+    [clearLongPressTimer, node.id, pointerScale, onDrag],
   );
 
   const handlePressOut = useCallback(() => {
@@ -349,22 +350,46 @@ function computeGroupCentroids(nodes: GraphCanvasNode[]): GroupCentroid[] {
 function PannableCanvas({
   nodes,
   edges,
+  contentWidth,
+  contentHeight,
   onSelectNode,
   onOpenNode,
 }: {
   nodes: GraphCanvasNode[];
   edges: GraphCanvasEdge[];
+  /** Layout coordinate space. Drives the viewBox so the whole graph fits the viewport. */
+  contentWidth: number;
+  contentHeight: number;
   onSelectNode?: (id: string) => void;
   onOpenNode?: (id: string) => void;
 }) {
   const [panX, setPanX] = useState(0);
   const [panY, setPanY] = useState(0);
   const [zoom, setZoom] = useState(1);
+  const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const [dragPositions, setDragPositions] = useState<Map<string, { x: number; y: number }>>(
     () => new Map(),
   );
   const isPanning = useRef(false);
   const lastPointer = useRef({ x: 0, y: 0 });
+
+  const handleViewportLayout = useCallback((e: LayoutChangeEvent) => {
+    const { width, height } = e.nativeEvent.layout;
+    setViewport((prev) =>
+      Math.abs(prev.width - width) < 1 && Math.abs(prev.height - height) < 1
+        ? prev
+        : { width, height },
+    );
+  }, []);
+
+  // Screen pixels per layout unit once the viewBox has been fitted. Pointer
+  // deltas arrive in screen pixels; pan and node drag both live in layout
+  // units, so every delta has to be divided by this.
+  const fitScale =
+    viewport.width > 0 && viewport.height > 0
+      ? Math.min(viewport.width / contentWidth, viewport.height / contentHeight)
+      : 1;
+  const pointerScale = fitScale * zoom || 1;
 
   // Merge layout positions with any drag overrides.
   const displayNodes = useMemo(() => {
@@ -408,17 +433,20 @@ function PannableCanvas({
     }
   }, []);
 
-  const handlePointerMove = useCallback((e: unknown) => {
-    if (!isPanning.current) {
-      return;
-    }
-    const evt = e as { clientX: number; clientY: number };
-    const dx = evt.clientX - lastPointer.current.x;
-    const dy = evt.clientY - lastPointer.current.y;
-    lastPointer.current = { x: evt.clientX, y: evt.clientY };
-    setPanX((prev) => prev + dx);
-    setPanY((prev) => prev + dy);
-  }, []);
+  const handlePointerMove = useCallback(
+    (e: unknown) => {
+      if (!isPanning.current) {
+        return;
+      }
+      const evt = e as { clientX: number; clientY: number };
+      const dx = (evt.clientX - lastPointer.current.x) / pointerScale;
+      const dy = (evt.clientY - lastPointer.current.y) / pointerScale;
+      lastPointer.current = { x: evt.clientX, y: evt.clientY };
+      setPanX((prev) => prev + dx);
+      setPanY((prev) => prev + dy);
+    },
+    [pointerScale],
+  );
 
   const handlePointerUp = useCallback(() => {
     isPanning.current = false;
@@ -438,17 +466,23 @@ function PannableCanvas({
     setDragPositions(new Map());
   }, []);
 
-  const transform = `translate(${panX}, ${panY}) scale(${zoom})`;
+  // Zoom about the centre of the content so the graph doesn't drift off-screen.
+  const centerX = contentWidth / 2;
+  const centerY = contentHeight / 2;
+  const transform = `translate(${centerX}, ${centerY}) scale(${zoom}) translate(${panX - centerX}, ${panY - centerY})`;
 
   return (
     <View style={styles.canvasContainer}>
       <View
         style={styles.canvasViewport}
+        onLayout={handleViewportLayout}
         {...({ onWheel: handleWheel } as Record<string, unknown>)}
       >
         <Svg
           width="100%"
-          height={CANVAS_VIEW_HEIGHT}
+          height="100%"
+          viewBox={`0 0 ${contentWidth} ${contentHeight}`}
+          preserveAspectRatio="xMidYMid meet"
           {...({
             onPointerDown: handlePointerDown,
             onPointerMove: handlePointerMove,
@@ -527,7 +561,7 @@ function PannableCanvas({
               <GraphCanvasNodeView
                 key={node.id}
                 node={node}
-                zoom={zoom}
+                pointerScale={pointerScale}
                 onSelect={onSelectNode}
                 onOpen={onOpenNode}
                 onDrag={handleDragNode}
@@ -583,7 +617,7 @@ export function KnowledgeGraphCanvas({
         <GraphCanvasNodeView
           key={node.id}
           node={node}
-          zoom={1}
+          pointerScale={1}
           onSelect={onSelectNode}
           onOpen={onOpenNode}
           onDrag={undefined}
@@ -772,10 +806,11 @@ export function KnowledgeGraphView({
   return (
     <View style={styles.card}>
       <View style={styles.cardContent}>
-        <Text style={styles.heading}>Research Knowledge Graph</Text>
         <PannableCanvas
           nodes={canvasNodes}
           edges={canvasEdges}
+          contentWidth={layout.width}
+          contentHeight={layout.height}
           onSelectNode={handleSelect}
           onOpenNode={onOpenDetail ? handleOpen : undefined}
         />
@@ -925,6 +960,7 @@ function EdgeLegend({ visibleRelations }: { visibleRelations: Set<string> }) {
 
 const styles = StyleSheet.create((theme) => ({
   card: {
+    flex: 1,
     backgroundColor: theme.colors.surface1,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
@@ -932,18 +968,16 @@ const styles = StyleSheet.create((theme) => ({
     overflow: "hidden",
   },
   cardContent: {
+    flex: 1,
     padding: theme.spacing[4],
     gap: theme.spacing[3],
   },
-  heading: {
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.medium,
-    color: theme.colors.foreground,
-  },
   canvasContainer: {
+    flex: 1,
     gap: theme.spacing[1],
   },
   canvasViewport: {
+    flex: 1,
     borderRadius: theme.borderRadius.lg,
     overflow: "hidden",
     backgroundColor: theme.colors.surface0,
