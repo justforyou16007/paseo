@@ -2,7 +2,7 @@
 name: experiment-queue
 description: SSH job queue for multi-seed/multi-config ML experiments with OOM-aware retry, stale-screen cleanup, and wave-transition race prevention. Use when user says "batch experiments", "队列实验", "run grid", "multi-seed sweep", "auto-chain experiments", or when /run-experiment is insufficient for 10+ jobs that need orchestration.
 argument-hint: [manifest-or-grid-spec]
-allowed-tools: Bash(*), Read, Grep, Glob, Edit, Write, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission
+allowed-tools: Bash(*), Read, Grep, Glob, Edit, Write, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__create_heartbeat, mcp__paseo__delete_heartbeat
 ---
 
 > **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in [](shared-references/paseo-subagent-dispatch.md) (Rule 1: One Agent = One Skill; Rule 4: Paseo MCP Only, Strict). Spawn any sub-skill or sub-phase via `mcp__paseo__create_agent` — do **not** use the host `Skill` / `Agent` / `Task` tools.
@@ -55,59 +55,36 @@ All of these are pure engineering friction that can be orchestrated.
 
 > **Environment config source:** The manifest's `ssh`, `conda`/`conda_hook`,
 > `cwd`, and `resources` fields are populated from the generated experiment
-> skill's `info.sh` output. Host preparation uses `prepare.sh`:
+> skill's `ops/env-info.sh` output. Host preparation uses `ops/sync-code.sh` +
+> `ops/build-env.sh`:
 >
 > ```bash
 > # --- resolve the project-level experiment skill ---
 > PROJECT=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\+/-/g; s/^-//; s/-$//')
 > SKILL_DIR=".claude/skills/run-${PROJECT}-experiment"
-> [ -d "$SKILL_DIR/scripts" ] || { echo "ERROR: experiment skill not found — run /experiment-env-manager — mode: setup first" >&2; exit 1; }
+> OPS="$SKILL_DIR/scripts/ops"
+> [ -d "$OPS" ] || { echo "ERROR: experiment skill not found — run /experiment-env-manager — mode: setup first" >&2; exit 1; }
 >
-> # Read connection and resource details from the atomic interface
-> ENV_INFO=$(sh "$SKILL_DIR/scripts/info.sh")
+> # Read connection and resource details from the op interface
+> ENV_INFO=$(sh "$OPS/env-info.sh")
 > SSH_ALIAS=$(echo "$ENV_INFO" | jq -r '.connection.ssh_alias')
 > CONDA_ENV=$(echo "$ENV_INFO" | jq -r '.connection.conda_env')
 > CONDA_HOOK=$(echo "$ENV_INFO" | jq -r '.connection.conda_hook')
 > REMOTE_PATH=$(echo "$ENV_INFO" | jq -r '.paths.remote_path')
 > RESOURCES_JSON=$(echo "$ENV_INFO" | jq -c '.resources // empty')
 >
-> # Prepare the host ONCE (replaces provision + preflight + sync)
-> STDERR_FILE=$(mktemp)
-> sh "$SKILL_DIR/scripts/prepare.sh" 2>"$STDERR_FILE"; EXIT_CODE=$?
-> if [ $EXIT_CODE -ne 0 ]; then
->   STDERR_TAIL=$(tail -20 "$STDERR_FILE" | jq -R . | jq -s .)
->   rm -f "$STDERR_FILE"
->   TS=$(date -u +%Y%m%dT%H%M%SZ)
->   REPORT_PATH=".aris/env-config/$PROJECT/error-reports/${TS}.json"
->   mkdir -p "$(dirname "$REPORT_PATH")"
->   jq -n \
->     --arg skill "experiment-queue" \
->     --arg project "$PROJECT" \
->     --argjson exit_code "$EXIT_CODE" \
->     --argjson stderr_tail "$STDERR_TAIL" \
->     --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
->     '{
->       skill: $skill, project: $project, error_type: "prepare_failed",
->       script: "prepare.sh", exit_code: $exit_code, stderr_tail: $stderr_tail,
->       failure_patterns_matched: [], attempts: 1,
->       context: { last_code_change: null, last_successful_run: null },
->       timestamp: $ts
->     }' > "$REPORT_PATH"
->   # Dispatch env-manager with actual report path
->   mcp__paseo__create_agent
->     title: "env-manager: fix $PROJECT"
->     provider: claude
->     initialPrompt: "/experiment-env-manager — project: $PROJECT — mode: error-report — error-report: $REPORT_PATH"
->     notifyOnFinish: true
->   # Wait for receipt → if result == "fixed": retry prepare.sh
->   # If result != "fixed": abort queue
-> fi
+> # Prepare the host ONCE (sync + build + verify are two ops)
+> sh "$OPS/sync-code.sh"
+> sh "$OPS/build-env.sh"
+> # On failure of either: follow the generated skill's unified op-failure
+> # routing (error JSON from the op's stderr → error-reports/<TS>.json →
+> # /experiment-env-manager — mode: error-report). On "fixed": retry the op.
+> # If not fixed: abort queue.
 > ```
 >
 > `queue-manager.js` itself is unchanged — it runs on the remote host and
-> batch-schedules jobs. The experiment skill's `prepare.sh` runs locally and
-> prepares the host; they are complementary (single-env control vs batch
-> scheduling).
+> batch-schedules jobs. The experiment skill's ops run locally and prepare
+> the host; they are complementary (single-env control vs batch scheduling).
 
 A manifest lists jobs with explicit state:
 
@@ -296,23 +273,60 @@ The scheduler:
 
 - Reads manifest
 - Loops: for each pending job, assign to free GPU, launch via `screen`
+  (rendered through the generated skill's `ops/launch-job.sh --print-command`,
+  so the queue and single runs share one frozen command template)
 - Polls job status (every 60s)
 - Detects stale screens (python exited but screen detached → kill)
 - Detects OOM (CUDA OOM in log → mark failed_oom → retry after delay)
 - Detects completion (expected output JSON/file exists) → mark completed
 - Launches next wave when current wave settles
-- Writes state to `queue_state.json` continuously
+- Writes state to `queue_state.json` continuously (and per-job handles in the
+  generated skill's `handles/` format, so `ops/job-status.sh` covers queue jobs)
 
-### Step 4: Monitoring
+### Step 3f: Arm the queue-monitor heartbeat
+
+**This is the liveness guarantee for a long queue** — without it, nothing
+wakes anyone when the batch finishes. It is this agent's LAST action before
+ending its turn, after Step 3d's nohup launch.
+
+```
+mcp__paseo__create_heartbeat:
+  name: "queue-monitor-<project>-<RUN_TS>"     # upsert by name — idempotent
+  cron: "23 * * * *"                           # hourly, off the :00 mark
+  expiresIn: "<manifest-bounded hours>h"       # orphan backstop
+  maxRuns: <bounded>
+  prompt: |
+    Run: sh <SKILL_DIR>/scripts/ops/job-status.sh --queue <REMOTE_RUN_DIR>
+    (read-only). If any job is pending|running: append one line to
+    .aris/runs/<run_id>.monitor.jsonl and stop. If all jobs are
+    completed|stuck AND queue_mgr.log contains "All jobs done": run
+    Step 5 aggregation (summary.md), delete this heartbeat
+    (id from handles/<RUN_TS>.monitor.json), write the receipt, stop.
+    NEVER launch, retry, or kill — the remote 60s scheduler owns those.
+```
+
+Write `handles/<RUN_TS>.monitor.json` with the heartbeat id (not listable
+later; delete is creator-only — the id must live on disk). Write receipt
+`status: "monitoring"` and end the turn.
+
+**Degradation:** non-agent-scoped session or `create_heartbeat` unavailable →
+print the poll command and note "monitor manually". Do not block the queue.
+
+**Fence note:** the remote scheduler already polls every 60s — the heartbeat
+must NOT become a second scheduler (external-cadence.md: never duplicate an
+existing scheduler). It only detects the terminal state the scheduler wrote
+and resumes the pipeline.
+
+### Step 4: Monitoring (manual / visibility)
 
 User can check state anytime, using `$REMOTE_RUN_DIR` from Step 3b (or reload from `$LOCAL_RUN_DIR/run_meta.txt` for an older run):
 
 ```bash
+sh "$OPS/job-status.sh" --queue "$REMOTE_RUN_DIR"
+# or the raw state:
 ssh <server> "cat \"$REMOTE_RUN_DIR/queue_state.json\"" \
   | jq '.jobs | group_by(.status) | map({(.[0].status): length}) | add'
 ```
-
-Note: `/monitor-experiment` is currently focused on screen sessions, result JSONs, and W&B; it does not yet read `queue_state.json` directly. For queue-state monitoring, use the literal command above against the recorded `REMOTE_RUN_DIR`. (Tracking `/monitor-experiment` queue-state integration as a follow-up.)
 
 ### Step 5: Post-completion
 
@@ -480,7 +494,7 @@ Then user can check anytime or wait for summary report.
 ## See Also
 
 - `/run-experiment` — single experiment deployment
-- `/monitor-experiment` — check progress (now reads from queue_state.json)
+- monitoring heartbeat (Step 3f) — terminal-state detection over `queue_state.json`
 - `/analyze-results — project: <project>` — post-hoc analysis
 - `dist/skills/experiment-queue/queue-manager.js` — the scheduler implementation; resolved at runtime via the fallback chain in Step 3a.
 - `dist/skills/experiment-queue/build-manifest.js` — build manifest from grid spec; same resolution chain.

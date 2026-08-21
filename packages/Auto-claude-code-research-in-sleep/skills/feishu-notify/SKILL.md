@@ -145,7 +145,7 @@ Skills send these events at these moments:
 | `/run-experiment`              | `experiment_done` | Screen session finishes                |
 | `/idea-discovery`              | `checkpoint`      | Between phases (if interactive)        |
 | `/idea-discovery`              | `pipeline_done`   | Final report ready                     |
-| `/monitor-experiment`          | `experiment_done` | Results collected                      |
+| monitoring heartbeat           | `experiment_done` | Results collected                      |
 | `/research-pipeline`           | `checkpoint`      | Between workflow stages                |
 | `/research-pipeline`           | `pipeline_done`   | Full pipeline complete                 |
 

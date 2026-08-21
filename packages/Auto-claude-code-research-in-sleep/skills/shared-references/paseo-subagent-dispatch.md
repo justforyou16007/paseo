@@ -76,6 +76,17 @@ collected. The only synchronous wait is `mcp__paseo__send_agent_prompt` with
 `background: false` (blocking continuation of a prompted turn);
 `create_agent` cannot block.
 
+**External-wait children arm their own heartbeat.** A child whose work is
+"launch a job, then wait for the external world" (e.g. `/run-experiment`,
+`/experiment-queue`) arms its OWN self-target `create_heartbeat` as its last
+action before ending the turn (Step 5.5 / Step 3f in those skills) and
+reports `receipt.status: "monitoring"`. The owner treats a `monitoring`
+receipt as keep-waiting: keep the child alive (continuation child), end the
+turn, and gate phase advancement on a TERMINAL receipt
+(`done`/`failed`/`early_stopped`/`blocked`) — never archive a `monitoring`
+child, and answer its healthy-tick finish notifications with a one-line ack
+only. See `external-cadence.md` "Paseo heartbeat bounds convention".
+
 Children **MUST NOT** spawn their parent (no cycles). Children may create
 sub-children only with `mcp__paseo__create_agent`; cascading trees are fine
 and grandchild archives cascade with the child. Provider/harness-native

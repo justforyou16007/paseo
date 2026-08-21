@@ -114,7 +114,7 @@ claude
 > Read through this project and verify all skills are working:
 > /idea-creator, /research-review, /auto-review-loop, /novelty-check,
 > /idea-discovery, /research-pipeline, /research-lit, /run-experiment,
-> /analyze-results, /monitor-experiment, /pixel-art
+> /analyze-results, /pixel-art
 > ```
 
 </details>

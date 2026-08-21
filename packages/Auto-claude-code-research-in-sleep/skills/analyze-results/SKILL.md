@@ -1,6 +1,6 @@
 ---
 name: analyze-results
-description: 'Iterative experiment analysis driver. Runs analyze.sh to collect results, dispatches a cross-model verifier to evaluate completeness, then iterates: modifying analyze.sh and/or triggering supplementary experiments until the verifier passes. Produces comparison tables, statistical tests, insights, and a completeness verdict. Use when user says "analyze results", "分析结果", "compare experiments", "结果分析", or after experiments complete and results need interpretation.'
+description: 'Iterative experiment analysis HUB (总分结构): routes each analysis dimension to a focused sub-skill (analysis-wandb / analysis-convergence / analysis-training-dynamics / analysis-comparison under skills/analyze-results-tools/), assembles their artifacts, dispatches a cross-model verifier to evaluate completeness, and iterates until the verifier passes. Use when user says "analyze results", "分析结果", "compare experiments", "结果分析", or after experiments complete and results need interpretation.'
 argument-hint: "[— project: <name>] [— max-rounds: N] [— method: <existing-analysis-script-or-command>]"
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, AskUserQuestion, WebSearch, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission
 ---
@@ -27,15 +27,16 @@ Experiment analysis is not a one-shot operation. The first pass often reveals
 gaps: missing experiments, insufficient seeds, uncovered error modes, or shallow
 insights. This skill drives an iterative loop:
 
-1. Run analysis (using an existing method or analyze.sh)
-2. Dispatch a cross-model verifier to evaluate completeness
-3. If incomplete: fix analyze.sh / trigger supplementary experiments
-4. Repeat until the verifier passes or the user accepts
+1. Collect the result manifest (from collect-outputs.sh receipts)
+2. Route each analysis dimension to a sub-skill; dispatch as sub-agents
+3. Dispatch a cross-model verifier to evaluate completeness
+4. If incomplete: re-dispatch sub-skills / trigger supplementary experiments
+5. Repeat until the verifier passes or the user accepts
 
 ```
 Phase 0    Resolve project + locate generated skill
-Phase 1    Bootstrap — use existing method or analyze.sh for first analysis
-Phase 2    Analysis — comparison tables, statistics, insights
+Phase 1    Bootstrap — collect the result manifest from experiment receipts
+Phase 2    Analysis — dispatch analysis sub-skills (hub-and-spoke)
 Phase 3    Dispatch verifier (Type-B gate) — cross-model completeness audit
 Phase 4    Iteration loop — address verifier gaps, re-analyze, re-verify
 Phase 5    Final output — complete analysis report
@@ -139,86 +140,81 @@ In direct-call mode:
 2. **Locate generated skill.**
    ```bash
    SKILL_DIR=".claude/skills/run-${PROJECT}-experiment"
-   [ -d "$SKILL_DIR/scripts" ] || { echo "ERROR: experiment skill not found at $SKILL_DIR. Run /experiment-env-configuration first." >&2; exit 1; }
+   [ -d "$SKILL_DIR/scripts/ops" ] || { echo "ERROR: experiment skill not found at $SKILL_DIR. Run /experiment-env-manager — mode: setup first." >&2; exit 1; }
    ```
 
-3. **Read config.** Parse `$SKILL_DIR/env.json` for `feedback.analysis` and
-   `feedback.error` settings.
+3. **Read config.** Parse `$SKILL_DIR/env.json` for `feedback.result`
+   (`primary_metric_key`), `feedback.error`, `wandb`, and `monitor.early_stop`
+   (thresholds the convergence sub-skill applies).
 
 4. **Parse `— method`** argument if provided. Record as `initial_method`
    (a script path or shell command the user already uses for analysis).
 
 ---
 
-## Phase 1: Bootstrap
+## Phase 1: Bootstrap — collect the analysis inputs
 
-The first analysis run uses either the user's existing method or the standard
-analyze.sh path.
+The input to every analysis round is the **result manifest**: the
+`result_files` list from `collect-outputs.sh` receipts
+(`.aris/runs/<run_id>.experiment.<exp>.done.json`), plus the error reports the
+same receipts reference. Analysis data collection is DONE — the ops already
+collected it; this skill never re-scans logs itself.
 
 **Worker mode:** start from `manifest.inputs.results` and
-`manifest.inputs.tracker`. An `analyze.sh` or user method may add calculations,
-but it must be pointed at those exact inputs and must not substitute files found
-under project-root result directories. Keep supplemental outputs under
-`$OUTPUT_DIR`.
+`manifest.inputs.tracker`. A user method may add calculations, but it must be
+pointed at those exact inputs and must not substitute files found under
+project-root result directories. Keep supplemental outputs under `$OUTPUT_DIR`.
 
-**Direct-call mode:** use the branches below.
+**Direct-call mode:** read the newest experiment receipts for the project
+(`.aris/runs/*.experiment.*.done.json`); fall back to scanning `results/` and
+`logs/` only when no receipts exist.
 
-**If `— method: <path-or-command>` is provided:**
-
-- Execute the user's specified method/script/command
-- Capture its output (stdout + any files it writes)
-- This output seeds the first round — what it already covers doesn't need
-  re-analysis; what it misses becomes the iteration target
-- If the method produces structured output (JSON/CSV), parse it into the
-  same format as analyze.sh would produce
-- Incorporate the method into `analyze.sh` Stage 2 if not already there
-  (so future rounds don't lose what it already does)
-
-**Otherwise (standard path):**
-
-- Execute `sh "$SKILL_DIR/scripts/analyze.sh"`
-- Read `<output_dir>/error_report.md` (Stage 1 error collection)
-- Read the Stage 2 analysis output at `feedback.analysis.output_path`
-
-In direct-call mode, collect all result files from `results/`, `logs/`, and any
-other directories referenced in `env.json`. This project-wide scan is forbidden
-in worker mode.
+**If `— method: <path-or-command>` is provided:** execute the user's method,
+capture its output, and seed the first round with it — what it already covers
+doesn't need re-analysis; what it misses becomes the iteration target.
 
 ---
 
-## Phase 2: Analysis
+## Phase 2: Dispatch Analysis Sub-Skills (hub-and-spoke)
 
-Build the structured analysis from collected data. This is **Type-A work** —
-the skill can judge whether tables are correct and stats are computed properly.
+**This skill is the hub: it routes, sub-skills analyze.** Each sub-skill is
+dispatched as its own paseo sub-agent (Rule 1: one agent = one skill), reads
+its inputs from an input manifest, and writes its own artifact. The hub reads
+only the artifacts' output contracts (file paths + machine-checkable fields)
+— never the full artifacts. Analysis logic NEVER lives in this skill.
 
-### Step 2a: Build Comparison Table
+### The analysis tool index
 
-Organize results by:
-- Independent variables: model type, hyperparameters, data config, seed
-- Dependent variables: primary metric, secondary metrics
-- Delta vs baseline: always compute relative improvement
-- Group by experiment purpose (from EXPERIMENT_PLAN.md if available)
+| Sub-skill | Use when | Machine-checkable? |
+|---|---|---|
+| `analysis-wandb` | W&B is configured and any other sub-skill needs series or run state | Yes (data acquisition) |
+| `analysis-convergence` | Training runs exist and the question is converged / diverged / collapsed (applies the frozen `monitor.early_stop` thresholds) | Partially (thresholds are mechanical; the verdict is a *proposal*) |
+| `analysis-training-dynamics` | The question is HOW training behaved — loss-curve shape, train/eval gap, LR schedule, gradient norms | No (interpretive report; verifier adjudicates) |
+| `analysis-comparison` | Two or more runs exist and the question is which is better, by how much, with what significance | Yes (tables parse; stats recompute) |
 
-### Step 2b: Statistical Analysis
+### Routing rules (deterministic)
 
-- Multiple seeds → mean ± std, check reproducibility
-- Parameter sweep → identify trends (monotonic, U-shaped, plateau)
-- Flag outliers or suspicious results (>3σ from mean)
-- Compute p-values for key comparisons when seeds ≥ 3
+1. W&B configured (`env-info.sh` `.wandb.enabled` or receipts carry `wandb`) AND
+   any sub-skill needs series → dispatch `analysis-wandb` FIRST; its exports
+   feed the others.
+2. Any training run in the manifest → dispatch `analysis-convergence`
+   (thresholds from `monitor.early_stop`).
+3. Multiple runs → dispatch `analysis-comparison`.
+4. Train/eval series exist (W&B export or logs) → dispatch
+   `analysis-training-dynamics`.
+5. A `— method` user script covers a dimension → skip that dimension's
+   sub-skill; record the skip in the final report.
+6. Dispatch one sub-agent per sub-skill, sequentially (create → end turn →
+   notification → read output contract → archive → next). Each sub-agent's
+   input manifest carries: metric/result paths, the relevant `env.json`
+   blocks, `exp` names, and its `$OUTPUT_DIR`.
 
-### Step 2c: Generate Insights
+### Step 2z: Assemble the hub artifact
 
-For each finding, structure as:
-1. **Observation**: what the data shows (with numbers)
-2. **Interpretation**: why this might be happening
-3. **Implication**: what this means for the research question
-4. **Next step**: what experiment would test the interpretation
-
-### Step 2d: Write Analysis Artifact
-
-In worker mode, write to `$OUTPUT_DIR/EXPERIMENT_RESULTS.md`. In direct-call
-mode, write to `feedback.analysis.output_path` (default
-`refine-logs/EXPERIMENT_RESULTS.md`).
+Merge the sub-skills' output contracts (NOT their full artifacts) into
+`EXPERIMENT_RESULTS.md`: in worker mode `$OUTPUT_DIR/EXPERIMENT_RESULTS.md`,
+in direct-call mode `refine-logs/EXPERIMENT_RESULTS.md` (default). The
+assembled report links each sub-skill's artifact; it does not duplicate them.
 
 ---
 
@@ -250,7 +246,7 @@ mcp__paseo__create_agent
       Experiment plan:     <manifest input path, or "not supplied">
       Experiment tracker:  <manifest input path in worker mode; direct path otherwise>
       Result files:        <manifest input path in worker mode; direct paths otherwise>
-      analyze.sh:          <resolved SKILL_DIR>/scripts/analyze.sh, if present
+      Sub-skill artifacts: <OUTPUT_DIR>/analysis-*.md and wandb/ (from Phase 2)
       env.json:            <manifest experiment_skill path, if supplied>
 
     Evaluate against these criteria — report each as PASS | WARN | FAIL:
@@ -313,17 +309,21 @@ On `"warn"`, carry the WARN items as caveats in the final report.
    **`suggested_action: run_experiment`**
    - Dispatch `run-<project>-experiment` via paseo sub-agent with the
      specific experiment parameters from the gap description
-   - Wait for completion (monitor.sh)
+   - Wait for its monitoring heartbeat's terminal receipt
    - Re-run Phase 1 → 2 → 3
 
    **`suggested_action: modify_analyze_sh`**
-   - Edit `$SKILL_DIR/scripts/analyze.sh` to address the identified gap
-     (e.g., add error patterns, broaden log scanning)
+   - The gap is in analysis coverage: re-dispatch the relevant sub-skill
+     with an explicit instruction addressing the gap (e.g., broader series
+     extraction, an additional comparison), or fix the op failure report
+     pipeline when the data itself is missing
    - Re-run Phase 1 → 2 → 3
 
    **`suggested_action: add_analysis`**
-   - Add missing analysis logic to analyze.sh Stage 2 or write it inline
-     (e.g., add a missing comparison, compute a missing statistic)
+   - A missing dimension: write a NEW sub-skill under
+     `skills/analyze-results-tools/` following the existing four (focused
+     scope, artifact + output contract, no verdict), add it to the Phase 2
+     tool index and routing rules, dispatch it
    - Re-run Phase 1 → 2 → 3
 
 3. Each iteration dispatches a **fresh** verifier (not a continuation —
@@ -350,7 +350,7 @@ Write `refine-logs/EXPERIMENT_RESULTS.md`:
 ## Analysis Status
 - Verifier verdict: <pass|warn|user_override>
 - Iterations: <N> rounds
-- Method: <initial_method or "standard analyze.sh">
+- Method: <initial_method or "sub-skill dispatch">
 
 ## Raw Data Tables
 <all experiments, all metrics, organized by experiment group>
@@ -411,16 +411,20 @@ Write direct-call receipt `.aris/runs/<run_id>.analyze-results.<project>.done.js
    supplement. The skill never autonomously decides to stop iterating.
 4. **`— method` seeds, doesn't replace.** An existing analysis method becomes
    the starting point; the iterative process may extend beyond it.
-5. **Modify analyze.sh, don't bypass it.** When adding analysis logic, write
-   it into the generated scripts so it persists for future runs — don't run
-   one-off commands that aren't captured.
+5. **Analysis logic lives in sub-skills, not one-offs.** When adding
+   analysis, write it as (or into) a sub-skill under
+   `skills/analyze-results-tools/` so it persists and is re-dispatchable —
+   don't run one-off commands that aren't captured.
 6. **File-paths-only receipts.** The receipt carries paths; the dispatching
    parent reads the files themselves.
 
 ## External dependencies (reused, not modified)
 
 - `.claude/skills/run-<project>-experiment/` — the generated experiment skill
-  (scripts + env.json). Must exist before this skill runs.
+  (ops + env.json). Its `collect-outputs.sh` receipts are the result manifest.
+- `skills/analyze-results-tools/*` — the four analysis sub-skills this hub
+  dispatches (analysis-wandb, analysis-convergence,
+  analysis-training-dynamics, analysis-comparison).
 - `shared-references/acceptance-gate.md` — DRIVE/ACQUIT; the Type-A / Type-B
   split that Phase 3 implements.
 - `shared-references/reviewer-independence.md` — why the verifier reads files

@@ -191,7 +191,7 @@ EOF
 | `/auto-paper-improvement-loop` | 每轮出分、全部完成   | 分数进展表          | 分数进展表          |
 | `/run-experiment`              | 实验已部署           | GPU 分配 + 预计时间 | GPU 分配 + 预计时间 |
 | `/vast-gpu`                    | 实例租用/销毁        | 实例 ID + 成本      | 实例 ID + 成本      |
-| `/monitor-experiment`          | 结果已收集           | 结果对比表          | 结果对比表          |
+| 监控心跳（monitoring heartbeat）| 结果已收集           | 结果对比表          | 结果对比表          |
 | `/idea-discovery`              | 阶段切换、最终报告   | 各阶段摘要          | + 审批/拒绝         |
 | `/research-pipeline`           | 阶段切换、流水线结束 | 阶段摘要            | + 审批/拒绝         |
 

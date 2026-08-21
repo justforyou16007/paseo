@@ -13,7 +13,7 @@ Generate publishable research ideas for: $ARGUMENTS
 
 ## Overview
 
-Given a broad research direction from the user, systematically generate, validate, and rank concrete research ideas. Standalone, Phase 1's landscape survey is **inline** (WebSearch — it does not invoke `/research-lit`); Phases 4-5 invoke `/novelty-check`, `/run-experiment`, and `/monitor-experiment` for validation and pilots. For the full sub-skill pipeline (`/research-lit` → idea generation → `/novelty-check` → `/research-review`), run `/idea-discovery` (Workflow 1), which orchestrates this skill.
+Given a broad research direction from the user, systematically generate, validate, and rank concrete research ideas. Standalone, Phase 1's landscape survey is **inline** (WebSearch — it does not invoke `/research-lit`); Phases 4-5 invoke `/novelty-check` and `/run-experiment` (with its monitoring heartbeat) for validation and pilots. For the full sub-skill pipeline (`/research-lit` → idea generation → `/novelty-check` → `/research-review`), run `/idea-discovery` (Workflow 1), which orchestrates this skill.
 
 ## Constants
 
@@ -409,7 +409,7 @@ Before committing to a full research effort, run cheap pilot experiments to get 
 
    Use `run_in_background: true` to launch all at once.
 
-3. **Collect results**: Use `/monitor-experiment` to check progress. If any pilot exceeds PILOT_TIMEOUT_HOURS, kill it and collect partial results. Once all pilots complete (or timeout), compare:
+3. **Collect results**: The `/run-experiment` monitoring heartbeat reports progress; read its receipts. If any pilot exceeds PILOT_TIMEOUT_HOURS, kill it (`ops/stop-job.sh`) and collect partial results (`ops/collect-outputs.sh`). Once all pilots complete (or timeout), compare:
    - Which ideas showed positive signal?
    - Which showed null/negative results? (eliminate or deprioritize)
    - Any surprising findings that suggest a pivot?

@@ -121,18 +121,16 @@ An explicit `auto_destroy` always overrides.
 
 No skill needs to change — they all dispatch through `EnvBackend.create()`.
 
-## Layering with `queue_manager.py`
+## Layering with the experiment-queue scheduler
 
-This helper runs **locally** and orchestrates one environment (SSH out,
-vastai, modal CLI). `skills/experiment-queue/scripts/queue_manager.py`
-runs **on the remote host** and batch-schedules N jobs. They are
-complementary:
+The queue (`src/skills/experiment-queue/queue-manager.ts`, compiled to
+`dist/skills/experiment-queue/queue-manager.js`) runs on the remote host and
+orchestrates batches: polls, launches, retries, cleans. It is complementary to
+this env helper — single-environment control vs batch scheduling. When the
+project's generated experiment skill is present, the queue renders job
+commands through its `ops/launch-job.sh --print-command` (the frozen run
+template) instead of re-assembling commands itself.
 
-- `env_helper provision + preflight + sync` prepares the host **once**.
-- `experiment-queue` (manifest filled from `experiment-env.json`)
-  uploads `queue_manager.py` + manifest and runs N jobs.
-- `env_helper destroy` runs **once** at the end (vast `auto_destroy`
-  fires for the batch, not per-job).
 
 ## Failure policies (per integration-contract.md)
 

@@ -112,8 +112,8 @@ Same analysis as any GPU skill — determine VRAM needs from model size, pick GP
 ### Step 2: Generate Modal Launcher (now done by `env_helper deploy`)
 
 ```bash
-sh "$SKILL_DIR/scripts/prepare.sh"
-sh "$SKILL_DIR/scripts/run.sh" "$EXP_NAME" --args "$ARGS"
+sh "$SKILL_DIR/scripts/ops/sync-code.sh + scripts/ops/build-env.sh"
+sh "$SKILL_DIR/scripts/ops/launch-job.sh" "$EXP_NAME" --args "$ARGS"
 ```
 
 `deploy` generates `modal_launcher.py` reproducing Pattern A (`modal.Mount.from_local_dir` + `modal.Volume` + `@app.function(gpu=modal_gpu, timeout=modal_timeout, secrets=modal_secrets)` + `volume.commit()` + `train.remote()`) and runs `modal run`. The Pattern A/B/C/D/E/F reference below documents what the backend generates — kept for choosing the right pattern (Pattern A is the run-experiment default).
@@ -258,7 +258,7 @@ modal deploy app.py       # Persistent service deployment
 ### Step 4: Verify & Monitor
 
 ```bash
-sh "$SKILL_DIR/scripts/monitor.sh"
+sh "$SKILL_DIR/scripts/ops/job-status.sh"
 ```
 
 (Backend runs `modal app list` + `modal app logs <app>` — reference below.)
@@ -271,7 +271,7 @@ modal app logs <app-name> # Stream logs
 ### Step 5: Collect Results
 
 ```bash
-sh "$SKILL_DIR/scripts/collect.sh"
+sh "$SKILL_DIR/scripts/ops/collect-outputs.sh"
 ```
 
 Results collection depends on the pattern used (reference):
@@ -294,7 +294,7 @@ Results are printed to terminal or returned from the function — already local.
 Modal auto-scales to zero — no manual instance destruction needed. But clean up unused resources:
 
 ```bash
-sh "$SKILL_DIR/scripts/teardown.sh"
+sh "$SKILL_DIR/scripts/ops/release-resources.sh"
 ```
 
 (Reference commands the backend reproduces:)

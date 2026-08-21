@@ -97,7 +97,7 @@ User can override independently:
 | ------------------ | --------- | ------------- | --------------------- | --------------------------- | -------------------------------- |
 | experiment-bridge  | scope     | sanity + main | main + basic ablation | + top ablation + robustness | full suite + cross-validation    |
 | run-experiment     | launches  | smoke + main  | smoke + multi-seed    | + dry run + manifest        | full config + multi-GPU parallel |
-| monitor-experiment | depth     | latest log    | log + JSON            | + W&B + anomaly             | real-time + auto-alert + trend   |
+| job-status op      | depth     | latest log    | log + JSON            | + W&B + facts               | heartbeat-paced + facts recorded |
 | analyze-results    | findings  | 3             | 5                     | 8                           | full-dimensional + stat tests    |
 | ablation-planner   | ablations | 2-3           | 4-5                   | 6-8                         | 10+                              |
 

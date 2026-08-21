@@ -186,7 +186,6 @@ ARIS 在 `tools/` 下有一整套可复用工具。新增功能前检查是否�
 | `evidence_check.py`                                                                                         | 证据存在性检查         |
 | `threat_scan.py`                                                                                            | 提示注入扫描           |
 | `capture_filter.py`                                                                                         | 知识捕获过滤           |
-| `watchdog.py`                                                                                               | 远程训练监控守护进程   |
 | `provenance.py`                                                                                             | 溯源验证/跨模型断言    |
 | `extract_paper_style.py`                                                                                    | 论文风格提取           |
 | `figure_renderer.py`                                                                                        | 图表渲染               |
@@ -207,11 +206,8 @@ ARIS 在 `tools/` 下有一整套可复用工具。新增功能前检查是否�
 | 机制     | 位置                  | 说明                         |
 | -------- | --------------------- | ---------------------------- |
 | 实验队列 | `/experiment-queue`   | 自托管调度器,60s 轮询,依赖链 |
-| 训练检查 | `/training-check`     | WandB 指标读取 + 趋势判断    |
-| 实验监控 | `/monitor-experiment` | SSH 检查 + 结果汇总          |
-| Watchdog | `tools/watchdog.py`   | 无依赖守护进程,24/7 健康检查 |
 
-> **新功能检查**:调度实验用 `/experiment-queue`,监控训练用 `/training-check`,不要自创。
+> **新功能检查**:调度实验用 `/experiment-queue`,监控任务用生成 skill 的 `job-status` op + 监控心跳,不要自创。
 
 ---
 

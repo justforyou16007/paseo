@@ -216,7 +216,7 @@ question: "SSH alias or hostname for the remote server? (from ~/.ssh/config or r
 Seed: read from `~/.ssh/config` host entries or CLAUDE.md
 
 Record as `preparation.files.ssh_alias` in the PRD. This field flows through
-to env-configuration → env.json → info.sh `connection.ssh_alias` → experiment-queue.
+to env-configuration → env.json → env-info.sh `connection.ssh_alias` → experiment-queue.
 
 #### Step 1.3 — Dependency Environment
 
@@ -349,18 +349,27 @@ options: `["JSON"]` / `["CSV"]` / `["Parsed from log"]` / `["W&B"]`
 `AskUserQuestion` — header: "Primary metric"
 question: "Which key is the headline metric?"
 
-#### Step 1.8 — Analysis
+#### Step 1.8 — Monitoring
 
-`AskUserQuestion` — header: "Analysis"
-question: "实验结果需要什么样的分析？"
-options: `["Compare against baseline"]` / `["Aggregate across seeds"]` / `["Custom analysis script"]`
+Analysis is NOT configured here — it is owned by `/analyze-results` and its
+sub-skills. What IS configured: how a running job is watched.
 
-`AskUserQuestion` — header: "Analysis logic"
-question: "What comparison or test is required?"
+`AskUserQuestion` — header: "Check interval"
+question: "How often should the monitoring heartbeat wake?"
+options: `["Every 20 minutes"]` / `["Every hour"]` / `["Custom cron"]`
 
-`AskUserQuestion` — header: "Output"
-question: "Where does the analysis artifact go?"
-Seed: `analysis/comparison.md`
+`AskUserQuestion` — header: "Max hours"
+question: "Hard cap on a single job's wall time?"
+Seed: `48`
+
+`AskUserQuestion` — header: "Early stop"
+question: "配置早停条件吗？（超时/收敛/发散/熵塌缩）"
+options: `["No"]` / `["Yes"]`
+
+When "Yes", follow up with the early-stop sub-questions (timeout hours,
+convergence patience, divergence multiplier, entropy threshold) — the same
+shape `/research-setup` collects. These are inputs for analysis sub-skills,
+not enforced by the ops.
 
 #### Step 1.9 — Baseline info
 
@@ -396,8 +405,12 @@ Assemble the complete PRD JSON (full schema, all fields filled):
   "run": { "entry_point": "...", "arg_style": "...", "launch_mode": "...", "gpu_selection": "...", "template": "..." },
   "feedback": {
     "error": { "signal": "...", "log_path": "...", "task_type": "...", "failure_patterns": ["..."] },
-    "result": { "path_template": "...", "format": "...", "primary_metric_key": "...", "extra_keys": ["..."] },
-    "analysis": { "mode": "...", "logic": "...", "output_path": "..." }
+    "result": { "path_template": "...", "format": "...", "primary_metric_key": "...", "extra_keys": ["..."] }
+  },
+  "monitor": {
+    "interval_cron": "*/20 * * * *", "escalate_cron": "23 * * * *", "max_hours": 48,
+    "early_stop": { "enabled": false },
+    "stall": { "no_log_growth_minutes": 45, "gpu_idle_threshold_pct": 5, "consecutive_alert_ticks": 3 }
   },
   "baseline": { "kind": "real|mock", "evidence_source": "..." }
 }
@@ -751,7 +764,7 @@ Expected error report schema (flat format written by downstream skills):
   "skill": "<skill-name>",
   "project": "<project>",
   "error_type": "prepare_failed|run_failed|collect_failed|info_failed",
-  "script": "prepare.sh|run.sh|collect.sh|info.sh",
+  "script": "env-info.sh|query-resources.sh|sync-code.sh|build-env.sh|launch-job.sh|job-status.sh|job-logs.sh|collect-outputs.sh|stop-job.sh|release-resources.sh (op name)",
   "exit_code": 1,
   "stderr_tail": ["line 1", "line 2", "...last 20 lines"],
   "failure_patterns_matched": [],
@@ -823,9 +836,9 @@ An error can match multiple patterns — the first match wins.
 | Priority | Category | Patterns (matched against `stderr_tail` lines) | Action |
 |---|----------|----------|--------|
 | 1 | **signal-kill** | `exit_code` is 137 (OOM kill) or 139 (segfault) | Escalate immediately — do not retry |
-| 2 | **transient** | `Connection refused`, `Connection timed out`, `ssh_exchange_identification`, `rate limit`, `Too many requests`, `temporary failure` | Retry `prepare.sh` up to 3 times, 30s delay between |
+| 2 | **transient** | `Connection refused`, `Connection timed out`, `ssh_exchange_identification`, `rate limit`, `Too many requests`, `temporary failure` | Retry the failing op (`$SCRIPT`, the op named in the report) up to 3 times, 30s delay between |
 | 3 | **env-recoverable** | `conda: command not found`, `ModuleNotFoundError`, `No module named`, `CondaError`, `activate: No such file`, `pip: command not found` | Construct patch PRD --> dispatch env-configuration |
-| 4 | **build-related** | `ImportError: .*.so`, `undefined symbol`, `version .* mismatch`, `pip install -e .` failure, `make: ***` | Re-run `prepare.sh` (includes build step) |
+| 4 | **build-related** | `ImportError: .*.so`, `undefined symbol`, `version .* mismatch`, `pip install -e .` failure, `make: ***` | Re-run `build-env.sh` (build + verify are one closed loop) |
 | 5 | **code-bug** | `Traceback` AND `AssertionError\|TypeError\|ValueError\|KeyError\|AttributeError\|SyntaxError` WITHOUT any env patterns from priorities 2-4 | Return receipt: `{ "result": "not_env_issue" }` |
 | 6 | **unknown** | None of the above match | Dispatch env-audit for diagnosis |
 
@@ -833,11 +846,11 @@ Note on priority: `ModuleNotFoundError` includes "Traceback" in its output
 but is an environment issue (priority 3), not a code bug (priority 5). The
 ordered evaluation ensures env patterns win over generic traceback matching.
 
-Additionally use `error_type` for routing context:
-- `prepare_failed` → likely env-recoverable or build-related
-- `run_failed` → check `stderr_tail` and `failure_patterns_matched`
-- `collect_failed` → likely code-bug or transient
-- `info_failed` → likely env-recoverable
+Additionally use `error_type` for routing context (op mapped via `script`):
+- `sync-code.sh` / `build-env.sh` failures → likely env-recoverable or build-related
+- `launch-job.sh` failures → check `stderr_tail` and `failure_patterns_matched`
+- `collect-outputs.sh` failures → likely code-bug or transient
+- `env-info.sh` / `query-resources.sh` failures → likely env-recoverable
 
 Check `failure_patterns_matched` first — if the worker already matched known
 patterns, use those directly instead of re-scanning `stderr_tail`.
@@ -850,9 +863,11 @@ Write receipt with `result: "escalated"` and the signal info. Do not retry.
 
 **Transient:**
 
+Retry the FAILING op (from the report's `script` field), not a fixed script:
+
 ```bash
 for ATTEMPT in 1 2 3; do
-    sh "$SKILL_DIR/scripts/prepare.sh" && break
+    sh "$SKILL_DIR/scripts/ops/$SCRIPT" $SCRIPT_ARGS && break
     echo "Retry $ATTEMPT failed. Waiting 30s..."
     sleep 30
 done
@@ -913,10 +928,12 @@ done
 **Build-related:**
 
 ```bash
-sh "$SKILL_DIR/scripts/prepare.sh"
+sh "$SKILL_DIR/scripts/ops/build-env.sh"
+sh "$SKILL_DIR/scripts/ops/sync-code.sh"
 ```
 
-Re-running prepare.sh re-syncs code and re-runs the build step.
+Re-running sync-code.sh re-transfers the source; build-env.sh re-runs the
+build and verify steps as one closed loop.
 
 **Code-bug:**
 
@@ -953,10 +970,10 @@ Wait --> read structured verdict --> re-classify from the failing checks
 **Trivial fix (transient retry / build rebuild):**
 
 ```bash
-sh "$SKILL_DIR/scripts/prepare.sh" && sh "$SKILL_DIR/scripts/info.sh" > /dev/null
+sh "$SKILL_DIR/scripts/ops/sync-code.sh"   && sh "$SKILL_DIR/scripts/ops/build-env.sh"   && sh "$SKILL_DIR/scripts/ops/env-info.sh" > /dev/null
 ```
 
-PASS if both exit 0.
+PASS if all exit 0.
 
 **Non-trivial fix (patch):**
 

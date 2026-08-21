@@ -98,4 +98,4 @@ The review and rewriting skills (`/auto-review-loop`, `/research-review`, `/pape
 
 - [`/vast-gpu`](../../skills/vast-gpu/SKILL.md) — direct rental control
 - [`/run-experiment`](../../skills/run-experiment/SKILL.md) — auto-deploy via `gpu: vast`
-- [`/monitor-experiment`](../../skills/monitor-experiment/SKILL.md) — collect results from running rentals
+- the generated experiment skill's `ops/collect-outputs.sh` — collect results from running rentals

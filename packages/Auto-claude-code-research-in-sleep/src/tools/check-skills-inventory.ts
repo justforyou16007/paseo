@@ -47,6 +47,12 @@ function globSkillMd(root: string): string[] {
       const skillPath = path.join(root, entry.name, "SKILL.md");
       if (fs.existsSync(skillPath)) {
         results.push(skillPath);
+      } else {
+        // Skill GROUPS (e.g. analyze-results-tools/) hold sub-skills one
+        // level down; the group itself is not a skill.
+        for (const sub of globSkillMd(path.join(root, entry.name))) {
+          results.push(sub);
+        }
       }
     }
   }
@@ -131,6 +137,10 @@ function requireCount(
   }
 }
 
+function readOptional(fp: string): string | null {
+  return fs.existsSync(fp) ? fs.readFileSync(fp, "utf-8") : null;
+}
+
 function checkInventory(): string[] {
   const failures: string[] = [];
   const main = skillNames(SKILLS_ROOT);
@@ -151,8 +161,8 @@ function checkInventory(): string[] {
   );
 
   const catalogText = read(CATALOG);
-  const readme = read(README);
-  const readmeCn = read(README_CN);
+  const readme = readOptional(README) ?? "";
+  const readmeCn = readOptional(README_CN) ?? "";
   const agentGuide = read(AGENT_GUIDE);
   const arisIntro = read(ARIS_INTRO);
   const arisIntroHtml = read(ARIS_INTRO_HTML);
@@ -255,21 +265,59 @@ function checkInventory(): string[] {
     }
   }
 
-  const watchdogTs = read(path.join(REPO_ROOT, "src", "tools", "watchdog.ts"));
+  const envConfig = read(
+    path.join(SKILLS_ROOT, "experiment-env-configuration", "SKILL.md"),
+  );
+  const runExp = read(path.join(SKILLS_ROOT, "run-experiment", "SKILL.md"));
+  const expQueue = read(path.join(SKILLS_ROOT, "experiment-queue", "SKILL.md"));
   const extCadence = read(path.join(SKILLS_ROOT, "shared-references", "external-cadence.md"));
-  const toolLoop =
-    /function checkLoop\b/.test(watchdogTs) &&
-    /"loop"/.test(watchdogTs) &&
-    /--register/.test(watchdogTs);
-  const docLoop = /"type"\s*:\s*"loop"/.test(extCadence);
+  const OPS = [
+    "env-info",
+    "query-resources",
+    "sync-code",
+    "build-env",
+    "launch-job",
+    "job-status",
+    "job-logs",
+    "collect-outputs",
+    "stop-job",
+    "release-resources",
+  ];
+  const opsSpecified = OPS.every((op) =>
+    new RegExp(`\\b${op}\\.sh\\b`).test(envConfig),
+  );
+  const failureContract = /uniform op exit contract/i.test(envConfig);
+  const noAnalysisInOps = /process-invariant only/i.test(envConfig);
   require_(
-    toolLoop,
-    "src/tools/watchdog.ts must implement loop-liveness checkLoop + --register accepting the 'loop' task type (A2)",
+    opsSpecified,
+    "experiment-env-configuration/SKILL.md must specify all ten ops (env-info…release-resources) (A2)",
     failures,
   );
   require_(
-    docLoop,
-    "external-cadence.md must document registering a watchdog 'loop' task — its trigger (A2)",
+    failureContract,
+    "experiment-env-configuration/SKILL.md must document the uniform op exit contract (failure-recovery entry point) (A2)",
+    failures,
+  );
+  require_(
+    noAnalysisInOps,
+    "experiment-env-configuration/SKILL.md must state ops are process-invariant only (analysis belongs to /analyze-results) (A2)",
+    failures,
+  );
+  const heartbeatWired =
+    runExp.includes("mcp__paseo__create_heartbeat") &&
+    runExp.includes("job-status.sh") &&
+    expQueue.includes("mcp__paseo__create_heartbeat") &&
+    expQueue.includes("job-status.sh");
+  require_(
+    heartbeatWired,
+    "run-experiment and experiment-queue must both arm a monitoring heartbeat and poll via job-status.sh (A2)",
+    failures,
+  );
+  const heartbeatBounded =
+    /expiresIn/.test(extCadence) && /maxRuns/.test(extCadence);
+  require_(
+    heartbeatBounded,
+    "external-cadence.md must document heartbeat bounds (expiresIn/maxRuns) (A2)",
     failures,
   );
 

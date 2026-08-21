@@ -115,7 +115,7 @@ claude
 > 读一下这个项目，验证所有 skills 是否正常：
 > /idea-creator, /research-review, /auto-review-loop, /novelty-check,
 > /idea-discovery, /research-pipeline, /research-lit, /run-experiment,
-> /analyze-results, /monitor-experiment, /pixel-art
+> /analyze-results, /pixel-art
 > ```
 
 </details>

@@ -4,7 +4,7 @@
 
 ## TL;DR
 
-ARIS is a collection of **85 composable Claude Code skills** that orchestrate **cross-model collaboration**: Claude Code drives the research (reads files, writes code, deploys experiments) while an external LLM (GPT-5.5 / 5.5 via [Codex MCP](https://github.com/openai/codex)) acts as a critical reviewer. The two models disagree, debate, and force each other to do better — adversarial, not self-play.
+ARIS is a collection of **88 composable Claude Code skills** that orchestrate **cross-model collaboration**: Claude Code drives the research (reads files, writes code, deploys experiments) while an external LLM (GPT-5.5 / 5.5 via [Codex MCP](https://github.com/openai/codex)) acts as a critical reviewer. The two models disagree, debate, and force each other to do better — adversarial, not self-play.
 
 Seven workflows (W1 / W1.5 / W2 / W3 / W4 / W5 / W6) compose into a full research lifecycle: idea discovery → experiment bridge → auto-review → paper writing → rebuttal → resubmit → conference talk. Tested end-to-end on real ICLR/NeurIPS submissions. Score progression on a real overnight run: **5/10 → 7.5/10 with 20+ GPU experiments**.
 
@@ -108,7 +108,7 @@ Every review round uses a **fresh codex thread**. We never use `codex-reply` to 
 3. 🔬 **GPT-5.5 code review** — fresh-thread cross-model review of the generated code BEFORE any GPU time is spent (catches ~80% of bugs that would otherwise burn 8-GPU-hour runs)
 4. ✅ **Sanity check** — smallest config runs first; checks for OOM, NaN, runtime errors
 5. 🚀 **Deploy** — SSH to your GPU server (per `CLAUDE.md`), launch in `screen`, capture stdout/stderr
-6. 📊 **Collect** — `/monitor-experiment` polls until completion, fetches results, formats for downstream skills
+6. 📊 **Collect** — the monitoring heartbeat (armed at launch) polls `job-status` until completion, `collect-outputs` fetches results, formats for downstream skills
 
 ```bash
 /experiment-bridge --- base repo: https://github.com/anthropic-experimental/some-baseline
@@ -263,14 +263,14 @@ A real overnight 4-round run on an ML research project, from borderline reject t
 
 ---
 
-## The 85 Skills
+## The 88 Skills
 
 Grouped by role (full catalog: [`docs/SKILLS_CATALOG.md`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/docs/SKILLS_CATALOG.md)).
 
 | Category               | Count | Headliners                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | ---------------------- | :---: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Literature & ideation  |   9   | [`/research-lit`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/research-lit/SKILL.md), [`/idea-creator`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/idea-creator/SKILL.md), [`/novelty-check`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/novelty-check/SKILL.md), [`/deepxiv`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/deepxiv/SKILL.md), [`/arxiv`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/arxiv/SKILL.md)                                                 |
-| Experiments            |   7   | [`/experiment-bridge`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/experiment-bridge/SKILL.md), [`/run-experiment`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/run-experiment/SKILL.md), [`/monitor-experiment`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/monitor-experiment/SKILL.md), [`/experiment-audit`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/experiment-audit/SKILL.md)                                                                                                                     |
+| Experiments            |   6   | [`/experiment-bridge`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/experiment-bridge/SKILL.md), [`/run-experiment`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/run-experiment/SKILL.md), [`/experiment-audit`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/experiment-audit/SKILL.md)                                                                                                                     |
 | Paper writing          |  12   | [`/paper-plan`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/paper-plan/SKILL.md), [`/paper-figure`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/paper-figure/SKILL.md), [`/paper-write`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/paper-write/SKILL.md), [`/paper-compile`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/paper-compile/SKILL.md), [`/auto-paper-improvement-loop`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/auto-paper-improvement-loop/SKILL.md) |
 | Audits                 |   5   | [`/proof-checker`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/proof-checker/SKILL.md), [`/paper-claim-audit`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/paper-claim-audit/SKILL.md), [`/citation-audit`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/citation-audit/SKILL.md), [`/result-to-claim`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/result-to-claim/SKILL.md), [`/kill-argument`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/kill-argument/SKILL.md)   |
 | Talks & posters        |   5   | [`/paper-talk`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/paper-talk/SKILL.md), [`/paper-slides`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/paper-slides/SKILL.md), [`/paper-poster-html`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/paper-poster-html/SKILL.md), [`/slides-polish`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/slides-polish/SKILL.md)                                                                                                                                               |
@@ -308,7 +308,7 @@ ARIS skills are plain `SKILL.md` files. They run anywhere an agent reads markdow
 
 ## 中文版速览
 
-ARIS（**A**utonomous **R**esearch via Adversarial **M**ulti-Agent Collaboration，**梦中科研**）是一组 85 个可组合的 Claude Code skills，编排**跨模型对抗式协作**：
+ARIS（**A**utonomous **R**esearch via Adversarial **M**ulti-Agent Collaboration，**梦中科研**）是一组 88 个可组合的 Claude Code skills，编排**跨模型对抗式协作**：
 
 - **执行**：Claude Code 读文件、写代码、跑实验、改论文
 - **审稿**：GPT-5.5/5.5（via [Codex MCP](https://github.com/openai/codex)）以**跨家族**审稿人身份打分、找弱点、提建议

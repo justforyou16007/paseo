@@ -172,9 +172,10 @@ curl -s "${LLM_BASE_URL}/chat/completions" \
 
 Priority: metric additions > reframing > new experiments
 
-> When `run-<project>-experiment` skill exists, use its atomic interface instead of manual SSH:
-> 1. `sh .claude/skills/run-<project>-experiment/scripts/prepare.sh` — sync code
-> 2. `sh .claude/skills/run-<project>-experiment/scripts/run.sh <exp_name> --args "..."` — launch
+> When `run-<project>-experiment` skill exists, use its op interface instead of manual SSH:
+> 1. `sh .claude/skills/run-<project>-experiment/scripts/ops/sync-code.sh` — sync code
+> 2. `sh .claude/skills/run-<project>-experiment/scripts/ops/build-env.sh` — build + verify
+> 3. `sh .claude/skills/run-<project>-experiment/scripts/ops/launch-job.sh <exp_name> --args "..."` — launch
 > Otherwise fall back to manual SSH + screen.
 
 #### Phase D: Wait for Results
@@ -182,8 +183,11 @@ Priority: metric additions > reframing > new experiments
 Monitor remote experiments
 
 > When the `run-<project>-experiment` skill exists, poll via:
-> `sh .claude/skills/run-<project>-experiment/scripts/monitor.sh <exp_name>`
-> Read `status` from the JSON output. Collect results via `collect.sh`.
+> `sh .claude/skills/run-<project>-experiment/scripts/ops/job-status.sh <exp_name>`
+> Read `status` from the JSON output. Collect results via `ops/collect-outputs.sh`.
+> If the launcher armed a monitoring heartbeat, the job's terminal tick
+> already wrote the receipt — read `.aris/runs/<run_id>.experiment.<exp>.done.json`
+> instead of polling.
 
 #### Phase E: Document Round
 

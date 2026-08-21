@@ -98,4 +98,4 @@ Review 和改写类 skill（`/auto-review-loop`、`/research-review`、`/paper-w
 
 - [`/vast-gpu`](../../skills/vast-gpu/SKILL.md) —— 直接租用控制
 - [`/run-experiment`](../../skills/run-experiment/SKILL.md) —— 通过 `gpu: vast` 自动部署
-- [`/monitor-experiment`](../../skills/monitor-experiment/SKILL.md) —— 从租用中的实例收集结果
+- 生成的实验 skill 的 `ops/collect-outputs.sh` —— 从租用中的实例收集结果

@@ -310,45 +310,17 @@ If sanity fails → **auto-debug before giving up** (max 3 attempts):
    - NaN/divergence → reduce learning rate, check data preprocessing
 
    > When `run-<project>-experiment` exists, read error patterns from:
-   > `sh .claude/skills/run-<project>-experiment/scripts/info.sh | jq -r '.error_patterns[]'`
+   > `sh .claude/skills/run-<project>-experiment/scripts/ops/env-info.sh | jq -r '.error_patterns[]'`
    > Otherwise fall back to these defaults.
 3. **Fix and re-run** — apply the fix, re-run sanity
 4. **Attempt 2+ still failing? → Call in Codex rescue** (if Codex plugin installed):
    Before the next retry, dispatch a paseo claude sub-agent for `/codex:rescue` per `shared-references/paseo-subagent-dispatch.md` to get a second opinion on the root cause. The rescue sub-agent is a claude child that may itself spawn a codex reviewer; it independently reads the code and error logs — it may spot issues Claude missed (wrong tensor shapes, subtle import shadowing, config mismatches, etc.). Apply its suggested fix, then re-run.
    - If `/codex:rescue` is not available (plugin not installed), continue with Claude's own diagnosis
-5. **Still failing after 3 attempts?** → write structured error receipt and
-   dispatch `/experiment-env-manager` for diagnosis and repair.
-
-   The failing command must redirect stderr so it can be captured:
-   ```bash
-   STDERR_FILE=$(mktemp)
-   sh "$SKILL_DIR/scripts/run.sh" <args> 2>"$STDERR_FILE"; EXIT_CODE=$?
-   ```
-
-   Then build the report with real stderr:
-   ```bash
-   STDERR_TAIL=$(tail -20 "$STDERR_FILE" | jq -R . | jq -s .)
-   rm -f "$STDERR_FILE"
-   LAST_CHANGED=$(git diff --name-only HEAD~1 2>/dev/null | head -1 || echo "null")
-   TS=$(date -u +%Y%m%dT%H%M%SZ)
-   REPORT_PATH=".aris/env-config/$PROJECT/error-reports/${TS}.json"
-   mkdir -p "$(dirname "$REPORT_PATH")"
-
-   jq -n \
-     --arg skill "experiment-bridge" \
-     --arg project "$PROJECT" \
-     --argjson exit_code "$EXIT_CODE" \
-     --argjson stderr_tail "$STDERR_TAIL" \
-     --arg last "$LAST_CHANGED" \
-     --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-     '{
-       skill: $skill, project: $project, error_type: "run_failed",
-       script: "run.sh", exit_code: $exit_code, stderr_tail: $stderr_tail,
-       failure_patterns_matched: [], attempts: 3,
-       context: { last_code_change: $last, last_successful_run: null },
-       timestamp: $ts
-     }' > "$REPORT_PATH"
-   ```
+5. **Still failing after 3 attempts?** → follow the generated skill's
+   unified op-failure routing: the failing op (`launch-job.sh` / `job-status.sh`)
+   already emitted its structured error JSON on stderr; write it to
+   `.aris/env-config/$PROJECT/error-reports/<TS>.json` and dispatch
+   `/experiment-env-manager` for diagnosis and repair.
 
    Dispatch env-manager:
    ```
@@ -409,24 +381,16 @@ Auto-routing rule: if any milestone in `EXPERIMENT_PLAN.md` declares ≥10 jobs 
 For each milestone:
 
 1. Dispatch the `/run-experiment` (or `/experiment-queue`) sub-agent above, then wait for its finish notification (end the turn; one child turn outstanding at a time). Do NOT launch the jobs yourself from this agent.
-2. Dispatch a paseo claude sub-agent for `/monitor-experiment` per `shared-references/paseo-subagent-dispatch.md` to track progress (reads from queue_state.json if `/experiment-queue` is active):
-
-```
-mcp__paseo__create_agent:
-  title: "monitor-experiment :: <milestone> :: <run_id>"
-  provider: $CFG.executor_provider
-  settings:
-    modeId: $CFG.executor_mode
-    thinkingOptionId: $CFG.executor_thinking   # omit when empty
-  initialPrompt: |
-    /monitor-experiment <exp names or server alias>
-    Run context: run_id=<run_id>, project root=<cwd> (shared workspace).
-    Report per-job status, collected metrics, and any failures; then stop.
-  notifyOnFinish: true
-```
-
-   When monitoring reports jobs still running, end the turn and re-dispatch
-   `/monitor-experiment` on the next wake-up - do not busy-poll from this agent.
+2. **Heartbeat-aware wait.** The launcher sub-agent arms its own monitoring
+   heartbeat (`create_heartbeat` in its Step 5.5; the queue arms a queue-level
+   one in its Step 3f) and reports `receipt.status == "monitoring"`. On that
+   receipt: keep the child alive (continuation child), end your turn — the
+   job's terminal tick writes the final receipt and the child's finish
+   notification re-invokes you. Your notification handler is **terminal-gated**:
+   a healthy-tick notification gets a one-line ack and no phase advance; only
+   a terminal receipt (`done`/`failed`/`early_stopped`/`blocked`) advances to
+   Phase 5. Never archive a `monitoring` child; never busy-poll job status
+   from this agent.
 3. Collect results as experiments complete
 
 **🚦 Checkpoint (if AUTO_DEPLOY = false):**
@@ -449,11 +413,14 @@ Deploy now? Or review the code first?
 As experiments complete:
 
 1. **Parse output files** (JSON/CSV/logs) for key metrics
-2. **Training quality check** — if W&B data is available (CLAUDE.md has `wandb: true` and `wandb_project`), dispatch a paseo claude sub-agent for `/training-check` per `shared-references/paseo-subagent-dispatch.md` to detect NaN, loss divergence, plateaus, or overfitting. If W&B is not configured, skip silently.
-
-   > When `run-<project>-experiment` exists, check W&B from:
-   > `sh .claude/skills/run-<project>-experiment/scripts/info.sh | jq '.wandb.enabled'`
-   > Otherwise fall back to reading CLAUDE.md `wandb: true`.
+2. **Training quality signals** — read the launcher's experiment receipts
+   (`.aris/runs/<run_id>.experiment.<exp>.done.json`) and the monitor tick log
+   (`.aris/runs/<run_id>.monitor.jsonl`): suspected NaN/divergence markers,
+   early-stop reasons, and `wandb` fields surface there. You do NOT judge
+   training quality here — that verdict belongs to `/analyze-results`
+   (Phase 5.6) and its analysis sub-skills, terminated by the cross-model
+   verifier. If a receipt shows `early_stopped`, carry the reason into the
+   results summary as a caveat.
 3. **Update `refine-logs/EXPERIMENT_TRACKER.md`** — fill in Status and Notes columns
 4. **Check success criteria** from EXPERIMENT_PLAN.md — did each experiment meet its bar?
 5. **Write initial results summary:**

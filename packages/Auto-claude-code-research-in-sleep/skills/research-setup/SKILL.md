@@ -270,7 +270,7 @@ If Q4 (Entropy) was "Yes":
 
 **Batch 3 (1 question):**
 
-- Q7 header "Check Interval" / "检查间隔", question: "How often should watchdog check logs?"
+- Q7 header "Check Interval" / "检查间隔", question: "How often should the monitoring heartbeat check the job?"
   (zh): "Watchdog 多久检查一次日志？"
   options: `["5 minutes", "10 minutes", "30 minutes"]` + "Other"
 
@@ -582,7 +582,7 @@ After it completes, transcribe results (do NOT judge them):
 
 1. `SKILL_DIR` is already set above using `PROJECT_SLUG`.
 2. Read environment type from the generated skill:
-   `sh "$SKILL_DIR/scripts/info.sh" 2>/dev/null | jq -r '.backend_hint // "none"'`
+   `sh "$SKILL_DIR/scripts/ops/env-info.sh" 2>/dev/null | jq -r '.backend_hint // "none"'`
    → set `answers.gpu_type` to the result.
 3. Read `$SKILL_DIR/env.json` → set
    `answers.experiment_skill = "run-${PROJECT_SLUG}-experiment"` and

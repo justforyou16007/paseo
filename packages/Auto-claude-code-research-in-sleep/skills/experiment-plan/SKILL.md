@@ -50,10 +50,10 @@ If these files do not exist, derive the same information from the user's prompt.
 
 ### Phase 0.5: Hardware Awareness (when available)
 
-If `.claude/skills/run-<project>-experiment/scripts/info.sh` exists, read it:
+If `.claude/skills/run-<project>-experiment/scripts/ops/env-info.sh` exists, read it:
 
 ```bash
-ENV_INFO=$(sh .claude/skills/run-<project>-experiment/scripts/info.sh 2>/dev/null) || true
+ENV_INFO=$(sh .claude/skills/run-<project>-experiment/scripts/ops/env-info.sh 2>/dev/null) || true
 ```
 
 When available, use `hardware.gpu_type`, `hardware.gpu_count`, `hardware.device`,

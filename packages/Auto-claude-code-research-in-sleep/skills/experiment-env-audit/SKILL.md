@@ -1,6 +1,6 @@
 ---
 name: experiment-env-audit
-description: 'Cross-model audit of a project''s experiment environment configuration with real execution verification. Static checks (G-K): command provenance, metric key agreement, failure detectability, environment reachability, analysis honesty. Execution checks (L-N): actually run prepare.sh/run.sh/collect.sh/info.sh and verify real results are produced. Dynamic checks (O): simulate agent workflow with source modifications. Patch regression (P): verify patch did not break existing functionality. Dispatched exclusively by /experiment-env-manager.'
+description: 'Cross-model audit of a project''s experiment environment configuration with real execution verification. Static checks (G-K): command provenance, metric key agreement, failure detectability, environment reachability, analysis honesty. Execution checks (L-N): actually run the ops (sync-code, build-env, launch-job, collect-outputs, env-info) and verify real results are produced. Dynamic checks (O): simulate agent workflow with source modifications. Patch regression (P): verify patch did not break existing functionality. Dispatched exclusively by /experiment-env-manager.'
 argument-hint: "[— project: <name>] [— reviewer: codex|oracle-pro|manual] [— target: draft|promoted] [— report-format: standard|structured] [— patch-id: <id>]"
 allowed-tools: Bash(*), Read, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission
 ---
@@ -108,7 +108,7 @@ mcp__paseo__create_agent
     Audit target (paths only — read them yourself, they are not summarized here):
       Bundle directory:    <BUNDLE_DIR>/
       Frozen config:       <BUNDLE_DIR>/env.json
-      Generated scripts:   <BUNDLE_DIR>/scripts/*.sh
+      Generated scripts:   <BUNDLE_DIR>/scripts/lib/env.sh, <BUNDLE_DIR>/scripts/ops/*.sh
       Generated skill:     <BUNDLE_DIR>/SKILL.md
       Baseline evidence:   refine-logs/EXPERIMENT_TRACKER.md
       Metric contract:     CLAUDE.md  (## Metric Target)
@@ -137,9 +137,10 @@ mcp__paseo__create_agent
     J. Environment reachability — is preparation.environment.verify_cmd a real
        check of the env that runs the entry point, or a tautology (e.g. `true`,
        `echo ok`, `python --version` for a CUDA job)? FAIL if tautological.
-    K. Analysis honesty — does feedback.analysis actually produce the artifact it
-       claims at output_path, or is it a stub? WARN on stub, FAIL on a stub
-       presented as complete.
+    K. Analysis honesty — the bundle must contain NO analysis logic (ops are
+       process-invariant only). FAIL if any op interprets results instead of
+       collecting facts; WARN if the collect-outputs receipt lacks the
+       result_files manifest that /analyze-results depends on.
 
     Write the report to .aris/env-config/<project>/ENV_CONFIG_AUDIT.md and the
     machine-readable verdict to .aris/env-config/<project>/ENV_CONFIG_AUDIT.json
@@ -224,14 +225,14 @@ Key properties:
 - **Creation check:** `|| exit 1` after `git worktree add` prevents
   continuing with a missing worktree.
 
-### L. prepare.sh — environment is reachable AND changes propagate
+### L. sync-code + build-env — environment is reachable AND changes propagate
 
 Two sub-checks:
 
-**L1. Basic reachability** — prepare.sh exits 0:
+**L1. Basic reachability** — sync-code.sh and build-env.sh exit 0:
 
 ```bash
-sh "$BUNDLE_DIR/scripts/prepare.sh"
+sh "$BUNDLE_DIR/scripts/ops/sync-code.sh" && sh "$BUNDLE_DIR/scripts/ops/build-env.sh"
 ```
 
 PASS if exit 0. This proves sync + build + verify all work.
@@ -250,9 +251,9 @@ Uses the worktree lifecycle pattern above.
 
 3. **Rebuild** in the worktree:
    ```bash
-   cd "$WORKTREE_DIR" && sh "$BUNDLE_DIR_ABS/scripts/prepare.sh"
+   cd "$WORKTREE_DIR" && sh "$BUNDLE_DIR_ABS/scripts/ops/sync-code.sh" && sh "$BUNDLE_DIR_ABS/scripts/ops/build-env.sh"
    ```
-   Note: prepare.sh syncs code from the worktree, so the canary propagates.
+   Note: sync-code.sh transfers code from the worktree, so the canary propagates.
    The scripts are referenced via absolute path because the promoted bundle
    is untracked/gitignored and does not exist inside the worktree.
 
@@ -273,9 +274,9 @@ experiment code but `run.sh` silently executes old compiled output.
 Run a minimal smoke experiment and verify it produces real output:
 
 ```bash
-sh "$BUNDLE_DIR/scripts/run.sh" audit-smoke --args "" --gpu 0 2>&1
+sh "$BUNDLE_DIR/scripts/ops/launch-job.sh" audit-smoke --args "" --gpu 0 2>&1
 # wait for completion (foreground mode or poll via monitor.sh)
-sh "$BUNDLE_DIR/scripts/collect.sh" audit-smoke
+sh "$BUNDLE_DIR/scripts/ops/collect-outputs.sh" audit-smoke
 ```
 
 PASS if:
@@ -299,7 +300,7 @@ don't pollute real experiment data. Keep the receipt for audit evidence.
 ### N. info.sh — metadata is valid
 
 ```bash
-INFO_OUT=$(sh "$BUNDLE_DIR/scripts/info.sh")
+INFO_OUT=$(sh "$BUNDLE_DIR/scripts/ops/env-info.sh")
 echo "$INFO_OUT" | jq -e '(.hardware or .resources) and .error_patterns and .connection' >/dev/null
 ```
 
@@ -326,9 +327,9 @@ Uses the worktree lifecycle pattern (same as L2 — separate worktree invocation
 
 3. **Run the full cycle** from the worktree:
    ```bash
-   cd "$WORKTREE_DIR" && sh "$BUNDLE_DIR_ABS/scripts/prepare.sh"
-   sh "$BUNDLE_DIR_ABS/scripts/run.sh" audit-dynamic --args "" --gpu 0 2>&1
-   sh "$BUNDLE_DIR_ABS/scripts/collect.sh" audit-dynamic
+   cd "$WORKTREE_DIR" && sh "$BUNDLE_DIR_ABS/scripts/ops/sync-code.sh" && sh "$BUNDLE_DIR_ABS/scripts/ops/build-env.sh"
+   sh "$BUNDLE_DIR_ABS/scripts/ops/launch-job.sh" audit-dynamic --args "" --gpu 0 2>&1
+   sh "$BUNDLE_DIR_ABS/scripts/ops/collect-outputs.sh" audit-dynamic
    ```
 
 4. **Verify:**
@@ -353,8 +354,8 @@ check verifies the patch did not break existing functionality.
 
 1. Run the standard smoke test (same as Check M):
    ```bash
-   sh "$BUNDLE_DIR/scripts/run.sh" audit-regression --args "" --gpu 0 2>&1
-   sh "$BUNDLE_DIR/scripts/collect.sh" audit-regression
+   sh "$BUNDLE_DIR/scripts/ops/launch-job.sh" audit-regression --args "" --gpu 0 2>&1
+   sh "$BUNDLE_DIR/scripts/ops/collect-outputs.sh" audit-regression
    ```
 
 2. Verify receipt exists with `status: "ok"` and non-null `primary_metric`.
@@ -494,7 +495,7 @@ Field semantics:
   human judgment (e.g., wrong entry_point, fundamentally broken environment).
 - `recommended_action`:
   - `none` — all checks pass
-  - `retry_prepare` — only prepare-related checks failed, re-running prepare.sh may help
+  - `retry_prepare` — only prepare-related checks failed, re-running sync-code.sh + build-env.sh may help
   - `patch_config` — specific env.json fields need patching
   - `full_reconfigure` — too many failures, env-configuration should re-run from scratch
   - `ask_user` — failures require human input (auto_fixable is false)

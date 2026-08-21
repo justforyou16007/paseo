@@ -70,17 +70,18 @@ an external event. The cadence is the _only_ thing the agent is waiting
 for; no semantic judgment is being re-run. ARIS already validated this
 pattern in production.
 
-- **GPU / experiment job completion polling.**
-  `/monitor-experiment` + `/check-gpu` on a cadence: "is the job done?
-  are the GPUs still busy?" The agent wakes, reads status, and either
-  reports done or sleeps again. The thing it waits on (job exit, GPU
-  free) is external and machine-checkable.
-- **WandB anomaly checks.** `/training-check` is _already_ cron-wired:
-  its SKILL.md sets itself up via `CronCreate` ("do not ask the user
-  whether to set it up — just set it") to read WandB metrics every N
-  minutes and catch NaN / divergence / idle GPUs early. The cadence
-  exists so the agent does not have to hold a session open for the whole
-  training run.
+- **GPU / experiment job completion polling.** The monitoring heartbeat
+  armed by `/run-experiment` Step 5.5 (per job) and `/experiment-queue`
+  Step 3f (per queue): each tick runs the generated skill's
+  `ops/job-status.sh` — "is the job done? are the GPUs still busy?" The
+  agent wakes, reads status, and either collects or sleeps again. The thing
+  it waits on (job exit, GPU free) is external and machine-checkable.
+- **WandB anomaly facts.** `ops/job-status.sh` carries the `wandb` fields
+  each tick; suspected NaN / divergence is RECORDED as a fact line in the
+  monitor tick log (never judged in-tick) and analyzed after termination
+  by `/analyze-results` sub-skills (`analysis-convergence`,
+  `analysis-training-dynamics`). The cadence exists so the agent does not
+  have to hold a session open for the whole training run.
 - **Experiment-queue progression visibility.** Periodically surfacing
   _where the queue is_ (N done / N running / N pending) so a human can
   watch overnight progress. Read-only visibility — see the fence below
@@ -94,10 +95,14 @@ pattern in production.
   external fact is "the world published something new today"; the
   cadence just sets the polling rhythm.
 
-ARIS's own `tools/watchdog.py` makes the additive shape explicit: it
-aggregates per-task status into a `summary.txt` whose header documents
-it as a "one-line-per-task summary for CronCreate polling." The
-artifact is built _so that_ an external low-frequency poller can read
+The generated experiment skill's ops make the additive shape explicit:
+`ops/job-status.sh` emits one machine-readable JSON object per call, built
+_so that_ a low-frequency heartbeat can read completion state cheaply,
+without holding a session open. The per-tick line appended to
+`.aris/runs/<run_id>.monitor.jsonl` serves the same role for the
+heartbeat's own liveness evidence. (Historical note: this was previously
+the standalone `tools/watchdog.py` daemon writing `summary.txt` for
+CronCreate polling; the bounded paseo heartbeat replaced it.)
 completion state cheaply, without holding a session open.
 
 ### Why these are safe same-model
@@ -169,8 +174,10 @@ done → then audit once), not the verdict itself.
 These are the surfaces external cadence is _for_. They wait on the
 outside world and self-judge only machine-checkable completion:
 
-- `/monitor-experiment` — poll for job completion / progress
-- `/check-gpu` — poll for GPU availability and running processes
+- `ops/job-status.sh` + the monitoring heartbeat — poll for job
+  completion / progress (armed by `/run-experiment` Step 5.5 and
+  `/experiment-queue` Step 3f)
+- `ops/query-resources.sh` — poll for resource availability
 - `/experiment-queue` — **visibility only** (report position); never a
   re-poll that competes with its own scheduler
 - overnight `/research-pipeline` — a **non-judgmental heartbeat + nudge**
@@ -228,33 +235,37 @@ re-derive them:
   re-prompted by the heartbeat — the fence forbids it; recovery is a
   human/cron decision, as below.
 
-The watchdog + `iteration-log.js` machinery is identical: the heartbeat
-writes its state file first each tick, registers with the watchdog, and
-records new-finding counts via the canonical resolver chain. The paseo
-substrate changes **where the tick comes from**, not what the tick may do.
+The `iteration-log.js` machinery is identical: the heartbeat writes its
+tick line first each tick and records new-finding counts via the canonical
+resolver chain. The paseo substrate changes **where the tick comes from**,
+not what the tick may do.
 
-## Loop self-heartbeat + watchdog liveness (catch a silent death)
+## Paseo heartbeat bounds convention (catch a silent death — and bound it)
 
-A `/loop` or `CronCreate` heartbeat is parasitic on a living session; if it dies
-(context compaction, session close) nothing notices. Two-part convention:
+An external-cadence heartbeat is parasitic on a living session; if the session
+dies (context compaction, close) the heartbeat dies with it — but an ABANDONED
+heartbeat that outlives its job is the opposite failure (it keeps waking a
+dead pipeline forever). Every `mcp__paseo__create_heartbeat` MUST be bounded:
 
-1. **Write a heartbeat first.** As the FIRST action of every iteration, rewrite
-   (or `touch`) the loop's state file (`*_STATE.json` / `run_state.json` / a tiny
-   `last_seen` file) so its mtime advances each tick _before_ any work that might hang.
-2. **Register it with the watchdog** at startup, and **unregister on completion**:
-   ```bash
-   node "$WATCHDOG" --register      '{"name":"<run_id>","type":"loop","state_file":"<the heartbeat file>","stale_after_seconds":21600}'
-   # on completion: node "$WATCHDOG" --unregister "<run_id>"
-   ```
-   where `WATCHDOG` resolves through the canonical chain (integration-contract §2):
-   `.aris/dist/tools/watchdog.js` → `dist/tools/watchdog.js` (2 layers only).
-   `stale_after_seconds` is the loop's OWN tolerance — set it to **comfortably exceed
-   the longest single iteration/operation** (≈ a few × the tick interval), **never** the
-   watchdog poll interval. The watchdog writes **STALE** to `summary.txt` + `alerts.log`
-   (which your poll already reads) when the file's mtime is older than that; a finished
-   loop shows **COMPLETED** (if its state carries a terminal `status`) or should be
-   unregistered. **It only DETECTS** — it never restarts the loop or re-runs a
-   verdict-bearing skill; recovery stays a human/cron decision, per the fence above.
+1. **Name it for upsert idempotence.** `name: "monitor-<project>-<exp>"` —
+   re-arming under the same name replaces, not duplicates
+   (`createOrReplace` by `(name, target)`).
+2. **Bound it at creation: `expiresIn` + `maxRuns`.** Even if the terminal
+   branch never runs, the heartbeat self-expires. `expiresIn` = the job's
+   `monitor.max_hours`; `maxRuns` = ceil(hours×60 / interval minutes).
+3. **Persist the id on disk.** Heartbeats are not listable and
+   `delete_heartbeat` is creator-only — the id must live in a file
+   (`handles/<exp>.monitor.json`) or the terminal branch cannot clean up.
+4. **Delete on terminal.** The tick that observes the terminal state deletes
+   the heartbeat (id from disk) as its last action before stopping.
+5. **Write a per-tick state line.** Each healthy tick appends one line to a
+   `.aris/runs/<run_id>.monitor.jsonl` — the tick log is the heartbeat's own
+   liveness evidence AND the record of machine-checkable facts (suspected
+   NaN/divergence markers are recorded here as facts, never judged).
+
+Who arms it: the **launching agent itself** (create_heartbeat is
+self-target-only), as its last action before ending the turn —
+`/run-experiment` Step 5.5 per job, `/experiment-queue` Step 3f per queue.
 
 ## Stall detection & forced structural pivot
 

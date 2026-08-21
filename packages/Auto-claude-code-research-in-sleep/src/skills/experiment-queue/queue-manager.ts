@@ -3,7 +3,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { execSync } from "child_process";
+import { execSync, spawnSync } from "child_process";
 import { createCli, runCli } from "../../lib/cli.js";
 import { GpuSampleHistory } from "../../tools/gpu-sample-history.js";
 import type { GpuSample } from "../../tools/gpu-sample-history.js";
@@ -65,6 +65,14 @@ interface ManifestPhase {
 interface Manifest {
   project?: string;
   cwd?: string;
+  /**
+   * Optional path to the generated experiment skill's
+   * scripts/ops/launch-job.sh. When set, job commands are rendered through
+   * `launch-job.sh --print-command` (the project's frozen run template)
+   * instead of being re-assembled here; the queue still owns screen
+   * wrapping, GPU/slot allocation, and scheduling.
+   */
+  launch_op?: string;
   conda?: string;
   conda_hook?: string;
   gpus?: number[];
@@ -112,6 +120,29 @@ interface AdaptiveOpts {
   gpuHistory: GpuSampleHistory;
   backend: EnvBackend | null;
   manifestJobMap: Map<string, ManifestJob>;
+}
+
+/**
+ * Write a per-job handle in the generated experiment skill's handle format
+ * (<project-skill>/handles/<job-id>.json) so ops/job-status.sh covers queue
+ * jobs too. Best-effort: the queue must not stall if the bundle is absent.
+ */
+function writeHandle(job: JobState, cwd: string): void {
+  try {
+    const handleDir = path.join(cwd, ".claude", "skills", `run-${job.id.replace(/EQ_/, "").split("_")[0]}-experiment`, "handles");
+    if (!fs.existsSync(handleDir)) return;
+    const handle = {
+      exp_name: job.id,
+      pid_or_session: job.screen_name,
+      gpu: job.gpu,
+      launched_at: job.started ?? now(),
+    };
+    const tmp = path.join(handleDir, `${job.id}.json.tmp`);
+    fs.writeFileSync(tmp, JSON.stringify(handle, null, 2));
+    fs.renameSync(tmp, path.join(handleDir, `${job.id}.json`));
+  } catch {
+    // bundle not present on this host — handles are best-effort
+  }
 }
 
 function now(): string {
@@ -356,6 +387,37 @@ function assignJobsToPhases(manifest: Manifest, state: QueueState): void {
   }
 }
 
+function renderCmdViaLaunchOp(
+  launchOp: string,
+  job: JobState,
+  slots: (number | string)[],
+  batchSize: number | null | undefined,
+  primarySlot: number | string,
+): string | null {
+  // Render through the project's frozen run template. The op prints the
+  // resolved command to stdout and exits 0 without launching
+  // (--print-command). Any op failure falls back to local rendering —
+  // the queue must not stall because the bundle is missing on this host.
+  try {
+    const args = [job.cmd, "--print-command"];
+    const slotArgs = [
+      "--slot",
+      String(primarySlot),
+      "--slot-list",
+      slots.map(String).join(","),
+    ];
+    if (batchSize != null) slotArgs.push("--batch-size", String(batchSize));
+    const { status, stdout } = spawnSync("sh", [launchOp, ...args, ...slotArgs], {
+      encoding: "utf-8",
+      timeout: 30_000,
+    });
+    if (status === 0 && stdout.trim()) return stdout.trim();
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function launchJob(
   job: JobState,
   slots: (number | string)[],
@@ -365,6 +427,7 @@ function launchJob(
   condaHook: string,
   rc: ResourceConfig,
   batchSize?: number | null,
+  launchOp?: string,
 ): { screenName: string; pid: number | null } {
   const primarySlot = slots[0] ?? 0;
   const slotList = slots.map(String).join(",");
@@ -376,9 +439,13 @@ function launchJob(
 
   const logFile = path.join(logDir, `${job.id}.log`);
   const batchVal = batchSize ?? job.current_batch_size;
-  const cmdWithSlot = job.cmd
+  let cmdWithSlot = job.cmd
     .replace(/\$\{GPU\}/g, String(primarySlot))
     .replace(/\$\{SLOT\}/g, String(primarySlot));
+  if (launchOp) {
+    const rendered = renderCmdViaLaunchOp(launchOp, job, slots, batchSize, primarySlot);
+    if (rendered) cmdWithSlot = rendered;
+  }
   const cmdFinal = cmdWithSlot
     .replace(/\$\{GPU_LIST\}/g, slotList)
     .replace(/\$\{SLOT_LIST\}/g, slotList)
@@ -596,6 +663,7 @@ function step(
       condaHook,
       rc,
       batchSize,
+      manifest.launch_op,
     );
     job.status = "running";
     job.slot = slots[0];
@@ -608,6 +676,7 @@ function step(
     job.attempts += 1;
     job.started = now();
     job.error = null;
+    writeHandle(job, cwd);
     launched++;
   }
 

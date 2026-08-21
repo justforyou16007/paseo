@@ -50,7 +50,7 @@ All active vast.ai instances are tracked in `vast-instances.json` at the project
 ]
 ```
 
-This file is the source of truth for `/run-experiment` and `/monitor-experiment` to connect to vast.ai instances.
+This file is the source of truth for `/run-experiment` (and its generated experiment skill's ops) to connect to vast.ai instances.
 
 ## Workflow
 
@@ -166,7 +166,7 @@ Use these to scale the base estimated hours across offers.
 Create an instance from a user-selected offer. **After the user picks an offer in Provision Step 4**, provision via the generated experiment skill:
 
 ```bash
-sh "$SKILL_DIR/scripts/prepare.sh"
+sh "$SKILL_DIR/scripts/ops/sync-code.sh + scripts/ops/build-env.sh"
 ```
 
 The detailed `vastai create instance` / wait / ssh-url / verify steps below are the **reference implementation** the backend reproduces — they are now executed by `prepare.sh`, not inlined here.
@@ -261,7 +261,7 @@ To destroy when done: /vast-gpu destroy <ID>
 Set up the rented instance for a specific experiment. Called automatically by `/run-experiment` when targeting a vast.ai instance. **Delegated to the generated experiment skill:**
 
 ```bash
-sh "$SKILL_DIR/scripts/prepare.sh"
+sh "$SKILL_DIR/scripts/ops/sync-code.sh + scripts/ops/build-env.sh"
 ```
 
 The pip-install / rsync / torch-verify steps below are the reference the backend reproduces.
@@ -306,8 +306,8 @@ Expected output: `PyTorch 2.1.0, CUDA: True, GPUs: 1` (or more GPUs if multi-GPU
 Tear down a vast.ai instance to stop billing. **Delegated to the generated experiment skill** (collects results first, then destroys; respects `auto_destroy` — skipped if false):
 
 ```bash
-sh "$SKILL_DIR/scripts/collect.sh"
-sh "$SKILL_DIR/scripts/teardown.sh"
+sh "$SKILL_DIR/scripts/ops/collect-outputs.sh"
+sh "$SKILL_DIR/scripts/ops/release-resources.sh"
 ```
 
 The result-download / destroy / state-update steps below are the reference the backend reproduces.

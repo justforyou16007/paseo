@@ -26,9 +26,9 @@ Phase 0    Pre-flight: resolve roots, detect existing config, validate input mod
 Phase 1    Read preparation config from PRD (files + SSH)
 Phase 2    Read preparation config from PRD (environment + resources)
 Phase 3    Read run config from PRD
-Phase 4    Read feedback config from PRD (error, result, analysis)
+Phase 4    Read feedback config from PRD (error, result) + monitor config
 Phase 4.5  Transport config — write .aris/experiment-env.json (internal) + CLAUDE.md env block
-Phase 5    Emit the project-local skill bundle (SKILL.md + scripts/ + env.json)
+Phase 5    Emit the project-local skill bundle (router SKILL.md + lib/ + ops/ + env.json)
 Phase 5.5  Establish runnable baseline (mock if PRD specifies) — requires Phase 5 scripts
 Phase 6    Verify and promote: syntax check + dry-runs → finalize, print summary
 Phase 6.5  Save exploration to references/index.md for future reuse
@@ -38,19 +38,28 @@ Phase 6.5  Save exploration to references/index.md for future reuse
 
 | # | Path | Contents |
 |---|------|----------|
-| 1 | `.claude/skills/run-<project>-experiment/SKILL.md` | The replayable prepare→run→feedback procedure |
-| 2 | `.claude/skills/run-<project>-experiment/scripts/prepare.sh` | Sync code + verify dependency env |
-| 3 | `.claude/skills/run-<project>-experiment/scripts/run.sh` | Launch one experiment (takes a run-spec) |
-| 4 | `.claude/skills/run-<project>-experiment/scripts/collect.sh` | Pull back logs + results |
-| 5 | `.claude/skills/run-<project>-experiment/scripts/analyze.sh` | Produce the analysis artifact |
-| 6 | `.claude/skills/run-<project>-experiment/env.json` | Frozen answers (the config of record) |
-| 6.1 | `.claude/skills/run-<project>-experiment/scripts/monitor.sh` | Poll running job status: returns JSON with status/GPU/logs/W&B |
-| 6.2 | `.claude/skills/run-<project>-experiment/scripts/info.sh` | Dump environment metadata: hardware, error patterns, W&B, connection |
-| 6.3 | `.claude/skills/run-<project>-experiment/scripts/teardown.sh` | Release environment resources (destroy instances, stop containers) |
-| 6.4 | `.claude/skills/run-<project>-experiment/handles/` | Per-experiment handle JSON files (replaces /tmp/handle.json) |
-| 7 | `.aris/env-config/<project>/receipt.json` | Configuration receipt |
+| 1 | `.claude/skills/run-<project>-experiment/SKILL.md` | Short op router: one operation per invocation |
+| 2 | `.claude/skills/run-<project>-experiment/env.json` | Frozen answers (the config of record, v2) |
+| 3 | `.claude/skills/run-<project>-experiment/scripts/lib/env.sh` | Shared library: env.json read, backend dispatch, handle IO |
+| 4 | `.claude/skills/run-<project>-experiment/scripts/ops/env-info.sh` | Static environment metadata JSON |
+| 5 | `.claude/skills/run-<project>-experiment/scripts/ops/query-resources.sh` | Live free-resource query |
+| 6 | `.claude/skills/run-<project>-experiment/scripts/ops/sync-code.sh` | Transfer code to the execution machine |
+| 7 | `.claude/skills/run-<project>-experiment/scripts/ops/build-env.sh` | Build + verify the dependency environment |
+| 8 | `.claude/skills/run-<project>-experiment/scripts/ops/launch-job.sh` | Launch one job; write handle |
+| 9 | `.claude/skills/run-<project>-experiment/scripts/ops/job-status.sh` | Job status + resource consumption JSON |
+| 10 | `.claude/skills/run-<project>-experiment/scripts/ops/job-logs.sh` | Job log query (tail/since/full) |
+| 11 | `.claude/skills/run-<project>-experiment/scripts/ops/collect-outputs.sh` | Pull back results + logs; write enriched receipt |
+| 12 | `.claude/skills/run-<project>-experiment/scripts/ops/stop-job.sh` | Stop one running job |
+| 13 | `.claude/skills/run-<project>-experiment/scripts/ops/release-resources.sh` | Release environment resources |
+| 14 | `.claude/skills/run-<project>-experiment/handles/` | Per-experiment handle JSON files |
+| 15 | `.aris/env-config/<project>/receipt.json` | Configuration receipt |
 
-Rows 1–6.4 are written to a **staging directory first** and only moved into
+Each op is a **process-invariant operation**: it moves files, launches
+processes, or reads state — it never analyzes results. Analysis (convergence,
+divergence, training dynamics, comparisons) lives in `/analyze-results` and its
+sub-skills, never in the generated bundle.
+
+Rows 1–14 are written to a **staging directory first** and only moved into
 `.claude/skills/` after Phase 6 verification passes.
 
 > **This skill does NOT modify the ARIS repo.** The environment is project data,
@@ -252,8 +261,7 @@ Read `prd.feedback.error.failure_patterns` → set failure_patterns[]
 - `task_type`: `"unknown"`
 - `failure_patterns`: use `DEFAULT_FAILURE_PATTERNS`
 
-`collect.sh` greps these patterns and surfaces matching lines. `analyze.sh`
-Stage 1 uses the same list for comprehensive error log collection. A silent
+`collect-outputs.sh` greps these patterns and surfaces matching lines. A silent
 failure that looks identical to "still running" is the worst outcome — the
 pattern list should be as comprehensive as possible for the specific task type.
 
@@ -280,26 +288,36 @@ feedback.result.primary_metric_key".
 
 Record `feedback.result = { path_template, format, primary_metric_key, extra_keys[] }`.
 
-### 4c. Analysis feedback — what do the numbers mean?
+### 4c. Monitor config — how is a running job watched?
 
 ```
-Read `prd.feedback.analysis.mode`        → set mode
-Read `prd.feedback.analysis.logic`       → set logic
-Read `prd.feedback.analysis.output_path` → set output_path
+Read `prd.monitor.interval_cron`          → set interval_cron
+Read `prd.monitor.escalate_cron`          → set escalate_cron
+Read `prd.monitor.max_hours`              → set max_hours
+Read `prd.monitor.early_stop`             → set early_stop
+Read `prd.monitor.stall`                  → set stall
 ```
 
 **Defaults when omitted:**
-- `mode`: `"standard"` (standard statistical analysis driven by /analyze-results)
-- `logic`: `""` (empty — /analyze-results uses its default)
-- `output_path`: `"refine-logs/EXPERIMENT_RESULTS.md"`
+- `interval_cron`: `"*/20 * * * *"` (every 20 minutes, off the :00/:30 marks)
+- `escalate_cron`: `"23 * * * *"` (hourly after 6 healthy ticks)
+- `max_hours`: `48`
+- `early_stop`: `{ "enabled": false }` — when enabled, carries
+  `max_training_time_hours`, `convergence {enabled, patience, min_delta}`,
+  `divergence {enabled, threshold_multiplier}`, `entropy_collapse {enabled,
+  threshold}` (same shape `/research-setup` collects). These conditions are
+  **inputs to the analysis sub-skills**, not enforced by the ops — the ops and
+  the heartbeat wake contract only surface machine-checkable facts.
+- `stall`: `{ "no_log_growth_minutes": 45, "gpu_idle_threshold_pct": 5,
+  "consecutive_alert_ticks": 3 }`
 
-Record `feedback.analysis = { mode, logic, output_path }`.
+Record `monitor = { interval_cron, escalate_cron, max_hours, early_stop, stall }`.
 
-**Analysis is driven by `/analyze-results`.** `analyze.sh` Stage 2 collects
-result file paths; `/analyze-results` handles all analysis logic, iteration,
-and supplementary experiment dispatch. The `— method` parameter on
-`/analyze-results` accepts a user's existing analysis script as the starting
-point.
+**Analysis is NOT configured here.** Analysis (convergence, training dynamics,
+comparisons, W&B interpretation) is owned by `/analyze-results` and its
+sub-skills under `skills/analyze-results-tools/`. The generated bundle only
+freezes where results and logs land (`feedback.*`) so analysis sub-skills can
+find them.
 
 ---
 
@@ -338,11 +356,11 @@ Everything below is written under `$STAGING_DIR` = `.aris/env-config/<project>/d
 in the **project**, NOT into `.claude/skills/` yet. The bundle is promoted after
 Phase 6 verification passes.
 
-### 5a. `env.json` — the config of record
+### 5a. `env.json` — the config of record (v2)
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "project": "<project>",
   "generated": "<ISO-8601 UTC>",
   "source": "experiment-env-configuration",
@@ -375,8 +393,14 @@ Phase 6 verification passes.
       "task_type": "<task type from PRD>",
       "failure_patterns": ["<from PRD>"]
     },
-    "result": { "path_template": "...", "format": "...", "primary_metric_key": "...", "extra_keys": ["..."] },
-    "analysis": { "mode": "...", "logic": "...", "output_path": "..." }
+    "result": { "path_template": "...", "format": "...", "primary_metric_key": "...", "extra_keys": ["..."] }
+  },
+  "monitor": {
+    "interval_cron": "*/20 * * * *",
+    "escalate_cron": "23 * * * *",
+    "max_hours": 48,
+    "early_stop": { "enabled": false },
+    "stall": { "no_log_growth_minutes": 45, "gpu_idle_threshold_pct": 5, "consecutive_alert_ticks": 3 }
   }
 }
 ```
@@ -387,125 +411,61 @@ after audit passes), so an un-audited configuration is inert rather than
 silently authoritative.
 
 `backend_hint` records whether an existing `EnvBackend` (`local`/`remote`/`vast`/
-`modal`/`docker`) covers this environment. When it does, the generated scripts
+`modal`/`docker`) covers this environment. When it does, the generated ops
 call `env-helper.js` and inherit its retry/sync behavior. When it is `custom`,
-the scripts issue the commands directly. **No ARIS source file is edited either way.**
+the ops issue the commands directly. **No ARIS source file is edited either way.**
 
-### 5b. The seven scripts
+`monitor` is read by `/run-experiment` Step 5.5 (heartbeat arming) and by the
+monitor wake contract in the router SKILL.md. It is NOT read by any op except
+`job-status.sh` surfacing facts (elapsed time vs max_hours, log mtime age)
+without judging them.
 
-Each is POSIX `sh`, `set -eu`, reads `env.json` via `jq`, and accepts
-`--dry-run` (print the command, execute nothing). All must be executable
-(`chmod +x`).
+### 5b. The shared library and the ten ops
 
-**`prepare.sh`** — three steps:
+Every script under `scripts/` is POSIX `sh`, `set -eu`, reads `env.json` via
+`jq`, and accepts `--dry-run` (print the command, execute nothing). All must
+be executable (`chmod +x`). Each op sources `scripts/lib/env.sh`.
 
-1. **Sync** — transfer code per `preparation.files`.
-   When `location == "remote"`, use `ssh_alias` from `preparation.files.ssh_alias`
-   (read from env.json, not hardcoded) for rsync/scp/git operations.
-2. **Build** — if `preparation.environment.build_cmd` is set, run the build
-   command on the execution machine. Incremental build is fine.
-   If `build_cmd` is empty, skip this step (code runs directly).
-3. **Verify** — run `preparation.environment.verify_cmd`. Non-zero exit
-   means do not proceed to `run.sh`.
+#### The shared library — `scripts/lib/env.sh`
 
-**`run.sh <exp_name> [--gpu N] [--args "..."] [--entry-point <path>]`** —
-substitute into `run.template` and launch. Prints the resolved command before
-executing so the log records exactly what ran.
+Provides, as POSIX sh functions (no analysis logic, ever):
 
-When `--entry-point <path>` is provided, override `run.entry_point` with the
-given path. This is used by Phase 5.5 mock baseline to run the generated mock
-script instead of the project's real entry point.
+- `env_load` — locate and validate `env.json` (walks up from the script dir)
+- `env_get <jq-path>` — read one config value
+- `backend_run <remote-cmd>` — run a command on the execution machine
+  (`backend_hint != "custom"` → `env-helper.js` transport; else direct ssh/local)
+- `handle_write <exp_name> <pid_or_session> <gpu>` / `handle_read <exp_name>` —
+  atomic JSON handle IO under `handles/`
+- `json_out <exit_code> <payload>` — emit the op's result JSON to stdout on
+  success, or the structured error JSON to stderr on failure (see 5b.0)
+- `dry_run_guard` — when `--dry-run` is set, print the command and exit 0
 
-`run.sh` saves the running experiment's handle to `handles/<exp_name>.json`
-(replacing the previous convention of `/tmp/handle.json`):
-```json
-{ "exp_name": "...", "pid_or_session": "...", "launched_at": "<ISO-8601>" }
-```
+#### 5b.0 — The uniform op exit contract (failure-recovery entry point)
 
-**`collect.sh <exp_name>`** — pull back `feedback.error.log_path` and
-`feedback.result.path_template`; grep the log for `failure_patterns`; print a
-verdict line: `RESULT ok <primary_metric>=<value>` or `RESULT failed <first matching pattern>`.
+Every op follows the same exit contract. This is what makes the unified repair
+loop possible — callers never write per-op failure handling.
 
-`collect.sh` also writes the enriched receipt to
-`.aris/runs/<run_id>.experiment.<exp_name>.done.json`:
+- **Success:** exit 0; a single JSON object on **stdout**.
+- **Failure:** exit non-zero; a structured error JSON on **stderr**:
 
 ```json
 {
-  "exp_name": "...",
-  "status": "ok|failed",
-  "primary_metric": null,
-  "metrics": {},
-  "result_path": "...",
-  "log_path": "...",
-  "analysis_path": "...",
-  "failure_reason": null,
-  "failure_patterns_matched": [],
-  "error_report": "<output_dir>/error_report.md",
-  "error_count": 0,
-  "error_types": [],
-  "gpu_usage": { "memory_used_mib": 0, "utilization_pct": 0 },
-  "wandb": null,
-  "handle": "handles/<exp>.json",
-  "elapsed_seconds": 0,
-  "completed_at": "<ISO-8601>"
+  "op": "sync-code",
+  "exit_code": 1,
+  "stderr_tail": ["<last 20 lines of stderr>"],
+  "failure_patterns_matched": ["<any feedback.error.failure_patterns hit>"],
+  "handle": "handles/<exp>.json"
 }
 ```
 
-This receipt replaces multiple formerly separate data sources: env-helper
-monitor output, SSH W&B queries, CLAUDE.md parsing, and hardcoded error
-patterns — all in one file that downstream skills can read directly.
+`handle` is present only for ops that had already launched something
+(`launch-job`). Ops must guarantee this JSON even when the underlying command
+dies mid-write (build it in a temp file, then emit).
 
-**`analyze.sh`** — two-stage output:
+#### The ten ops — `scripts/ops/`
 
-**Stage 1: Comprehensive error log collection.** Scan ALL log files for the
-error patterns in `feedback.error.failure_patterns[]`. Collect:
-- Full stack traces (from error marker through the final error line)
-- Surrounding context (5 lines before and after each match)
-- Log file path and line number for each error
-- Deduplicated error summary (same root cause collapsed)
-
-Write to `<output_dir>/error_report.md`:
-```
-## Error Report — <exp_name>
-### Errors Found: <count>
-#### Error 1: <error type> at <log_file>:<line>
-<context + full trace>
-### Summary
-- Total errors: <n>
-- Unique error types: <n>
-- Most frequent: <type> (<count> occurrences)
-```
-
-**Stage 2: Result collection for /analyze-results.** Collect all result file
-paths and output a manifest to stdout (JSON list of `{path, format, experiment}`
-entries). `/analyze-results` reads this manifest as its input when it drives
-the iterative analysis loop. The actual analysis logic lives in
-`/analyze-results`, not in this script.
-
-Stage 1 always runs. A run with zero errors produces an error_report.md
-confirming "0 errors found".
-
-**`monitor.sh <exp_name>`** — check status of a running experiment. Reads the
-handle from `handles/<exp_name>.json`, queries the backend (screen session /
-process / modal app / local pid), and outputs a **single JSON object** to stdout:
-
-```json
-{
-  "status": "running|done|failed|unknown",
-  "exit_code": null,
-  "gpu_usage": { "memory_used_mib": 0, "utilization_pct": 0 },
-  "tail": ["<last 20 log lines>"],
-  "elapsed_seconds": 0,
-  "wandb": { "run_id": "...", "url": "...", "project": "...", "entity": "..." }
-}
-```
-
-This replaces the pattern where `/monitor-experiment` called `env-helper.js
-monitor` directly and pulled W&B metrics via raw SSH Python snippets. The W&B
-query is done internally using `wandb` config from `env.json`.
-
-**`info.sh`** — dump environment metadata as a **single JSON object** to stdout.
-Downstream skills call this instead of reading `.aris/experiment-env.json` directly:
+**`env-info.sh`** — static environment metadata as a single JSON object on
+stdout. Downstream skills call this instead of reading `env.json` directly:
 
 ```json
 {
@@ -534,32 +494,130 @@ Downstream skills call this instead of reading `.aris/experiment-env.json` direc
 }
 ```
 
-`connection.ssh_alias` is read from `env.json` `preparation.files.ssh_alias`.
-It is `null` for local environments.
+`connection.ssh_alias` is `null` for local environments. `resources` is the
+canonical resource slot config read by `/experiment-queue` for scheduling;
+`hardware` is a backward-compatible alias computed from `resources` when the
+resource type is `"gpu"`. `/experiment-plan` reads `hardware`; `/experiment-bridge`
+reads `error_patterns` and `wandb`; `/experiment-queue` reads `connection`.
 
-`resources` is the canonical resource slot config read by `/experiment-queue`
-for scheduling. `hardware` is a backward-compatible alias computed from
-`resources` when the resource type is `"gpu"` (otherwise `gpu_count: 0`).
-Downstream skills that only need GPU metadata can continue reading `hardware`.
+**`query-resources.sh`** — live free-resource query. Runs
+`resources.free_check.cmd` on the execution machine, filters by
+`threshold`/`compare`/`index_by`, and outputs:
 
-`/experiment-plan` reads `hardware` for compute estimates; `/experiment-bridge`
-reads `error_patterns` (replacing hardcoded OOM/CUDA patterns) and `wandb`;
-`/experiment-queue` reads `connection` to populate manifest fields.
+```json
+{ "queried_at": "<ISO-8601>", "free_ids": [0, 1], "per_slot": [ { "id": 0, "value": 120, "unit": "mib" } ] }
+```
 
-**`teardown.sh [--force]`** — release environment resources. For `vast`:
-destroy the instance; for `modal`: stop the app; for `docker`: stop and remove
-the container; for `remote`/`local`: no-op (or kill stale screen sessions with
-`--force`). Exit 0 on success, 1 on failure.
+**`sync-code.sh`** — transfer code per `preparation.files` (rsync/scp/git via
+`ssh_alias` read from env.json, never hardcoded). Output: `{ "synced": true,
+"files": <count>, "excludes": [...] }`. Fails (per 5b.0) when the transfer
+command exits non-zero.
 
-### 5c. `SKILL.md` — the replayable procedure
+**`build-env.sh`** — build + verify, one closed loop:
+1. If `preparation.environment.build_cmd` is set, run it on the execution
+   machine (incremental is fine). If empty, skip.
+2. Run `preparation.environment.verify_cmd`. Non-zero exit fails the op —
+   do not proceed to `launch-job.sh`.
+
+Output: `{ "built": true, "verified": true }`.
+
+**`launch-job.sh <exp_name> [--gpu N] [--args "..."] [--entry-point <path>] [--print-command]`** —
+substitute into `run.template` and launch. Prints the resolved command before
+executing so the log records exactly what ran. `--entry-point` overrides
+`run.entry_point` (used by Phase 5.5 mock baseline). `--print-command` prints
+the resolved command **without launching** — consumed by `queue-manager.ts`
+so the queue renders commands through the same frozen template instead of
+re-assembling its own.
+
+Saves the handle to `handles/<exp_name>.json`:
+```json
+{ "exp_name": "...", "pid_or_session": "...", "gpu": 0, "launched_at": "<ISO-8601>" }
+```
+Output: `{ "exp_name": "...", "handle": "handles/<exp>.json", "command": "<resolved>" }`.
+
+**`job-status.sh [<exp_name>] [--queue <run_dir>]`** — status + resource
+consumption of a running job. Reads the handle from `handles/<exp_name>.json`;
+with no argument, uses the newest handle. `--queue` reads a
+`queue_manager`-produced `queue_state.json` (read-only) and reports per-job
+status. Outputs a single JSON object:
+
+```json
+{
+  "status": "running|done|failed|unknown",
+  "exit_code": null,
+  "gpu_usage": { "memory_used_mib": 0, "utilization_pct": 0 },
+  "elapsed_seconds": 0,
+  "log_age_seconds": 0,
+  "max_hours": 48,
+  "session_alive": true,
+  "wandb": { "run_id": "...", "url": "...", "project": "...", "entity": "..." }
+}
+```
+
+`elapsed_seconds`, `log_age_seconds`, `max_hours`, `session_alive` are
+**facts surfaced for the heartbeat wake contract** — this op never decides
+whether the job should stop. The W&B query (when `wandb.enabled`) is done
+internally using config from `env.json`.
+
+**`job-logs.sh <exp_name> [--tail N] [--since <duration>] [--full]`** — log
+query. Defaults to the last 20 lines. `--full` emits the entire log (failure
+diagnosis needs the whole trace; status polling needs only the tail). Output:
+`{ "exp_name": "...", "log_path": "...", "lines": ["..."] }`.
+
+**`collect-outputs.sh <exp_name>`** — pull back
+`feedback.error.log_path` and `feedback.result.path_template`; grep the log for
+`failure_patterns`; print a verdict line: `RESULT ok <primary_metric>=<value>`
+or `RESULT failed <first matching pattern>`. Also gathers the full error-log
+context (stack traces ±5 lines, deduplicated summary) into
+`<output_dir>/error_report.md` — data collection only, no interpretation.
+
+Writes the enriched receipt to `.aris/runs/<run_id>.experiment.<exp_name>.done.json`:
+
+```json
+{
+  "exp_name": "...",
+  "status": "ok|failed",
+  "primary_metric": null,
+  "metrics": {},
+  "result_files": [{ "path": "...", "format": "json", "experiment": "..." }],
+  "result_path": "...",
+  "log_path": "...",
+  "error_report": "<output_dir>/error_report.md",
+  "failure_reason": null,
+  "failure_patterns_matched": [],
+  "gpu_usage": { "memory_used_mib": 0, "utilization_pct": 0 },
+  "wandb": null,
+  "handle": "handles/<exp>.json",
+  "elapsed_seconds": 0,
+  "completed_at": "<ISO-8601>"
+}
+```
+
+`result_files` is the manifest `/analyze-results` reads as input — analysis
+sub-skills start from this list, so no separate manifest script is needed.
+This receipt replaces multiple formerly separate data sources (env-helper
+monitor output, SSH W&B queries, CLAUDE.md parsing, hardcoded error patterns).
+
+**`stop-job.sh <exp_name> [--force]`** — stop one running job. `screen -X
+quit` / `tmux kill-session` / `kill <pid>` / `modal app stop` per handle +
+`launch_mode`. `--force` escalates to `kill -9`. Output:
+`{ "exp_name": "...", "stopped": true }`. Used by the heartbeat wake contract
+(machine-checkable early stop), the repair loop, and manual intervention.
+
+**`release-resources.sh [--force]`** — release environment resources. For
+`vast`: destroy the instance; for `modal`: stop the app; for `docker`: stop
+and remove the container; for `remote`/`local`: no-op (or kill stale screen
+sessions with `--force`). Exit 0 on success, 1 on failure.
+
+### 5c. `SKILL.md` — the op router
 
 Frontmatter:
 
 ```yaml
 ---
 name: run-<project>-experiment
-description: 'Run one experiment for the <project> research project: prepare (sync code + verify dependency environment), run (launch via the frozen command), and feed back (errors, metrics, analysis). Generated by /experiment-env-configuration from a verified PRD — do not re-answer configuration questions, the answers are frozen in env.json. Use whenever an experiment must be executed or re-executed for this project.'
-argument-hint: "<exp_name> [— args: ...] [— gpu: N] [— skip-prepare] [— entry-point: <path>]"
+description: 'One experiment operation per invocation for the <project> research project: env-info, query-resources, sync-code, build-env, launch-job, job-status, job-logs, collect-outputs, stop-job, release-resources. Process operations only — analysis lives in /analyze-results. Generated by /experiment-env-configuration from a verified PRD — answers are frozen in env.json; change them via /experiment-env-manager.'
+argument-hint: "<operation> [args] — exactly one operation per invocation"
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob
 ---
 ```
@@ -567,27 +625,59 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob
 Body sections, in order:
 
 1. **Frozen configuration** — a human-readable rendering of `env.json`
-   (where code lives, which env, the run command, the three feedback channels).
-   Marked explicitly: *"These values were verified during configuration.
-   Do not re-derive them. To change them, use `/experiment-env-manager`."*
-2. **Step 1 — Prepare** — `scripts/prepare.sh`; hard-stop on failure.
-   Skippable with `— skip-prepare` when a run in the same session already prepared.
-3. **Step 2 — Run** — `scripts/run.sh <exp_name>` with the resolved arguments.
-   When `— entry-point: <path>` is provided, pass `--entry-point <path>` to run.sh.
-4. **Step 3 — Error feedback** — `scripts/collect.sh <exp_name>`; on
-   `RESULT failed`, report the matched pattern and the last 40 log lines, and stop.
-5. **Step 4 — Result feedback** — read `primary_metric_key`; append a row to
-   `refine-logs/EXPERIMENT_TRACKER.md`.
-6. **Step 5 — Analysis feedback** — `scripts/analyze.sh`; the artifact lands at
-   `feedback.analysis.output_path`.
-7. **Receipt** — write `.aris/runs/<run_id>.experiment.<exp_name>.done.json`:
-   ```json
-   { "exp_name": "...", "status": "ok|failed", "primary_metric": <number|null>,
-     "result_path": "...", "analysis_path": "...", "log_path": "...",
-     "failure_reason": "<null or matched pattern>", "completed_at": "<ISO-8601>" }
+   (where code lives, which env, the run command, the feedback channels,
+   the monitor block). Marked explicitly: *"These values were verified during
+   configuration. Do not re-derive them. To change them, use
+   `/experiment-env-manager`."*
+2. **Operations table** — one row per op: name, invocation, stdout contract,
+   side effects. The rule: **exactly one operation per invocation**; run the
+   script, report its JSON or verdict line, stop. Never chain ops in one
+   invocation.
+3. **Op failure routing** (verbatim, so every caller inherits it):
+
    ```
-   This is the file a dispatching parent reads. The agent's reply text is at most
-   a one-line status (file-paths-only).
+   When an op exits non-zero:
+   1. Read the structured error JSON from the op's stderr.
+   2. Write it to .aris/env-config/<project>/error-reports/<TS>.json
+      (fields: op, exit_code, stderr_tail, failure_patterns_matched, handle?).
+   3. Dispatch /experiment-env-manager — mode: error-report — error-report: <path>
+      as a paseo sub-agent. The CALLER performs the dispatch; this generated
+      skill never spawns agents itself (it has no agent-spawning tools).
+   4. env-manager classifies:
+      - transient        → retry the same op (≤3 times, 30s backoff)
+      - env-recoverable  → patch env.json → regenerate affected ops → retry
+      - signal-kill / code-bug → stop and surface upward (do not retry)
+   5. On env-manager receipt result == "fixed": retry the op once.
+      On "not_env_issue" or "escalated": stop and report the error report path.
+   Never hand-edit env.json or the ops to work around a failure.
+   ```
+
+4. **Monitor wake contract** (verbatim — this text is what a monitoring
+   heartbeat's prompt contains; it judges machine-checkable facts only):
+
+   ```
+   Run: sh <skill_dir>/scripts/ops/job-status.sh <exp_name>
+   Then decide, purely from the returned JSON:
+   - status done|failed → run ops/collect-outputs.sh <exp_name>; the receipt at
+     .aris/runs/<run_id>.experiment.<exp>.done.json is the result; report
+     file-paths-only and stop.
+   - session_alive false, or elapsed_seconds > max_hours*3600, or
+     (gpu utilization < monitor.stall.gpu_idle_threshold_pct AND
+      log_age_seconds > monitor.stall.no_log_growth_minutes*60) for
+     monitor.stall.consecutive_alert_ticks ticks → run ops/stop-job.sh
+     <exp_name>, then ops/collect-outputs.sh <exp_name>; receipt status is
+     "early_stopped" with the reason; report and stop.
+   - anything else (including suspected NaN/divergence you are unsure about) →
+     append one line {ts, status, elapsed_seconds} to
+     .aris/runs/<run_id>.monitor.jsonl and stop. Suspected-quality signals are
+     a FACT to record, never a verdict — analysis belongs to /analyze-results
+     after the job terminates.
+   Never: judge quality, compare against baselines, launch new jobs, or
+   prompt other agents.
+   ```
+
+5. **Rules** — one op per invocation; file-paths-only reports; never edit
+   `env.json` or the ops; analysis is `/analyze-results`'s job, never this skill's.
 
 ---
 
@@ -606,14 +696,15 @@ end-to-end before Phase 6 promotes.
    `{"<primary_metric_key>": <float>, "steps": 10}` to
    `results/<exp_name>.json`, print a completion marker, `exit 0`.
 
-2. Execute end-to-end through the **staging** bundle's scripts using the
+2. Execute end-to-end through the **staging** bundle's ops using the
    `--entry-point` flag to run the mock instead of the project's real entry
    point:
    ```bash
-   sh "$STAGING_DIR/scripts/prepare.sh"
-   sh "$STAGING_DIR/scripts/run.sh" smoke \
+   sh "$STAGING_DIR/scripts/ops/sync-code.sh"
+   sh "$STAGING_DIR/scripts/ops/build-env.sh"
+   sh "$STAGING_DIR/scripts/ops/launch-job.sh" smoke \
      --entry-point ".aris/env-config/<project>/mock/smoke_baseline.py"
-   sh "$STAGING_DIR/scripts/collect.sh" smoke
+   sh "$STAGING_DIR/scripts/ops/collect-outputs.sh" smoke
    ```
 
 3. On success:
@@ -657,15 +748,16 @@ to override the default entry point. Dry-runs substitute the mock, so Phase 6's
 
 ### 6a. Syntax verification (in staging)
 
-1. **Scripts are valid shell:** `sh -n` each script in `$STAGING_DIR/scripts/`.
+1. **Scripts are valid shell:** `sh -n` every script in `$STAGING_DIR/scripts/`
+   (lib + all ops).
 2. **`env.json` parses and is structurally complete:**
    ```bash
-   jq -e '.run.template != "" and .feedback.result.primary_metric_key != ""' \
+   jq -e '.version == 2 and .run.template != "" and .feedback.result.primary_metric_key != "" and (.monitor.interval_cron | test("\\*"))' \
      "$STAGING_DIR/env.json"
    ```
 3. **SSH alias consistency (for remote):** when `preparation.files.location == "remote"`,
    verify `preparation.files.ssh_alias` is set and non-empty in `env.json`.
-   Also verify `info.sh` output `connection.ssh_alias` matches.
+   Also verify `ops/env-info.sh` output `connection.ssh_alias` matches.
 
 ### 6b. Preliminary promotion
 
@@ -674,7 +766,7 @@ Copy the draft to the final path:
 ```bash
 mkdir -p "$(dirname "$SKILL_DIR")"
 cp -R "$STAGING_DIR" "$SKILL_DIR"
-chmod +x "$SKILL_DIR"/scripts/*.sh
+chmod +x "$SKILL_DIR"/scripts/lib/*.sh "$SKILL_DIR"/scripts/ops/*.sh
 # mark as pending audit — env-manager will flip to "complete" after audit passes
 tmp="$SKILL_DIR/env.json.tmp.$$"
 jq '.status = "pending_audit"' "$SKILL_DIR/env.json" > "$tmp" && mv "$tmp" "$SKILL_DIR/env.json"
@@ -683,17 +775,16 @@ jq '.status = "pending_audit"' "$SKILL_DIR/env.json" > "$tmp" && mv "$tmp" "$SKI
 ### 6c. Dry-run verification (at promoted path)
 
 ```bash
-sh "$SKILL_DIR/scripts/prepare.sh" --dry-run
-sh "$SKILL_DIR/scripts/run.sh" smoke --dry-run
-sh "$SKILL_DIR/scripts/collect.sh" smoke --dry-run
-sh "$SKILL_DIR/scripts/analyze.sh" --dry-run
-sh "$SKILL_DIR/scripts/monitor.sh" --dry-run 2>/dev/null || true
-sh "$SKILL_DIR/scripts/info.sh" > /dev/null
-sh "$SKILL_DIR/scripts/teardown.sh" --dry-run 2>/dev/null || true
+for op in env-info query-resources sync-code build-env launch-job job-status job-logs collect-outputs stop-job release-resources; do
+  sh "$SKILL_DIR/scripts/ops/${op}.sh" --dry-run 2>/dev/null || true
+done
+sh "$SKILL_DIR/scripts/ops/env-info.sh" > /dev/null
 ```
 
-Each must exit 0 and print a plausible command — no unsubstituted
-`{{placeholder}}` may survive. If any fails, demote (step 6g) and report.
+Side-effecting ops must print a plausible command under `--dry-run` — no
+unsubstituted `{{placeholder}}` may survive. Read-only ops (`env-info`,
+`query-resources`, `job-status`, `job-logs`) are safe to run for real. If any
+check fails, demote (step 6g) and report.
 
 ### 6f. Write receipt
 
@@ -736,7 +827,8 @@ Experiment environment configured for "<project>".
 Generated:
   .claude/skills/run-<project>-experiment/SKILL.md
   .claude/skills/run-<project>-experiment/env.json
-  .claude/skills/run-<project>-experiment/scripts/{prepare,run,collect,analyze}.sh
+  .claude/skills/run-<project>-experiment/scripts/lib/env.sh
+  .claude/skills/run-<project>-experiment/scripts/ops/{env-info,query-resources,sync-code,build-env,launch-job,job-status,job-logs,collect-outputs,stop-job,release-resources}.sh
 
 Frozen configuration:
   Files:     <location> → <remote_path> via <transfer>
@@ -745,7 +837,7 @@ Frozen configuration:
   Run:       <entry_point> (<launch_mode>, <gpu_selection>)
   Error:     <signal>, log at <log_path>
   Result:    <primary_metric_key> from <path_template>
-  Analysis:  <mode> → <output_path>
+  Monitor:   every <interval_cron>, escalate to <escalate_cron>, cap <max_hours>h
 
 Verification:
   Shell syntax:   PASS/FAIL
@@ -779,13 +871,13 @@ Write `.aris/runs/<run_id>.experiment-env-configuration.<project>.done.json`:
   "status": "pending_audit|failed",
   "skill_dir": ".claude/skills/run-<project>-experiment",
   "env_json_path": ".claude/skills/run-<project>-experiment/env.json",
-  "scripts_regenerated": ["prepare.sh", "run.sh", "collect.sh", "analyze.sh", "monitor.sh", "info.sh", "teardown.sh"],
+  "scripts_regenerated": ["lib/env.sh", "ops/env-info.sh", "ops/query-resources.sh", "ops/sync-code.sh", "ops/build-env.sh", "ops/launch-job.sh", "ops/job-status.sh", "ops/job-logs.sh", "ops/collect-outputs.sh", "ops/stop-job.sh", "ops/release-resources.sh"],
   "completed_at": "<ISO-8601>"
 }
 ```
 
 In patch mode, `scripts_regenerated` lists only the scripts that were actually
-regenerated (not all seven).
+regenerated (not all eleven).
 
 ---
 
@@ -843,20 +935,27 @@ When `— patch: <path>` is provided:
 3. **Apply changes.** For each entry in `changes[]`, set or append the value
    at the specified `field` path in the existing `env.json`.
 
-4. **Determine affected scripts.** Use the field-to-script mapping:
+4. **Determine affected ops.** Use the field-to-op mapping:
 
-   | env.json path prefix | Affected scripts |
+   | env.json path prefix | Affected ops |
    |---|---|
-   | `preparation.files.*` | `prepare.sh`, `info.sh` |
-   | `preparation.environment.*` | `prepare.sh` |
-   | `resources.*` | `info.sh` |
-   | `run.*` | `run.sh` |
-   | `feedback.error.*` | `collect.sh`, `analyze.sh` |
-   | `feedback.result.*` | `collect.sh` |
-   | `feedback.analysis.*` | `analyze.sh` |
+   | `preparation.files.*` | `sync-code.sh`, `env-info.sh` |
+   | `preparation.environment.*` | `build-env.sh` |
+   | `resources.*` | `env-info.sh`, `query-resources.sh` |
+   | `run.*` | `launch-job.sh` |
+   | `feedback.error.*` | `collect-outputs.sh`, `job-logs.sh` |
+   | `feedback.result.*` | `collect-outputs.sh` |
+   | `monitor.*` | `job-status.sh` (facts surfacing) |
 
-5. **Regenerate only affected scripts** from the updated `env.json` values.
-   Leave unaffected scripts untouched.
+   **Version gate:** if the existing `env.json` has `version < 2`, the patch
+   cannot be mapped onto the old layout — regenerate the whole bundle from the
+   patched `env.json` (preserve `handles/` in place) instead of partial
+   regeneration.
+
+5. **Regenerate only affected ops** from the updated `env.json` values.
+   Leave unaffected scripts untouched. When a patched field changes what a
+   previously generated op renders (e.g. a new `ssh_alias`), also refresh
+   `lib/env.sh` when `backend_hint` changed.
 
 6. **Promote.** Write the updated `env.json` and regenerated scripts to
    `$SKILL_DIR`. Set `status: "pending_audit"`.
@@ -870,13 +969,15 @@ When `— patch: <path>` is provided:
 
 - **SKILL_DIR_TEMPLATE** = `.claude/skills/run-<project>-experiment`
 - **STAGING_DIR_TEMPLATE** = `.aris/env-config/<project>/draft`
-- **CONFIG_VERSION** = 1
+- **CONFIG_VERSION** = 2
+- **OPS** = `env-info`, `query-resources`, `sync-code`, `build-env`, `launch-job`, `job-status`, `job-logs`, `collect-outputs`, `stop-job`, `release-resources`
 - **DEFAULT_EXCLUDES** = `.git, __pycache__, results/, logs/, checkpoints/, *.pt, *.ckpt, data/`
 - **DEFAULT_FAILURE_PATTERNS** = `Traceback`, `CUDA out of memory`, `Killed`, `AssertionError`, `RuntimeError`, `No such file`
 - **MAX_VERIFY_RETRIES** = 3
 - **REF_DIR_TEMPLATE** = `$CLAUDE_SKILL_DIR/references` → `.claude/skills/experiment-env-configuration/references`
 - **MOCK_DIR_TEMPLATE** = `.aris/env-config/<project>/mock`
 - **HANDLE_DIR** = `handles/` (inside the generated skill directory)
+- **DEFAULT_MONITOR** = `{ interval_cron: "*/20 * * * *", escalate_cron: "23 * * * *", max_hours: 48, early_stop: {enabled: false}, stall: {no_log_growth_minutes: 45, gpu_idle_threshold_pct: 5, consecutive_alert_ticks: 3} }`
 
 ## Critical Rules
 
@@ -897,10 +998,12 @@ When `— patch: <path>` is provided:
 5. **Prefer an existing backend.** If `local`/`remote`/`vast`/`modal`/`docker`
    covers the environment, set `backend_hint` and call `env-helper.js` from the
    generated scripts. Only fall back to `custom` direct commands when none fits.
-6. **Analysis is driven by `/analyze-results`.** `analyze.sh` Stage 2 provides
-   data collection; `/analyze-results` owns the analysis logic, iterates until
-   a cross-model verifier passes, and can trigger supplementary experiments.
-   Never duplicate analysis logic that belongs in `/analyze-results`.
+6. **Analysis is driven by `/analyze-results`.** `collect-outputs.sh` provides
+   data collection (the `result_files` manifest in its receipt);
+   `/analyze-results` and its sub-skills (`skills/analyze-results-tools/`)
+   own all analysis logic, iterate until a cross-model verifier passes, and can
+   trigger supplementary experiments. Never duplicate analysis logic that
+   belongs in `/analyze-results` — see also Rule 15.
 7. **The primary metric key must match `CLAUDE.md` `## Metric Target`.** A
    mismatch silently breaks every downstream Type-A stop check. Verify in Phase 6.
 8. **Every generated script supports `--dry-run`** and is verified with it before
@@ -908,13 +1011,13 @@ When `— patch: <path>` is provided:
 9. **File-paths-only receipts.** The generated skill writes
    `.aris/runs/<run_id>.experiment.<exp_name>.done.json`; the dispatching parent
    reads that file, never the agent's prose.
-10. **Downstream skills use the 7-script interface, not internal files.**
+10. **Downstream skills use the op interface, not internal files.**
     `.aris/experiment-env.json` and `env-helper.js` are internal implementation
-    details of the generated scripts. Downstream skills (`/monitor-experiment`,
+    details of the generated ops. Downstream skills (`/run-experiment`,
     `/experiment-queue`, `/experiment-bridge`, `/auto-review-loop`,
-    `/experiment-plan`, `/ablation-planner`) call the scripts (`prepare.sh`,
-    `run.sh`, `collect.sh`, `analyze.sh`, `monitor.sh`, `info.sh`,
-    `teardown.sh`) and read the structured JSON output — never the internals.
+    `/experiment-plan`, `/ablation-planner`, `/analyze-results`) invoke the
+    generated router skill or call `scripts/ops/<name>.sh` directly and read
+    the structured JSON output — never the internals.
 11. **References are an accelerator, not a requirement.** The skill runs
     correctly without `references/index.md`. It creates the directory and
     index on first successful configuration.
@@ -926,14 +1029,23 @@ When `— patch: <path>` is provided:
     `Foo__Bar!` → `foo-bar`. This matches the env-manager's algorithm.
 14. **Validate patch input.** Reject patches with empty patch_id, empty changes,
     or unresolved prose values before mutation.
+15. **Ops are process-invariant only.** No op analyzes results — convergence,
+    divergence, training-dynamics interpretation, and comparisons live in
+    `/analyze-results` and its sub-skills. An op may collect and surface facts
+    (metrics, log lines, elapsed time); it never interprets them.
+16. **Uniform failure contract.** Every op emits the structured error JSON on
+    stderr per 5b.0. The failure-recovery loop (`/experiment-env-manager`
+    `— mode: error-report`) depends on this shape; an op that fails without it
+    breaks the repair loop for every caller.
 
 ## External dependencies (reused, not modified)
 
 - `src/tools/experiment-env/env-helper.ts` — `provision | sync | deploy | monitor | collect | destroy`.
-  Used by generated scripts when `backend_hint != "custom"`.
+  Used by generated ops when `backend_hint != "custom"`.
 - `src/tools/experiment-env/parse-env.ts` — `ENV_TYPES` / `ENV_SCHEMAS`; read to
   decide whether an existing backend covers the environment.
-- `skills/analyze-results/SKILL.md` — the default analysis implementation.
+- `skills/analyze-results/SKILL.md` + `skills/analyze-results-tools/*` — all
+  analysis; the generated bundle's `collect-outputs.sh` receipt feeds them.
 - `skills/run-experiment/SKILL.md` — the transport-level runner; the generated
   skill wraps it rather than replacing it.
 - `skills/shared-references/integration-contract.md` section 2 — helper resolution chain.

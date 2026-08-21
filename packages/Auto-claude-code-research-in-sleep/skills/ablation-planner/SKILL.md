@@ -26,7 +26,7 @@ CC reads available project files to build the full picture:
 - Method description and components (from docs/research_contract.md or project CLAUDE.md)
 - Current experiment results (from EXPERIMENT_LOG.md, EXPERIMENT_TRACKER.md, or W&B)
 - Confirmed and intended claims (from result-to-claim output or project notes)
-- Available compute resources (from CLAUDE.md server config, if present; when `run-<project>-experiment` exists, read `sh .claude/skills/run-<project>-experiment/scripts/info.sh | jq '.hardware'` for verified hardware info)
+- Available compute resources (from CLAUDE.md server config, if present; when `run-<project>-experiment` exists, read `sh .claude/skills/run-<project>-experiment/scripts/ops/env-info.sh | jq '.hardware'` for verified hardware info)
 
 ### Step 2: Codex Designs Ablations
 
@@ -124,9 +124,9 @@ Before running anything, CC checks:
 
 > Dispatch ablation experiments via the generated `run-<project>-experiment`
 > skill when it exists. For each ablation:
-> 1. `sh .claude/skills/run-<project>-experiment/scripts/prepare.sh`
-> 2. `sh .claude/skills/run-<project>-experiment/scripts/run.sh ablation-<name> --args "..."`
-> 3. `sh .claude/skills/run-<project>-experiment/scripts/collect.sh ablation-<name>`
+> 1. `sh .claude/skills/run-<project>-experiment/scripts/ops/sync-code.sh + scripts/ops/build-env.sh`
+> 2. `sh .claude/skills/run-<project>-experiment/scripts/ops/launch-job.sh ablation-<name> --args "..."`
+> 3. `sh .claude/skills/run-<project>-experiment/scripts/ops/collect-outputs.sh ablation-<name>`
 >
 > When the generated skill does not exist, follow `/experiment-bridge` for
 > deployment or ask the user for manual execution instructions.

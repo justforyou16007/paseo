@@ -191,7 +191,7 @@ Now skills will:
 | `/auto-paper-improvement-loop` | Review scored, all rounds done            | Score progression     | Score progression               |
 | `/run-experiment`              | Experiments deployed                      | GPU assignment + ETA  | GPU assignment + ETA            |
 | `/vast-gpu`                    | Instance rented/destroyed                 | Instance ID + cost    | Instance ID + cost              |
-| `/monitor-experiment`          | Results collected                         | Results table         | Results table                   |
+| monitoring heartbeat           | Results collected                         | Results table         | Results table                   |
 | `/idea-discovery`              | Phase transitions, final report           | Summary at each phase | + approve/reject at checkpoints |
 | `/research-pipeline`           | Stage transitions, pipeline done          | Stage summary         | + approve/reject                |
 
