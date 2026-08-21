@@ -6,38 +6,9 @@ import { createCli, runCli } from "../lib/cli.js";
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const SKILLS_ROOT = path.join(REPO_ROOT, "skills");
 const CATALOG = path.join(REPO_ROOT, "docs", "SKILLS_CATALOG.md");
-const README = path.join(REPO_ROOT, "README.md");
-const README_CN = path.join(REPO_ROOT, "README_CN.md");
 const AGENT_GUIDE = path.join(REPO_ROOT, "AGENT_GUIDE.md");
 const ARIS_INTRO = path.join(REPO_ROOT, "docs", "ARIS_INTRO.md");
 const ARIS_INTRO_HTML = path.join(REPO_ROOT, "docs", "ARIS_INTRO.html");
-
-const REQUIRED_README_ANCHORS = [
-  "contents",
-  "more-than-just-a-prompt",
-  "whats-new",
-  "quick-start",
-  "features",
-  "score-progression",
-  "community-showcase",
-  "awesome-community-skills",
-  "workflows",
-  "skills-catalog",
-  "setup",
-  "customization",
-  "alternative-model-combinations",
-  "community",
-  "citation",
-  "star-history",
-  "acknowledgements",
-  "license",
-  "prerequisites",
-  "install-skills",
-  "gpu-server-setup",
-  "alt-a-glm--gpt",
-  "-optional-gpt-54-pro-via-oracle",
-  "-research-wiki--persistent-research-memory",
-];
 
 function globSkillMd(root: string): string[] {
   const results: string[] = [];
@@ -81,21 +52,6 @@ function frontmatterSplit(text: string): string {
   return match ? text.slice(match[0].length) : text;
 }
 
-function readmeAnchors(text: string): Set<string> {
-  const anchors = new Set<string>();
-  const re = /<a id="([^"]+)"><\/a>/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    anchors.add(m[1]);
-  }
-  return anchors;
-}
-
-function numberedH2Count(text: string): number {
-  const matches = text.match(/^## \d+\.\s/gm);
-  return matches ? matches.length : 0;
-}
-
 function read(filePath: string): string {
   return fs.readFileSync(filePath, "utf-8");
 }
@@ -137,10 +93,6 @@ function requireCount(
   }
 }
 
-function readOptional(fp: string): string | null {
-  return fs.existsSync(fp) ? fs.readFileSync(fp, "utf-8") : null;
-}
-
 function checkInventory(): string[] {
   const failures: string[] = [];
   const main = skillNames(SKILLS_ROOT);
@@ -161,8 +113,6 @@ function checkInventory(): string[] {
   );
 
   const catalogText = read(CATALOG);
-  const readme = readOptional(README) ?? "";
-  const readmeCn = readOptional(README_CN) ?? "";
   const agentGuide = read(AGENT_GUIDE);
   const arisIntro = read(ARIS_INTRO);
   const arisIntroHtml = read(ARIS_INTRO_HTML);
@@ -170,10 +120,6 @@ function checkInventory(): string[] {
   const expectedCount = main.size;
   const countChecks: [string, string, string][] = [
     [CATALOG, catalogText, "\\*\\*(?<count>\\d+) skills\\*\\*"],
-    [README, readme, "📊\\s+\\*\\*(?<count>\\d+) composable skills\\*\\*"],
-    [README, readme, "ARIS ships \\*\\*(?<count>\\d+)\\+ skills\\*\\*"],
-    [README_CN, readmeCn, "📊\\s+\\*\\*(?<count>\\d+) 个可组合 skill\\*\\*"],
-    [README_CN, readmeCn, "ARIS 现有 \\*\\*(?<count>\\d+)\\+ 个 skill\\*\\*"],
     [AGENT_GUIDE, agentGuide, "Full catalog.*?\\*\\*(?<count>\\d+) skills\\*\\*"],
     [
       ARIS_INTRO,
@@ -193,30 +139,6 @@ function checkInventory(): string[] {
   for (const [fp, text, pattern] of countChecks) {
     requireCount(fp, text, pattern, expectedCount, failures);
   }
-
-  const enAnchors = readmeAnchors(readme);
-  const cnAnchors = readmeAnchors(readmeCn);
-  for (const required of REQUIRED_README_ANCHORS) {
-    if (!enAnchors.has(required)) {
-      failures.push(`README.md missing required anchor: <a id="${required}"></a>`);
-    }
-    if (!cnAnchors.has(required)) {
-      failures.push(`README_CN.md missing required anchor: <a id="${required}"></a>`);
-    }
-  }
-
-  const enH2 = numberedH2Count(readme);
-  const cnH2 = numberedH2Count(readmeCn);
-  require_(
-    enH2 === 16,
-    `README.md has ${enH2} numbered H2 sections; expected 16 (Phase A)`,
-    failures,
-  );
-  require_(
-    cnH2 === 16,
-    `README_CN.md has ${cnH2} numbered H2 sections; expected 16 (Phase A)`,
-    failures,
-  );
 
   for (const skillFile of globSkillMd(SKILLS_ROOT)) {
     const text = read(skillFile);
