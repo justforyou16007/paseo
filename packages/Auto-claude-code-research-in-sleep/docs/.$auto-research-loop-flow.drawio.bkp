@@ -1,0 +1,772 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="drawio" version="31.1.8">
+  <diagram id="overview" name="00 总流程">
+    <mxGraphModel dx="1800" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="1600" math="0" shadow="0">
+      <root>
+        <mxCell id="ov-0"/>
+        <mxCell id="ov-1" parent="ov-0"/>
+        <mxCell id="ov-start" value="&lt;b&gt;开始 / 恢复&lt;/b&gt;&lt;br&gt;参数：run_id、baseline plan、auto_write、render_html、max_iterations" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" vertex="1" parent="ov-1">
+          <mxGeometry x="760" y="20" width="520" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="ov-p0" value="&lt;b&gt;Phase 0：前置条件与初始化&lt;/b&gt;&lt;br&gt;读取 CLAUDE.md 的 active Metric Target；确认实验环境 env.json.status=complete、scripts/ 存在、baseline EXPERIMENT_PLAN.md 存在；创建 dashboard.json 与 run-state.json。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;spacing=8;" vertex="1" parent="ov-1">
+          <mxGeometry x="620" y="130" width="800" height="105" as="geometry"/>
+        </mxCell>
+        <mxCell id="ov-p1" value="&lt;b&gt;Phase 1：Experiment Bridge&lt;/b&gt;&lt;br&gt;实现计划中的实验、先做 sanity、部署并收集结果；内部强制调用 /analyze-results；receipt 发布 metric.current 等字段。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;spacing=8;" vertex="1" parent="ov-1">
+          <mxGeometry x="620" y="285" width="800" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="ov-p2" value="&lt;b&gt;Phase 2：Auto Review Loop&lt;/b&gt;&lt;br&gt;外部 reviewer 评分 → 代码/实验/分析修复 → 重新审查；结束时强制最终 /analyze-results，发布质量 verdict 和最终 metric。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;spacing=8;" vertex="1" parent="ov-1">
+          <mxGeometry x="620" y="435" width="800" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="ov-p3" value="&lt;b&gt;Phase 3：metric-gate.js&lt;/b&gt;&lt;br&gt;dashboard 字段 → invalid / target / budget / patience&lt;br&gt;写 stop_reason" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;spacing=5;" vertex="1" parent="ov-1">
+          <mxGeometry x="750" y="590" width="540" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="ov-stop" value="&lt;b&gt;停止&lt;/b&gt;&lt;br&gt;metric_met / budget_exhausted / patience_exhausted&lt;br&gt;dashboard.status=finishing；loop done；进入 Phase 5" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;spacing=8;" vertex="1" parent="ov-1">
+          <mxGeometry x="1440" y="600" width="500" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="ov-invalid" value="&lt;b&gt;无效指标&lt;/b&gt;&lt;br&gt;invalid_metric：loop failed；summary/paper-writing skipped；dashboard.status=invalid；退出" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;spacing=8;" vertex="1" parent="ov-1">
+          <mxGeometry x="30" y="600" width="500" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="ov-p4" value="&lt;b&gt;Phase 4：受约束 Idea Discovery&lt;/b&gt;&lt;br&gt;只读上一轮 final-analysis / results / tracker / AUTO_REVIEW 和 prior gap_map；禁止文献、web、pilot、开放式计划；生成 3–5 个候选并只选一个。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="ov-1">
+          <mxGeometry x="620" y="820" width="800" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="ov-p45" value="&lt;b&gt;Phase 4.5：Gap Planner&lt;/b&gt;&lt;br&gt;唯一的缺口审计者；按实验证据合并/关闭/反驳/延期/排序 gap，并把已选 idea + canonical open gaps 组装成下一轮 EXPERIMENT_PLAN.md。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="ov-1">
+          <mxGeometry x="620" y="980" width="800" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="ov-p5" value="&lt;b&gt;Phase 5：Summary&lt;/b&gt;&lt;br&gt;summary 子 agent 读取 dashboard + wiki + 最后一轮分析/审查，生成 NARRATIVE_REPORT.md；可选调用 /render-html。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="ov-1">
+          <mxGeometry x="1440" y="820" width="500" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="ov-p6" value="&lt;b&gt;Phase 6：Paper Writing&lt;/b&gt;&lt;br&gt;达标且 iteration≥2；AUTO_WRITE=true；paper audit pass 后完成。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=6;" vertex="1" parent="ov-1">
+          <mxGeometry x="2010" y="980" width="500" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="ov-end" value="&lt;b&gt;完成&lt;/b&gt;&lt;br&gt;dashboard.status=completed；run-state 四个外层 phase terminal" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" vertex="1" parent="ov-1">
+          <mxGeometry x="1440" y="1170" width="500" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="ov-e1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="ov-1" source="ov-start" target="ov-p0"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ov-e2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="ov-1" source="ov-p0" target="ov-p1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ov-e3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="ov-1" source="ov-p1" target="ov-p2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ov-e4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="ov-1" source="ov-p2" target="ov-p3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ov-e5" value="非 invalid_metric" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="ov-1" source="ov-p3" target="ov-stop"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ov-e6" value="invalid_metric" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="ov-1" source="ov-p3" target="ov-invalid"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ov-e7" value="stop_reason 为空" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="ov-1" source="ov-p3" target="ov-p4"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ov-e8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="ov-1" source="ov-p4" target="ov-p45"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ov-e9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="ov-1" source="ov-p45" target="ov-p1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ov-e10" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="ov-1" source="ov-stop" target="ov-p5"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ov-e11" value="gate pass + auto_write" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="ov-1" source="ov-p5" target="ov-p6"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ov-e12" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="ov-1" source="ov-p5" target="ov-end"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ov-e13" value="审计通过" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="ov-1" source="ov-p6" target="ov-end"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ov-note" value="&lt;b&gt;核心边界&lt;/b&gt;&lt;br&gt;主 orchestrator 只读 dashboard.json 与 receipt.json；worker 的 Markdown、结果和日志通过 input-manifest → receipt.dashboard_patch 传递。Phase 3 不读取 review verdict；review 的 ready/almost/not ready 只结束本轮审查。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;spacing=8;" vertex="1" parent="ov-1">
+          <mxGeometry x="30" y="820" width="500" height="145" as="geometry"/>
+        </mxCell>
+        <mxCell id="ov-source" value="源码依据：skills/auto-research-loop/SKILL.md；相关子图见后续页面。图中没有单独的“功能”字段，动作直接写在节点内。" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#666666;" vertex="1" parent="ov-1">
+          <mxGeometry x="30" y="1320" width="1900" height="40" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="phase0" name="01 Phase 0 初始化与恢复">
+    <mxGraphModel dx="1800" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2400" pageHeight="1800" math="0" shadow="0">
+      <root>
+        <mxCell id="p0-0"/>
+        <mxCell id="p0-1" parent="p0-0"/>
+        <mxCell id="p0-start" value="&lt;b&gt;进入 Phase 0&lt;/b&gt;&lt;br&gt;fresh 或 --resume &lt;run_id&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" vertex="1" parent="p0-1">
+          <mxGeometry x="930" y="20" width="520" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="p0-read" value="&lt;b&gt;解析项目和运行配置&lt;/b&gt;&lt;br&gt;动作：定位 ROOT；解析 project slug；解析 --max-iterations、--baseline、--auto-write、--render-html；用 tools/render_w_agent_prompt.sh --emit-config 生成一次 Paseo 配置。&lt;br&gt;落盘：.aris/runs/&lt;run_id&gt;.paseo-config.json，字段 executor_provider、executor_mode、executor_thinking、notify_on_finish。" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;spacing=8;" vertex="1" parent="p0-1">
+          <mxGeometry x="650" y="130" width="1080" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="p0-metric" value="&lt;b&gt;读取并验证 Metric Target&lt;/b&gt;&lt;br&gt;子程序：metric-gate.js config ROOT。&lt;br&gt;输入：CLAUDE.md 中未被 HTML 注释的 ## Metric Target；字段 primary: 数值 + 单位、direction、tolerance、baseline。&lt;br&gt;输出：target、name、direction、tolerance、baseline。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p0-1">
+          <mxGeometry x="650" y="300" width="1080" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="p0-md" value="Metric Target 可用且字段合法？&lt;br&gt;primary 是有限数；direction ∈ higher_better/lower_better；tolerance ∈ [0,1)。" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;spacing=8;" vertex="1" parent="p0-1">
+          <mxGeometry x="850" y="470" width="680" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="p0-metric-fail" value="&lt;b&gt;失败&lt;/b&gt;&lt;br&gt;没有 active Metric Target 或字段非法；不创建可运行 loop。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;spacing=8;" vertex="1" parent="p0-1">
+          <mxGeometry x="40" y="495" width="520" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="p0-env" value="&lt;b&gt;检查生成的实验环境&lt;/b&gt;&lt;br&gt;输入：.claude/skills/run-&lt;project&gt;-experiment/env.json 与 scripts/。判断字段：env.json.status == complete 且 scripts/ 目录存在。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p0-1">
+          <mxGeometry x="650" y="660" width="1080" height="115" as="geometry"/>
+        </mxCell>
+        <mxCell id="p0-env-d" value="环境已完成？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;" vertex="1" parent="p0-1">
+          <mxGeometry x="900" y="815" width="580" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="p0-env-call" value="&lt;b&gt;子 skill：/experiment-env-manager&lt;/b&gt;&lt;br&gt;动作：以 mode=setup、run-id、paseo-config 调用；等待完成通知；读取 .aris/runs/&lt;run_id&gt;.experiment-env-manager.&lt;project&gt;.done.json；归档子 agent。&lt;br&gt;它负责生成 env.json/scripts 并完成环境审计。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;spacing=8;" vertex="1" parent="p0-1">
+          <mxGeometry x="1780" y="790" width="570" height="170" as="geometry"/>
+        </mxCell>
+        <mxCell id="p0-env-ok" value="env.json.status=complete 且 scripts/ 存在？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;spacing=8;" vertex="1" parent="p0-1">
+          <mxGeometry x="1780" y="1010" width="570" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="p0-env-fail" value="&lt;b&gt;失败&lt;/b&gt;&lt;br&gt;环境管理器完成但 bundle 仍无效；停止初始化。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;spacing=8;" vertex="1" parent="p0-1">
+          <mxGeometry x="1780" y="1190" width="570" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="p0-plan" value="&lt;b&gt;检查 baseline plan&lt;/b&gt;&lt;br&gt;输入路径：--baseline 或默认 refine-logs/EXPERIMENT_PLAN.md。判断：文件存在。&lt;br&gt;后续 Phase 1 iteration 1 直接使用此 MD；iteration 2+ 改用 gap-planner 输出的 plan。" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;spacing=8;" vertex="1" parent="p0-1">
+          <mxGeometry x="650" y="1000" width="1080" height="125" as="geometry"/>
+        </mxCell>
+        <mxCell id="p0-plan-d" value="baseline EXPERIMENT_PLAN.md 存在？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;" vertex="1" parent="p0-1">
+          <mxGeometry x="850" y="1165" width="680" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="p0-plan-fail" value="&lt;b&gt;失败&lt;/b&gt;&lt;br&gt;没有基线实验计划，不能进入迭代。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;" vertex="1" parent="p0-1">
+          <mxGeometry x="40" y="1190" width="520" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="p0-freshresume" value="&lt;b&gt;fresh / resume 分支&lt;/b&gt;&lt;br&gt;fresh：生成 run_id，创建 workers/，初始化 dashboard 和 run-state。&lt;br&gt;resume：读取 .aris/runs/&lt;run_id&gt;.json + dashboard.json；按 outer phase 与 current_phase 决定重跑、继续或跳过。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p0-1">
+          <mxGeometry x="650" y="1360" width="1080" height="145" as="geometry"/>
+        </mxCell>
+        <mxCell id="p0-dashboard" value="&lt;b&gt;fresh 的初始化写入&lt;/b&gt;&lt;br&gt;.aris/runs/&lt;run_id&gt;/dashboard.json：run_id、project、status=running、iteration=1、max_iterations、current_phase=init；config.baseline_plan/auto_write/render_html/patience；metric.name/target/direction/tolerance/baseline/current=null/history=[]；best_idea=null；gaps.open/closed/total；last_review.verdict/score/reviewer_id；stop_reason=null；system_errors.total/last；applied_receipts=[]。&lt;br&gt;.aris/runs/&lt;run_id&gt;.json：phases=[init,loop,summary,paper-writing]，每项 status/artifact/verdict_id/reviewer/updated。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;spacing=8;" vertex="1" parent="p0-1">
+          <mxGeometry x="650" y="1550" width="1080" height="170" as="geometry"/>
+        </mxCell>
+        <mxCell id="p0-done" value="&lt;b&gt;初始化完成&lt;/b&gt;&lt;br&gt;run-state：init done → accept，verdict_id/reviewer=deterministic:preconditions；loop=running。&lt;br&gt;dashboard.current_phase=experiment-bridge；进入 Phase 1。" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;spacing=8;" vertex="1" parent="p0-1">
+          <mxGeometry x="650" y="1750" width="1080" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="p0-s1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p0-1" source="p0-start" target="p0-read"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p0-s2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p0-1" source="p0-read" target="p0-metric"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p0-s3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p0-1" source="p0-metric" target="p0-md"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p0-s4" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p0-1" source="p0-md" target="p0-metric-fail"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p0-s5" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p0-1" source="p0-md" target="p0-env"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p0-s6" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p0-1" source="p0-env" target="p0-env-d"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p0-s7" value="否，调用 setup" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p0-1" source="p0-env-d" target="p0-env-call"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p0-s8" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p0-1" source="p0-env-d" target="p0-plan"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p0-s9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p0-1" source="p0-env-call" target="p0-env-ok"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p0-s10" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p0-1" source="p0-env-ok" target="p0-env-fail"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p0-s11" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p0-1" source="p0-env-ok" target="p0-plan"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p0-s12" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p0-1" source="p0-plan" target="p0-plan-d"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p0-s13" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p0-1" source="p0-plan-d" target="p0-plan-fail"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p0-s14" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p0-1" source="p0-plan-d" target="p0-freshresume"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p0-s15" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p0-1" source="p0-freshresume" target="p0-dashboard"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p0-s16" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p0-1" source="p0-dashboard" target="p0-done"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p0-source" value="源码依据：skills/auto-research-loop/SKILL.md §Phase 0、Fresh start vs Resume；src/tools/metric-gate.ts；src/tools/run-state.ts。" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#666666;" vertex="1" parent="p0-1">
+          <mxGeometry x="40" y="1750" width="520" height="50" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="phase1" name="02 Phase 1 Experiment Bridge">
+    <mxGraphModel dx="1900" dy="1300" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2600" pageHeight="2000" math="0" shadow="0">
+      <root>
+        <mxCell id="p1-0"/>
+        <mxCell id="p1-1" parent="p1-0"/>
+        <mxCell id="p1-start" value="&lt;b&gt;Phase 1 开始&lt;/b&gt;&lt;br&gt;当前 iteration：ITERATION；目标指标：target_metric / target_unit" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" vertex="1" parent="p1-1">
+          <mxGeometry x="960" y="20" width="600" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-in" value="&lt;b&gt;输入清单&lt;/b&gt;&lt;br&gt;iteration 1：ROOT/BASELINE_PLAN；不传 idea_report。&lt;br&gt;iteration 2+：$WORKERS_DIR/&lt;ITERATION&gt;-gap-planner/outputs/EXPERIMENT_PLAN.md + $WORKERS_DIR/&lt;ITERATION&gt;-idea-discovery/outputs/IDEA_REPORT.md。&lt;br&gt;两种情况都传 experiment_skill：.claude/skills/run-&lt;project&gt;-experiment/env.json；context.is_baseline、target_metric、target_unit。" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;spacing=8;" vertex="1" parent="p1-1">
+          <mxGeometry x="650" y="135" width="1220" height="145" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-manifest" value="&lt;b&gt;写 worker manifest&lt;/b&gt;&lt;br&gt;文件：.aris/runs/&lt;run_id&gt;/workers/&lt;ITERATION&gt;-experiment-bridge/input-manifest.json。&lt;br&gt;字段：worker=experiment-bridge、iteration、run_id、inputs.experiment_plan/idea_report?/experiment_skill、context.is_baseline/target_metric/target_unit、output_dir=.../outputs。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p1-1">
+          <mxGeometry x="650" y="320" width="1220" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-dispatch" value="&lt;b&gt;子 skill：/experiment-bridge&lt;/b&gt;&lt;br&gt;调用：mcp__paseo__create_agent；prompt 只给 skill 名 + manifest 路径；provider/mode/thinking 从 run 的 Paseo config；等待通知后读 receipt.json、merge、archive。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;spacing=8;" vertex="1" parent="p1-1">
+          <mxGeometry x="650" y="480" width="1220" height="115" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-parse" value="&lt;b&gt;1. 解析 EXPERIMENT_PLAN.md&lt;/b&gt;&lt;br&gt;读出 run order、dataset/split/task、systems/variants、metrics、backbone/hyperparameters/seeds、success criterion、MUST-RUN/NICE-TO-HAVE、GPU 预算、method。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p1-1">
+          <mxGeometry x="650" y="635" width="1220" height="105" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-code" value="&lt;b&gt;2. 实现实验代码&lt;/b&gt;&lt;br&gt;动作：先找并复用现有代码；补训练/评估/data loader/baseline；所有超参 argparse 可配置；固定 seed；结果写 JSON/CSV；按 sanity → baseline → main → ablation 实现。&lt;br&gt;改动：项目实验脚本、配置、日志代码；输入 MD 的每个命令/超参必须能在实现中找到对应字段。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p1-1">
+          <mxGeometry x="650" y="780" width="1220" height="135" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-review-d" value="CODE_REVIEW=true？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;" vertex="1" parent="p1-1">
+          <mxGeometry x="930" y="960" width="660" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-review" value="&lt;b&gt;子 skill/agent：Codex code review&lt;/b&gt;&lt;br&gt;读取计划、FINAL_PROPOSAL、实现脚本；检查方法对应关系、超参、loss/data split/eval、真实 ground-truth、OOM/数值稳定/seed。&lt;br&gt;判断：CRITICAL=0 才继续；有 critical → 修复后最多重审 2 轮；create_agent 失败才允许跳过。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;spacing=8;" vertex="1" parent="p1-1">
+          <mxGeometry x="1960" y="935" width="590" height="180" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-sanity" value="&lt;b&gt;3. SANITY_FIRST：调用 /run-experiment&lt;/b&gt;&lt;br&gt;先运行最小 sanity 实验；不能在 bridge 进程内 inline 跑。&lt;br&gt;若 generated skill scripts/ 不存在，先调用 /experiment-env-manager mode=setup；等待 receipt。&lt;br&gt;验证：训练无错误、指标保存、GPU 内存、输出格式。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;spacing=8;" vertex="1" parent="p1-1">
+          <mxGeometry x="650" y="1150" width="1220" height="145" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-sanity-d" value="sanity 成功？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;" vertex="1" parent="p1-1">
+          <mxGeometry x="930" y="1335" width="660" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-debug" value="&lt;b&gt;失败调试&lt;/b&gt;&lt;br&gt;最多 3 次：按 stderr/traceback 分类 OOM、ImportError、路径、CUDA、NaN；修复后重跑；第 2 次起可调用 /codex:rescue；3 次仍失败 → 写 .aris/env-config/&lt;project&gt;/error-reports/&lt;timestamp&gt;.json 并调用 /experiment-env-manager mode=error-report。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;spacing=8;" vertex="1" parent="p1-1">
+          <mxGeometry x="40" y="1300" width="540" height="190" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-route" value="&lt;b&gt;4. 按 job 数量路由部署&lt;/b&gt;&lt;br&gt;每个 milestone 依据 plan 的 jobs、multi-seed、phase dependency 判断。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p1-1">
+          <mxGeometry x="650" y="1525" width="1220" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-route-d" value="≤5 jobs 且无大规模依赖？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;" vertex="1" parent="p1-1">
+          <mxGeometry x="930" y="1645" width="660" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-run" value="&lt;b&gt;子 skill：/run-experiment&lt;/b&gt;&lt;br&gt;调用 generated scripts：info.sh → prepare.sh（同步代码）→ run.sh；返回 handle；monitor.sh 验证启动；完成后 collect.sh 获取结果；Vast 配置 auto_destroy=true 时 teardown.sh。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;spacing=8;" vertex="1" parent="p1-1">
+          <mxGeometry x="40" y="1810" width="540" height="145" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-queue" value="&lt;b&gt;子 skill：/experiment-queue&lt;/b&gt;&lt;br&gt;条件：≥10 jobs、multi-seed sweep、teacher→student 依赖或需 wave/OOM 管理。&lt;br&gt;写 experiment-queue/&lt;timestamp&gt;/manifest.json、run_meta.txt；远端持续写 .aris_queue/runs/&lt;timestamp&gt;/queue_state.json；按 expected output 判断完成。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;spacing=8;" vertex="1" parent="p1-1">
+          <mxGeometry x="1960" y="1810" width="590" height="160" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-monitor" value="&lt;b&gt;子 skill：/monitor-experiment&lt;/b&gt;&lt;br&gt;读取 monitor.sh JSON：status、gpu_usage、tail、exit_code、elapsed_seconds、wandb；必要时 collect.sh 下载 ./results/*.json 与 ./logs/*。&lt;br&gt;若仍 running：等待外部通知后再监控，不 busy-poll。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="p1-1">
+          <mxGeometry x="650" y="1800" width="1220" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-collect" value="&lt;b&gt;5. 收集并更新 tracker&lt;/b&gt;&lt;br&gt;输入：JSON/CSV/log、EXPERIMENT_PLAN.md success criteria。&lt;br&gt;改动：EXPERIMENT_TRACKER.md 的 Status/Notes；写初始 EXPERIMENT_RESULTS.md，记录每个 milestone、主指标、完成数、positive/negative/inconclusive、是否 ready。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p1-1">
+          <mxGeometry x="650" y="1985" width="1220" height="125" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-analyze" value="&lt;b&gt;5.6 强制子 skill：/analyze-results&lt;/b&gt;&lt;br&gt;写 internal/analyze-results/input-manifest.json：results、tracker、experiment_plan、experiment_skill、error_report?、metric_history、output_dir=outputs/analysis。只允许分析本 worker 的结果/Tracker；不能换成项目根 results/logs。&lt;br&gt;验证 receipt：status=done、run/iteration 匹配、analysis/EXPERIMENT_RESULTS.md 存在、metric.current 有限。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;spacing=8;" vertex="1" parent="p1-1">
+          <mxGeometry x="650" y="2160" width="1220" height="155" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-analyze-fail" value="分析失败或 verifier 要补充？&lt;br&gt;失败是 experiment-bridge failed；不能退回 raw rows，也不能自动替用户接受 verifier 的 FAIL。" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;spacing=8;" vertex="1" parent="p1-1">
+          <mxGeometry x="910" y="2360" width="700" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-ablation-d" value="主结果 positive？且需要消融？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;spacing=8;" vertex="1" parent="p1-1">
+          <mxGeometry x="930" y="2550" width="660" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-ablation" value="&lt;b&gt;可选子 skill：/ablation-planner&lt;/b&gt;&lt;br&gt;读取主结果、method、claims、硬件；设计 component/hyperparameter/design-choice ablation；把新的 blocks 追加到 refine-logs/EXPERIMENT_PLAN.md 与 EXPERIMENT_TRACKER.md。主结果 negative/inconclusive 时跳过。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;spacing=8;" vertex="1" parent="p1-1">
+          <mxGeometry x="1960" y="2520" width="590" height="160" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-out" value="&lt;b&gt;Phase 1 worker 输出&lt;/b&gt;&lt;br&gt;outputs/EXPERIMENT_RESULTS.md（原始汇总）&lt;br&gt;outputs/EXPERIMENT_TRACKER.md（执行状态）&lt;br&gt;outputs/analysis/EXPERIMENT_RESULTS.md（结构化分析）&lt;br&gt;receipt.json：metric.current、metric.delta、statistical_significance、experiment_ids；iteration 1 另有 metric.baseline；experiments[] 每项 slug/title/idea/verdict/confidence/metrics/reasoning/provenance/tags。" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;spacing=8;" vertex="1" parent="p1-1">
+          <mxGeometry x="650" y="2720" width="1220" height="165" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-merge" value="&lt;b&gt;主 orchestrator 合并&lt;/b&gt;&lt;br&gt;dashboard-merge.js apply：校验 receipt/input-manifest/iteration/current_phase/允许 patch；原子更新 dashboard.json；更新 metric.history（同 iteration 的 final analyze 会替换 bridge 的初值，不新增重复行）；追加 applied_receipts；若 has_errors 则累加 system_errors。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p1-1">
+          <mxGeometry x="650" y="2910" width="1220" height="145" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-wiki" value="&lt;b&gt;主 orchestrator 的 canonical wiki 写入&lt;/b&gt;&lt;br&gt;逐条读取 receipt.experiments；调用 research-wiki.js add_experiment research-wiki/。写入实验实体字段：slug、title、idea、verdict、confidence、metrics、reasoning、provenance、tags。主 orchestrator 不读 worker 的 raw MD。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;spacing=8;" vertex="1" parent="p1-1">
+          <mxGeometry x="650" y="3080" width="1220" height="125" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-end" value="&lt;b&gt;进入 Phase 2&lt;/b&gt;&lt;br&gt;current_phase=auto-review-loop" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" vertex="1" parent="p1-1">
+          <mxGeometry x="950" y="3240" width="620" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-e1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p1-1" source="p1-start" target="p1-in"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p1-1" source="p1-in" target="p1-manifest"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p1-1" source="p1-manifest" target="p1-dispatch"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p1-1" source="p1-dispatch" target="p1-parse"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p1-1" source="p1-parse" target="p1-code"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e6" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p1-1" source="p1-code" target="p1-review-d"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e7" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p1-1" source="p1-review-d" target="p1-review"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e8" value="否 / spawn 失败" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p1-1" source="p1-review-d" target="p1-sanity"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e9" value="无 CRITICAL 或修复后通过" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p1-1" source="p1-review" target="p1-sanity"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e10" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p1-1" source="p1-sanity" target="p1-sanity-d"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e11" value="否，重试/调试" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p1-1" source="p1-sanity-d" target="p1-debug"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e12" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p1-1" source="p1-sanity-d" target="p1-route"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e13" value="修复后再跑 sanity" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p1-1" source="p1-debug" target="p1-sanity"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e14" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p1-1" source="p1-route" target="p1-route-d"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e15" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p1-1" source="p1-route-d" target="p1-run"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e16" value="否：大批量/依赖" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p1-1" source="p1-route-d" target="p1-queue"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e17" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p1-1" source="p1-run" target="p1-monitor"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e18" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p1-1" source="p1-queue" target="p1-monitor"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e19" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p1-1" source="p1-monitor" target="p1-collect"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e20" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p1-1" source="p1-collect" target="p1-analyze"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e21" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p1-1" source="p1-analyze" target="p1-analyze-fail"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e22" value="是：worker failed / 等用户选择" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p1-1" source="p1-analyze-fail" target="p1-debug"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e23" value="否：analysis done" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p1-1" source="p1-analyze-fail" target="p1-ablation-d"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e24" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p1-1" source="p1-ablation-d" target="p1-ablation"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e25" value="否 / 不可用" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p1-1" source="p1-ablation-d" target="p1-out"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e26" value="追加计划后" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p1-1" source="p1-ablation" target="p1-out"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e27" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p1-1" source="p1-out" target="p1-merge"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e28" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p1-1" source="p1-merge" target="p1-wiki"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-e29" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p1-1" source="p1-wiki" target="p1-end"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1-source" value="源码依据：skills/auto-research-loop/SKILL.md §Phase 1；skills/experiment-bridge/SKILL.md §Phase 1–6；skills/analyze-results/SKILL.md §Manifest/Phase 1–5。" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#666666;" vertex="1" parent="p1-1">
+          <mxGeometry x="40" y="3240" width="760" height="50" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="phase2" name="03 Phase 2 Auto Review Loop">
+    <mxGraphModel dx="1900" dy="1300" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2600" pageHeight="3500" math="0" shadow="0">
+      <root>
+        <mxCell id="p2-0"/>
+        <mxCell id="p2-1" parent="p2-0"/>
+        <mxCell id="p2-start" value="&lt;b&gt;Phase 2 输入&lt;/b&gt;&lt;br&gt;本轮 experiment-bridge 的 analysis/EXPERIMENT_RESULTS.md、EXPERIMENT_TRACKER.md、原始 EXPERIMENT_RESULTS.md；本轮 experiment_plan；env.json；iteration 2+ 的 IDEA_REPORT。" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;spacing=8;" vertex="1" parent="p2-1">
+          <mxGeometry x="650" y="20" width="1220" height="135" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-manifest" value="&lt;b&gt;写 manifest 并派发 /auto-review-loop&lt;/b&gt;&lt;br&gt;文件：workers/&lt;ITERATION&gt;-auto-review-loop/input-manifest.json；context.target_metric、target_unit、metric_history、reviewer_model、reviewer_bias_guard=true、max_review_rounds=4；prompt 只含 skill + manifest path。输出目录：outputs/。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p2-1">
+          <mxGeometry x="650" y="195" width="1220" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-init" value="&lt;b&gt;初始化 / 恢复&lt;/b&gt;&lt;br&gt;读取 outputs/REVIEW_STATE.json（若存在）；status=completed → fresh；24h 内 in_progress → 恢复 round、threadId、score、pending_experiments；读取 AUTO_REVIEW.md、项目 notes、结果。&lt;br&gt;创建/更新 review-stage/AUTO_REVIEW.md（worker 模式映射到 outputs/AUTO_REVIEW.md）。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p2-1">
+          <mxGeometry x="650" y="355" width="1220" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-review" value="&lt;b&gt;Phase A：外部 reviewer&lt;/b&gt;&lt;br&gt;默认 Codex/gpt-5.5；Round 1 创建 fresh paseo codex agent，保存 agent-id 到 REVIEW_STATE.threadId；Round 2+ 用 send_agent_prompt 继续同一 reviewer。manual backend 使用 manual_review review/reply。&lt;br&gt;输入是文件路径：claims/paper、methods/code、raw results、changed files；reviewer 自己读文件。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;spacing=8;" vertex="1" parent="p2-1">
+          <mxGeometry x="650" y="535" width="1220" height="160" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-assess" value="&lt;b&gt;Phase B：解析评估&lt;/b&gt;&lt;br&gt;保留 reviewer 的完整原文；提取 score（1–10）、verdict（ready / almost / not ready）、按严重度排序的 action items。&lt;br&gt;停止条件：score ≥ 6 且 verdict ∈ {ready, almost}；not ready 即使分数高也不能停。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p2-1">
+          <mxGeometry x="650" y="735" width="1220" height="125" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-stop-d" value="score ≥ 6 且 verdict=ready/almost？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;spacing=8;" vertex="1" parent="p2-1">
+          <mxGeometry x="920" y="900" width="720" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-memory" value="&lt;b&gt;可选：hard/nightmare&lt;/b&gt;&lt;br&gt;写/追加 REVIEWER_MEMORY.md：每轮 suspicion、unresolved、patterns；Debate Protocol 中 executor rebuttal 最多 3 条，再让同一 reviewer 对每条给 SUSTAINED / OVERRULED / PARTIALLY SUSTAINED。medium 跳过。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="p2-1">
+          <mxGeometry x="1960" y="875" width="590" height="170" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-human" value="&lt;b&gt;可选 HUMAN_CHECKPOINT=true&lt;/b&gt;&lt;br&gt;把 score、弱点、建议修复交给用户；用户可 go、定制、skip 某项或 stop。默认 false，自动进入修复。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;spacing=8;" vertex="1" parent="p2-1">
+          <mxGeometry x="40" y="1080" width="540" height="125" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-fix" value="&lt;b&gt;Phase C：实现 action items&lt;/b&gt;&lt;br&gt;按优先级修复：实验脚本/模型代码/分析脚本；需要时用 generated run skill 的 prepare.sh + run.sh，不能手工绕过原子接口；补指标、结果表、项目 notes、review 文档。高成本/缺外部资源的项标记后续处理。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p2-1">
+          <mxGeometry x="650" y="1090" width="1220" height="145" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-wait" value="&lt;b&gt;Phase D：等待与监控&lt;/b&gt;&lt;br&gt;如果启动实验：读取 monitor.sh/collect.sh；W&amp;B 可用且配置开启时派发 /training-check，检查 NaN、loss divergence、plateau、过拟合；未完成则等待外部事实，不在 loop 内忙轮询。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;spacing=8;" vertex="1" parent="p2-1">
+          <mxGeometry x="650" y="1280" width="1220" height="125" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-doc" value="&lt;b&gt;Phase E：记录本轮&lt;/b&gt;&lt;br&gt;追加 AUTO_REVIEW.md：score/verdict/criticism、reviewer 完整原文、修复内容、结果、状态；更新 REVIEW_STATE.json：round、threadId、score、verdict、pending_experiments、status=in_progress；COMPACT=true 时追加 findings.md 一行。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p2-1">
+          <mxGeometry x="650" y="1450" width="1220" height="135" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-loop" value="&lt;b&gt;继续审查&lt;/b&gt;&lt;br&gt;round += 1；回到 Phase A。MAX_ROUNDS=4；若达到上限仍 not ready，结束并列出 blocker/预计工作量/继续或 pivot 建议。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p2-1">
+          <mxGeometry x="650" y="1630" width="1220" height="95" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-term" value="&lt;b&gt;终止阶段&lt;/b&gt;&lt;br&gt;REVIEW_STATE.status=completed；AUTO_REVIEW.md 写最终总结和 ## Method Description；保留 review 轮次日志。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;spacing=8;" vertex="1" parent="p2-1">
+          <mxGeometry x="650" y="1830" width="1220" height="105" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-final-inputs" value="&lt;b&gt;worker 模式的最终输入快照&lt;/b&gt;&lt;br&gt;复制最新结果到 outputs/final-inputs/EXPERIMENT_RESULTS.md 与 EXPERIMENT_TRACKER.md；未发生变化时复制 manifest 输入原文件。&lt;br&gt;禁止最终分析读项目根 results/logs/refine-logs 代替这些快照。" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;spacing=8;" vertex="1" parent="p2-1">
+          <mxGeometry x="650" y="1990" width="1220" height="125" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-final-analyze" value="&lt;b&gt;强制子 skill：最终 /analyze-results&lt;/b&gt;&lt;br&gt;写 internal/final-analyze/input-manifest.json：final-inputs、outer experiment_plan/experiment_skill、prior metric history、error_report?、output_dir=final-analysis。等待 receipt；要求 run/iteration 匹配、metric.current 有限；把 metric.current/delta/statistical_significance 原值复制到 auto-review receipt；失败即 worker failed。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;spacing=8;" vertex="1" parent="p2-1">
+          <mxGeometry x="650" y="2160" width="1220" height="155" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-claim" value="&lt;b&gt;可选子 skill：/result-to-claim&lt;/b&gt;&lt;br&gt;读取 AUTO_REVIEW.md 中的结果，把实验数字转成 CLAIMS_FROM_RESULTS.md；可写 .aris/claims.json 与 evidence_precheck.json；不可用时静默跳过。作用：给后续 /paper-plan 提供已验证 claim。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="p2-1">
+          <mxGeometry x="1960" y="2140" width="590" height="145" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-html" value="&lt;b&gt;可选子 skill：/render-html&lt;/b&gt;&lt;br&gt;RENDER_HTML=true 时调用 /render-html AUTO_REVIEW.md --no-review --state REVIEW_STATE.json；输出 outputs/AUTO_REVIEW.html；HTML 失败只记录，不阻断 worker。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="p2-1">
+          <mxGeometry x="1960" y="2320" width="590" height="135" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-out" value="&lt;b&gt;Phase 2 receipt.dashboard_patch&lt;/b&gt;&lt;br&gt;last_review.verdict、last_review.score、last_review.reviewer_id；metric.current、metric.delta、statistical_significance。&lt;br&gt;合并后：同 iteration 的 metric.history 条目由最终分析替换 bridge 初值；质量 verdict 保留在 last_review，不能作为 Phase 3 stop_reason。" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;spacing=8;" vertex="1" parent="p2-1">
+          <mxGeometry x="650" y="2375" width="1220" height="135" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-end" value="&lt;b&gt;进入 Phase 3&lt;/b&gt;&lt;br&gt;读取 dashboard 字段做确定性指标判断" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" vertex="1" parent="p2-1">
+          <mxGeometry x="950" y="2560" width="620" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-e1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p2-1" source="p2-start" target="p2-manifest"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2-e2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p2-1" source="p2-manifest" target="p2-init"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2-e3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p2-1" source="p2-init" target="p2-review"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2-e4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p2-1" source="p2-review" target="p2-assess"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2-e5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p2-1" source="p2-assess" target="p2-stop-d"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2-e6" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p2-1" source="p2-stop-d" target="p2-memory"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2-e7" value="hard/nightmare 时" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p2-1" source="p2-memory" target="p2-human"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2-e8" value="medium 或记忆/辩论完成" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p2-1" source="p2-memory" target="p2-fix"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2-e9" value="checkpoint 开启" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p2-1" source="p2-human" target="p2-fix"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2-e10" value="checkpoint 关闭" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p2-1" source="p2-memory" target="p2-fix"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2-e11" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p2-1" source="p2-fix" target="p2-wait"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2-e12" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p2-1" source="p2-wait" target="p2-doc"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2-e13" value="仍需修复 / round 未结束" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p2-1" source="p2-doc" target="p2-loop"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2-e14" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p2-1" source="p2-loop" target="p2-review"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2-e15" value="是，或 MAX_ROUNDS 到达" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p2-1" source="p2-stop-d" target="p2-term"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2-e16" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p2-1" source="p2-term" target="p2-final-inputs"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2-e17" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p2-1" source="p2-final-inputs" target="p2-final-analyze"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2-e18" value="分析失败 → worker failed" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p2-1" source="p2-final-analyze" target="p2-final-inputs"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2-e19" value="分析成功" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p2-1" source="p2-final-analyze" target="p2-claim"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2-e20" value="可用时" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p2-1" source="p2-claim" target="p2-html"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2-e21" value="RENDER_HTML=true" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p2-1" source="p2-term" target="p2-html"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2-e22" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p2-1" source="p2-html" target="p2-out"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2-e23" value="不可用也继续" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p2-1" source="p2-claim" target="p2-out"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2-e24" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p2-1" source="p2-out" target="p2-end"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2-source" value="源码依据：skills/auto-review-loop/SKILL.md §Initialization、Phase A–E、Termination；skills/analyze-results/SKILL.md；skills/result-to-claim/SKILL.md；skills/render-html/SKILL.md。" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#666666;" vertex="1" parent="p2-1">
+          <mxGeometry x="40" y="2560" width="760" height="50" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="phase3" name="04 Phase 3 Metric Evaluation">
+    <mxGraphModel dx="1800" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2400" pageHeight="1800" math="0" shadow="0">
+      <root>
+        <mxCell id="p3-0"/>
+        <mxCell id="p3-1" parent="p3-0"/>
+        <mxCell id="p3-start" value="&lt;b&gt;Phase 3 开始&lt;/b&gt;&lt;br&gt;Phase 1/2 receipt 已合并；dashboard 是唯一输入。" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" vertex="1" parent="p3-1">
+          <mxGeometry x="850" y="20" width="700" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-input" value="&lt;b&gt;读取字段&lt;/b&gt;&lt;br&gt;.aris/runs/&lt;run_id&gt;/dashboard.json：metric.current、metric.target、metric.direction、metric.tolerance、metric.history；iteration、max_iterations；config.patience。&lt;br&gt;禁止：读取 worker Markdown、raw results、receipt 原文、last_review 做停止判断；禁止 dispatch/reviewer。" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;spacing=8;" vertex="1" parent="p3-1">
+          <mxGeometry x="630" y="145" width="1140" height="135" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-calc" value="&lt;b&gt;metric-gate.js evaluate&lt;/b&gt;&lt;br&gt;计算：band = abs(target) × tolerance；higher_better threshold = target − band；lower_better threshold = target + band。&lt;br&gt;patience：按 history.iter 排序，只有比此前 best 更好才清零，否则 streak+1；每次从 history 重算，不累积计数。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p3-1">
+          <mxGeometry x="630" y="330" width="1140" height="145" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-d-invalid" value="判断 1：current 非有限/为空，或 target、direction、tolerance、history、iteration、max_iterations、patience 非法？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;spacing=8;" vertex="1" parent="p3-1">
+          <mxGeometry x="740" y="525" width="920" height="155" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-invalid" value="&lt;b&gt;invalid_metric&lt;/b&gt;&lt;br&gt;metric-gate 原子写 dashboard.stop_reason=invalid_metric；dashboard.status=invalid；run-state：loop failed、summary skipped、paper-writing skipped；不生成 summary/paper。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;spacing=8;" vertex="1" parent="p3-1">
+          <mxGeometry x="40" y="535" width="560" height="135" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-d-target" value="判断 2：目标达成？&lt;br&gt;higher_better：current ≥ target − abs(target)×tolerance；lower_better：current ≤ target + abs(target)×tolerance。" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;spacing=8;" vertex="1" parent="p3-1">
+          <mxGeometry x="740" y="735" width="920" height="155" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-target" value="stop_reason=metric_met&lt;br&gt;dashboard.status=finishing；run-state loop done；进入 Phase 5。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;spacing=8;" vertex="1" parent="p3-1">
+          <mxGeometry x="1780" y="750" width="540" height="115" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-d-budget" value="判断 3：iteration ≥ max_iterations？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;spacing=8;" vertex="1" parent="p3-1">
+          <mxGeometry x="740" y="945" width="920" height="135" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-budget" value="stop_reason=budget_exhausted&lt;br&gt;只说明预算耗尽，不说明质量；dashboard.status=finishing；loop done；进入 Phase 5。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;spacing=8;" vertex="1" parent="p3-1">
+          <mxGeometry x="1780" y="960" width="540" height="115" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-d-patience" value="判断 4：trailing no-progress streak ≥ config.patience？默认 patience=2。" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;spacing=8;" vertex="1" parent="p3-1">
+          <mxGeometry x="740" y="1135" width="920" height="135" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-patience" value="stop_reason=patience_exhausted&lt;br&gt;只说明连续没有指标改善；dashboard.status=finishing；loop done；进入 Phase 5。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;spacing=8;" vertex="1" parent="p3-1">
+          <mxGeometry x="1780" y="1150" width="540" height="115" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-continue" value="&lt;b&gt;没有任何停止原因&lt;/b&gt;&lt;br&gt;stop_reason 仍为 null；dashboard.status 继续 running。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p3-1">
+          <mxGeometry x="630" y="1340" width="1140" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-inc" value="&lt;b&gt;进入下一 iteration&lt;/b&gt;&lt;br&gt;dashboard.iteration 只增加一次；current_phase=idea-discovery；source_iteration=旧 iteration。resume 若已在 idea-discovery，只从 iteration−1 推导 source_iteration，不能再次加一。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p3-1">
+          <mxGeometry x="630" y="1480" width="1140" height="115" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-end" value="&lt;b&gt;进入 Phase 4&lt;/b&gt;&lt;br&gt;Idea Discovery 读取上一轮证据。" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" vertex="1" parent="p3-1">
+          <mxGeometry x="870" y="1645" width="660" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-e1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p3-1" source="p3-start" target="p3-input"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p3-e2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p3-1" source="p3-input" target="p3-calc"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p3-e3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p3-1" source="p3-calc" target="p3-d-invalid"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p3-e4" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p3-1" source="p3-d-invalid" target="p3-invalid"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p3-e5" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p3-1" source="p3-d-invalid" target="p3-d-target"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p3-e6" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p3-1" source="p3-d-target" target="p3-target"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p3-e7" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p3-1" source="p3-d-target" target="p3-d-budget"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p3-e8" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p3-1" source="p3-d-budget" target="p3-budget"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p3-e9" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p3-1" source="p3-d-budget" target="p3-d-patience"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p3-e10" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p3-1" source="p3-d-patience" target="p3-patience"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p3-e11" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p3-1" source="p3-d-patience" target="p3-continue"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p3-e12" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p3-1" source="p3-continue" target="p3-inc"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p3-e13" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p3-1" source="p3-inc" target="p3-end"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p3-source" value="源码依据：skills/auto-research-loop/SKILL.md §Phase 3、Stop Gate；src/tools/metric-gate.ts evaluate。" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#666666;" vertex="1" parent="p3-1">
+          <mxGeometry x="40" y="1645" width="700" height="50" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="phase4" name="05 Phase 4 受约束 Idea Discovery">
+    <mxGraphModel dx="1800" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2400" pageHeight="1900" math="0" shadow="0">
+      <root>
+        <mxCell id="p4-0"/>
+        <mxCell id="p4-1" parent="p4-0"/>
+        <mxCell id="p4-start" value="&lt;b&gt;Phase 4 开始&lt;/b&gt;&lt;br&gt;由 Phase 3 的 stop_reason=null 进入；iteration 已先加一，source_iteration=iteration−1。" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" vertex="1" parent="p4-1">
+          <mxGeometry x="810" y="20" width="780" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="p4-input" value="&lt;b&gt;输入&lt;/b&gt;&lt;br&gt;ROOT/research-wiki/gap_map.md；上一轮 workers/&lt;source_iteration&gt;-auto-review-loop/outputs/final-analysis/EXPERIMENT_RESULTS.md；final-inputs/EXPERIMENT_TRACKER.md；final-inputs/EXPERIMENT_RESULTS.md；AUTO_REVIEW.md。&lt;br&gt;context：metric_gap_constrained=true、source_iteration、metric_name/target/direction/tolerance/current/history、prior open_gap_ids。" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;spacing=8;" vertex="1" parent="p4-1">
+          <mxGeometry x="590" y="145" width="1220" height="155" as="geometry"/>
+        </mxCell>
+        <mxCell id="p4-manifest" value="&lt;b&gt;写并派发 /idea-discovery&lt;/b&gt;&lt;br&gt;文件：workers/&lt;iteration&gt;-idea-discovery/input-manifest.json；inputs 只能引用上面五类证据；context.source_iteration 必须等于 iteration−1；output_dir=outputs。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p4-1">
+          <mxGeometry x="590" y="350" width="1220" height="115" as="geometry"/>
+        </mxCell>
+        <mxCell id="p4-branch" value="&lt;b&gt;idea-discovery 的 metric-gap constrained branch&lt;/b&gt;&lt;br&gt;发现 3–5 个 implementation-ready candidate；优先引用已有 gap id，但新问题只能写 provisional 描述 + evidence path，不创建权威 id。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p4-1">
+          <mxGeometry x="590" y="515" width="1220" height="105" as="geometry"/>
+        </mxCell>
+        <mxCell id="p4-fields" value="&lt;b&gt;每个 candidate 必须具备的字段&lt;/b&gt;&lt;br&gt;target gap ids/description；evidence paths；mechanism；exact code/config change；command；dataset/split；seeds；metric；closing threshold；expected artifact；runtime estimate；main risk。缺字段就拒绝候选，gap-planner 不得补写。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;spacing=8;" vertex="1" parent="p4-1">
+          <mxGeometry x="590" y="670" width="1220" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="p4-forbid" value="&lt;b&gt;明确禁止&lt;/b&gt;&lt;br&gt;不调用 /research-lit、/idea-creator、/novelty-check、/research-review、/research-refine-pipeline；不做 web/literature search、pilot、开放 pipeline、user checkpoint、method refinement、独立 experiment plan、rendering。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;spacing=8;" vertex="1" parent="p4-1">
+          <mxGeometry x="40" y="515" width="500" height="160" as="geometry"/>
+        </mxCell>
+        <mxCell id="p4-review" value="&lt;b&gt;一次 fresh method audit&lt;/b&gt;&lt;br&gt;读取 run 的 .paseo-config.json，调用配置的 reviewer provider/mode/thinking；只审 supplied artifacts、证据适配、可行性、因果隔离、测量质量、阈值可测试性；prompt 禁止 web/literature/novelty。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;spacing=8;" vertex="1" parent="p4-1">
+          <mxGeometry x="590" y="850" width="1220" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="p4-review-d" value="method reviewer pass / warn？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;" vertex="1" parent="p4-1">
+          <mxGeometry x="900" y="1030" width="600" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="p4-fix" value="&lt;b&gt;一次有界修正&lt;/b&gt;&lt;br&gt;只按 reviewer 明确指出的问题修正 candidates；用 fresh reviewer 再审一次。第二次仍 fail → 写 failed receipt，不继续。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;spacing=8;" vertex="1" parent="p4-1">
+          <mxGeometry x="40" y="1015" width="500" height="145" as="geometry"/>
+        </mxCell>
+        <mxCell id="p4-select" value="&lt;b&gt;排序并只选一个&lt;/b&gt;&lt;br&gt;pass/warn 后写排名、exactly one selected_idea_id；不提问用户、不跑 pilot、不写 EXPERIMENT_PLAN/FINAL_PROPOSAL；写完 receipt 后立即返回。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p4-1">
+          <mxGeometry x="590" y="1210" width="1220" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="p4-report" value="&lt;b&gt;输出：IDEA_REPORT.md&lt;/b&gt;&lt;br&gt;outputs/IDEA_REPORT.md；包含 candidates、每个候选必需字段、method review、排序、selected_idea_id。&lt;br&gt;不是完整 idea-stage pipeline：本分支不产生 FINAL_PROPOSAL.md、EXPERIMENT_PLAN.md、HTML。" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;spacing=8;" vertex="1" parent="p4-1">
+          <mxGeometry x="590" y="1370" width="1220" height="125" as="geometry"/>
+        </mxCell>
+        <mxCell id="p4-receipt" value="&lt;b&gt;receipt.dashboard_patch&lt;/b&gt;&lt;br&gt;best_idea：id/title/metric/iteration；idea_ids：候选 id 数组；summary.mode=metric-gap-constrained；method_review.verdict=pass|warn、review_agent_id、reviewer_provider；status=done。" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;spacing=8;" vertex="1" parent="p4-1">
+          <mxGeometry x="590" y="1545" width="1220" height="115" as="geometry"/>
+        </mxCell>
+        <mxCell id="p4-merge" value="&lt;b&gt;主 orchestrator&lt;/b&gt;&lt;br&gt;dashboard-merge 原子写 best_idea、idea_ids、applied_receipts；current_phase 改为 gap-planner；不读取 IDEA_REPORT.md 内容。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p4-1">
+          <mxGeometry x="590" y="1710" width="1220" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="p4-end" value="&lt;b&gt;进入 Phase 4.5&lt;/b&gt;&lt;br&gt;selected_idea_id 由 dashboard.best_idea.id 传给 gap-planner" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" vertex="1" parent="p4-1">
+          <mxGeometry x="850" y="1850" width="700" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="p4-e1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p4-1" source="p4-start" target="p4-input"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p4-e2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p4-1" source="p4-input" target="p4-manifest"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p4-e3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p4-1" source="p4-manifest" target="p4-branch"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p4-e4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p4-1" source="p4-branch" target="p4-fields"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p4-e5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p4-1" source="p4-fields" target="p4-review"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p4-e6" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p4-1" source="p4-review" target="p4-review-d"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p4-e7" value="否，第一次" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p4-1" source="p4-review-d" target="p4-fix"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p4-e8" value="修正后 fresh re-audit" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p4-1" source="p4-fix" target="p4-review"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p4-e9" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p4-1" source="p4-review-d" target="p4-select"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p4-e10" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p4-1" source="p4-select" target="p4-report"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p4-e11" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p4-1" source="p4-report" target="p4-receipt"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p4-e12" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p4-1" source="p4-receipt" target="p4-merge"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p4-e13" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p4-1" source="p4-merge" target="p4-end"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p4-source" value="源码依据：skills/auto-research-loop/SKILL.md §Phase 4；skills/idea-discovery/SKILL.md §Metric-gap constrained branch。" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#666666;" vertex="1" parent="p4-1">
+          <mxGeometry x="40" y="1850" width="700" height="50" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="phase45" name="06 Phase 4.5 Gap Planner">
+    <mxGraphModel dx="1800" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2400" pageHeight="1900" math="0" shadow="0">
+      <root>
+        <mxCell id="p45-0"/>
+        <mxCell id="p45-1" parent="p45-0"/>
+        <mxCell id="p45-start" value="&lt;b&gt;Phase 4.5 开始&lt;/b&gt;&lt;br&gt;只在 Phase 4 选出 exactly one selected idea 后执行一次。" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" vertex="1" parent="p45-1">
+          <mxGeometry x="820" y="20" width="760" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="p45-input" value="&lt;b&gt;输入&lt;/b&gt;&lt;br&gt;idea_report：本轮 IDEA_REPORT.md；上一轮 final-analysis/EXPERIMENT_RESULTS.md、final-inputs/EXPERIMENT_TRACKER.md、final-inputs/EXPERIMENT_RESULTS.md、AUTO_REVIEW.md；ROOT/research-wiki/gap_map.md。&lt;br&gt;context：source_iteration=iteration−1、metric_name/target/direction/tolerance/current/baseline/history、selected_idea_id。" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;spacing=8;" vertex="1" parent="p45-1">
+          <mxGeometry x="590" y="145" width="1220" height="155" as="geometry"/>
+        </mxCell>
+        <mxCell id="p45-manifest" value="&lt;b&gt;写并派发 /gap-planner&lt;/b&gt;&lt;br&gt;manifest.worker 必须是 gap-planner；context.source_iteration = iteration−1；selected_idea_id 必须对应 IDEA_REPORT 的一个候选；output_dir=worker/outputs。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p45-1">
+          <mxGeometry x="590" y="350" width="1220" height="105" as="geometry"/>
+        </mxCell>
+        <mxCell id="p45-audit" value="&lt;b&gt;1. 审计 gap_map&lt;/b&gt;&lt;br&gt;实验 analysis/tracker/results/review 是 gap 状态的证据；IDEA_REPORT 只在决定完成后用于把 provisional 描述/旧 id 映射到 canonical id。&lt;br&gt;动作：识别新 gap；重复项并入最老稳定 id；只有证据满足 closing condition 才 close；矛盾→refuted；低价值未解决→deferred；按 metric impact/evidence strength/cost 排序。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p45-1">
+          <mxGeometry x="590" y="510" width="1220" height="165" as="geometry"/>
+        </mxCell>
+        <mxCell id="p45-check" value="&lt;b&gt;结构检查&lt;/b&gt;&lt;br&gt;run/iteration/source_iteration/selected idea 一致；gap id 唯一；open/closed 不重叠；action 合法；每个 add/merge/close/refute 都有 evidence；selected idea 只映射 canonical open gap。失败直接 failed receipt，不替审计修正。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;spacing=8;" vertex="1" parent="p45-1">
+          <mxGeometry x="40" y="510" width="500" height="165" as="geometry"/>
+        </mxCell>
+        <mxCell id="p45-json" value="&lt;b&gt;写 GAP_AUDIT.json&lt;/b&gt;&lt;br&gt;字段：schema_version、run_id、iteration、source_iteration、auditor=gap-planner；decisions[] {gap_id, action, merged_into, priority, evidence[], reason}；open_gap_ids、closed_gap_ids、total_gaps；selected_idea {id, canonical_gap_ids}。" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;spacing=8;" vertex="1" parent="p45-1">
+          <mxGeometry x="590" y="730" width="1220" height="135" as="geometry"/>
+        </mxCell>
+        <mxCell id="p45-md" value="&lt;b&gt;同步写三份审计/规划 MD&lt;/b&gt;&lt;br&gt;outputs/gap_map.md：完整审计后的 gap map；outputs/GAP_ANALYSIS.md：带 evidence paths 的简要推理；outputs/EXPERIMENT_PLAN.md：下一轮自包含计划。" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;spacing=8;" vertex="1" parent="p45-1">
+          <mxGeometry x="590" y="920" width="1220" height="115" as="geometry"/>
+        </mxCell>
+        <mxCell id="p45-plan" value="&lt;b&gt;2. 机械组装下一轮计划&lt;/b&gt;&lt;br&gt;读取 selected idea 的 exact candidate；不能换 idea；每个 canonical target gap 复制 priority/closing condition。只允许使用 candidate 已有的具体 code/config steps。每个 milestone 必含 gap_id、hypothesis、exact modification、command/config、dataset/split、seeds、metric、success threshold、expected artifact、dependency、runtime。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p45-1">
+          <mxGeometry x="590" y="1090" width="1220" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="p45-receipt" value="&lt;b&gt;receipt.dashboard_patch&lt;/b&gt;&lt;br&gt;gaps.open、gaps.closed、gaps.total、gap_audit_path、plan_path；primary_output=EXPERIMENT_PLAN.md；summary.operation=audit-and-plan、selected_idea_id、decisions、milestones。" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;spacing=8;" vertex="1" parent="p45-1">
+          <mxGeometry x="590" y="1290" width="1220" height="115" as="geometry"/>
+        </mxCell>
+        <mxCell id="p45-merge" value="&lt;b&gt;主 orchestrator 合并与 root wiki 更新&lt;/b&gt;&lt;br&gt;dashboard-merge 原子更新 gap 字段；把 outputs/gap_map.md 复制为 ROOT/research-wiki/gap_map.md；调用 research-wiki rebuild_query_pack；current_phase=experiment-bridge；iteration 不再次改变。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p45-1">
+          <mxGeometry x="590" y="1450" width="1220" height="125" as="geometry"/>
+        </mxCell>
+        <mxCell id="p45-end" value="&lt;b&gt;进入下一轮 Phase 1&lt;/b&gt;&lt;br&gt;experiment-bridge 同时读取 gap-planner 的 EXPERIMENT_PLAN.md 与 idea-discovery 的 IDEA_REPORT.md" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" vertex="1" parent="p45-1">
+          <mxGeometry x="790" y="1630" width="820" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="p45-e1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p45-1" source="p45-start" target="p45-input"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p45-e2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p45-1" source="p45-input" target="p45-manifest"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p45-e3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p45-1" source="p45-manifest" target="p45-audit"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p45-e4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p45-1" source="p45-audit" target="p45-check"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p45-e5" value="结构失败" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p45-1" source="p45-check" target="p45-audit"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p45-e6" value="通过" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p45-1" source="p45-check" target="p45-json"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p45-e7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p45-1" source="p45-json" target="p45-md"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p45-e8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p45-1" source="p45-md" target="p45-plan"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p45-e9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p45-1" source="p45-plan" target="p45-receipt"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p45-e10" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p45-1" source="p45-receipt" target="p45-merge"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p45-e11" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p45-1" source="p45-merge" target="p45-end"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p45-source" value="源码依据：skills/auto-research-loop/SKILL.md §Phase 4.5；skills/gap-planner/SKILL.md 全文（Manifest、Audit、Compose、Receipt、Authority Boundary）。" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#666666;" vertex="1" parent="p45-1">
+          <mxGeometry x="40" y="1630" width="700" height="50" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="phase5" name="07 Phase 5 Summary">
+    <mxGraphModel dx="1800" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2400" pageHeight="1500" math="0" shadow="0">
+      <root>
+        <mxCell id="p5-0"/>
+        <mxCell id="p5-1" parent="p5-0"/>
+        <mxCell id="p5-start" value="&lt;b&gt;Phase 5 触发&lt;/b&gt;&lt;br&gt;dashboard.status=finishing；stop_reason 已由 metric-gate 确定。" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" vertex="1" parent="p5-1">
+          <mxGeometry x="850" y="20" width="700" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5-invalid" value="&lt;b&gt;例外：invalid_metric&lt;/b&gt;&lt;br&gt;Phase 5 被跳过；run-state loop=failed、summary=skipped、paper-writing=skipped；dashboard.status=invalid。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;spacing=8;" vertex="1" parent="p5-1">
+          <mxGeometry x="40" y="150" width="540" height="115" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5-input" value="&lt;b&gt;summary worker 输入&lt;/b&gt;&lt;br&gt;dashboard.json；research-wiki/index.md；research-wiki/gap_map.md；最后一轮 final-analysis/EXPERIMENT_RESULTS.md；最后一轮 AUTO_REVIEW.md。&lt;br&gt;context.stop_reason、total_iterations、final_metric、target_metric、metric_history。" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;spacing=8;" vertex="1" parent="p5-1">
+          <mxGeometry x="650" y="150" width="1220" height="135" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5-dispatch" value="&lt;b&gt;summary 子 agent&lt;/b&gt;&lt;br&gt;不是 /render-html；它负责从结构化输入生成新内容。调用 create_agent，要求只写 output_dir 指定路径。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;spacing=8;" vertex="1" parent="p5-1">
+          <mxGeometry x="650" y="340" width="1220" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5-report" value="&lt;b&gt;输出：NARRATIVE_REPORT.md&lt;/b&gt;&lt;br&gt;文件：workers/summary/outputs/NARRATIVE_REPORT.md。必须包含 metric_trajectory、stop_reason、iteration_log、open_gaps、closed_gaps、artifacts。receipt.primary_output=NARRATIVE_REPORT.md；dashboard_patch.summary_path=run-relative 路径。" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;spacing=8;" vertex="1" parent="p5-1">
+          <mxGeometry x="650" y="485" width="1220" height="125" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5-html-d" value="config.render_html=true？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;" vertex="1" parent="p5-1">
+          <mxGeometry x="930" y="665" width="660" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5-html" value="&lt;b&gt;可选子 skill：/render-html&lt;/b&gt;&lt;br&gt;输入：NARRATIVE_REPORT.md；选择 academic 模板，临时 HTML 仅结构转换；写 NARRATIVE_REPORT.html / receipt.html_rendered=true。失败记录但不阻断 summary。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;spacing=8;" vertex="1" parent="p5-1">
+          <mxGeometry x="1960" y="635" width="590" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5-accept" value="&lt;b&gt;run-state 写入&lt;/b&gt;&lt;br&gt;loop 用 deterministic:&lt;stop_reason&gt; accept，不能用 reviewer id；summary done → accept，verdict=deterministic:summary；artifact 指向 NARRATIVE_REPORT.md。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p5-1">
+          <mxGeometry x="650" y="850" width="1220" height="115" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5-end" value="&lt;b&gt;进入 Phase 6&lt;/b&gt;&lt;br&gt;由 dashboard.metric、iteration、config.auto_write 决定是否写论文" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" vertex="1" parent="p5-1">
+          <mxGeometry x="850" y="1020" width="700" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5-e1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p5-1" source="p5-start" target="p5-input"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p5-e2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p5-1" source="p5-input" target="p5-dispatch"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p5-e3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p5-1" source="p5-dispatch" target="p5-report"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p5-e4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p5-1" source="p5-report" target="p5-html-d"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p5-e5" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p5-1" source="p5-html-d" target="p5-html"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p5-e6" value="否 / 失败也继续" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p5-1" source="p5-html-d" target="p5-accept"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p5-e7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p5-1" source="p5-html" target="p5-accept"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p5-e8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p5-1" source="p5-accept" target="p5-end"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p5-source" value="源码依据：skills/auto-research-loop/SKILL.md §Phase 5；skills/render-html/SKILL.md §Manifest/Workflow。" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#666666;" vertex="1" parent="p5-1">
+          <mxGeometry x="40" y="1020" width="700" height="50" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="phase6" name="08 Phase 6 Paper Writing">
+    <mxGraphModel dx="1800" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2600" pageHeight="2200" math="0" shadow="0">
+      <root>
+        <mxCell id="p6-0"/>
+        <mxCell id="p6-1" parent="p6-0"/>
+        <mxCell id="p6-start" value="&lt;b&gt;Phase 6 gate&lt;/b&gt;&lt;br&gt;输入：dashboard.metric.current、target、direction、tolerance、iteration、config.auto_write。" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" vertex="1" parent="p6-1">
+          <mxGeometry x="850" y="20" width="700" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="p6-gate" value="metric 达标 AND iteration ≥ 2？&lt;br&gt;higher_better：current ≥ target − abs(target)×tolerance；lower_better：current ≤ target + abs(target)×tolerance。" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;spacing=8;" vertex="1" parent="p6-1">
+          <mxGeometry x="760" y="150" width="880" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="p6-skip" value="&lt;b&gt;gate 不通过&lt;/b&gt;&lt;br&gt;run-state paper-writing=skipped；dashboard.status=completed；不创建 paper worker。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;spacing=8;" vertex="1" parent="p6-1">
+          <mxGeometry x="40" y="175" width="560" height="105" as="geometry"/>
+        </mxCell>
+        <mxCell id="p6-auto" value="config.auto_write=true？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;" vertex="1" parent="p6-1">
+          <mxGeometry x="850" y="375" width="700" height="135" as="geometry"/>
+        </mxCell>
+        <mxCell id="p6-skip2" value="&lt;b&gt;AUTO_WRITE=false&lt;/b&gt;&lt;br&gt;paper-writing=skipped；dashboard.status=completed。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;spacing=8;" vertex="1" parent="p6-1">
+          <mxGeometry x="40" y="390" width="560" height="95" as="geometry"/>
+        </mxCell>
+        <mxCell id="p6-input" value="&lt;b&gt;paper-writing worker 输入&lt;/b&gt;&lt;br&gt;summary/NARRATIVE_REPORT.md；ROOT/research-wiki/；最后一轮 final-inputs/EXPERIMENT_RESULTS.md；final-analysis/EXPERIMENT_RESULTS.md；dashboard.json。&lt;br&gt;context.metric_trajectory、final_metric、target_metric。" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;spacing=8;" vertex="1" parent="p6-1">
+          <mxGeometry x="650" y="585" width="1220" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="p6-plan" value="&lt;b&gt;子 skill：/paper-plan&lt;/b&gt;&lt;br&gt;从 narrative 抽取 claims/evidence/figures；生成 Claims-Evidence Matrix、章节结构、图表位置、citation scaffold；输出 PAPER_PLAN.md。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="p6-1">
+          <mxGeometry x="40" y="780" width="540" height="135" as="geometry"/>
+        </mxCell>
+        <mxCell id="p6-fig" value="&lt;b&gt;子 skill：/paper-figure + illustration 分支&lt;/b&gt;&lt;br&gt;/paper-figure 读 PAPER_PLAN，生成 matplotlib/seaborn 图、LaTeX 表、figures/latex_includes.tex；architecture 可选 figurespec / paper-illustration / mermaid / codex-image2，写 figures/*。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="p6-1">
+          <mxGeometry x="650" y="780" width="1220" height="135" as="geometry"/>
+        </mxCell>
+        <mxCell id="p6-write" value="&lt;b&gt;子 skill：/paper-write&lt;/b&gt;&lt;br&gt;按 plan 写 section LaTeX；插入图表；构建 references.bib；清理 stale sections、未引用 bib、AI 风格词；输出 paper/main.tex、sections/*.tex、references.bib、math_commands.tex。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="p6-1">
+          <mxGeometry x="1960" y="780" width="590" height="145" as="geometry"/>
+        </mxCell>
+        <mxCell id="p6-compile" value="&lt;b&gt;子 skill：/paper-compile&lt;/b&gt;&lt;br&gt;latexmk -pdf，多轮修复常见编译错误；检查 undefined refs、页数、字体嵌入、pdftotext；输出 paper/main.pdf。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="p6-1">
+          <mxGeometry x="650" y="1010" width="1220" height="105" as="geometry"/>
+        </mxCell>
+        <mxCell id="p6-improve" value="&lt;b&gt;子 skill：/auto-paper-improvement-loop&lt;/b&gt;&lt;br&gt;最多 MAX_IMPROVEMENT_ROUNDS=2：review → fix → recompile；保留 round0/round1/round2 PDF 与 PAPER_IMPROVEMENT_LOG.md。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="p6-1">
+          <mxGeometry x="650" y="1170" width="1220" height="105" as="geometry"/>
+        </mxCell>
+        <mxCell id="p6-audit" value="&lt;b&gt;submission assurance 审计&lt;/b&gt;&lt;br&gt;按内容检测调用 /proof-checker、/paper-claim-audit、/citation-audit；理论/范围论文可调用 /kill-argument。每个审计写对应 .json/.md；audit verifier 检查 artifact 存在、schema、hash 新鲜度、blocking verdict。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;spacing=8;" vertex="1" parent="p6-1">
+          <mxGeometry x="650" y="1330" width="1220" height="135" as="geometry"/>
+        </mxCell>
+        <mxCell id="p6-audit-d" value="verify_paper_audits.sh exit=0？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;" vertex="1" parent="p6-1">
+          <mxGeometry x="900" y="1525" width="720" height="135" as="geometry"/>
+        </mxCell>
+        <mxCell id="p6-fail" value="&lt;b&gt;阻断&lt;/b&gt;&lt;br&gt;submission assurance 下不能 accept paper-writing 或声称 submission-ready；按 MISSING / STALE / BLOCKING_VERDICT / SCHEMA_INVALID 修复并重跑审计。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;spacing=8;" vertex="1" parent="p6-1">
+          <mxGeometry x="40" y="1515" width="560" height="145" as="geometry"/>
+        </mxCell>
+        <mxCell id="p6-out" value="&lt;b&gt;成功落盘&lt;/b&gt;&lt;br&gt;workers/paper-writing/outputs/paper/：main.pdf、LaTeX 源码、图、审计 JSON/MD、audit-verifier-report.json。&lt;br&gt;receipt.dashboard_patch：paper_status=compiled、audit_passed=true；run-state paper-writing done → accept(verdict=deterministic:verify_paper_audits.sh)；dashboard.status=completed。" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;spacing=8;" vertex="1" parent="p6-1">
+          <mxGeometry x="650" y="1710" width="1220" height="145" as="geometry"/>
+        </mxCell>
+        <mxCell id="p6-end" value="&lt;b&gt;运行完成&lt;/b&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" vertex="1" parent="p6-1">
+          <mxGeometry x="930" y="1910" width="660" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="p6-e1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p6-1" source="p6-start" target="p6-gate"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p6-e2" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p6-1" source="p6-gate" target="p6-skip"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p6-e3" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p6-1" source="p6-gate" target="p6-auto"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p6-e4" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p6-1" source="p6-auto" target="p6-skip2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p6-e5" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p6-1" source="p6-auto" target="p6-input"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p6-e6" value="AUTO_WRITE=false / gate false" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p6-1" source="p6-skip" target="p6-end"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p6-e7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p6-1" source="p6-skip2" target="p6-end"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p6-e8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p6-1" source="p6-input" target="p6-plan"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p6-e9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p6-1" source="p6-plan" target="p6-fig"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p6-e10" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p6-1" source="p6-fig" target="p6-write"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p6-e11" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p6-1" source="p6-write" target="p6-compile"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p6-e12" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p6-1" source="p6-compile" target="p6-improve"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p6-e13" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p6-1" source="p6-improve" target="p6-audit"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p6-e14" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p6-1" source="p6-audit" target="p6-audit-d"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p6-e15" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p6-1" source="p6-audit-d" target="p6-fail"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p6-e16" value="修复后重审" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p6-1" source="p6-fail" target="p6-audit"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p6-e17" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p6-1" source="p6-audit-d" target="p6-out"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p6-e18" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p6-1" source="p6-out" target="p6-end"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p6-source" value="源码依据：skills/auto-research-loop/SKILL.md §Phase 6；skills/paper-writing/SKILL.md §Overview、Inputs、Pipeline、Assurance/Final Report。" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#666666;" vertex="1" parent="p6-1">
+          <mxGeometry x="40" y="1910" width="760" height="50" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="deps-exec" name="09 相关 skill：环境与实验执行">
+    <mxGraphModel dx="1900" dy="1300" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2800" pageHeight="2200" math="0" shadow="0">
+      <root>
+        <mxCell id="d9-0"/>
+        <mxCell id="d9-1" parent="d9-0"/>
+        <mxCell id="d9-title" value="Experiment Bridge 的子调用与落盘责任" style="text;html=1;fontSize=20;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="d9-1">
+          <mxGeometry x="700" y="20" width="1400" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="d9-env" value="&lt;b&gt;/experiment-env-manager&lt;/b&gt;&lt;br&gt;触发：Phase 0 发现 env.json.status != complete，或 sanity 3 次失败/运行时 env error。&lt;br&gt;输入：project、mode=setup|error-report|audit、run-id、paseo-config、error-report path。&lt;br&gt;动作：写 .aris/env-config/&lt;project&gt;/env-manager-state.json；setup 模式写 prd.json；派发 /experiment-env-configuration 生成 bundle，再派发 /experiment-env-audit 生成结构化 verdict；FAIL 时按 checks.*.fix_hint 与 patch_targets 修复并重新审计。&lt;br&gt;落盘：.claude/skills/run-&lt;project&gt;-experiment/env.json、scripts/*；ENV_CONFIG_AUDIT.md/JSON；最终 env.json.status=complete；receipt .aris/runs/&lt;run_id&gt;.experiment-env-manager.&lt;project&gt;.done.json，字段 result、audit_verdict、repair_rounds。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="d9-1">
+          <mxGeometry x="40" y="110" width="820" height="315" as="geometry"/>
+        </mxCell>
+        <mxCell id="d9-run" value="&lt;b&gt;/run-experiment&lt;/b&gt;&lt;br&gt;输入：experiment command、project generated skill。&lt;br&gt;读取：info.sh JSON 的 env_type/backend/connection/resources；prepare.sh 做 pre-flight + code_sync；run.sh 启动并返回 handle；monitor.sh 返回 status/gpu_usage/tail/exit_code/elapsed_seconds/wandb；collect.sh 下载 results/logs。&lt;br&gt;修改/新增：失败时写 .aris/env-config/&lt;project&gt;/error-reports/&lt;timestamp&gt;.json；实验脚本写 JSON/CSV 结果、日志、W&amp;B 指标；Vast auto_destroy=true 时 teardown。&lt;br&gt;判断：prepare/info 失败 → env-manager error-report；完成后 suggestion /analyze-results。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="d9-1">
+          <mxGeometry x="980" y="110" width="820" height="315" as="geometry"/>
+        </mxCell>
+        <mxCell id="d9-queue" value="&lt;b&gt;/experiment-queue&lt;/b&gt;&lt;br&gt;触发：≥10 jobs、multi-seed、wave、teacher→student 依赖、OOM 重试。&lt;br&gt;输入：YAML manifest / grid spec / natural language；由 info.sh 注入 ssh、conda、cwd、resources。&lt;br&gt;落盘：本地 experiment-queue/&lt;timestamp&gt;/manifest.json、run_meta.txt；远端 .aris_queue/runs/&lt;timestamp&gt;/manifest.json、queue_state.json、logs/*、queue_mgr.log；scheduler 每 60s 更新 jobs[].status。&lt;br&gt;判断：expected output 存在才 completed；CUDA OOM → bounded retry；依赖 checkpoint 不存在不发下游；最终 summary.md，analyze_on_complete=true 时调用 /analyze-results。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="d9-1">
+          <mxGeometry x="1920" y="110" width="820" height="315" as="geometry"/>
+        </mxCell>
+        <mxCell id="d9-monitor" value="&lt;b&gt;/monitor-experiment&lt;/b&gt;&lt;br&gt;输入：server alias 或 experiment name。&lt;br&gt;调用：generated monitor.sh、collect.sh。&lt;br&gt;输出：对比表 Experiment / Metric / Delta vs Baseline / Status；receipt .aris/runs/&lt;run_id&gt;.experiment.&lt;exp&gt;.done.json 字段 status、primary_metric、metrics、gpu_usage、wandb、failure_patterns_matched、elapsed_seconds；不修改主 dashboard。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="d9-1">
+          <mxGeometry x="40" y="520" width="820" height="250" as="geometry"/>
+        </mxCell>
+        <mxCell id="d9-train" value="&lt;b&gt;/training-check&lt;/b&gt;&lt;br&gt;输入：W&amp;B entity/project/run_id 或 SSH log；读取 loss trend、eval metrics、NaN/Inf、spike、learning rate、gradient norm。&lt;br&gt;判断：Clearly bad → STOP；Clearly fine → CONTINUE；不确定 → 一次 Codex judgment，输出 WAIT/STOP/CONTINUE。&lt;br&gt;STOP 落盘：保存 W&amp;B URL、关键指标、停止原因到项目 notes；健康时检查间隔 10→20→30→60 min。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="d9-1">
+          <mxGeometry x="980" y="520" width="820" height="250" as="geometry"/>
+        </mxCell>
+        <mxCell id="d9-ablate" value="&lt;b&gt;/ablation-planner&lt;/b&gt;&lt;br&gt;触发：主结果经 result-to-claim 为 yes/partial、或 reviewer 指出缺少消融。&lt;br&gt;输入：method components、EXPERIMENT_LOG.md/EXPERIMENT_TRACKER.md/W&amp;B、claims、hardware。&lt;br&gt;输出：component ablation、hyperparameter sensitivity、design choice comparison、priority、run order、compute estimate；实现/运行后追加 EXPERIMENT_PLAN.md 与 EXPERIMENT_TRACKER.md，结果写 EXPERIMENT_LOG.md。&lt;br&gt;每个 ablation 必须有 what_it_tests 和 expected_if_component_matters。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="d9-1">
+          <mxGeometry x="1920" y="520" width="820" height="250" as="geometry"/>
+        </mxCell>
+        <mxCell id="d9-fail" value="&lt;b&gt;共同失败转移&lt;/b&gt;&lt;br&gt;实验执行 skill 不直接修改 auto-research-loop 的 dashboard。它们把机器事实写到结果/receipt/error-report；上层 worker 读取后才转换成 dashboard_patch；主 loop 只接受受限字段。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;spacing=8;" vertex="1" parent="d9-1">
+          <mxGeometry x="650" y="875" width="1220" height="115" as="geometry"/>
+        </mxCell>
+        <mxCell id="d9-flow1" value="Phase 0 / sanity failure" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=12;" edge="1" parent="d9-1" source="d9-env" target="d9-run"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="d9-flow2" value="小批量" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=12;" edge="1" parent="d9-1" source="d9-run" target="d9-monitor"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="d9-flow3" value="大批量/依赖" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=12;" edge="1" parent="d9-1" source="d9-run" target="d9-queue"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="d9-flow4" value="W&amp;B 开启" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=12;" edge="1" parent="d9-1" source="d9-monitor" target="d9-train"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="d9-flow5" value="主结果 positive" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=12;" edge="1" parent="d9-1" source="d9-monitor" target="d9-ablate"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="d9-source" value="源码依据：skills/experiment-env-manager/SKILL.md；run-experiment/SKILL.md；experiment-queue/SKILL.md；monitor-experiment/SKILL.md；training-check/SKILL.md；ablation-planner/SKILL.md。" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#666666;" vertex="1" parent="d9-1">
+          <mxGeometry x="40" y="1080" width="1500" height="50" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="deps-review" name="10 相关 skill：分析、审查与发布">
+    <mxGraphModel dx="1900" dy="1300" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2800" pageHeight="2300" math="0" shadow="0">
+      <root>
+        <mxCell id="d10-0"/>
+        <mxCell id="d10-1" parent="d10-0"/>
+        <mxCell id="d10-title" value="Auto Review / Analyze / Render / Paper 的输入输出边界" style="text;html=1;fontSize=20;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="d10-1">
+          <mxGeometry x="700" y="20" width="1400" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="d10-analyze" value="&lt;b&gt;/analyze-results&lt;/b&gt;&lt;br&gt;输入（worker 模式）：manifest.inputs.results、tracker，optional experiment_plan、experiment_skill、error_report；只读这些路径，不扫项目根 results/logs/refine-logs。&lt;br&gt;Phase 2：比较表按 model/hyperparameter/data/seed 分组，算 baseline delta；多 seed 算 mean±std、p-value，找 outlier；每个 finding 写 observation/interpretation/implication/next step。&lt;br&gt;Phase 3：派 fresh Codex verifier 写 .aris/env-config/&lt;project&gt;/ANALYSIS_AUDIT.md/.json；FAIL 时由用户选择补充、跳过或 override。&lt;br&gt;输出：outputs/EXPERIMENT_RESULTS.md；receipt.dashboard_patch.metric.current、metric.delta、statistical_significance，summary.verdict/iterations。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="d10-1">
+          <mxGeometry x="40" y="110" width="820" height="355" as="geometry"/>
+        </mxCell>
+        <mxCell id="d10-review" value="&lt;b&gt;/auto-review-loop&lt;/b&gt;&lt;br&gt;输入：analysis/tracker/results/experiment_plan/experiment_skill/idea_report；context.target_metric、metric_history、reviewer_model。&lt;br&gt;内部 round：reviewer 读文件 → 提取 score/verdict/actions → 修 code/experiment/analysis/docs → monitor → 记录 raw response；score≥6 AND ready/almost 才停，MAX_ROUNDS=4。&lt;br&gt;终止落盘：AUTO_REVIEW.md、REVIEW_STATE.json、final-inputs/EXPERIMENT_RESULTS.md、final-inputs/EXPERIMENT_TRACKER.md、final-analysis/EXPERIMENT_RESULTS.md；可选 CLAIMS_FROM_RESULTS.md、AUTO_REVIEW.html。&lt;br&gt;receipt.patch：last_review.verdict/score/reviewer_id + final metric fields。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="d10-1">
+          <mxGeometry x="980" y="110" width="820" height="355" as="geometry"/>
+        </mxCell>
+        <mxCell id="d10-claim" value="&lt;b&gt;/result-to-claim（auto-review 终止可选）&lt;/b&gt;&lt;br&gt;输入：W&amp;B、EXPERIMENT_LOG.md、EXPERIMENT_TRACKER.md、logs、research_contract；先写 .aris/claims.json {id,value,source}，运行 evidence pre-check 生成 .aris/evidence_precheck.json。&lt;br&gt;Codex 判断：claim_supported=yes|partial|no、what_results_support/don't_support、missing_evidence、suggested_claim_revision、next_experiments_needed、confidence。&lt;br&gt;写 CLAIMS_FROM_RESULTS.md；若 wiki 存在，只添加 experiment edges，不改 claim.status、不创建 claim 节点。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="d10-1">
+          <mxGeometry x="1920" y="110" width="820" height="355" as="geometry"/>
+        </mxCell>
+        <mxCell id="d10-render" value="&lt;b&gt;/render-html&lt;/b&gt;&lt;br&gt;输入：选定的 MD/JSON（IDEA_REPORT、AUTO_REVIEW、NARRATIVE_REPORT、research-wiki 等），可带 --state/--json sidecar。&lt;br&gt;动作：识别 artifact、选 academic/dashboard 模板、调用纯 stdlib helper；Markdown 是源，HTML 只是阅读视图。&lt;br&gt;输出：同目录 .html，内含 source SHA256；worker receipt.dashboard_patch.html_rendered=true。academic 默认需要 fresh Codex 做 fidelity/structure/safety review；auto-loop/summary 明确传 --no-review；失败不阻断上游。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="d10-1">
+          <mxGeometry x="40" y="560" width="820" height="300" as="geometry"/>
+        </mxCell>
+        <mxCell id="d10-paper" value="&lt;b&gt;/paper-writing&lt;/b&gt;&lt;br&gt;输入：NARRATIVE_REPORT.md、research-wiki、final result/analysis、dashboard；支持直接 PAPER_PLAN.md 或研究方向+结果。&lt;br&gt;固定链：paper-plan → paper-figure → paper-write → paper-compile → auto-paper-improvement-loop；可选 figurespec/gemini/mermaid/codex-image2 生成架构图。&lt;br&gt;最终 assurance=submission 时必须有 PROOF_AUDIT.json、PAPER_CLAIM_AUDIT.json、CITATION_AUDIT.json（必要时 KILL_ARGUMENT.json），再由 verify_paper_audits.sh 判 exit code。&lt;br&gt;输出 paper/：PDF、TeX、figures、审计报告、audit-verifier-report.json；receipt.patch.paper_status/audit_passed。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="d10-1">
+          <mxGeometry x="980" y="560" width="820" height="300" as="geometry"/>
+        </mxCell>
+        <mxCell id="d10-authority" value="&lt;b&gt;字段来源的先后关系&lt;/b&gt;&lt;br&gt;实验原始数据 → analyze-results 的结构化 metric → dashboard.metric.current；reviewer 的 score/verdict → dashboard.last_review；metric-gate 只用 dashboard.metric 与 history 决定停止；gap-planner 只用 supplied evidence 做 gap 变更；paper verifier 的 exit code 才能给 paper-writing accept。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;spacing=8;" vertex="1" parent="d10-1">
+          <mxGeometry x="650" y="970" width="1220" height="135" as="geometry"/>
+        </mxCell>
+        <mxCell id="d10-a1" value="结构化 metric" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=12;" edge="1" parent="d10-1" source="d10-analyze" target="d10-review"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="d10-a2" value="最终 claim" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=12;" edge="1" parent="d10-1" source="d10-review" target="d10-claim"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="d10-a3" value="报告 MD" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=12;" edge="1" parent="d10-1" source="d10-review" target="d10-render"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="d10-a4" value="NARRATIVE_REPORT" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=12;" edge="1" parent="d10-1" source="d10-review" target="d10-paper"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="d10-source" value="源码依据：skills/analyze-results/SKILL.md；auto-review-loop/SKILL.md；result-to-claim/SKILL.md；render-html/SKILL.md；paper-writing/SKILL.md。" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#666666;" vertex="1" parent="d10-1">
+          <mxGeometry x="40" y="1190" width="1500" height="50" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="files" name="11 文件与字段责任">
+    <mxGraphModel dx="1900" dy="1300" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2800" pageHeight="2400" math="0" shadow="0">
+      <root>
+        <mxCell id="d11-0"/>
+        <mxCell id="d11-1" parent="d11-0"/>
+        <mxCell id="d11-title" value="可落盘文件、写入者和字段边界" style="text;html=1;fontSize=20;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="d11-1">
+          <mxGeometry x="700" y="20" width="1400" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="d11-dashboard" value="&lt;b&gt;.aris/runs/&lt;run_id&gt;/dashboard.json — 主循环唯一状态源&lt;/b&gt;&lt;br&gt;初始化写：run_id、project、status、iteration、max_iterations、current_phase、config{baseline_plan,auto_write,render_html,patience}、metric{name,target,direction,tolerance,baseline,current,history}、best_idea、gaps{open,closed,total}、last_review{verdict,score,reviewer_id}、stop_reason、timestamps、system_errors、applied_receipts。&lt;br&gt;worker 只通过 dashboard_patch 写：bridge→metric.*/experiment_ids；review→last_review.* + final metric；idea→best_idea/idea_ids；gap→gaps.* + paths；summary→summary_path；paper→paper_status/audit_passed；render→html_rendered。&lt;br&gt;metric.history：首次写 iter/value/source/timestamp；同 iteration 再写时替换，不重复追加。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;spacing=8;" vertex="1" parent="d11-1">
+          <mxGeometry x="40" y="105" width="1320" height="280" as="geometry"/>
+        </mxCell>
+        <mxCell id="d11-state" value="&lt;b&gt;.aris/runs/&lt;run_id&gt;.json — 外层生命周期&lt;/b&gt;&lt;br&gt;run-state 只存 init、loop、summary、paper-writing 四个不重复阶段；每个 phase 字段：phase、status(pending/running/done/failed/accepted/skipped)、artifact、verdict_id、reviewer、updated。&lt;br&gt;accepted 必须带 verdict_id + reviewer；loop 的 accept 只能是 deterministic:&lt;stop_reason&gt;；paper-writing 的 accept 是 deterministic:verify_paper_audits.sh。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="d11-1">
+          <mxGeometry x="1480" y="105" width="1260" height="280" as="geometry"/>
+        </mxCell>
+        <mxCell id="d11-worker" value="&lt;b&gt;.aris/runs/&lt;run_id&gt;/workers/&lt;iteration&gt;-&lt;phase&gt;/&lt;/b&gt;&lt;br&gt;input-manifest.json：worker、iteration、run_id、inputs（路径）、context（标量）、output_dir。&lt;br&gt;receipt.json：worker、iteration、run_id、status、error、primary_output、summary、dashboard_patch、completed_at、has_errors、error_count；done receipt 的 primary_output 必须存在于 output_dir；failed receipt 不得有 patch。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;spacing=8;" vertex="1" parent="d11-1">
+          <mxGeometry x="40" y="465" width="1320" height="250" as="geometry"/>
+        </mxCell>
+        <mxCell id="d11-arts" value="&lt;b&gt;worker Markdown / JSON 的写者&lt;/b&gt;&lt;br&gt;experiment-bridge：EXPERIMENT_RESULTS.md、EXPERIMENT_TRACKER.md、analysis/EXPERIMENT_RESULTS.md；auto-review：AUTO_REVIEW.md、REVIEW_STATE.json、final-inputs/*、final-analysis/*；idea：IDEA_REPORT.md；gap：GAP_AUDIT.json、gap_map.md、GAP_ANALYSIS.md、EXPERIMENT_PLAN.md；summary：NARRATIVE_REPORT.md；paper：paper/；render：同源 .html。&lt;br&gt;这些文件不是 Phase 3 的停止输入，主 orchestrator 只读它们对应 receipt 的结构化 patch。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;spacing=8;" vertex="1" parent="d11-1">
+          <mxGeometry x="1480" y="465" width="1260" height="250" as="geometry"/>
+        </mxCell>
+        <mxCell id="d11-wiki" value="&lt;b&gt;research-wiki/ 的 canonical 更改&lt;/b&gt;&lt;br&gt;Phase 1：receipt.experiments 通过 research-wiki.js add_experiment 写实验实体，字段 slug/title/idea/verdict/confidence/metrics/reasoning/provenance/tags。&lt;br&gt;Phase 4.5：把 gap-planner outputs/gap_map.md 覆盖/同步到 research-wiki/gap_map.md，并 rebuild_query_pack。&lt;br&gt;规则：ideas、experiments、edges 走 helper；gap 只能由 gap-planner 决定；不从 worker raw MD 猜字段。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;spacing=8;" vertex="1" parent="d11-1">
+          <mxGeometry x="40" y="820" width="1320" height="230" as="geometry"/>
+        </mxCell>
+        <mxCell id="d11-config" value="&lt;b&gt;运行/环境配置文件&lt;/b&gt;&lt;br&gt;.aris/runs/&lt;run_id&gt;.paseo-config.json：executor_provider、executor_mode、executor_thinking、notify_on_finish。&lt;br&gt;.claude/skills/run-&lt;project&gt;-experiment/env.json：环境 status、backend、connection、paths、resources、wandb、audit；scripts/info.sh、prepare.sh、run.sh、monitor.sh、collect.sh、teardown.sh 是实验原子接口。&lt;br&gt;.aris/env-config/&lt;project&gt;/：prd.json、env-manager-state.json、ENV_CONFIG_AUDIT.md/.json、error-reports/*。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="d11-1">
+          <mxGeometry x="1480" y="820" width="1260" height="230" as="geometry"/>
+        </mxCell>
+        <mxCell id="d11-merge" value="&lt;b&gt;dashboard-merge.js 的保护逻辑&lt;/b&gt;&lt;br&gt;校验 run_id、worker、iteration、manifest 所有权、current_phase、primary_output 在 output_dir 内、patch 字段白名单和值类型；重复 receipt 按 applied_receipts 跳过；成功后 dotted path 写入 + metric.history 更新 + system_errors 累加，整份 dashboard 原子替换。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="d11-1">
+          <mxGeometry x="650" y="1130" width="1220" height="145" as="geometry"/>
+        </mxCell>
+        <mxCell id="d11-flow" value="&lt;b&gt;字段流转&lt;/b&gt;&lt;br&gt;实验 JSON/CSV/log → analyze-results receipt.metric.current → dashboard.metric.current/history → metric-gate.stop_reason → run-state loop provenance → summary/paper gate。&lt;br&gt;review score/verdict 只走 dashboard.last_review，不进入 stop_reason；idea/gap 只走 best_idea、idea_ids、gaps.*，不由主循环解析 Markdown。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;spacing=8;" vertex="1" parent="d11-1">
+          <mxGeometry x="650" y="1360" width="1220" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="d11-source" value="源码依据：skills/auto-research-loop/SKILL.md；shared-references/worker-manifest.md；src/tools/dashboard-merge.ts；src/tools/run-state.ts；src/tools/metric-gate.ts。" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#666666;" vertex="1" parent="d11-1">
+          <mxGeometry x="40" y="1610" width="1500" height="50" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

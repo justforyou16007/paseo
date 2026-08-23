@@ -171,14 +171,12 @@ Every field in the PRD must be filled — env-configuration cannot ask the user.
 - `CLAUDE.md` `## Experiment Environment` section
 - `.aris/setup-state.json` (from `/research-setup`)
 - `refine-logs/EXPERIMENT_TRACKER.md` (commands that actually worked)
-- `skills/experiment-env-configuration/references/index.md` (prior experience)
 
 ```bash
 # Harvest context (all optional -- missing files are skipped)
 CLAUDE_MD_ENV=$(awk '/^## Experiment Environment/,/^## [^#]/' CLAUDE.md 2>/dev/null)
 SETUP_STATE=$(cat .aris/setup-state.json 2>/dev/null)
 TRACKER=$(cat refine-logs/EXPERIMENT_TRACKER.md 2>/dev/null)
-PRIOR_EXP=$(cat skills/experiment-env-configuration/references/index.md 2>/dev/null)
 ```
 
 #### Step 1.1 — Environment Overview
@@ -186,9 +184,6 @@ PRIOR_EXP=$(cat skills/experiment-env-configuration/references/index.md 2>/dev/n
 `AskUserQuestion` — header: "环境描述" / "Environment"
 question: "请描述你的实验环境 CLI 使用方式（如何连接、在哪里运行、用什么工具）"
 (en): "Describe your experiment environment CLI workflow (how to connect, where it runs, what tools)"
-
-After answer: search `references/index.md` for matching prior experience.
-If match found, ask user whether to reuse it.
 
 #### Step 1.2 — File Location
 
