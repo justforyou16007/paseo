@@ -273,7 +273,7 @@ mcp__paseo__create_agent
         "checks": { "A": "pass|warn|fail", "B": "...", ... },
         "gaps": [
           { "check": "A", "description": "...",
-            "suggested_action": "run_experiment|modify_analyze_sh|add_analysis" }
+            "suggested_action": "run_experiment|re_dispatch_subskill|add_analysis" }
         ]
       }
 
@@ -312,7 +312,7 @@ On `"warn"`, carry the WARN items as caveats in the final report.
    - Wait for its monitoring heartbeat's terminal receipt
    - Re-run Phase 1 → 2 → 3
 
-   **`suggested_action: modify_analyze_sh`**
+   **`suggested_action: re_dispatch_subskill`**
    - The gap is in analysis coverage: re-dispatch the relevant sub-skill
      with an explicit instruction addressing the gap (e.g., broader series
      extraction, an additional comparison), or fix the op failure report
