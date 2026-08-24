@@ -658,7 +658,11 @@ test("contract: no unmarked old receipt paths in worker skills", () => {
         line.includes(".done.json") &&
         !line.toLowerCase().includes("legacy") &&
         !line.toLowerCase().includes("internal") &&
-        !line.toLowerCase().includes("direct-call")
+        !line.toLowerCase().includes("direct-call") &&
+        // The ops-layer experiment receipt is a current contract, not the old
+        // worker receipt: collect-outputs.sh / the monitoring heartbeat's
+        // terminal tick writes it, and analyzers read it as an input manifest.
+        !/\.experiment\.[^ )`]*done\.json/.test(line)
       ) {
         conflicts.push(`${w}:${i + 1}: ${line.trim().slice(0, 80)}`);
       }
@@ -698,9 +702,12 @@ test("contract: worker output path chain — orchestrator reads from worker outp
     l.includes("| ") && (l.includes("WORKERS_DIR") || l.includes("$ROOT/idea-stage") || l.includes("$ROOT/refine-logs"))
   );
 
+  // Exception: at loop start (iteration 1) the evidence is the setup-time
+  // baseline reproduction, which lives under $ROOT/refine-logs by definition —
+  // no worker in this run produced it. Those rows are labelled "loop start:".
   const badPaths = inputLines.filter((l) =>
     (l.includes("$ROOT/idea-stage") || l.includes("$ROOT/refine-logs") || l.includes("$ROOT/review-stage")) &&
-    !l.includes("BASELINE_PLAN")
+    !l.includes("loop start:")
   );
 
   assert.equal(
@@ -725,9 +732,10 @@ test("contract: worker output path chain — orchestrator reads from worker outp
 
 test("contract: resume restores persisted run configuration", () => {
   const arl = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
-  for (const field of ["baseline_plan", "auto_write", "render_html", "patience"]) {
+  for (const field of ["auto_write", "render_html", "patience"]) {
     assert.ok(arl.includes(`.config.${field}`), `auto-research-loop does not restore config.${field}`);
   }
+  assert.ok(!arl.includes(".config.baseline_plan"), "baseline_plan is no longer a run config field (baseline is anchored during /research-setup Phase 7.6)");
   assert.ok(!arl.includes("older than 24h"), "valid old runs must not be discarded by age");
 
   const pipeline = fs.readFileSync(path.resolve("skills/research-pipeline/SKILL.md"), "utf-8");
@@ -1437,9 +1445,12 @@ test("contract: nested result analysis preserves the verifier's user decision", 
 
 test("contract: nested analyzers use their manifest snapshots instead of stale project results", () => {
   const analyze = fs.readFileSync(path.resolve("skills/analyze-results/SKILL.md"), "utf-8");
-  assert.ok(analyze.includes("require `manifest.inputs.results` and\n`manifest.inputs.tracker`"),
+  // Compare against whitespace-normalized prose: these phrases must survive
+  // rewrapping, so a line break or list indent must not fail the contract.
+  const flat = analyze.replace(/\s+/g, " ");
+  assert.ok(flat.includes("require `manifest.inputs.results` and `manifest.inputs.tracker`"),
     "analyze-results worker mode must bind results and tracker from its manifest");
-  assert.ok(analyze.includes("project-wide scan is forbidden\nin worker mode"),
+  assert.ok(flat.includes("project-wide scan is forbidden in worker mode"),
     "worker analysis must not fall back to project-root result directories");
 
   const bridge = fs.readFileSync(path.resolve("skills/experiment-bridge/SKILL.md"), "utf-8");
@@ -1456,14 +1467,19 @@ test("contract: nested analyzers use their manifest snapshots instead of stale p
 test("contract: auto-research-loop waits for environment setup before validation", () => {
   const loop = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
   const start = loop.indexOf("# 0b. Check experiment environment");
-  const end = loop.indexOf("# 0c. Locate baseline plan");
+  const end = loop.indexOf("# 0c. Baseline must already be anchored");
+  assert.ok(start >= 0 && end > start, "must find the 0b environment block");
   const env = loop.slice(start, end);
   const create = env.indexOf("mcp__paseo__create_agent:");
-  const wait = env.indexOf("mcp__paseo__wait_for_agent:");
+  // wait_for_agent no longer exists; the parent ends its turn and resumes on
+  // the child's finish notification (see shared-references/paseo-subagent-dispatch.md).
+  const wait = env.indexOf("Waiting is mandatory");
   const validate = env.indexOf("if jq -e", wait);
   const archive = env.indexOf("mcp__paseo__archive_agent:");
   assert.ok(create >= 0 && create < wait && wait < validate && validate < archive,
     "environment setup must create, wait, validate, then archive in that order");
+  assert.ok(!env.includes("wait_for_agent"),
+    "wait_for_agent was deleted upstream - waiting is done by ending the turn");
   assert.ok(env.includes("experiment-env-manager") && env.includes("— run-id: $RUN_ID"),
     "the parent must give env-manager a known run-scoped receipt path");
   assert.ok((env.match(/run-\$\{PROJECT_NAME\}-experiment\/scripts/g) ?? []).length >= 2,
@@ -1674,17 +1690,17 @@ test("contract: analyze-results patches metric.current, not primary_metric", () 
   assert.ok(!patch.includes('"metric_delta"'), 'dashboard_patch must not use legacy "metric_delta" key (use "metric.delta")');
 });
 
-test("contract: experiment-bridge iteration-1 patches metric.baseline, not primary_metric", () => {
+test("contract: experiment-bridge never patches metric.baseline (anchored at setup time)", () => {
   const eb = fs.readFileSync(path.resolve("skills/experiment-bridge/SKILL.md"), "utf-8");
   const manifestStart = eb.indexOf("## Manifest Protocol");
   const workflowStart = eb.indexOf("## Workflow");
   const protocol = eb.slice(manifestStart, workflowStart);
 
-  // iteration 1 receipt must patch metric.baseline
-  assert.ok(protocol.includes('"metric.baseline"'), 'iteration-1 dashboard_patch must use "metric.baseline"');
+  // The baseline is reproduced in /research-setup Phase 7.6, not by this worker.
+  assert.ok(!protocol.includes('"metric.baseline"'), 'dashboard_patch must not patch "metric.baseline" (baseline is anchored during /research-setup Phase 7.6)');
 
-  // must document that iteration 2+ omits metric.baseline
-  assert.ok(protocol.includes("iteration 2") || protocol.includes("iter 2") || protocol.includes("omit"), "must document that iteration 2+ omits metric.baseline");
+  // The protocol must say so, so a reader knows where the baseline comes from.
+  assert.ok(protocol.includes("research-setup"), "manifest protocol must point at /research-setup as the baseline owner");
 
   // Must NOT use the old flat key in any receipt example
   assert.ok(!protocol.includes('"primary_metric"'), 'dashboard_patch must not use legacy "primary_metric" key');
@@ -1714,11 +1730,11 @@ test("contract: metric configuration chain is consistent across template, setup,
   assert.ok(!loop.includes("research-pipeline-coupling"), "no pipeline-coupling config references");
 });
 
-test("contract: dashboard-merge.js wires metric.baseline and metric.current to metric.history", () => {
-  // Verify the tool source handles both keys
+test("contract: dashboard-merge.js wires metric.current to metric.history", () => {
+  // Verify the tool source handles the current-metric key
   const src = fs.readFileSync(path.resolve("src/tools/dashboard-merge.ts"), "utf-8");
   assert.ok(src.includes('"metric.current"') || src.includes("metric.current"), 'dashboard-merge must recognize metric.current patch key');
-  assert.ok(src.includes('"metric.baseline"') || src.includes("metric.baseline"), 'dashboard-merge must recognize metric.baseline patch key');
+  assert.ok(!src.includes('"metric.baseline"'), 'no worker may patch metric.baseline (anchored during /research-setup Phase 7.6)');
   assert.ok(src.includes("metric.history"), 'dashboard-merge must append to metric.history');
 
   // Verify the history append is idempotent (checks by iteration number)
@@ -1831,26 +1847,25 @@ test("dashboard-merge: final review metric replaces the bridge metric for the sa
     writeDash(d, "run1", dash);
 
     const experiments = [{
-      slug: "iter-1-baseline",
-      title: "Baseline reproduction",
-      idea: "",
+      slug: "iter-1-attempt",
+      title: "Improvement attempt",
+      idea: "idea-1",
       verdict: "yes",
       confidence: "high",
       metrics: "F1=0.65",
-      reasoning: "Reproduced within tolerance.",
+      reasoning: "Improved over the anchored baseline.",
       provenance: ".aris/runs/run1/workers/1-experiment-bridge/outputs/analysis/EXPERIMENT_RESULTS.md",
-      tags: ["iteration-1", "baseline"],
+      tags: ["iteration-1"],
     }];
     const baseReceipt = writeWorkerReceipt(d, "run1", "1-experiment-bridge", {
       worker: "experiment-bridge",
       primary_output: "analysis/EXPERIMENT_RESULTS.md",
       summary: { experiments_run: 1, analysis_verdict: "pass" },
       dashboard_patch: {
-        "metric.baseline": 0.65,
         "metric.current": 0.65,
         "metric.delta": 0,
         statistical_significance: false,
-        experiment_ids: ["iter-1-baseline"],
+        experiment_ids: ["iter-1-attempt"],
       },
       experiments,
     });
@@ -1907,20 +1922,19 @@ test("dashboard-merge: an applied receipt remains idempotent after the phase adv
       worker: "experiment-bridge",
       primary_output: "analysis/EXPERIMENT_RESULTS.md",
       dashboard_patch: {
-        "metric.baseline": 0.65,
         "metric.current": 0.65,
-        experiment_ids: ["iter-1-baseline"],
+        experiment_ids: ["iter-1-attempt"],
       },
       experiments: [{
-        slug: "iter-1-baseline",
-        title: "Baseline reproduction",
-        idea: "",
+        slug: "iter-1-attempt",
+        title: "Improvement attempt",
+        idea: "idea-1",
         verdict: "yes",
         confidence: "high",
         metrics: "F1=0.65",
-        reasoning: "Reproduced.",
+        reasoning: "Ran.",
         provenance: ".aris/runs/run1/workers/1-experiment-bridge/outputs/analysis/EXPERIMENT_RESULTS.md",
-        tags: ["baseline"],
+        tags: ["iteration-1"],
       }],
     });
     const first = dashMergeCli("apply", "--root", d, "--run-id", "run1", "--receipt", receiptPath);
@@ -2030,7 +2044,7 @@ test("contract: research-pipeline persists all override constants in dashboard.c
 
 test("contract: auto-research-loop persists all resume-needed constants", () => {
   const arl = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
-  const requiredFields = ["baseline_plan", "auto_write", "render_html", "patience"];
+  const requiredFields = ["auto_write", "render_html", "patience"];
 
   const dashInitStart = arl.indexOf('cat > "$DASHBOARD"');
   const dashInitEnd = arl.indexOf("\nDASH", dashInitStart);
@@ -2120,20 +2134,25 @@ test("contract: metric-gate.ts uses abs-based threshold", () => {
 // Contract: iteration 1 skips idea-discovery (baseline)
 // ============================================================================
 
-test("contract: auto-research-loop skips idea-discovery for iteration 1 (baseline)", () => {
+test("contract: auto-research-loop runs idea-discovery on every iteration (no baseline iteration)", () => {
   const arl = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
   const phase1Start = arl.indexOf("## Phase 1: Experiment Bridge");
   const phase2Start = arl.indexOf("## Phase 2:");
   const phase1 = arl.slice(phase1Start, phase2Start);
-  assert.ok(/Iteration 1:.*baseline plan/i.test(phase1), "iteration 1 must execute the confirmed baseline plan");
-  assert.ok(/No `idea_report` input.*no idea-discovery/i.test(phase1),
-    "iteration 1 must not depend on idea-discovery");
+  assert.ok(!/Iteration 1:.*baseline plan/i.test(phase1),
+    "the loop no longer reproduces a baseline in iteration 1 (that moved to /research-setup Phase 7.6)");
+  assert.ok(/every iteration/i.test(phase1),
+    "Phase 1 must state that the plan+idea source is the same on every iteration");
 
   const ideaStart = arl.indexOf("## Phase 4: Idea Discovery");
   const gapStart = arl.indexOf("## Phase 4.5: Gap Planner");
   const ideaPhase = arl.slice(ideaStart, gapStart);
+  // Loop start opens directly at idea-discovery with SOURCE_ITERATION=0; only
+  // iteration transitions advance the dashboard, and they do so exactly once.
+  assert.ok(/loop start/i.test(ideaPhase) && ideaPhase.includes("SOURCE_ITERATION = 0"),
+    "Phase 4 must document the loop-start entry case reading setup-time baseline evidence");
   assert.ok(ideaPhase.includes("advance the dashboard") && ideaPhase.includes("exactly once"),
-    "idea discovery must begin only after the completed baseline iteration advances once");
+    "an iteration transition must advance the dashboard exactly once");
 });
 
 // ============================================================================
@@ -2457,21 +2476,21 @@ test("contract: auto-research-loop dispatches idea-discovery for iteration 2+ (m
     "the short branch's reviewer must not restart literature research");
 });
 
-test("contract: auto-research-loop experiment-bridge input references idea_report for iteration 2+", () => {
+test("contract: auto-research-loop experiment-bridge input references idea_report every iteration", () => {
   const arl = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
   // Phase 1 consumes artifacts prepared for the iteration that is now running.
   const phase1Start = arl.indexOf("## Phase 1: Experiment Bridge");
   const phase2Start = arl.indexOf("## Phase 2:");
   const phase1 = arl.slice(phase1Start, phase2Start);
-  assert.ok(phase1.includes("idea_report"), "Phase 1 input must include idea_report for iteration 2+");
+  assert.ok(phase1.includes("idea_report"), "Phase 1 input must include idea_report");
   assert.ok(phase1.includes("${ITERATION}-idea-discovery/outputs/IDEA_REPORT.md"),
     "Phase 1 idea_report must point at the current iteration's prepared idea");
   assert.ok(phase1.includes("${ITERATION}-gap-planner/outputs/EXPERIMENT_PLAN.md"),
     "Phase 1 plan must point at the current iteration's post-idea plan");
   assert.ok(!phase1.includes("${PREV_ITERATION}"),
     "Phase 1 must not look one iteration behind after the dashboard has advanced");
-  assert.ok(/omitted \(iter ?1\)|iteration 1.*no idea-discovery|no `idea_report` input/i.test(phase1),
-    "Phase 1 must document that idea_report is omitted on iteration 1 (no idea-discovery ran yet)");
+  assert.ok(!/omitted \(iter ?1\)/i.test(phase1),
+    "idea_report is never omitted now - idea-discovery runs before every iteration's bridge");
 });
 
 // ============================================================================

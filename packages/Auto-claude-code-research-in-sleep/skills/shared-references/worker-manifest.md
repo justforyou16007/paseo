@@ -165,13 +165,12 @@ using a **dot-notation-aware, idempotent merge**:
    one history row for `receipt.iteration`. A later authoritative write in the
    same iteration replaces that row. This is how auto-review-loop publishes
    the post-fix metric after experiment-bridge's initial analysis without
-   double-counting history. A baseline-only write never downgrades an existing
-   current value. Concretely:
+   double-counting history. `metric.baseline` is not patchable by any worker —
+   it is anchored during `/research-setup` Phase 7.6 and written at dashboard
+   init. Concretely:
    ```
    if patch has metric.current:
        upsert history[receipt.iteration] = patch["metric.current"]
-   else if patch has metric.baseline and iteration is absent:
-       append baseline history row
    ```
 6. **Receipt tracking:** After merging, the orchestrator records the receipt
    path in `dashboard.applied_receipts` (an array of strings). On resume,
@@ -229,7 +228,6 @@ The orchestrator's single state source. ~50 lines, ~300 tokens.
   "max_iterations": 5,
   "current_phase": "experiment-bridge",
   "config": {
-    "baseline_plan": "refine-logs/EXPERIMENT_PLAN.md",
     "auto_write": false,
     "render_html": true,
     "patience": 2

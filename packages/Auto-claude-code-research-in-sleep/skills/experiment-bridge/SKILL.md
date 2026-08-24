@@ -52,13 +52,15 @@ When invoked with `— manifest: <path>`, this skill runs as a worker under an
 orchestrator (`/research-pipeline` or `/auto-research-loop`). The manifest
 provides all inputs; the skill writes its receipt to the manifest's directory.
 
-`/auto-research-loop` iteration 2+ passes `manifest.inputs.idea_report`
-alongside `manifest.inputs.experiment_plan`: `experiment_plan` is
+`/auto-research-loop` passes `manifest.inputs.idea_report` alongside
+`manifest.inputs.experiment_plan` on every iteration: `experiment_plan` is
 gap-planner's output (what gap, what to measure, what closes it) and
 `idea_report` is idea-discovery's `IDEA_REPORT.md` (the method to implement).
-This skill consumes both together — the plan supplies the target and
-measurement, the idea report supplies the method. Iteration 1 omits
-`idea_report` (no idea-discovery ran yet); implement the baseline plan alone.
+This skill consumes both together - the plan supplies the target and
+measurement, the idea report supplies the method. Baseline reproduction is
+NOT this skill's job in the loop flow: the baseline is reproduced during
+`/research-setup` (Phase 7.6) and already anchored in CLAUDE.md's
+`## Metric Target` before the loop starts.
 
 **Startup check:**
 ```
@@ -77,8 +79,8 @@ fi
 
 In worker mode, the internal analyze-results receipt is the source of
 `metric.current`, `metric.delta`, and `statistical_significance`. Propagate
-those values into this final receipt. On the baseline iteration, also set
-`metric.baseline` to the same reproduced value; omit it later.
+those values into this final receipt. Never patch `metric.baseline` - the
+baseline is anchored at setup time, not by this worker.
 
 ```json
 {
@@ -88,33 +90,21 @@ those values into this final receipt. On the baseline iteration, also set
   "status": "done",
   "error": null,
   "primary_output": "analysis/EXPERIMENT_RESULTS.md",
-  "summary": { "experiments_run": 2, "experiments_passed": 2, "analysis_verdict": "pass" },
+  "summary": { "experiments_run": 1, "experiments_passed": 1, "analysis_verdict": "pass" },
   "dashboard_patch": {
-    "metric.baseline": 0.65,
-    "metric.current": 0.65,
+    "metric.current": 0.71,
     "metric.delta": 0.0,
     "statistical_significance": false,
-    "experiment_ids": ["iter-1-baseline", "iter-1-main"]
+    "experiment_ids": ["iter-1-main"]
   },
   "experiments": [
     {
-      "slug": "iter-1-baseline",
-      "title": "Confirmed baseline reproduction",
-      "idea": "",
-      "verdict": "yes",
-      "confidence": "high",
-      "metrics": "F1=0.65",
-      "reasoning": "Reproduced within the plan's tolerance.",
-      "provenance": ".aris/runs/<run-id>/workers/1-experiment-bridge/outputs/analysis/EXPERIMENT_RESULTS.md",
-      "tags": ["iteration-1", "baseline"]
-    },
-    {
       "slug": "iter-1-main",
       "title": "Iteration 1 main run",
-      "idea": "",
+      "idea": "<selected idea id>",
       "verdict": "partial",
       "confidence": "medium",
-      "metrics": "F1=0.65",
+      "metrics": "F1=0.71",
       "reasoning": "Initial evidence collected; review may request fixes.",
       "provenance": ".aris/runs/<run-id>/workers/1-experiment-bridge/outputs/analysis/EXPERIMENT_RESULTS.md",
       "tags": ["iteration-1"]
@@ -126,9 +116,7 @@ those values into this final receipt. On the baseline iteration, also set
 }
 ```
 
-For iteration 2+, keep `metric.current`, `metric.delta`,
-`statistical_significance`, `experiment_ids`, and `experiments`, but omit
-`metric.baseline`. `dashboard_patch.experiment_ids` must exactly equal the
+`dashboard_patch.experiment_ids` must exactly equal the
 ordered `experiments[].slug` list. The orchestrator uses the bounded
 `experiments` records for research-wiki writes and never reads result files.
 

@@ -99,7 +99,6 @@ const WORKER_RULES: Readonly<Record<string, WorkerRule>> = {
   "experiment-bridge": {
     phases: ["experiment-bridge"],
     patchKeys: {
-      "metric.baseline": isFiniteNumber,
       "metric.current": isFiniteNumber,
       "metric.delta": isNullableFiniteNumber,
       statistical_significance: (value) => typeof value === "boolean" || value === null,
@@ -111,7 +110,6 @@ const WORKER_RULES: Readonly<Record<string, WorkerRule>> = {
   "analyze-results": {
     phases: ["analyze-results"],
     patchKeys: {
-      "metric.baseline": isFiniteNumber,
       "metric.current": isFiniteNumber,
       "metric.delta": isNullableFiniteNumber,
       statistical_significance: (value) => typeof value === "boolean" || value === null,
@@ -502,14 +500,6 @@ function validatePatch(receipt: Receipt, dashboard: JsonObject): void {
 
   if (receipt.worker === "experiment-bridge") {
     validateExperiments(receipt);
-    const metric = dashboard.metric as JsonObject;
-    if (receipt.iteration === 1 && metric.target !== null) {
-      if (!Object.hasOwn(receipt.dashboard_patch, "metric.baseline")) {
-        fail("iteration-1 experiment-bridge receipt must patch metric.baseline");
-      }
-    } else if (receipt.iteration > 1 && Object.hasOwn(receipt.dashboard_patch, "metric.baseline")) {
-      fail("experiment-bridge may patch metric.baseline only on iteration 1");
-    }
   }
 
   if (receipt.worker === "auto-review-loop") {
@@ -553,22 +543,19 @@ function setDotPath(target: JsonObject, dottedKey: string, value: unknown): void
 function updateMetricHistory(dashboard: JsonObject, receipt: Receipt): void {
   const patch = receipt.dashboard_patch;
   const current = patch["metric.current"];
-  const baseline = patch["metric.baseline"];
-  const value = isFiniteNumber(current) ? current : isFiniteNumber(baseline) ? baseline : null;
-  if (value === null) return;
+  if (!isFiniteNumber(current)) return;
+  const value = current;
 
   const metric = dashboard.metric as JsonObject;
   const history = metric.history as JsonObject[];
   const existingIndex = history.findIndex((entry) => entry.iter === receipt.iteration);
   if (existingIndex >= 0) {
-    if (isFiniteNumber(current)) {
-      history[existingIndex] = {
-        iter: receipt.iteration,
-        value,
-        source: receipt.worker,
-        timestamp: new Date().toISOString(),
-      };
-    }
+    history[existingIndex] = {
+      iter: receipt.iteration,
+      value,
+      source: receipt.worker,
+      timestamp: new Date().toISOString(),
+    };
   } else {
     history.push({
       iter: receipt.iteration,

@@ -73,7 +73,8 @@ fi
 - use the supplied plan for coverage checks when present; when absent, mark
   plan-coverage as not applicable;
 - do not replace these inputs with project-root `results/`, `logs/`,
-  `refine-logs/`, or an older analysis file.
+  `refine-logs/`, or an older analysis file. A project-wide scan is forbidden
+  in worker mode — the manifest snapshot is the whole input set.
 
 Direct-call mode retains the project-root discovery behavior below.
 

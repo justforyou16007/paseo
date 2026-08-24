@@ -1,7 +1,7 @@
 ---
 name: auto-research-loop
-description: 'Metric-target-driven iterative research loop. A standalone top-level flow that repeats experiment-bridge (including structured analysis), auto-review-loop (including final re-analysis), deterministic metric evaluation, constrained idea-discovery, and one post-idea gap-planner audit that also composes the next plan. Iteration 1 reproduces a confirmed baseline. Iteration 2+ executes the current iteration''s IDEA_REPORT and EXPERIMENT_PLAN. Use when the user asks for an auto research loop or autonomous quantitative improvement toward a configured Metric Target.'
-argument-hint: "[— baseline: <experiment-plan-path>] [— resume <run_id>] [— max-iterations: N]"
+description: 'Metric-target-driven iterative research loop. A standalone top-level flow that opens with constrained idea-discovery + gap-planner on the setup-time baseline evidence, then repeats experiment-bridge (including structured analysis), auto-review-loop (including final re-analysis), and deterministic metric evaluation until the stop gate fires. The baseline is reproduced during /research-setup and anchored in CLAUDE.md''s ## Metric Target before the loop starts - every loop iteration is an improvement attempt. Use when the user asks for an auto research loop or autonomous quantitative improvement toward a configured Metric Target.'
+argument-hint: "[- resume <run_id>] [- max-iterations: N]"
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent, mcp__paseo__create_heartbeat
 ---
 
@@ -25,12 +25,15 @@ dispatches this skill):
 2. **Metric-driven.** The loop is governed by a quantitative target parsed
    from the active `## Metric Target` block in `CLAUDE.md` (validated by
    `metric-gate.js config`).
-3. **Separated decisions.** Iteration 1 reproduces the confirmed baseline.
-   For iteration 2+, constrained idea-discovery selects a method from the
-   latest experiment evidence and prior gap map without literature search or
-   pilots. Gap-planner then runs once as the audit stage: it identifies,
-   merges, closes, and ranks gaps, then combines the selected method and
-   audited gaps into a self-contained `EXPERIMENT_PLAN.md`.
+3. **Separated decisions.** The baseline is NOT reproduced here - it is
+   reproduced during `/research-setup` (Phase 7.6, right after environment
+   setup) and anchored in CLAUDE.md's `## Metric Target` `baseline:` field.
+   Every loop iteration is an improvement attempt: constrained idea-discovery
+   selects a method from the latest experiment evidence and prior gap map
+   without literature search or pilots. Gap-planner then runs once as the
+   audit stage: it identifies, merges, closes, and ranks gaps, then combines
+   the selected method and audited gaps into a self-contained
+   `EXPERIMENT_PLAN.md`.
 
 ### Stop-gate responsibility boundary
 
@@ -130,7 +133,7 @@ The dashboard tracks intra-iteration state for crash-safe resume:
 | `current_phase` | Last completed or in-progress phase within the iteration |
 | `status` | `running` / `finishing` / `completed` / `invalid` |
 | `stop_reason` | `null` while looping; one of `metric_met`, `budget_exhausted`, `patience_exhausted`, `invalid_metric` when the stop gate fires |
-| `config` | Immutable run inputs needed after restart: baseline path, auto-write/render flags, patience |
+| `config` | Immutable run inputs needed after restart: auto-write/render flags, patience |
 
 **Status values:**
 - `running` - iteration loop is active
@@ -147,11 +150,13 @@ dispatching. Only `status=completed` means nothing to do.
 ```
 init        Validate preconditions + Initialize dashboard + run-state
 loop        --- Iteration loop (1 -> MAX_ITERATIONS) ---
+              Phase 4     Idea Discovery (short evidence-constrained branch;
+                          loop start uses the setup-time baseline evidence,
+                          later iterations use the previous iteration's review)
+              Phase 4.5   Gap Planner (one post-idea audit + mechanical plan)
               Phase 1     Experiment Bridge + internal Analyze Results
               Phase 2     Auto Review/Fix + final Analyze Results
               Phase 3     Metric Evaluation (metric-gate.js - pure arithmetic, NO dispatch)
-              Phase 4     Next iteration Idea Discovery (short evidence-constrained branch)
-              Phase 4.5   Gap Planner (one post-idea audit + mechanical plan)
             --- End loop (stop gate fires) ---
 summary     Phase 5     Summary report (skipped on invalid_metric)
 paper-writing  Phase 6  Paper Writing (optional; skipped on invalid_metric)
@@ -265,10 +270,12 @@ if [ "$ENV_CONFIGURED" = "false" ]; then
     fi
 fi
 
-# 0c. Locate baseline plan
-BASELINE_PLAN="${BASELINE_PLAN:-${ARG_BASELINE:-refine-logs/EXPERIMENT_PLAN.md}}"
-if [ ! -f "$BASELINE_PLAN" ]; then
-    echo "ERROR: Baseline plan not found at $BASELINE_PLAN"
+# 0c. Baseline must already be anchored (reproduced during /research-setup
+#     Phase 7.6 and written into CLAUDE.md ## Metric Target baseline:)
+if [ -z "$TARGET_BASELINE" ]; then
+    echo "ERROR: '## Metric Target' has no baseline value. The baseline is no longer"
+    echo "reproduced by this loop - run /research-setup (Phase 7.6 baseline reproduction)"
+    echo "or fill the baseline: field in CLAUDE.md manually before starting the loop."
     exit 1
 fi
 }
@@ -316,7 +323,6 @@ if [ -n "$ARG_RESUME" ]; then
     STATUS=$(jq -r '.status' "$DASHBOARD")
     ITERATION=$(jq -r '.iteration' "$DASHBOARD")
     CURRENT_PHASE=$(jq -r '.current_phase' "$DASHBOARD")
-    BASELINE_PLAN=$(jq -r '.config.baseline_plan // "refine-logs/EXPERIMENT_PLAN.md"' "$DASHBOARD")
     AUTO_WRITE=$(jq -r '.config.auto_write // false' "$DASHBOARD")
     RENDER_HTML=$(jq -r '.config.render_html // true' "$DASHBOARD")
     PATIENCE=$(jq -r '.config.patience // 2' "$DASHBOARD")
@@ -338,11 +344,11 @@ if [ -n "$ARG_RESUME" ]; then
         node "$RUN_STATE" accept "$ROOT" "$RUN_ID" init \
             --verdict-id "deterministic:preconditions" --reviewer "deterministic:preconditions"
         node "$RUN_STATE" set "$ROOT" "$RUN_ID" loop running
-        jq '.status = "running" | .current_phase = "experiment-bridge" | .updated_at = (now | todateiso8601)' \
+        jq '.status = "running" | .current_phase = "idea-discovery" | .updated_at = (now | todateiso8601)' \
             "$DASHBOARD" > "$DASHBOARD.tmp" && mv "$DASHBOARD.tmp" "$DASHBOARD"
         RESUME_OUTER="loop"
         STATUS="running"
-        CURRENT_PHASE="experiment-bridge"
+        CURRENT_PHASE="idea-discovery"
     fi
 
     echo "Resuming run $RUN_ID: outer=$RESUME_OUTER, iteration=$ITERATION, phase=$CURRENT_PHASE, status=$STATUS"
@@ -361,7 +367,6 @@ else
     WORKERS_DIR=".aris/runs/$RUN_ID/workers"
     mkdir -p "$WORKERS_DIR"
 
-    BASELINE_PLAN="${ARG_BASELINE:-refine-logs/EXPERIMENT_PLAN.md}"
     AUTO_WRITE=${AUTO_WRITE:-false}
     RENDER_HTML=${RENDER_HTML:-true}
     PATIENCE=${PATIENCE:-2}
@@ -389,7 +394,6 @@ else
   "max_iterations": ${ARG_MAX_ITERATIONS:-5},
   "current_phase": "init",
   "config": {
-    "baseline_plan": "$BASELINE_PLAN",
     "auto_write": $AUTO_WRITE,
     "render_html": $RENDER_HTML,
     "patience": $PATIENCE
@@ -416,8 +420,13 @@ DASH
     node "$RUN_STATE" accept "$ROOT" "$RUN_ID" init \
         --verdict-id "deterministic:preconditions" --reviewer "deterministic:preconditions"
 
-    # Mark loop as running (the iteration loop is now active)
+    # Mark loop as running, then open the loop at idea-discovery: iteration 1
+    # composes its own method + plan from the setup-time baseline evidence
+    # (refine-logs reproduction artifacts + seed gap map); it does NOT run a
+    # baseline reproduction.
     node "$RUN_STATE" set "$ROOT" "$RUN_ID" loop running
+    jq '.current_phase = "idea-discovery" | .updated_at = (now | todateiso8601)' \
+        "$DASHBOARD" > "$DASHBOARD.tmp" && mv "$DASHBOARD.tmp" "$DASHBOARD"
 fi
 ```
 
@@ -427,25 +436,25 @@ fi
 
 Dispatch `/experiment-bridge` to implement and run experiments.
 
-**Experiment plan source:**
-- **Iteration 1:** `$ROOT/$BASELINE_PLAN` (the confirmed baseline plan). No `idea_report` input — iteration 1 has no idea-discovery.
-- **Iteration 2+:** `$WORKERS_DIR/${ITERATION}-gap-planner/outputs/EXPERIMENT_PLAN.md`
-  and `$WORKERS_DIR/${ITERATION}-idea-discovery/outputs/IDEA_REPORT.md`.
-  Both artifacts belong to the iteration being executed: idea-discovery chose
-  the method first, then one gap-planner run audited the gap state from the
-  preceding experiment evidence and composed this plan from the selected
-  method and canonical open gaps.
-  `/experiment-bridge` consumes both artifacts together: the gap-planner's
-  plan (what gap, what to measure, what closes it) and the idea report (the
-  method to implement).
+**Experiment plan source (every iteration):**
+`$WORKERS_DIR/${ITERATION}-gap-planner/outputs/EXPERIMENT_PLAN.md` and
+`$WORKERS_DIR/${ITERATION}-idea-discovery/outputs/IDEA_REPORT.md`.
+Both artifacts belong to the iteration being executed: idea-discovery chose
+the method first, then one gap-planner run audited the gap state from the
+preceding experiment evidence and composed this plan from the selected
+method and canonical open gaps. `/experiment-bridge` consumes both artifacts
+together: the gap-planner's plan (what gap, what to measure, what closes it)
+and the idea report (the method to implement). At loop start (iteration 1)
+the evidence is the setup-time baseline reproduction artifacts; from
+iteration 2 on it is the previous iteration's review outputs.
 
 | Input | Path |
 |-------|------|
-| experiment_plan | `$ROOT/$BASELINE_PLAN` (iter 1) or `$WORKERS_DIR/${ITERATION}-gap-planner/outputs/EXPERIMENT_PLAN.md` (iter 2+) |
-| idea_report | omitted (iter 1) or `$WORKERS_DIR/${ITERATION}-idea-discovery/outputs/IDEA_REPORT.md` (iter 2+) |
+| experiment_plan | `$WORKERS_DIR/${ITERATION}-gap-planner/outputs/EXPERIMENT_PLAN.md` |
+| idea_report | `$WORKERS_DIR/${ITERATION}-idea-discovery/outputs/IDEA_REPORT.md` |
 | experiment_skill | `$ROOT/.claude/skills/run-${PROJECT_NAME}-experiment/env.json` |
 
-Context: `is_baseline` (true if iter 1), `target_metric`, `target_unit`
+Context: `target_metric`, `target_unit`
 
 Output: raw `EXPERIMENT_RESULTS.md`, `EXPERIMENT_TRACKER.md`, and authoritative
 structured analysis at `analysis/EXPERIMENT_RESULTS.md` in
@@ -454,9 +463,10 @@ structured analysis at `analysis/EXPERIMENT_RESULTS.md` in
 Dispatch: `/experiment-bridge — manifest: $WORKER_DIR/input-manifest.json`
 
 **Dashboard patch fields:** `metric.current`, `metric.delta`,
-`statistical_significance`, `experiment_ids`, and `metric.baseline` on
-iteration 1 only. The metric values come from experiment-bridge's internal
-analyze-results receipt.
+`statistical_significance`, `experiment_ids`. The metric values come from
+experiment-bridge's internal analyze-results receipt. `metric.baseline` is
+never patched here - it was anchored at setup time and lives on the dashboard
+from initialization.
 
 **Post-receipt wiki writes:** `receipt.experiments` is the bounded wiki payload;
 the orchestrator reads no experiment output. For each record, invoke the real
@@ -503,9 +513,9 @@ Dispatch `/auto-review-loop` for cross-model review of the iteration's results.
 | analysis | `$WORKERS_DIR/${ITERATION}-experiment-bridge/outputs/analysis/EXPERIMENT_RESULTS.md` |
 | tracker | `$WORKERS_DIR/${ITERATION}-experiment-bridge/outputs/EXPERIMENT_TRACKER.md` |
 | results | `$WORKERS_DIR/${ITERATION}-experiment-bridge/outputs/EXPERIMENT_RESULTS.md` |
-| experiment_plan | `$ROOT/$BASELINE_PLAN` (iter 1) or `$WORKERS_DIR/${ITERATION}-gap-planner/outputs/EXPERIMENT_PLAN.md` (iter 2+) |
+| experiment_plan | `$WORKERS_DIR/${ITERATION}-gap-planner/outputs/EXPERIMENT_PLAN.md` |
 | experiment_skill | `$ROOT/.claude/skills/run-${PROJECT_NAME}-experiment/env.json` |
-| idea_report | omitted (iter 1) or `$WORKERS_DIR/${ITERATION}-idea-discovery/outputs/IDEA_REPORT.md` (iter 2+) |
+| idea_report | `$WORKERS_DIR/${ITERATION}-idea-discovery/outputs/IDEA_REPORT.md` |
 
 Context: `target_metric`, `target_unit`, `metric_history`, `reviewer_model`
 (from the run config), `reviewer_bias_guard` (true), and `max_review_rounds` (4)
@@ -592,23 +602,31 @@ If `stop_reason` is empty -> proceed to Phase 4.
 
 ---
 
-## Phase 4: Idea Discovery (short branch, iteration 2+)
+## Phase 4: Idea Discovery (short branch; loop start and iteration transitions)
 
-On the transition from a completed metric evaluation, advance the dashboard
-from `SOURCE_ITERATION=ITERATION` to `ITERATION=SOURCE_ITERATION+1` and set
-`current_phase = "idea-discovery"` in one atomic dashboard write. Do this
-exactly once. A resume that already sees `current_phase = "idea-discovery"`
-derives `SOURCE_ITERATION=ITERATION-1` and never increments again.
+There are two entry cases:
+
+- **Loop start (iteration 1):** the dashboard was initialized with
+  `current_phase = "idea-discovery"` and `ITERATION = 1` - no increment
+  happens. `SOURCE_ITERATION = 0`; the evidence inputs come from the
+  setup-time baseline reproduction artifacts (see the input table), and there
+  is no prior review round.
+- **Iteration transition:** on the transition from a completed metric
+  evaluation, advance the dashboard from `SOURCE_ITERATION=ITERATION` to
+  `ITERATION=SOURCE_ITERATION+1` and set `current_phase = "idea-discovery"`
+  in one atomic dashboard write. Do this exactly once. A resume that already
+  sees `current_phase = "idea-discovery"` derives
+  `SOURCE_ITERATION=ITERATION-1` and never increments again.
 
 The idea worker directory is `$WORKERS_DIR/${ITERATION}-idea-discovery`.
 
 | Input | Path |
 |-------|------|
 | prior_gap_map | `$ROOT/research-wiki/gap_map.md` |
-| analysis | `$WORKERS_DIR/${SOURCE_ITERATION}-auto-review-loop/outputs/final-analysis/EXPERIMENT_RESULTS.md` |
-| tracker | `$WORKERS_DIR/${SOURCE_ITERATION}-auto-review-loop/outputs/final-inputs/EXPERIMENT_TRACKER.md` |
-| results | `$WORKERS_DIR/${SOURCE_ITERATION}-auto-review-loop/outputs/final-inputs/EXPERIMENT_RESULTS.md` |
-| review | `$WORKERS_DIR/${SOURCE_ITERATION}-auto-review-loop/outputs/AUTO_REVIEW.md` |
+| analysis | loop start: `$ROOT/refine-logs/EXPERIMENT_RESULTS.md` (setup baseline reproduction); transition: `$WORKERS_DIR/${SOURCE_ITERATION}-auto-review-loop/outputs/final-analysis/EXPERIMENT_RESULTS.md` |
+| tracker | loop start: `$ROOT/refine-logs/EXPERIMENT_TRACKER.md`; transition: `$WORKERS_DIR/${SOURCE_ITERATION}-auto-review-loop/outputs/final-inputs/EXPERIMENT_TRACKER.md` |
+| results | loop start: `$ROOT/refine-logs/EXPERIMENT_RESULTS.md`; transition: `$WORKERS_DIR/${SOURCE_ITERATION}-auto-review-loop/outputs/final-inputs/EXPERIMENT_RESULTS.md` |
+| review | loop start: not supplied (no review round ran yet); transition: `$WORKERS_DIR/${SOURCE_ITERATION}-auto-review-loop/outputs/AUTO_REVIEW.md` |
 
 Context: `metric_gap_constrained: true`, `source_iteration`, current metric
 fields/history, and prior `open_gap_ids` from dashboard.
@@ -629,21 +647,22 @@ After merge, set `current_phase = "gap-planner"` and proceed to Phase 4.5.
 
 ---
 
-## Phase 4.5: Gap Planner (once, after idea discovery)
+## Phase 4.5: Gap Planner (once per iteration, after idea discovery)
 
 Dispatch `/gap-planner` once under
 `$WORKERS_DIR/${ITERATION}-gap-planner`. This skill is the gap audit; do not
 create a separate gap-audit worker and do not dispatch gap-planner before idea
-discovery. Derive `SOURCE_ITERATION=ITERATION-1` on both normal execution and
-resume.
+discovery. Derive `SOURCE_ITERATION=ITERATION-1` on transitions and resume; at
+loop start (iteration 1) `SOURCE_ITERATION=0` and the evidence inputs are the
+setup baseline reproduction artifacts.
 
 | Input | Path |
 |-------|------|
 | idea_report | `$WORKERS_DIR/${ITERATION}-idea-discovery/outputs/IDEA_REPORT.md` |
-| analysis | `$WORKERS_DIR/${SOURCE_ITERATION}-auto-review-loop/outputs/final-analysis/EXPERIMENT_RESULTS.md` |
-| tracker | `$WORKERS_DIR/${SOURCE_ITERATION}-auto-review-loop/outputs/final-inputs/EXPERIMENT_TRACKER.md` |
-| results | `$WORKERS_DIR/${SOURCE_ITERATION}-auto-review-loop/outputs/final-inputs/EXPERIMENT_RESULTS.md` |
-| review | `$WORKERS_DIR/${SOURCE_ITERATION}-auto-review-loop/outputs/AUTO_REVIEW.md` |
+| analysis | loop start: `$ROOT/refine-logs/EXPERIMENT_RESULTS.md`; transition: `$WORKERS_DIR/${SOURCE_ITERATION}-auto-review-loop/outputs/final-analysis/EXPERIMENT_RESULTS.md` |
+| tracker | loop start: `$ROOT/refine-logs/EXPERIMENT_TRACKER.md`; transition: `$WORKERS_DIR/${SOURCE_ITERATION}-auto-review-loop/outputs/final-inputs/EXPERIMENT_TRACKER.md` |
+| results | loop start: `$ROOT/refine-logs/EXPERIMENT_RESULTS.md`; transition: `$WORKERS_DIR/${SOURCE_ITERATION}-auto-review-loop/outputs/final-inputs/EXPERIMENT_RESULTS.md` |
+| review | loop start: not supplied; transition: `$WORKERS_DIR/${SOURCE_ITERATION}-auto-review-loop/outputs/AUTO_REVIEW.md` |
 | prior_gap_map | `$ROOT/research-wiki/gap_map.md` |
 
 Context: `source_iteration`, `metric_name`, `metric_target`,
