@@ -27,7 +27,9 @@ interface WorkerRule {
 
 const RUN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
-const GAP_ID_PATTERN = /^G[1-9][0-9]*$/;
+// Problem entity node ids (research-wiki `problems/<slug>.md`). Replaces the old
+// free-text gap ids (G1, G2, ...); the dashboard field names stayed `gaps.*`.
+const PROBLEM_ID_PATTERN = /^problem:[a-z0-9][a-z0-9._-]*$/;
 const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 function isObject(value: unknown): value is JsonObject {
@@ -53,7 +55,7 @@ function isStringArray(value: unknown): value is string[] {
 }
 
 function isGapIdArray(value: unknown): value is string[] {
-  return isStringArray(value) && value.every((item) => GAP_ID_PATTERN.test(item));
+  return isStringArray(value) && value.every((item) => PROBLEM_ID_PATTERN.test(item));
 }
 
 function isIdea(value: unknown): boolean {
@@ -85,8 +87,9 @@ const WORKER_RULES: Readonly<Record<string, WorkerRule>> = {
     patchKeys: {
       best_idea: isIdea,
       idea_ids: isStringArray,
+      plan_path: isPlanPath,
     },
-    requiredPatchKeys: ["best_idea", "idea_ids"],
+    requiredPatchKeys: ["best_idea", "idea_ids", "plan_path"],
   },
   "idea-creator": {
     phases: ["idea-discovery"],
@@ -127,17 +130,6 @@ const WORKER_RULES: Readonly<Record<string, WorkerRule>> = {
       statistical_significance: (value) => typeof value === "boolean" || value === null,
     },
     requiredPatchKeys: ["last_review.verdict", "last_review.score", "last_review.reviewer_id"],
-  },
-  "gap-planner": {
-    phases: ["gap-planner"],
-    patchKeys: {
-      "gaps.open": isGapIdArray,
-      "gaps.closed": isGapIdArray,
-      "gaps.total": (value) => Number.isInteger(value) && (value as number) >= 0,
-      gap_audit_path: isPlanPath,
-      plan_path: isPlanPath,
-    },
-    requiredPatchKeys: ["gaps.open", "gaps.closed", "gaps.total", "gap_audit_path", "plan_path"],
   },
   "kill-argument": {
     phases: ["kill-argument", "paper-writing"],
@@ -400,29 +392,16 @@ function validateOwnership(
     }
     if (!fs.existsSync(artifact)) fail(`primary output does not exist: ${artifact}`);
 
-    if (receipt.worker === "gap-planner") {
-      const requiredArtifacts = [
-        "GAP_AUDIT.json",
-        "gap_map.md",
-        "GAP_ANALYSIS.md",
-        "EXPERIMENT_PLAN.md",
-      ];
-      for (const filename of requiredArtifacts) {
-        const requiredArtifact = path.join(outputDir, filename);
-        if (!fs.existsSync(requiredArtifact)) {
-          fail(`gap-planner output is missing ${filename}`);
-        }
-      }
-
-      const expectedAudit = path.resolve(outputDir, "GAP_AUDIT.json");
+    if (receipt.worker === "idea-discovery") {
+      // The loop's next stage (experiment-bridge) consumes this plan directly, so the
+      // path in the patch must name a file this worker actually produced.
       const expectedPlan = path.resolve(outputDir, "EXPERIMENT_PLAN.md");
-      const auditPath = receipt.dashboard_patch.gap_audit_path;
-      const planPath = receipt.dashboard_patch.plan_path;
-      if (!isPlanPath(auditPath) || path.resolve(root, auditPath) !== expectedAudit) {
-        fail("gap-planner gap_audit_path must name this worker's GAP_AUDIT.json");
+      if (!fs.existsSync(expectedPlan)) {
+        fail("idea-discovery output is missing EXPERIMENT_PLAN.md");
       }
+      const planPath = receipt.dashboard_patch.plan_path;
       if (!isPlanPath(planPath) || path.resolve(root, planPath) !== expectedPlan) {
-        fail("gap-planner plan_path must name this worker's EXPERIMENT_PLAN.md");
+        fail("idea-discovery plan_path must name this worker's EXPERIMENT_PLAN.md");
       }
     }
   }
@@ -509,13 +488,7 @@ function validatePatch(receipt: Receipt, dashboard: JsonObject): void {
     }
   }
 
-  if (receipt.worker === "gap-planner") {
-    if (receipt.summary.operation !== "audit-and-plan") {
-      fail("gap-planner receipt summary.operation must be audit-and-plan");
-    }
-  }
-
-  if (receipt.worker === "gap-planner" || receipt.worker === "kill-argument") {
+  if (receipt.worker === "kill-argument") {
     const open = receipt.dashboard_patch["gaps.open"] as string[];
     const closed = receipt.dashboard_patch["gaps.closed"] as string[];
     const total = receipt.dashboard_patch["gaps.total"] as number;

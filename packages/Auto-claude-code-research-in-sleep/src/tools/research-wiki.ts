@@ -398,14 +398,13 @@ function renderPaperPage(
 
 function initWiki(wikiRoot: string): void {
   const root = wikiRoot;
-  for (const d of ["papers", "ideas", "experiments", "claims", "graph"]) {
+  for (const d of ["papers", "ideas", "experiments", "claims", "problems", "graph"]) {
     fs.mkdirSync(path.join(root, d), { recursive: true });
   }
 
   const files: Record<string, string> = {
     "index.md": "# Research Wiki Index\n\n_Auto-generated. Do not edit._\n",
     "log.md": "# Research Wiki Log\n\n_Append-only timeline._\n",
-    "gap_map.md": "# Gap Map\n\n_Field gaps with stable IDs._\n",
     "query_pack.md": "# Query Pack\n\n_Auto-generated for /idea-creator. Max 8000 chars._\n",
   };
   for (const [f, content] of Object.entries(files)) {
@@ -427,7 +426,8 @@ function initWiki(wikiRoot: string): void {
 const VALID_EDGE_TYPES = new Set([
   "extends",
   "contradicts",
-  "addresses_gap",
+  "addresses",
+  "child_of",
   "inspired_by",
   "tested_by",
   "supports",
@@ -572,12 +572,24 @@ function rebuildQueryPack(wikiRoot: string, maxChars = 8000): void {
     }
   }
 
-  // 2. Gap map
-  const gapPath = path.join(root, "gap_map.md");
-  if (fs.existsSync(gapPath)) {
-    const gaps = fs.readFileSync(gapPath, "utf-8").slice(0, 1200);
-    if (gaps.trim() && gaps.trim() !== "# Gap Map\n\n_Field gaps with stable IDs._") {
-      sections.push(`## Open Gaps\n${gaps}\n`);
+  // 2. Open problems (entity scan - no free-text truncation)
+  const problemsDir = path.join(root, "problems");
+  if (fs.existsSync(problemsDir)) {
+    const problems: string[] = [];
+    for (const f of fs
+      .readdirSync(problemsDir)
+      .filter((x: string) => x.endsWith(".md"))
+      .sort()) {
+      const meta = loadPaperFrontmatter(path.join(problemsDir, f));
+      if (meta.status && meta.status !== "open") continue;
+      const nodeId = meta.node_id ?? path.basename(f, ".md");
+      const title = meta.title || path.basename(f, ".md");
+      const severity = meta.severity ? ` [${meta.severity}]` : "";
+      problems.push(`- [${nodeId}]${severity} ${title}`);
+    }
+    if (problems.length > 0) {
+      const problemsText = problems.slice(0, 15).join("\n").slice(0, 1400);
+      sections.push(`## Open Problems (${problems.length} total)\n${problemsText}\n`);
     }
   }
 
@@ -744,6 +756,7 @@ function getStats(wikiRoot: string): void {
   const ideas = countFiles("ideas");
   const experiments = countFiles("experiments");
   const claims = countFiles("claims");
+  const problems = countFiles("problems");
 
   const edgesPath = path.join(root, "graph", "edges.jsonl");
   let edgeCount = 0;
@@ -769,6 +782,14 @@ function getStats(wikiRoot: string): void {
   }
   console.log(
     `Claims:      ${claims}` + (claimParts.length > 0 ? ` (${claimParts.join(", ")})` : ""),
+  );
+  const problemParts: string[] = [];
+  for (const st of [...PROBLEM_STATUSES].sort()) {
+    const n = countByField("problems", "status", st);
+    if (n) problemParts.push(`${n} ${st}`);
+  }
+  console.log(
+    `Problems:    ${problems}` + (problemParts.length > 0 ? ` (${problemParts.join(", ")})` : ""),
   );
   console.log(`Edges:       ${edgeCount}`);
   console.log(`Wiki root:   ${root}`);
@@ -975,9 +996,6 @@ function normalizeNodeId(target: string, defaultPrefix: string): string {
   const t = target.trim();
   if (!t) return "";
   if (t.includes(":")) return t;
-  if (defaultPrefix === "gap:" || /^[Gg]\d+$/.test(t)) {
-    return /^[Gg]\d+$/.test(t) ? `gap:${t.toUpperCase()}` : `${defaultPrefix}${t}`;
-  }
   return `${defaultPrefix}${t}`;
 }
 
@@ -990,13 +1008,8 @@ function warnIfDangling(wikiRoot: string, nid: string, fn: string): void {
     exists = fs.existsSync(path.join(wikiRoot, "papers", `${restStr}.md`));
   } else if (kind === "claim") {
     exists = fs.existsSync(path.join(wikiRoot, "claims", `${restStr}.md`));
-  } else if (kind === "gap") {
-    const gm = path.join(wikiRoot, "gap_map.md");
-    exists =
-      fs.existsSync(gm) &&
-      new RegExp(`\\b${restStr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(
-        fs.readFileSync(gm, "utf-8"),
-      );
+  } else if (kind === "problem") {
+    exists = fs.existsSync(path.join(wikiRoot, "problems", `${restStr}.md`));
   }
   if (!exists) {
     console.error(
@@ -1104,9 +1117,9 @@ function addClaim(
   fs.writeFileSync(pagePath, rendered, "utf-8");
 
   for (const tgt of opts.addresses ?? []) {
-    const tid = normalizeNodeId(tgt, "gap:");
+    const tid = normalizeNodeId(tgt, "problem:");
     warnIfDangling(root, tid, "add_claim");
-    addEdge(root, nodeId, tid, "addresses_gap", `claim ${finalSlug} addresses gap`);
+    addEdge(root, nodeId, tid, "addresses", `claim ${finalSlug} addresses problem`);
   }
   for (const tgt of opts.extends ?? []) {
     const tid = normalizeNodeId(tgt, "paper:");
@@ -1173,7 +1186,7 @@ function renderIdeaPage(
   thesis: string,
   risks: string,
   basedOnIds: string[],
-  targetGapIds: string[],
+  targetProblemIds: string[],
   tags: string[],
 ): string {
   const lines: string[] = ["---"];
@@ -1184,7 +1197,7 @@ function renderIdeaPage(
   lines.push(`outcome: ${outcome}`);
   lines.push(`added: ${nowUtcIso()}`);
   lines.push("based_on: [" + basedOnIds.map((i) => yamlQuote(i)).join(", ") + "]");
-  lines.push("target_gaps: [" + targetGapIds.map((i) => yamlQuote(i)).join(", ") + "]");
+  lines.push("target_problems: [" + targetProblemIds.map((i) => yamlQuote(i)).join(", ") + "]");
   lines.push("tags: [" + tags.map((t) => yamlQuote(t)).join(", ") + "]");
   lines.push("---");
   lines.push("");
@@ -1220,7 +1233,7 @@ function upsertIdea(
     risks?: string;
     tags?: string[];
     basedOn?: string[];
-    targetGaps?: string[];
+    targetProblems?: string[];
     updateOnExist?: boolean;
   },
 ): string {
@@ -1290,8 +1303,8 @@ function upsertIdea(
   }
 
   const basedOnIds = (opts.basedOn ?? []).map((t) => normalizeNodeId(t, "paper:")).filter(Boolean);
-  const targetGapIds = (opts.targetGaps ?? [])
-    .map((t) => normalizeNodeId(t, "gap:"))
+  const targetProblemIds = (opts.targetProblems ?? [])
+    .map((t) => normalizeNodeId(t, "problem:"))
     .filter(Boolean);
 
   const rendered = renderIdeaPage(
@@ -1303,7 +1316,7 @@ function upsertIdea(
     thesis,
     risks,
     basedOnIds,
-    targetGapIds,
+    targetProblemIds,
     tags,
   );
   fs.writeFileSync(pagePath, rendered, "utf-8");
@@ -1312,9 +1325,9 @@ function upsertIdea(
     warnIfDangling(root, nid, "upsert_idea");
     addEdge(root, nodeId, nid, "inspired_by", `idea ${finalSlug} inspired by paper`);
   }
-  for (const nid of targetGapIds) {
+  for (const nid of targetProblemIds) {
     warnIfDangling(root, nid, "upsert_idea");
-    addEdge(root, nodeId, nid, "addresses_gap", `idea ${finalSlug} addresses gap`);
+    addEdge(root, nodeId, nid, "addresses", `idea ${finalSlug} addresses problem`);
   }
 
   rebuildIndex(root);
@@ -1518,6 +1531,214 @@ function addExperiment(
   return pagePath;
 }
 
+// --- Problems (open problems; the old free-text gap_map, now a first-class entity) ---
+
+const PROBLEM_STATUSES = new Set(["open", "solved", "refuted", "deferred"]);
+const PROBLEM_SEVERITY = new Set(["high", "medium", "low"]);
+
+function problemSlugify(name: string, slug = ""): string {
+  if (slug) {
+    const s = slug
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "-")
+      .replace(/^-|-$/g, "");
+    if (s) return s;
+  }
+  return (
+    slugify(name)
+      .replace(/^_+/, "")
+      .replace(/^0+/, "")
+      .replace(/^_+|_+$/g, "") || "problem"
+  );
+}
+
+function renderProblemPage(
+  slug: string,
+  title: string,
+  status: string,
+  severity: string,
+  parent: string,
+  statement: string,
+  origin: string,
+  evidence: string,
+  whatWouldSolve: string,
+  caveats: string,
+  tags: string[],
+): string {
+  const lines: string[] = ["---"];
+  lines.push("type: problem");
+  lines.push(`node_id: problem:${slug}`);
+  lines.push(`title: ${yamlQuote(title)}`);
+  lines.push(`status: ${status}`);
+  lines.push(`severity: ${severity}`);
+  lines.push(`parent: ${yamlQuote(parent)}`);
+  lines.push(`added: ${nowUtcIso()}`);
+  lines.push("tags: [" + tags.map((t) => yamlQuote(t)).join(", ") + "]");
+  lines.push("---");
+  lines.push("");
+  lines.push(`# ${title}`);
+  lines.push("");
+  lines.push(`**status:** \`${status}\`  ·  **severity:** \`${severity}\``);
+  if (parent) {
+    lines.push("");
+    lines.push(`Child of \`${parent}\`.`);
+  }
+  lines.push("");
+  lines.push("## Statement");
+  lines.push(statement.trim() || "_TODO: what is unsolved._");
+  lines.push("");
+  lines.push("## Origin");
+  lines.push(
+    origin.trim() ||
+      "_TODO: why this problem exists - what problem, based on which idea/paper, observed in which experiment._",
+  );
+  lines.push("");
+  lines.push("## Evidence");
+  lines.push(evidence.trim() || "_TODO: evidence paths and concrete values._");
+  lines.push("");
+  lines.push("## What would solve it");
+  lines.push(whatWouldSolve.trim() || "_TODO: the result that closes or refutes this problem._");
+  lines.push("");
+  lines.push("## Caveats");
+  lines.push(caveats.trim() || "_TODO: known confounders and cautions._");
+  lines.push("");
+  lines.push("## Connections");
+  lines.push("_Edges are recorded in `graph/edges.jsonl`; summarize here for human readers._");
+  lines.push("");
+  return lines.join("\n") + "\n";
+}
+
+function addProblem(
+  wikiRoot: string,
+  slug: string,
+  title: string,
+  opts: {
+    status?: string;
+    severity?: string;
+    parent?: string;
+    statement?: string;
+    origin?: string;
+    evidence?: string;
+    whatWouldSolve?: string;
+    caveats?: string;
+    tags?: string[];
+    updateOnExist?: boolean;
+  },
+): string {
+  const root = wikiRoot;
+  if (!fs.existsSync(path.join(root, "problems"))) {
+    throw new Error(`${root} is not an initialized wiki (problems/ missing). Run \`init\` first.`);
+  }
+  const status = opts.status ?? "open";
+  if (!PROBLEM_STATUSES.has(status)) {
+    throw new Error(
+      `unknown problem status '${status}'. Valid: ${[...PROBLEM_STATUSES].sort().join(", ")}`,
+    );
+  }
+  const severity = opts.severity ?? "medium";
+  if (!PROBLEM_SEVERITY.has(severity)) {
+    throw new Error(
+      `unknown severity '${severity}'. Valid: ${[...PROBLEM_SEVERITY].sort().join(", ")}`,
+    );
+  }
+
+  const tags = opts.tags ?? [];
+  const finalSlug = problemSlugify(title, slug);
+  const nodeId = `problem:${finalSlug}`;
+
+  const pagePath = path.join(root, "problems", `${finalSlug}.md`);
+  if (fs.existsSync(pagePath) && !opts.updateOnExist) {
+    appendLog(
+      root,
+      `add_problem: skipped existing problem ${path.basename(pagePath)} (slug dedup)`,
+    );
+    console.log(`Problem already exists: ${path.basename(pagePath)} (slug dedup) - skipping.`);
+    return pagePath;
+  }
+  const wasUpdate = fs.existsSync(pagePath);
+
+  let statement = opts.statement ?? "";
+  let origin = opts.origin ?? "";
+  let evidence = opts.evidence ?? "";
+  let whatWouldSolve = opts.whatWouldSolve ?? "";
+  let caveats = opts.caveats ?? "";
+
+  if (quarantine) {
+    const qHits: Array<[string, string[], string]> = [];
+    function q(val: string, field: string): string {
+      if (!val) return val;
+      const [safe, findings] = quarantine!(val, "strict", `problem ${finalSlug}.${field}`);
+      if (findings.length > 0) qHits.push([field, findings, val]);
+      return safe;
+    }
+    statement = q(statement, "statement");
+    origin = q(origin, "origin");
+    evidence = q(evidence, "evidence");
+    whatWouldSolve = q(whatWouldSolve, "whatWouldSolve");
+    caveats = q(caveats, "caveats");
+    if (qHits.length > 0) {
+      const qlog = path.join(root, "graph", "quarantine.log");
+      fs.mkdirSync(path.dirname(qlog), { recursive: true });
+      for (const [field, findings, raw] of qHits) {
+        fs.appendFileSync(
+          qlog,
+          JSON.stringify({
+            ts: nowUtcIso(),
+            problem: nodeId,
+            field,
+            findings,
+            raw_text: raw,
+          }) + "\n",
+          "utf-8",
+        );
+      }
+      console.error(
+        `Warning: problem field(s) quarantined (${qHits.map((h) => h[0]).join(", ")}); ` +
+          `placeholder persisted, raw text preserved in graph/quarantine.log for review.`,
+      );
+    }
+  }
+
+  let parentId = (opts.parent ?? "").trim();
+  if (parentId && !parentId.includes(":")) {
+    parentId = `problem:${parentId}`;
+  }
+
+  const rendered = renderProblemPage(
+    finalSlug,
+    title,
+    status,
+    severity,
+    parentId,
+    statement,
+    origin,
+    evidence,
+    whatWouldSolve,
+    caveats,
+    tags,
+  );
+  fs.writeFileSync(pagePath, rendered, "utf-8");
+
+  if (parentId) {
+    if (parentId === nodeId) {
+      console.error(
+        `Warning: add_problem: problem ${nodeId} cannot be its own parent - edge skipped.`,
+      );
+    } else {
+      warnIfDangling(root, parentId, "add_problem");
+      addEdge(root, nodeId, parentId, "child_of", `problem ${finalSlug} is a sub-problem`);
+    }
+  }
+
+  rebuildIndex(root);
+  rebuildQueryPack(root);
+  const action = wasUpdate ? "updated" : "added";
+  appendLog(root, `add_problem: ${action} ${nodeId} [status=${status} severity=${severity}]`);
+  console.log(`Problem ${action}: ${pagePath} [status=${status} severity=${severity}]`);
+  return pagePath;
+}
+
 // --- Sync ---
 
 async function syncPapers(
@@ -1575,6 +1796,7 @@ function rebuildIndex(wikiRoot: string): void {
     ["ideas", "Ideas"],
     ["experiments", "Experiments"],
     ["claims", "Claims"],
+    ["problems", "Problems"],
   ];
 
   for (const [subdir, header] of subdirs) {
@@ -1740,7 +1962,7 @@ program
   .option("--scope <text>", "Honest scope", "")
   .option("--evidence <text>", "Evidence chain", "")
   .option("--tags <list>", "Comma-separated tag list", "")
-  .option("--addresses <list>", "Comma-separated gap ids, e.g. G2,G10", "")
+  .option("--addresses <list>", "Comma-separated problem node_ids/slugs this claim addresses", "")
   .option("--extends <list>", "Comma-separated paper node_ids/slugs", "")
   .option("--uses <list>", "Comma-separated paper node_ids/slugs", "")
   .option("--depends-on <list>", "Comma-separated claim node_ids/slugs", "")
@@ -1798,7 +2020,11 @@ program
   .option("--risks <text>", "Novelty / feasibility risks (body)", "")
   .option("--tags <list>", "Comma-separated tag list", "")
   .option("--based-on <list>", "Comma-separated paper node_ids/slugs", "")
-  .option("--target-gaps <list>", "Comma-separated gap ids, e.g. G2,G10", "")
+  .option(
+    "--target-problems <list>",
+    "Comma-separated problem node_ids/slugs this idea addresses",
+    "",
+  )
   .option("--update-on-exist", "Overwrite an existing idea", false)
   .action(
     (
@@ -1813,7 +2039,7 @@ program
         risks: string;
         tags: string;
         basedOn: string;
-        targetGaps: string;
+        targetProblems: string;
         updateOnExist: boolean;
       },
     ) => {
@@ -1825,7 +2051,60 @@ program
         risks: opts.risks,
         tags: splitCsv(opts.tags),
         basedOn: splitCsv(opts.basedOn),
-        targetGaps: splitCsv(opts.targetGaps),
+        targetProblems: splitCsv(opts.targetProblems),
+        updateOnExist: opts.updateOnExist,
+      });
+    },
+  );
+
+program
+  .command("add_problem")
+  .description("Create (or update) a problems/<slug>.md node (open problem entity)")
+  .argument("<wiki_root>", "Wiki root directory")
+  .requiredOption("--title <title>", "Human-readable problem title")
+  .option("--slug <slug>", "Stable problem id", "")
+  .option("--status <status>", `One of: ${[...PROBLEM_STATUSES].sort().join(", ")}`, "open")
+  .option("--severity <s>", `One of: ${[...PROBLEM_SEVERITY].sort().join(", ")}`, "medium")
+  .option("--parent <id>", "Parent problem node_id/slug (writes a child_of edge)", "")
+  .option("--statement <text>", "What is unsolved (body)", "")
+  .option(
+    "--origin <text>",
+    "Why this problem exists: what problem, based on which idea/paper, observed in which experiment (body)",
+    "",
+  )
+  .option("--evidence <text>", "Evidence paths and concrete values (body)", "")
+  .option("--what-would-solve <text>", "The result that closes or refutes this problem (body)", "")
+  .option("--caveats <text>", "Known confounders and cautions (body)", "")
+  .option("--tags <list>", "Comma-separated tag list", "")
+  .option("--update-on-exist", "Overwrite an existing problem", false)
+  .action(
+    (
+      wikiRoot: string,
+      opts: {
+        title: string;
+        slug: string;
+        status: string;
+        severity: string;
+        parent: string;
+        statement: string;
+        origin: string;
+        evidence: string;
+        whatWouldSolve: string;
+        caveats: string;
+        tags: string;
+        updateOnExist: boolean;
+      },
+    ) => {
+      addProblem(wikiRoot, opts.slug, opts.title, {
+        status: opts.status,
+        severity: opts.severity,
+        parent: opts.parent,
+        statement: opts.statement,
+        origin: opts.origin,
+        evidence: opts.evidence,
+        whatWouldSolve: opts.whatWouldSolve,
+        caveats: opts.caveats,
+        tags: splitCsv(opts.tags),
         updateOnExist: opts.updateOnExist,
       });
     },

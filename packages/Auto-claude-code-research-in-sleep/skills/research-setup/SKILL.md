@@ -1,6 +1,6 @@
 ---
 name: research-setup
-description: 'Interactive Q&A setup wizard for new ARIS research projects. Bootstraps CLAUDE.md, RESEARCH_BRIEF.md, and research-wiki from user answers; experiment environment configuration is delegated to /experiment-env-manager, and baseline reproduction (Phase 7.6, delegated to /experiment-bridge) anchors the ## Metric Target baseline right after the environment is configured. Resumable, bilingual (en/zh), smart defaults. Use when user says "研究项目初始化", "setup project", "初始化研究项目", "research setup", "new project", "配置项目", or wants to configure a new ARIS research workspace.'
+description: 'Interactive Q&A setup wizard for new ARIS research projects. Bootstraps CLAUDE.md, RESEARCH_BRIEF.md, and research-wiki from user answers; experiment environment configuration is delegated to /experiment-env-manager, and baseline info (method, code location, expected metric) is written into RESEARCH_BRIEF so /auto-research-loop iteration 1 reproduces it through the normal pipeline. Resumable, bilingual (en/zh), smart defaults. Use when user says "研究项目初始化", "setup project", "初始化研究项目", "research setup", "new project", "配置项目", or wants to configure a new ARIS research workspace.'
 argument-hint: "[project-name] [— language: en|zh]"
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, AskUserQuestion, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission
 ---
@@ -31,7 +31,7 @@ Phase 5.5  Reference knowledge (skills, documents, domain constraints) [skippabl
 Phase 6  Paseo substrate config (multi-agent orchestration)     [skippable]
 Phase 7  Artifact generation (CLAUDE.md, RESEARCH_BRIEF.md, research-wiki, .gitignore)
 Phase 7.5  Experiment environment configuration (delegated to /experiment-env-manager)
-Phase 7.6  Baseline reproduction (delegated to /experiment-bridge; anchors ## Metric Target baseline)
+Phase 7.6  Baseline info -> RESEARCH_BRIEF (no reproduction; loop iteration 1 reproduces it)
 Phase 8  Summary & next steps
 ```
 
@@ -442,7 +442,7 @@ Copy the template and fill in:
   uncomment the block and fill in:
   - `primary: <answers.metric_target> <answers.primary_metric>` (e.g., `primary: 0.85 F1`)
   - `direction: <answers.metric_direction>` (e.g., `higher_better`)
-  - `baseline: ""` (filled by Phase 7.6 baseline reproduction)
+  - `baseline: ""` (empty at setup; /auto-research-loop iteration 1 anchors it with the reproduced value)
   - `tolerance: 0.01`
   If no target was specified, leave the section commented.
 - `## Experiment Environment` — leave the template's commented blocks as-is.
@@ -518,12 +518,26 @@ if [ -n "$WIKI_SCRIPT" ]; then
   node "$WIKI_SCRIPT" init research-wiki/
 else
   # Fallback: create structure manually
-  mkdir -p research-wiki/{papers,ideas,experiments,claims,graph}
+  mkdir -p research-wiki/{papers,ideas,experiments,claims,problems,graph}
   echo "# Research Wiki Index\n\n_Auto-generated. Do not edit._" > research-wiki/index.md
   echo "# Research Wiki Log\n\n_Append-only timeline._" > research-wiki/log.md
-  echo "# Gap Map\n\n_Field gaps with stable IDs._" > research-wiki/gap_map.md
   echo "# Query Pack\n\n_Auto-generated for /idea-creator. Max 8000 chars._" > research-wiki/query_pack.md
   touch research-wiki/graph/edges.jsonl
+fi
+```
+
+**Root problem entity.** If `answers.metric_target` is set and
+`research-wiki/problems/` contains no problem yet, create the project's root
+open problem (the baseline->target distance):
+
+```bash
+if [ -n "$WIKI_SCRIPT" ] && [ -n "$answers.metric_target" ]; then
+  node "$WIKI_SCRIPT" add_problem research-wiki/ \
+    --slug "root" \
+    --title "close $answers.primary_metric gap: baseline -> $answers.metric_target" \
+    --severity high \
+    --statement "Reach $answers.metric_target $answers.primary_metric ($answers.metric_direction) from the reproduced baseline. /auto-research-loop iteration 1 reproduces the baseline method; subsequent iterations address sub-problems of this problem." \
+    --origin "root problem created by /research-setup from the Metric Target"
 fi
 ```
 
@@ -598,74 +612,37 @@ If configuration did not succeed (env.json is missing or status is not
 `complete`): set `answers.gpu_type = "none"`, print the draft and audit report
 paths, and **continue to Phase 7g/8 — do not block setup**.
 
-### Phase 7.6: Baseline Reproduction (delegated)
+### Phase 7.6: Baseline Info -> RESEARCH_BRIEF (no reproduction)
 
-Runs right after Phase 7.5 succeeds. Rationale: the environment was just
-configured - reproducing the known baseline NOW reuses that warm setup and
-proves the environment actually works end-to-end, instead of paying the
-environment cost twice (once in setup, once in `/auto-research-loop`'s old
-iteration-1 baseline).
+Setup does NOT reproduce the baseline - `/auto-research-loop` iteration 1 does,
+through the normal pipeline (idea-discovery materializes the baseline idea from
+the brief, experiment-bridge runs it, auto-review-loop + /result-to-claim absorb
+it). Setup's only job here is to carry the baseline info into the brief so
+iteration 1 has everything it needs.
 
-**Trigger conditions (all must hold):**
+**Trigger condition:** Phase 3 prior-work answers contain a describable baseline
+(`answers.prior_attempts` or `answers.existing_results` is not "Nothing yet" /
+"Starting fresh" and not empty). Otherwise skip silently - a from-scratch
+project has no baseline to reproduce.
 
-1. `answers.env_config_status == "complete"` (Phase 7.5 succeeded).
-2. Metric Target is configured (`answers.metric_target` is set).
-3. A runnable baseline exists: either `refine-logs/EXPERIMENT_PLAN.md` already
-   exists, or Phase 3 collected a prior baseline with a runnable command and
-   an expected metric.
+Append (or replace, if already present) this section to `RESEARCH_BRIEF.md`:
 
-If any condition fails, skip this phase silently (baseline stays empty;
-`/auto-research-loop` will refuse to start until it is set).
+```markdown
+## Baseline Reproduction (first experiment)
 
-**Step 1 - Ask the user:**
+The first experiment MUST reproduce this baseline before exploring improvements.
 
-`AskUserQuestion` - header: "Baseline 复现" / "Baseline reproduction"
-question: "环境已配置。现在复现已有 baseline 以锚定 ## Metric Target 的 baseline 值吗？（会消耗计算资源）"
-(en): "Environment configured. Reproduce the existing baseline now to anchor ## Metric Target's baseline value? (consumes compute)"
-options: `["现在复现", "跳过"]` / `["Reproduce now", "Skip"]`
-
-On "Skip": leave `baseline:` empty and note it in Phase 8 (the loop refuses to
-start without it).
-
-**Step 2 - Resolve the baseline plan:**
-
-- If `refine-logs/EXPERIMENT_PLAN.md` exists, use it unchanged.
-- Else write a minimal baseline plan to `refine-logs/EXPERIMENT_PLAN.md` from
-  the Phase 3 prior-work answers: one milestone (baseline reproduction), the
-  baseline command, the expected metric, and the tolerance from
-  `## Metric Target`. If Phase 3 has no runnable command, ask the user for it
-  (or skip).
-
-**Step 3 - Dispatch and transcribe (do NOT judge):**
-
-```
-mcp__paseo__create_agent
-  title:    "experiment-bridge: baseline reproduction $PROJECT_SLUG"
-  provider: claude
-  initialPrompt: "/experiment-bridge refine-logs/EXPERIMENT_PLAN.md - compact: true"
-  notifyOnFinish: true
+**Method**: <answers.prior_attempts - the existing method to reproduce>
+**Code / run location**: <repo path or run entry point; the generated
+run-<project>-experiment skill (Phase 7.5) when env config completed>
+**Expected metric**: <from answers.existing_results, or blank>
+**Tolerance**: <from CLAUDE.md ## Metric Target>
 ```
 
-Wait for the finish notification, then `mcp__paseo__archive_agent`. Read the
-direct-call artifacts (`refine-logs/EXPERIMENT_RESULTS.md`) and transcribe:
-
-1. Extract the reproduced primary metric value (the baseline experiment's
-   `primary_metric`).
-2. Fill CLAUDE.md `## Metric Target` `baseline:` with the reproduced value.
-3. Write the baseline receipt:
-   `.aris/runs/<timestamp>.baseline-reproduction.<project>.done.json`:
-   ```json
-   { "skill": "research-setup", "project": "<project>",
-     "baseline_value": <number>, "tolerance_met": true,
-     "output": "refine-logs/EXPERIMENT_RESULTS.md",
-     "completed_at": "<ISO-8601>" }
-   ```
-4. Set `answers.baseline_value` and `answers.baseline_reproduced = true`.
-
-If the reproduced value deviates from the prior baseline beyond tolerance,
-do NOT judge or retry - record `tolerance_met: false` and surface the
-deviation to the user in Phase 8 (a mismatched baseline is a research
-decision, not a setup decision).
+Fill each field from the answers; leave a field out when the user gave nothing
+for it. `answers.env_config_status == "complete"` adds the generated experiment
+skill name to Code / run location; otherwise that field just names the repo
+path. Do not dispatch any agent in this phase.
 
 ### 7g. Write final setup state
 
@@ -677,12 +654,11 @@ decision, not a setup decision).
   "answers": { ... },
   "artifacts": [
     "CLAUDE.md",
-    "RESEARCH_BRIEF.md",
-    "research-wiki/",
+    "RESEARCH_BRIEF.md (with Baseline Reproduction section when prior work was provided)",
+    "research-wiki/ (with the root problem when a Metric Target is set)",
     ".gitignore",
     ".claude/skills/ (ARIS skills)",
-    ".claude/skills/run-<project>-experiment/ (when env config status = complete)",
-    ".aris/runs/<timestamp>.baseline-reproduction.<project>.done.json (when Phase 7.6 ran)"
+    ".claude/skills/run-<project>-experiment/ (when env config status = complete)"
   ],
   "timestamp": "<ISO 8601>"
 }
@@ -732,7 +708,7 @@ Suggested next steps:
 Suggested next steps:
   /research-refine "PROBLEM: {problem_statement} | APPROACH: {sub_area}"
   /experiment-plan "{sub_area}"
-  /auto-research-loop  (when a ## Metric Target is set; baseline was anchored in Phase 7.6)
+  /auto-research-loop  (when a ## Metric Target is set; iteration 1 reproduces the baseline from RESEARCH_BRIEF)
 ```
 
 **If "Diagnostic study":**

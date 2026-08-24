@@ -53,14 +53,15 @@ orchestrator (`/research-pipeline` or `/auto-research-loop`). The manifest
 provides all inputs; the skill writes its receipt to the manifest's directory.
 
 `/auto-research-loop` passes `manifest.inputs.idea_report` alongside
-`manifest.inputs.experiment_plan` on every iteration: `experiment_plan` is
-gap-planner's output (what gap, what to measure, what closes it) and
-`idea_report` is idea-discovery's `IDEA_REPORT.md` (the method to implement).
-This skill consumes both together - the plan supplies the target and
-measurement, the idea report supplies the method. Baseline reproduction is
-NOT this skill's job in the loop flow: the baseline is reproduced during
-`/research-setup` (Phase 7.6) and already anchored in CLAUDE.md's
-`## Metric Target` before the loop starts.
+`manifest.inputs.experiment_plan` on every iteration. Both come from the same
+idea-discovery worker: `EXPERIMENT_PLAN.md` supplies the target and how it is
+measured, `IDEA_REPORT.md` supplies the method to implement. This skill
+consumes them together.
+
+Iteration 1 is not a special case. The loop's first iteration reproduces the
+baseline described in `RESEARCH_BRIEF.md`'s Baseline Reproduction section, and
+it reaches this skill as an ordinary plan - `/research-setup` describes that
+baseline but never runs it.
 
 **Startup check:**
 ```

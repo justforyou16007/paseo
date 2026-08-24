@@ -1,6 +1,6 @@
 # ARIS Skills Catalog
 
-Every skill that ships with ARIS, grouped by role. **88 skills** as of the
+Every skill that ships with ARIS, grouped by role. **87 skills** as of the
 latest update; new skills land via PR and get added to the table below.
 
 - Each `Skill` link goes to the canonical `SKILL.md` (the LLM-readable spec).
@@ -9,10 +9,6 @@ latest update; new skills land via PR and get added to the table below.
 - `Requires` lists external dependencies beyond ARIS core (Codex MCP, Gemini
   API, Modal account, LaTeX toolchain, etc.). `None` means it works out of
   the box on a standard install.
-- [`Program execution flow audit`](aris-skill-flow.html) shows execution order,
-  decisions, branches, loop-backs, side-expanded sub-skill calls, file handoffs,
-  and exact source lines. Regenerate it with `npm run audit:skill-flow` after
-  changing a skill or helper.
 
 > The table below tracks the main-tree canonical files.
 
@@ -38,8 +34,7 @@ End-to-end pipelines that chain many sub-skills. Most users start here.
 | [`/research-refine-pipeline`](../skills/research-refine-pipeline/SKILL.md) | Sub-pipeline used by `/idea-discovery` — refine method + plan experiments in one chain                                                                                                                                               | Codex MCP                           |
 | [`/patent-pipeline`](../skills/patent-pipeline/SKILL.md)                   | Full patent drafting — invention → claims → spec → jurisdiction format (CN / US / EP)                                                                                                                                                | Codex MCP                           |
 | [`/dse-loop`](../skills/dse-loop/SKILL.md)                                 | Autonomous design-space exploration loop for computer architecture / EDA — run → analyze → tune → iterate until objective met                                                                                                        | Domain-specific tools               |
-| [`/auto-research-loop`](../skills/auto-research-loop/SKILL.md)             | **Metric-target iteration loop** - constrained idea + gap audit on the setup-anchored baseline evidence -> experiment with internal analysis -> review/fix with final analysis -> metric gate; the baseline itself is reproduced during /research-setup                                                             | Codex MCP, research-wiki            |
-| [`/gap-planner`](../skills/gap-planner/SKILL.md)                           | One post-idea audit stage — the skill merges, closes, and prioritizes gaps from experiment evidence, then composes the selected method and canonical gaps into the next experiment plan                                                | research-wiki                       |
+| [`/auto-research-loop`](../skills/auto-research-loop/SKILL.md)             | **Metric-target iteration loop** - one iteration is research-pipeline Stage 1-3 (idea-discovery -> experiment-bridge -> auto-review-loop) plus a deterministic metric gate; iteration 1 reproduces the baseline the brief describes, and the orchestrator writes nothing to the wiki                                                             | Codex MCP, research-wiki            |
 | [`/meta-optimize`](../skills/meta-optimize/SKILL.md)                       | **Workflow M** — analyze ARIS usage logs and propose SKILL.md / prompt / default-parameter improvements (outer-loop self-evolution)                                                                                                  | Codex MCP, hook logging             |
 | [`/meta-apply`](../skills/meta-apply/SKILL.md)                             | **Privileged landing gate** — the only skill allowed to mutate the skill corpus; lands `/meta-optimize` patches the human approved, after a fresh cross-model jury PASS on the staged diff (read-only producer ≠ privileged applier) | Codex MCP, human-in-loop            |
 
@@ -165,13 +160,13 @@ Cross-cutting infrastructure used by other skills or run on demand.
 
 | Skill                                                              | Role                                                                                                                                                                                                        | Requires                                 |
 | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| [`/research-wiki`](../skills/research-wiki/SKILL.md)               | Persistent research knowledge base — papers / ideas / experiments / claims with typed relationships. Workflow hooks auto-ingest across the research lifecycle                                               | None (pure Python stdlib)                |
+| [`/research-wiki`](../skills/research-wiki/SKILL.md)               | Persistent research knowledge base — papers / ideas / experiments / claims / problems with typed relationships. Workflow hooks auto-ingest across the research lifecycle                                               | None (pure Python stdlib)                |
 | [`/wiki-enrich`](../skills/wiki-enrich/SKILL.md)                   | Fill the per-paper TODO sections that `ingest_paper` leaves as scaffolds (Karpathy LLM-wiki principle). Fetch chain alphaxiv → deepxiv → arXiv → page abstract; idempotent by default, `--force` to rewrite | Python stdlib + WebFetch                 |
 | [`/render-html`](../skills/render-html/SKILL.md)                   | Render ARIS Markdown / JSON artifacts into reviewed single-file HTML views for human reading                                                                                                                | Python stdlib; Codex MCP for review gate |
 | [`/overleaf-sync`](../skills/overleaf-sync/SKILL.md)               | Two-way sync between local paper directory and Overleaf project via Overleaf Git bridge (Premium) — `setup` / `pull` (diff protocol) / `push` (confirmation gate) / `status`                                | Overleaf Premium + macOS Keychain        |
 | [`/feishu-notify`](../skills/feishu-notify/SKILL.md)               | Send notifications to Feishu / Lark — push-only (webhook) or interactive (bidirectional) modes. Off by default                                                                                              | Feishu webhook URL                       |
 | [`/interview-cheatsheet`](../skills/interview-cheatsheet/SKILL.md) | Generate long-form Chinese ML / LLM interview-prep cheat sheets with formulas, code, Q&A, review, and HTML output                                                                                           | Codex MCP, Python                        |
-| [`/research-setup`](../skills/research-setup/SKILL.md)           | Interactive Q&A setup wizard for new ARIS research projects — bootstraps CLAUDE.md, RESEARCH_BRIEF.md, research-wiki; delegates experiment environment to `/experiment-env-manager` and baseline reproduction to `/experiment-bridge`; bilingual (en/zh), resumable          | None (pure Markdown + TS helpers)       |
+| [`/research-setup`](../skills/research-setup/SKILL.md)           | Interactive Q&A setup wizard for new ARIS research projects — bootstraps CLAUDE.md, RESEARCH_BRIEF.md, research-wiki + its root problem; delegates the experiment environment to `/experiment-env-manager` and describes the baseline in the brief for the loop's first iteration to reproduce; bilingual (en/zh), resumable          | None (pure Markdown + TS helpers)       |
 | [`/aris-update`](../skills/aris-update/SKILL.md)                 | Incremental update of ARIS skills in a project directory — diffs upstream, preserves local edits, syncs tools/dist/templates, and outputs adaptation guidance for current project progress | None |
 
 ---

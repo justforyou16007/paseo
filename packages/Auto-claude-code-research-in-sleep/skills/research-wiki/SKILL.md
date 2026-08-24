@@ -17,7 +17,7 @@ Inspired by [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6
 
 ## Core Concepts
 
-### Four Entity Types
+### Five Entity Types
 
 | Entity         | Directory      | Node ID format | What it represents                                                                      |
 | -------------- | -------------- | -------------- | --------------------------------------------------------------------------------------- |
@@ -25,6 +25,7 @@ Inspired by [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6
 | **Idea**       | `ideas/`       | `idea:<id>`    | A research idea (proposed, tested, or failed)                                           |
 | **Experiment** | `experiments/` | `exp:<id>`     | A concrete experiment run with results                                                  |
 | **Claim**      | `claims/`      | `claim:<id>`   | A theorem/headline with an honest PROOF status — born via `/proof-checker` (see Hook 4) |
+| **Problem**    | `problems/`    | `problem:<slug>` | An open problem the run is trying to close — born via `add_problem` (see Hook 5)      |
 
 ### Typed Relationships (`graph/edges.jsonl`)
 
@@ -32,7 +33,8 @@ Inspired by [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6
 | --------------- | ----------------- | ----------------------------- |
 | `extends`       | paper → paper     | Builds on prior work          |
 | `contradicts`   | paper → paper     | Disagrees with results/claims |
-| `addresses_gap` | paper\|idea → gap | Targets a known field gap     |
+| `addresses`     | idea\|claim → problem | Targets an open problem   |
+| `child_of`      | problem → problem | A sub-problem of a larger one |
 | `inspired_by`   | idea → paper      | Idea sourced from this paper  |
 | `tested_by`     | idea\|claim → exp | Tested in this experiment     |
 | `supports`      | exp → claim\|idea | Experiment confirms claim     |
@@ -63,7 +65,6 @@ finding, not operational noise.)
 research-wiki/
   index.md               # categorical index (auto-generated)
   log.md                 # append-only timeline
-  gap_map.md             # field gaps with stable IDs (G1, G2, ...)
   query_pack.md          # compressed summary for /idea-creator (auto-generated, max 8000 chars)
   papers/
     <slug>.md            # one page per paper
@@ -73,6 +74,8 @@ research-wiki/
     <exp_id>.md          # one page per experiment
   claims/
     <claim_id>.md        # one page per testable claim
+  problems/
+    <slug>.md            # one page per open problem
   graph/
     edges.jsonl          # materialized current relationship graph
 ```
@@ -118,9 +121,10 @@ Initialize the wiki for the current project. After resolving
 node "$WIKI_SCRIPT" init research-wiki/
 ```
 
-The helper creates `research-wiki/{papers,ideas,experiments,claims,graph}/`
-plus `index.md`, `log.md`, `gap_map.md`, **`query_pack.md`**, and
-`graph/edges.jsonl`, then appends `"Wiki initialized"` to `log.md`.
+The helper creates
+`research-wiki/{papers,ideas,experiments,claims,problems,graph}/` plus
+`index.md`, `log.md`, **`query_pack.md`**, and `graph/edges.jsonl`, then
+appends `"Wiki initialized"` to `log.md`.
 
 (Earlier versions of this skill described a prose-only init that
 omitted `query_pack.md` — that drifted from the helper and made
@@ -259,14 +263,14 @@ Generate `query_pack.md` — a compressed, context-window-friendly summary:
 | Section           | Budget        | Content                                                                                                                                                                                                                                                                                                                                     |
 | ----------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Project direction | full sections | Structured extraction from `RESEARCH_BRIEF.md` by `## ` heading (Problem / Constraints / Direction / Background / Non-Goals / Domain Knowledge / Existing Results), in priority order. No per-field char cap — the 8000-char assembly loop is the only safety net. Falls back to a flat 600-char slice if the brief uses no known headings. |
-| Top 5 gaps        | 1200 chars    | From gap_map.md, ranked by: unresolved + linked ideas + failed experiments                                                                                                                                                                                                                                                                  |
+| Open problems     | 1400 chars    | Up to 15 `problems/` pages whose `status` is still `open`, each as `[problem:<slug>] [severity] title`. An entity scan, so a long problem statement can never truncate the list.                                                                                                                                                             |
 | Paper clusters    | 1600 chars    | 3-5 clusters by tag overlap, 2-3 sentences each                                                                                                                                                                                                                                                                                             |
 | Failed ideas      | 1400 chars    | **Always included** — highest anti-repetition value                                                                                                                                                                                                                                                                                         |
-| Top papers        | 1800 chars    | 8-12 pages ranked by: linked gaps, linked ideas, centrality, relevance flag                                                                                                                                                                                                                                                                 |
+| Top papers        | 1800 chars    | 8-12 pages ranked by: linked problems, linked ideas, centrality, relevance flag                                                                                                                                                                                                                                                                 |
 | Active chains     | 900 chars     | limitation → opportunity relationship chains                                                                                                                                                                                                                                                                                                |
 | Open unknowns     | 500 chars     | Unresolved questions across the wiki                                                                                                                                                                                                                                                                                                        |
 
-**Pruning priority** (when over budget): low-ranked papers > cluster detail > chain detail. **Never prune** failed ideas or top gaps first.
+**Pruning priority** (when over budget): low-ranked papers > cluster detail > chain detail. **Never prune** failed ideas or open problems first — those two sections are what stop the next round from repeating the last one.
 
 **Key rule:** Read from short fields only (frontmatter, one-line thesis, gap summary, failure note). Do not summarize full page bodies every time.
 
@@ -332,7 +336,7 @@ if research-wiki/ exists AND $WIKI_SCRIPT resolved (chain at top of this SKILL):
         for each explicit relation to existing wiki paper:
             node "$WIKI_SCRIPT" add_edge research-wiki/ \
                 --from "paper:<slug>" --to "<target>" \
-                --type <extends|contradicts|addresses_gap|...> \
+                --type <extends|contradicts|addresses|...> \
                 --evidence "..."
     log "research-lit ingested N papers"
 elif research-wiki/ exists but $WIKI_SCRIPT did not resolve:
@@ -352,7 +356,7 @@ specific result set differs.
 if research-wiki/query_pack.md exists (and < 7 days old):
     prepend query_pack to landscape context
     treat failed ideas as banlist
-    treat top gaps as search seeds
+    treat open problems as search seeds (each is a problem:<slug> node id)
     still run fresh literature search for last 3-6 months
 ```
 
@@ -364,8 +368,9 @@ generation, including a re-run with updated constraints):** the page write is a
 for idea in all_generated_ideas (recommended + killed):
     node "$WIKI_SCRIPT" upsert_idea research-wiki/ \
       --slug <stable-id> --title <title> --stage <proposed|archived> --outcome pending \
-      --thesis <...> --risks <...> --based-on <paper:slug,...> --target-gaps <G2,...>
-    # one call: writes ideas/<slug>.md, wires inspired_by/addresses_gap edges,
+      --thesis <...> --risks <...> --based-on <paper:slug,...> \
+      --target-problems <problem:root,problem:slug,...>
+    # one call: writes ideas/<slug>.md, wires inspired_by/addresses edges,
     # rebuilds index + query_pack, logs. Default skip-on-exist (won't clobber an
     # existing idea enriched by /result-to-claim). `outcome` ∈ {unknown, pending,
     # negative, mixed, positive} — the experiment verdict is set later by
@@ -405,6 +410,12 @@ update_idea(active_idea_id, outcome=verdict)
 # If failed, record WHY for future ideation
 if verdict in ("no", "partial"):
     update_idea failure_notes with specific metrics and reasons
+    # …and file the unresolved cause as a problem entity (Hook 5) — the failure
+    # analysis is only useful to the next round if it is a search seed there.
+    add_problem(slug, parent="problem:root", status="open", origin/evidence=...)
+elif verdict == "yes":
+    for problem_id in idea page's target_problems:
+        add_problem(slug, status="solved", evidence=..., update_on_exist=True)
 
 rebuild query_pack
 log "result-to-claim: exp_id updated, verdict=..."
@@ -429,6 +440,33 @@ Claim `status` ∈ {`drafted`, `unproven`, `sound-modulo-imports`, `verified`,
 `refuted`, `retracted`} — the **proof axis only**. Empirical support is a separate
 axis, carried entirely by edges (Hook 3), never written into `status`.
 
+### Hook 5: Problem birth — the run's open-problem tree
+
+A problem is what the run is trying to close. `problem:root` is the distance
+between the reproduced baseline and the Metric Target; every other problem is a
+sub-problem of it, attached by a `child_of` edge that `--parent` writes.
+
+Three writers, one command:
+
+| Writer             | When                                                    |
+| ------------------ | ------------------------------------------------------- |
+| `/research-setup`  | once, at wiki init — creates `problem:root`             |
+| `/result-to-claim` | on a `partial` / `no` verdict — one per unresolved cause |
+| `/kill-argument`   | per `still_unresolved` attack point                     |
+
+```bash
+node "$WIKI_SCRIPT" add_problem research-wiki/ --slug leaked-eval-split \
+  --title "eval split leaks into training" --parent "problem:root" \
+  --status open --severity high --statement "..." --origin "..." \
+  --evidence "..." --what-would-solve "..." --caveats "..."
+```
+
+`status` ∈ {`open`, `solved`, `refuted`, `deferred`}. Only `open` problems reach
+query_pack's Open Problems section, which is where `/idea-creator` Phase 0 picks
+up next round's search seeds — so closing a problem is a `--status solved
+--update-on-exist` write, never a deletion. The page stays readable, it just
+stops being offered.
+
 ## Re-ideation Trigger
 
 After significant wiki updates, suggest re-running `/idea-creator`:
@@ -436,14 +474,14 @@ After significant wiki updates, suggest re-running `/idea-creator`:
 - ≥5 new papers ingested since last ideation
 - ≥3 new failed/partial ideas since last ideation
 - New contradiction discovered in the graph
-- New gap identified that no existing idea addresses
+- New open problem filed that no existing idea addresses
 
 The system suggests but does not auto-trigger. User decides.
 
 ## Key Rules
 
 - **One source of truth for relationships**: `graph/edges.jsonl`. Page `Connections` sections are auto-generated views.
-- **Canonical node IDs everywhere**: `paper:<slug>`, `idea:<id>`, `exp:<id>`, `claim:<id>`, `gap:<id>`. Never use raw titles or inconsistent shorthands.
+- **Canonical node IDs everywhere**: `paper:<slug>`, `idea:<id>`, `exp:<id>`, `claim:<id>`, `problem:<slug>`. Never use raw titles or inconsistent shorthands.
 - **Failed ideas are the most valuable memory.** Never prune them from query_pack.
 - **query_pack.md is hard-budgeted** at 8000 chars. Deterministic generation, not open-ended summarization.
 - **Append to log.md for every mutation.** The log is the audit trail.

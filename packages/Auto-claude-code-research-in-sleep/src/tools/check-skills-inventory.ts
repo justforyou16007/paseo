@@ -187,9 +187,7 @@ function checkInventory(): string[] {
     }
   }
 
-  const envConfig = read(
-    path.join(SKILLS_ROOT, "experiment-env-configuration", "SKILL.md"),
-  );
+  const envConfig = read(path.join(SKILLS_ROOT, "experiment-env-configuration", "SKILL.md"));
   const runExp = read(path.join(SKILLS_ROOT, "run-experiment", "SKILL.md"));
   const expQueue = read(path.join(SKILLS_ROOT, "experiment-queue", "SKILL.md"));
   const extCadence = read(path.join(SKILLS_ROOT, "shared-references", "external-cadence.md"));
@@ -205,9 +203,7 @@ function checkInventory(): string[] {
     "stop-job",
     "release-resources",
   ];
-  const opsSpecified = OPS.every((op) =>
-    new RegExp(`\\b${op}\\.sh\\b`).test(envConfig),
-  );
+  const opsSpecified = OPS.every((op) => new RegExp(`\\b${op}\\.sh\\b`).test(envConfig));
   const failureContract = /uniform op exit contract/i.test(envConfig);
   const noAnalysisInOps = /process-invariant only/i.test(envConfig);
   require_(
@@ -235,8 +231,7 @@ function checkInventory(): string[] {
     "run-experiment and experiment-queue must both arm a monitoring heartbeat and poll via job-status.sh (A2)",
     failures,
   );
-  const heartbeatBounded =
-    /expiresIn/.test(extCadence) && /maxRuns/.test(extCadence);
+  const heartbeatBounded = /expiresIn/.test(extCadence) && /maxRuns/.test(extCadence);
   require_(
     heartbeatBounded,
     "external-cadence.md must document heartbeat bounds (expiresIn/maxRuns) (A2)",
@@ -311,6 +306,62 @@ function checkInventory(): string[] {
   require_(
     expWritten,
     "result-to-claim/SKILL.md must invoke `add_experiment` to create the experiment node (Step 5) — not just mention it (else exp pages are freehand and supports/invalidates edges dangle)",
+    failures,
+  );
+
+  // Problem entities: the open-problem layer. Every problem is born through
+  // add_problem at one of three writers — /research-setup (the run's root
+  // problem), /result-to-claim (children derived from a partial/no verdict),
+  // /kill-argument (children derived from an unanswered attack). Freehand
+  // problem pages would not get the child_of edge or the query_pack listing,
+  // so /idea-creator's next round would never see them.
+  const setup = read(path.join(SKILLS_ROOT, "research-setup", "SKILL.md"));
+  const killarg = read(path.join(SKILLS_ROOT, "kill-argument", "SKILL.md"));
+  const toolProblem =
+    /\.command\("add_problem"\)/.test(rwiki) && /function\s+addProblem\b/.test(rwiki);
+  require_(
+    toolProblem,
+    "src/tools/research-wiki.ts must implement the add_problem problem-layer writer + its CLI",
+    failures,
+  );
+  require_(
+    /"\$WIKI_SCRIPT"\s+add_problem\b/.test(setup),
+    "research-setup/SKILL.md must invoke `add_problem` to create the run's root problem (else idea discovery has no seed and child problems have no parent)",
+    failures,
+  );
+  require_(
+    /"\$WIKI_SCRIPT"\s+add_problem\b/.test(r2c),
+    "result-to-claim/SKILL.md must invoke `add_problem` on partial/no verdicts (else a failed experiment leaves no search seed for the next iteration)",
+    failures,
+  );
+  require_(
+    /"\$WIKI_SCRIPT"\s+add_problem\b/.test(killarg),
+    "kill-argument/SKILL.md must invoke `add_problem` for still_unresolved points (else an unanswered attack is lost)",
+    failures,
+  );
+  require_(
+    /--parent\s+"problem:root"/.test(r2c) && /--parent\s+"problem:root"/.test(killarg),
+    "derived problems must attach to the root problem via `--parent problem:root` (else the child_of edge is missing and the problem tree is flat)",
+    failures,
+  );
+  require_(
+    !/\.command\("add_gap"\)/.test(rwiki) && !fs.existsSync(path.join(SKILLS_ROOT, "gap-planner")),
+    "the free-text gap map is retired: no add_gap writer and no gap-planner skill (problems are entities, audited by whoever writes them)",
+    failures,
+  );
+
+  // The loop is thin: one iteration = research-pipeline Stage 1-3 + the metric
+  // gate. Every wiki write happens inside a pipeline skill, so a second writer
+  // in the orchestrator would race the real birth point.
+  const arl = read(path.join(SKILLS_ROOT, "auto-research-loop", "SKILL.md"));
+  require_(
+    !/"\$WIKI_SCRIPT"\s+(add_experiment|upsert_idea|add_claim|add_problem)\b/.test(arl),
+    "auto-research-loop/SKILL.md must not write the research wiki — the pipeline skills it dispatches own every birth point",
+    failures,
+  );
+  require_(
+    /\/result-to-claim/.test(read(path.join(SKILLS_ROOT, "auto-review-loop", "SKILL.md"))),
+    "auto-review-loop/SKILL.md must dispatch /result-to-claim on termination — it is the loop's only path from experiment results into the wiki",
     failures,
   );
 

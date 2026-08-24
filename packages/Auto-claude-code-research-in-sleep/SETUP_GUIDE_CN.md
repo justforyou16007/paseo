@@ -183,12 +183,12 @@ Research Wiki 是 ARIS 的核心知识库，自动积累你整个研究过程中
 research-wiki/
   index.md               ← 分类索引（自动生成）
   log.md                 ← 时间线日志
-  gap_map.md             ← 领域空白地图
   query_pack.md          ← 压缩摘要（供 /idea-creator 使用）
   papers/                ← /alphaxiv、/arxiv 等自动写入
   ideas/                 ← /idea-creator 自动写入
   experiments/           ← /result-to-claim 自动写入
   claims/                ← 科学声明
+  problems/              ← 开放问题（根问题与子问题）
   graph/                 ← 关系图谱（edges.jsonl）
 ```
 

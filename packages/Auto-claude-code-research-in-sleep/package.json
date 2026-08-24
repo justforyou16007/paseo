@@ -4,7 +4,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "audit:skill-flow": "npx tsx src/tools/skill-flow-audit.ts",
     "build": "npm run build:clean",
     "build:clean": "npm run clean && tsc -p tsconfig.json",
     "clean": "node ../../scripts/clean-package-dist.mjs && node -e \"require('node:fs').rmSync('tsconfig.tsbuildinfo', { force: true })\"",

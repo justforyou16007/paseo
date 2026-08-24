@@ -135,7 +135,10 @@ WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
 ```
 if research-wiki/query_pack.md exists AND is less than 7 days old:
     Read query_pack.md and use it as initial landscape context:
-    - Treat listed gaps as priority search seeds
+    - Treat the **Open Problems** section as priority search seeds — each entry
+      is a `problem:<slug>` node id you can pass to `upsert_idea --target-problems`
+      in Phase 7. Read `research-wiki/problems/<slug>.md` for the full statement,
+      origin, evidence, and "what would solve it" when an entry looks promising.
     - Treat failed ideas as a banlist (do NOT regenerate similar ideas)
     - Treat top papers as known prior work (do not re-search them)
     Still run Phase 1 below for papers from the last 3-6 months (wiki may be stale)
@@ -495,7 +498,7 @@ This is critical for spiral learning — without it, `ideas/` stays empty and re
 **deterministic helper (`upsert_idea`)** — NOT freehand markdown — so **every
 generation, including a re-run with updated constraints, records reliably**
 (one CLI call per idea, not a prose step the model can skip). `upsert_idea`
-writes the page, wires the `inspired_by` / `addresses_gap` edges, and rebuilds
+writes the page, wires the `inspired_by` / `addresses` edges, and rebuilds
 index + query_pack in a single call. **Default skip-on-exist**: a re-ideation
 run records NEW ideas without clobbering an existing idea whose `outcome`
 `/result-to-claim` may already have enriched. If `$WIKI_SCRIPT` is empty
@@ -513,7 +516,7 @@ if research-wiki/ exists AND [ -n "$WIKI_SCRIPT" ]:
           --stage "<proposed|archived>" --outcome pending \
           --thesis "<core hypothesis / direction>" \
           --risks "<novelty / feasibility risks; why killed if eliminated>" \
-          --based-on "<paper:slug,paper:slug2>" --target-gaps "<G2,G10>" \
+          --based-on "<paper:slug,paper:slug2>" --target-problems "<problem:root,problem:slug>" \
           || echo "WARN: upsert_idea failed for <id> (continuing; audit/report unaffected)" >&2
     node "$WIKI_SCRIPT" log research-wiki/ "idea-creator wrote N ideas (M recommended, K eliminated)"
 elif research-wiki/ exists AND [ -z "$WIKI_SCRIPT" ]:

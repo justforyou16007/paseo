@@ -1,7 +1,7 @@
 ---
 name: kill-argument
-description: 'Two-thread adversarial review: a fresh reviewer constructs the strongest 200-word rejection memo, then a second fresh reviewer defends the paper point-by-point and surfaces still-unresolved critical issues. Optionally records unresolved findings as research-wiki gaps and emits a diagnostic experiment plan (`— gap-output` / `— plan-output`), which is how `/auto-research-loop` turns an attack into the next round of experiments. Use when user says "kill argument", "adversarial review", "hostile review", "rebuttal preparation", "reviewer-2 simulation", or before submitting a theory paper that has already passed standard review rounds.'
-argument-hint: "[paper-or-results-directory] [— gap-output: <gap_map.md>] [— plan-output: <plan.md>] [— render html: false]"
+description: 'Two-thread adversarial review: a fresh reviewer constructs the strongest 200-word rejection memo, then a second fresh reviewer defends the paper point-by-point and surfaces still-unresolved critical issues. Optionally files unresolved findings as research-wiki open problems and emits a diagnostic experiment plan (`— problem-output` / `— plan-output`). Use when user says "kill argument", "adversarial review", "hostile review", "rebuttal preparation", "reviewer-2 simulation", or before submitting a theory paper that has already passed standard review rounds.'
+argument-hint: "[paper-or-results-directory] [— problem-output: <research-wiki/>] [— plan-output: <plan.md>] [— render html: false]"
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent
 ---
 
@@ -436,7 +436,7 @@ The verdict is computed from the per-point counts; do NOT let the
 defense thread output the top-level verdict directly (that would let
 it self-grade). The skill code does the verdict mapping.
 
-### Step 4.5: Emit gaps and diagnostic plan (only when `— gap-output` / `— plan-output` given)
+### Step 4.5: File problems and diagnostic plan (only when `— problem-output` / `— plan-output` given)
 
 Skip this step entirely when neither argument is present — the default
 direct-invocation behavior is detect-only and writes nothing outside the
@@ -448,49 +448,57 @@ this is a mechanical projection of data this skill already produced, not a fresh
 interpretation. Routing it through a second agent would add a distortion layer
 between the adversarial finding and its record.
 
-**When `— gap-output: <path>` is given** — for each `decomposed_points[i]` whose
-`verdict == "still_unresolved"`, append one gap to `<path>`:
+**When `— problem-output: <research-wiki-root>` is given** — for each
+`decomposed_points[i]` whose `verdict == "still_unresolved"`, file one open
+problem entity. Resolve `$WIKI_SCRIPT` per
+[`shared-references/wiki-helper-resolution.md`](../shared-references/wiki-helper-resolution.md)
+(Variant B — warn and skip if unreachable), then:
 
-1. **Allocate ids.** Scan the file for existing `## G<n>` headings; the first new
-   id is `max(n) + 1`. Ids are sequential and never reused. A gap later shown to
-   be wrong is marked `**Status**: refuted` — never deleted.
-2. **Append**, in the format `/idea-discovery` and `/wiki-enrich` already use:
-   ```markdown
-   ## G<n> — <decomposed_points[i].label>
-   **Status**: open (<source context, e.g. "iteration 3, kill-argument">)
-   **Sub-direction**: <the research sub-direction this sits in>
-   **Why it matters**: <decomposed_points[i].attack_claim>, evidenced by <decomposed_points[i].evidence>
-   **What would close it**: <decomposed_points[i].recommended_fix>
-   **Severity**: <decomposed_points[i].severity_if_unresolved>
-   ```
+```bash
+node "$WIKI_SCRIPT" add_problem "<research-wiki-root>" \
+  --slug "<stable-kebab-slug from decomposed_points[i].label>" \
+  --title "<decomposed_points[i].label>" \
+  --parent "problem:root" --status open \
+  --severity "<decomposed_points[i].severity_if_unresolved>" \
+  --statement "<the research sub-direction this sits in, and what is unanswered>" \
+  --origin "kill-argument adversarial review of <target>, iteration <n>" \
+  --evidence "<decomposed_points[i].attack_claim>, evidenced by <decomposed_points[i].evidence>" \
+  --what-would-solve "<decomposed_points[i].recommended_fix>" \
+  || echo "WARN: add_problem failed for <slug> (continuing)" >&2
+```
 
-`still_unresolved` points are **gaps, not claims** — by construction the paper or
-results have no effective answer to them, so they are open questions. A claim
-asserts something evidence supports; recording an unanswered attack as a claim
-would assert what no experiment has shown. Claims arrive later, from
-`/result-to-claim --addresses G<n>`, once an experiment closes the gap.
+Never delete or rewrite a problem another writer owns. A problem later shown to
+be wrong is moved to `--status refuted --update-on-exist`, not removed. Ids are
+slugs, not sequence numbers — `add_problem` dedups on slug.
+
+`still_unresolved` points are **problems, not claims** — by construction the
+paper or results have no effective answer to them, so they are open questions. A
+claim asserts something evidence supports; recording an unanswered attack as a
+claim would assert what no experiment has shown. Claims arrive later, from
+`/proof-checker`, once an experiment closes the problem.
 
 Points classified `answered_by_current_text` or `partially_answered` do **not**
 become gaps. A partial answer is a weakness to note in the report, not an open
 research question.
 
 **When `— plan-output: <path>` is given** — write an `EXPERIMENT_PLAN`-schema file
-containing one milestone per gap just emitted (the same schema `/experiment-bridge`
+containing one milestone per problem just filed (the same schema `/experiment-bridge`
 accepts, without the `sanity/baseline/main/ablation` section headers — these are
 diagnostic experiments, not a full run):
 
 ```markdown
 ## <milestone id>
-**gap_id**: G<n>
-**modification**: <the minimal change that tests this gap>
-**metric_to_observe**: <the metric that would move if the gap is real>
-**success_threshold**: <the value that closes or refutes the gap>
+**problem_id**: problem:<slug>
+**modification**: <the minimal change that tests this problem>
+**metric_to_observe**: <the metric that would move if the problem is real>
+**success_threshold**: <the value that closes or refutes the problem>
 ```
 
-Derive each milestone from the gap's `recommended_fix`. If a `still_unresolved`
-point is not empirically testable (a framing or writing-level objection), emit
-the gap but **skip** its milestone, and note the omission in `KILL_ARGUMENT.md`
-under `## Recommendation`. Do not invent an experiment to fill the slot.
+Derive each milestone from the problem's `what would solve it`. If a
+`still_unresolved` point is not empirically testable (a framing or writing-level
+objection), file the problem but **skip** its milestone, and note the omission in
+`KILL_ARGUMENT.md` under `## Recommendation`. Do not invent an experiment to fill
+the slot.
 
 **Receipt (direct-call mode).** When invoked with either argument (i.e. by a dispatching parent),
 write direct-call receipt `.aris/runs/<run_id>.kill-argument.done.json`:
@@ -501,8 +509,8 @@ write direct-call receipt `.aris/runs/<run_id>.kill-argument.done.json`:
 {
   "phase": "kill-argument",
   "kill_arg_path": "<path to KILL_ARGUMENT.json>",
-  "gap_ids": ["G7", "G8"],
-  "gap_titles": ["<label for G7>", "<label for G8>"],
+  "problem_ids": ["problem:<slug-a>", "problem:<slug-b>"],
+  "problem_titles": ["<label for slug-a>", "<label for slug-b>"],
   "plan_path": "<path or null>",
   "milestone_count": <int>,
   "overall_verdict": "PASS|WARN|FAIL",
@@ -510,8 +518,8 @@ write direct-call receipt `.aris/runs/<run_id>.kill-argument.done.json`:
 }
 ```
 
-On `PASS` (`still_unresolved == 0`) there are no gaps: write the receipt with
-empty `gap_ids`, `plan_path: null`, and `milestone_count: 0`. Do not create an
+On `PASS` (`still_unresolved == 0`) there are no problems: write the receipt with
+empty `problem_ids`, `plan_path: null`, and `milestone_count: 0`. Do not create an
 empty plan file — a dispatching parent reads `PASS` as "nothing to diagnose".
 
 ### Step 5: Print summary
@@ -546,9 +554,9 @@ To the user:
 - `.aris/traces/kill-argument/<date>_runNN/` — per-thread codex traces (Attack memo + Adjudication memo)
 - Optional: applied fixes if user explicitly requests; default is **detect-only, do not auto-modify**.
 - `<paper-dir>/KILL_ARGUMENT.html` (when `RENDER_HTML = true`, default) — single-file HTML view auto-rendered via `/render-html "<paper-dir>/KILL_ARGUMENT.md" --json "<paper-dir>/KILL_ARGUMENT.json"`. Full review gate applies. The `.review.json` sidecar carries the render-fidelity verdict. **Non-blocking**: if `/render-html` fails (helper missing, Codex MCP unavailable, file write error), log the failure and treat the skill as complete — the HTML view is a convenience, not a prerequisite for the kill-argument verdict.
-- (when `— gap-output` given) Gap entries appended to `<gap_map.md>`.
+- (when `— problem-output` given) Open `problem` entities filed in the research wiki via `add_problem`.
 - (when `— plan-output` given) `<plan.md>` — diagnostic experiment plan.
-- (when either `— gap-output` or `— plan-output` given) `.aris/runs/<run_id>.kill-argument.done.json` — direct-call receipt for dispatching parents (legacy; worker mode uses `receipt.json`).
+- (when either `— problem-output` or `— plan-output` given) `.aris/runs/<run_id>.kill-argument.done.json` — direct-call receipt for dispatching parents (legacy; worker mode uses `receipt.json`).
 
 ## Key Rules
 

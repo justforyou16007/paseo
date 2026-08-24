@@ -604,7 +604,7 @@ test("auto-research-loop: AUTO_WRITE=true done+accept → COMPLETE", () => {
 test("contract: all auto-research-loop workers declare manifest protocol with required elements", () => {
   const workers = [
     "experiment-bridge", "analyze-results",
-    "auto-review-loop", "kill-argument", "gap-planner", "paper-writing", "render-html",
+    "auto-review-loop", "kill-argument", "paper-writing", "render-html",
   ];
   const skillsDir = path.resolve("skills");
   const missing: string[] = [];
@@ -642,7 +642,7 @@ test("contract: all auto-research-loop workers declare manifest protocol with re
 test("contract: no unmarked old receipt paths in worker skills", () => {
   const workers = [
     "experiment-bridge", "analyze-results",
-    "auto-review-loop", "kill-argument", "gap-planner", "paper-writing", "render-html",
+    "auto-review-loop", "kill-argument", "paper-writing", "render-html",
   ];
   const skillsDir = path.resolve("skills");
   const conflicts: string[] = [];
@@ -776,11 +776,11 @@ test("contract: research-pipeline and auto-research-loop are decoupled", () => {
   assert.ok(!loop.includes('"claude/claude-sonnet-4-6"'), "loop must not hardcode an executor provider");
   assert.ok(loop.includes("render_w_agent_prompt.sh"), "loop must use the shared paseo config emitter");
 
-  // auto-research-loop DOES dispatch idea-discovery, but only in metric-gap
-  // constrained mode (Phase 4, iteration 2+) — never research-pipeline's
-  // open-ended, unconstrained algorithm-idea exploration.
-  assert.ok(loop.includes("Dispatch: `/idea-discovery"), "auto-research-loop must dispatch /idea-discovery in Phase 4");
-  assert.ok(loop.includes("metric_gap_constrained"), "auto-research-loop must constrain idea-discovery to metric_gap_constrained mode");
+  // auto-research-loop dispatches the SAME full idea-discovery pipeline that
+  // research-pipeline does. There is no constrained variant: the loop's extra
+  // context (iteration, metric state, prior evidence) rides in manifest.context.
+  assert.ok(loop.includes("Dispatch: `/idea-discovery"), "auto-research-loop must dispatch /idea-discovery as Stage 1");
+  assert.ok(!loop.includes("metric_gap_constrained"), "the metric-gap constrained branch is retired — the loop runs the full pipeline");
 });
 
 test("contract: dashboard_patch idempotency — applied_receipts in dashboard schema", () => {
@@ -1276,31 +1276,25 @@ test("dashboard-merge: rejects dangerous nested keys", () => {
   } finally { cleanup(d); }
 });
 
-test("dashboard-merge: accepts one complete post-idea gap-planner receipt", () => {
+test("dashboard-merge: accepts an idea-discovery receipt naming its own plan", () => {
   const d = tmpDir();
   try {
     writeDash(d, "run1", makeDashboard({
       iteration: 2,
-      current_phase: "gap-planner",
+      current_phase: "idea-discovery",
     }));
-    const workerRel = ".aris/runs/run1/workers/2-gap-planner/outputs";
-    const receiptPath = writeWorkerReceipt(d, "run1", "2-gap-planner", {
-      worker: "gap-planner",
+    const workerRel = ".aris/runs/run1/workers/2-idea-discovery/outputs";
+    const receiptPath = writeWorkerReceipt(d, "run1", "2-idea-discovery", {
+      worker: "idea-discovery",
       iteration: 2,
       primary_output: "EXPERIMENT_PLAN.md",
-      summary: { operation: "audit-and-plan", reviewer_id: "reviewer-2" },
+      summary: { num_ideas: 3, top_idea: "t" },
       dashboard_patch: {
-        "gaps.open": ["G3"],
-        "gaps.closed": ["G1", "G2"],
-        "gaps.total": 3,
-        gap_audit_path: `${workerRel}/GAP_AUDIT.json`,
+        best_idea: { id: "idea-2-1", title: "t", metric: null, iteration: 2 },
+        idea_ids: ["idea-2-1"],
         plan_path: `${workerRel}/EXPERIMENT_PLAN.md`,
       },
     });
-    const outputDir = path.join(path.dirname(receiptPath), "outputs");
-    for (const name of ["GAP_AUDIT.json", "gap_map.md", "GAP_ANALYSIS.md"]) {
-      fs.writeFileSync(path.join(outputDir, name), "artifact\n", "utf-8");
-    }
 
     const result = dashMergeCli(
       "apply", "--root", d, "--run-id", "run1", "--receipt", receiptPath,
@@ -1309,126 +1303,144 @@ test("dashboard-merge: accepts one complete post-idea gap-planner receipt", () =
     const updated = JSON.parse(fs.readFileSync(
       path.join(d, ".aris", "runs", "run1", "dashboard.json"), "utf-8",
     ));
-    assert.deepEqual(updated.gaps.open, ["G3"]);
-    assert.deepEqual(updated.gaps.closed, ["G1", "G2"]);
     assert.equal(updated.plan_path, `${workerRel}/EXPERIMENT_PLAN.md`);
   } finally { cleanup(d); }
 });
 
-test("dashboard-merge: rejects gap-planner before idea discovery or with split outputs", () => {
+test("dashboard-merge: rejects an idea-discovery receipt without its own plan", () => {
   const d = tmpDir();
   try {
     writeDash(d, "run1", makeDashboard({
       iteration: 2,
       current_phase: "idea-discovery",
     }));
-    const workerRel = ".aris/runs/run1/workers/2-gap-planner/outputs";
+    // plan_path points at ANOTHER worker's directory: experiment-bridge would
+    // then run a plan this receipt never produced.
+    const receiptPath = writeWorkerReceipt(d, "run1", "2-idea-discovery", {
+      worker: "idea-discovery",
+      iteration: 2,
+      primary_output: "EXPERIMENT_PLAN.md",
+      summary: { num_ideas: 3, top_idea: "t" },
+      dashboard_patch: {
+        best_idea: { id: "idea-2-1", title: "t", metric: null, iteration: 2 },
+        idea_ids: ["idea-2-1"],
+        plan_path: ".aris/runs/run1/workers/1-idea-discovery/outputs/EXPERIMENT_PLAN.md",
+      },
+    });
+    let result = dashMergeCli(
+      "apply", "--root", d, "--run-id", "run1", "--receipt", receiptPath,
+    );
+    assert.notEqual(result.exitCode, 0, "plan_path must name this worker's own plan");
+
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf-8"));
+    delete receipt.dashboard_patch.plan_path;
+    fs.writeFileSync(receiptPath, JSON.stringify(receipt));
+    result = dashMergeCli(
+      "apply", "--root", d, "--run-id", "run1", "--receipt", receiptPath,
+    );
+    assert.notEqual(result.exitCode, 0, "plan_path is required — the loop's next stage consumes it");
+  } finally { cleanup(d); }
+});
+
+test("dashboard-merge: gap-planner is retired, and gap ids are problem node ids", () => {
+  const d = tmpDir();
+  try {
+    writeDash(d, "run1", makeDashboard({
+      iteration: 2,
+      current_phase: "gap-planner",
+    }));
     const receiptPath = writeWorkerReceipt(d, "run1", "2-gap-planner", {
       worker: "gap-planner",
       iteration: 2,
       primary_output: "EXPERIMENT_PLAN.md",
       summary: { operation: "audit-and-plan" },
       dashboard_patch: {
-        "gaps.open": ["G1"],
+        "gaps.open": ["G3"],
+        "gaps.closed": ["G1"],
+        "gaps.total": 2,
+        gap_audit_path: ".aris/runs/run1/workers/2-gap-planner/outputs/GAP_AUDIT.json",
+        plan_path: ".aris/runs/run1/workers/2-gap-planner/outputs/EXPERIMENT_PLAN.md",
+      },
+    });
+    const result = dashMergeCli(
+      "apply", "--root", d, "--run-id", "run1", "--receipt", receiptPath,
+    );
+    assert.notEqual(result.exitCode, 0, "gap-planner is no longer a known worker");
+  } finally { cleanup(d); }
+
+  // The surviving gaps.* patcher (kill-argument) now carries problem node ids.
+  const d2 = tmpDir();
+  try {
+    writeDash(d2, "run1", makeDashboard({
+      iteration: 2,
+      current_phase: "kill-argument",
+    }));
+    const receiptPath = writeWorkerReceipt(d2, "run1", "2-kill-argument", {
+      worker: "kill-argument",
+      iteration: 2,
+      primary_output: "KILL_ARGUMENT.md",
+      summary: { still_unresolved: 1 },
+      dashboard_patch: {
+        "gaps.open": ["G7"],
         "gaps.closed": [],
         "gaps.total": 1,
-        gap_audit_path: `${workerRel}/GAP_AUDIT.json`,
-        plan_path: `${workerRel}/EXPERIMENT_PLAN.md`,
+        overall_verdict: "WARN",
       },
     });
     const outputDir = path.join(path.dirname(receiptPath), "outputs");
-    for (const name of ["GAP_AUDIT.json", "gap_map.md", "GAP_ANALYSIS.md"]) {
-      fs.writeFileSync(path.join(outputDir, name), "artifact\n", "utf-8");
-    }
-
+    fs.writeFileSync(path.join(outputDir, "KILL_ARGUMENT.md"), "report\n", "utf-8");
     let result = dashMergeCli(
-      "apply", "--root", d, "--run-id", "run1", "--receipt", receiptPath,
+      "apply", "--root", d2, "--run-id", "run1", "--receipt", receiptPath,
     );
-    assert.notEqual(result.exitCode, 0, "gap-planner must not merge during idea-discovery");
+    assert.notEqual(result.exitCode, 0, "legacy G<n> gap ids must be rejected");
 
-    const dashboardPath = path.join(d, ".aris", "runs", "run1", "dashboard.json");
-    const dashboard = JSON.parse(fs.readFileSync(dashboardPath, "utf-8"));
-    dashboard.current_phase = "gap-planner";
-    fs.writeFileSync(dashboardPath, JSON.stringify(dashboard));
     const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf-8"));
-    delete receipt.dashboard_patch.plan_path;
+    receipt.dashboard_patch["gaps.open"] = ["problem:leaked-eval-split"];
     fs.writeFileSync(receiptPath, JSON.stringify(receipt));
-
     result = dashMergeCli(
-      "apply", "--root", d, "--run-id", "run1", "--receipt", receiptPath,
+      "apply", "--root", d2, "--run-id", "run1", "--receipt", receiptPath,
     );
-    assert.notEqual(result.exitCode, 0,
-      "gap-planner must publish audit and plan fields in the same receipt");
-  } finally { cleanup(d); }
+    assert.equal(result.exitCode, 0, result.stderr);
+  } finally { cleanup(d2); }
 });
 
-test("contract: gap-planner skill contract correctness", () => {
-  const gp = fs.readFileSync(path.resolve("skills/gap-planner/SKILL.md"), "utf-8");
+test("contract: result-to-claim writes experiments with real add_experiment CLI flags", () => {
+  // The loop stopped writing experiments — /result-to-claim is the birth point,
+  // so the "does the writer speak the CLI's dialect" check moves with it. Every
+  // flag the skill passes must be an option add_experiment actually declares;
+  // an invented alias is silently ignored by commander and the field ends empty.
+  const r2c = fs.readFileSync(path.resolve("skills/result-to-claim/SKILL.md"), "utf-8");
+  const wiki = fs.readFileSync(path.resolve("src/tools/research-wiki.ts"), "utf-8");
 
-  assert.ok(gp.includes("## Manifest Protocol"), "gap-planner must have Manifest Protocol section");
-  assert.ok(gp.includes("manifest's `context`") || gp.includes("manifest.context"), "gap-planner must read metric from manifest context");
-  assert.ok(gp.includes("Do not read or reinterpret\n`CLAUDE.md`"), "gap-planner must explicitly reject CLAUDE.md metric inference");
-  assert.ok(gp.includes("Do not assume a paper or LaTeX directory exists"), "gap-planner must not assume paper context");
+  const cmdStart = wiki.indexOf('.command("add_experiment")');
+  const cmdEnd = wiki.indexOf(".action(", cmdStart);
+  assert.ok(cmdStart >= 0 && cmdEnd > cmdStart, "must find the add_experiment CLI definition");
+  const declared = new Set(
+    [...wiki.slice(cmdStart, cmdEnd).matchAll(/\.(?:required)?[oO]ption\("(--[a-z-]+)/g)].map((m) => m[1]),
+  );
+  assert.ok(declared.has("--slug"), "sanity: parsed the option list");
 
-  assert.ok(gp.includes('"gaps.open"'), "receipt must patch gaps.open");
-  assert.ok(gp.includes('"gaps.closed"'), "receipt must patch gaps.closed");
-  assert.ok(gp.includes('"gaps.total"'), "receipt must patch gaps.total");
-  assert.ok(gp.includes('"plan_path"'), "receipt must patch plan_path");
-
-  assert.ok(gp.includes("GAP_ANALYSIS.md"), "must output GAP_ANALYSIS.md");
-  assert.ok(gp.includes("EXPERIMENT_PLAN.md"), "must output EXPERIMENT_PLAN.md");
-  assert.ok(gp.includes("gap_map.md"), "must output updated gap_map.md");
-
-  assert.ok(gp.includes("Run once, after idea-discovery"),
-    "gap-planner must be one post-idea stage");
-  assert.ok(gp.includes("This skill is the gap audit stage"),
-    "gap-planner itself must be the audit stage");
-  assert.ok(gp.includes("Do not add a\nseparate gap-audit skill, dispatch another gap reviewer"),
-    "gap-planner must not create another gap audit");
-  assert.ok(gp.includes("Gap-planner owns every gap ruling"),
-    "gap-planner must own merge, close, and priority decisions");
-  assert.ok(gp.includes("Do not select a\ndifferent method"),
-    "plan composition must not change the selected idea");
-  assert.ok(gp.includes("fail instead of inventing it"),
-    "plan composition must fail rather than invent missing idea details");
-  assert.ok(gp.includes("experiment-bridge"), "the generated plan must be consumable by experiment-bridge");
-
-  const loop = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
-  const ideaPhase = loop.indexOf("## Phase 4: Idea Discovery");
-  const gapPhase = loop.indexOf("## Phase 4.5: Gap Planner");
-  assert.ok(ideaPhase >= 0 && ideaPhase < gapPhase,
-    "the loop must discover an idea before its one gap-planner stage");
-  assert.equal((loop.match(/^Dispatch: `\/gap-planner /gm) ?? []).length, 1,
-    "auto-research-loop must dispatch gap-planner exactly once per continuing iteration");
-  assert.ok(!fs.existsSync(path.resolve("skills/gap-audit")), "gap audit must remain an operation of gap-planner, not a separate skill");
-
-  const catalog = fs.readFileSync(path.resolve("docs/SKILLS_CATALOG.md"), "utf-8");
-  assert.ok(catalog.includes("`/gap-planner`"), "catalog must list /gap-planner");
-});
-
-test("contract: auto-research-loop writes experiments with the real wiki CLI fields", () => {
-  const loop = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
-  const postReceipt = loop.indexOf("**Post-receipt wiki writes:**");
-  const codeStart = loop.indexOf("```bash", postReceipt);
-  const codeEnd = loop.indexOf("```", codeStart + 7);
-  const command = loop.slice(codeStart, codeEnd);
-  for (const field of [
-    "--slug",
-    "--title",
-    "--idea",
-    "--verdict",
-    "--confidence",
-    "--metrics",
-    "--reasoning",
-    "--provenance",
-    "--tags",
-  ]) {
-    assert.ok(command.includes(field), `experiment wiki write must pass ${field}`);
+  const callStart = r2c.indexOf('add_experiment research-wiki/');
+  assert.ok(callStart >= 0, "result-to-claim must invoke add_experiment");
+  const call = r2c
+    .slice(callStart, r2c.indexOf("\n\n", callStart))
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("#")) // prose edges like `idea--tested_by-->exp`
+    .join("\n");
+  const passed = [...call.matchAll(/(?:^|\s)(--[a-z-]+)/g)].map((m) => m[1]);
+  for (const flag of passed) {
+    assert.ok(declared.has(flag), `result-to-claim passes ${flag}, which add_experiment does not declare`);
   }
-  assert.ok(!/(^|\s)--id(?:\s|$)/m.test(command) && !/(^|\s)--status(?:\s|$)/m.test(command),
-    "experiment wiki write must not use unsupported aliases");
-  assert.ok(command.includes('EXP_TITLE=$(jq -er \'.title\''),
-    "the title must come from each bounded receipt record");
+  for (const required of ["--slug", "--idea", "--verdict", "--confidence", "--metrics", "--reasoning", "--provenance"]) {
+    assert.ok(passed.includes(required), `experiment wiki write must pass ${required}`);
+  }
+  assert.ok(passed.includes("--update-on-exist"),
+    "a re-judge must overwrite the stale verdict, not fail on an existing node");
+
+  // The loop must not have kept a competing copy of this write.
+  const loop = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
+  assert.ok(!loop.includes("Post-receipt wiki writes"),
+    "the orchestrator's post-receipt wiki write block is retired");
 });
 
 test("contract: nested result analysis preserves the verifier's user decision", () => {
@@ -1467,7 +1479,7 @@ test("contract: nested analyzers use their manifest snapshots instead of stale p
 test("contract: auto-research-loop waits for environment setup before validation", () => {
   const loop = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
   const start = loop.indexOf("# 0b. Check experiment environment");
-  const end = loop.indexOf("# 0c. Baseline must already be anchored");
+  const end = loop.indexOf("### Fresh start vs Resume");
   assert.ok(start >= 0 && end > start, "must find the 0b environment block");
   const env = loop.slice(start, end);
   const create = env.indexOf("mcp__paseo__create_agent:");
@@ -1512,10 +1524,11 @@ test("contract: auto-research-loop stop gate reads dashboard fields only (no rev
   assert.ok(!loop.includes("REVIEW_VERDICT") || !loop.includes("TYPE_B"), "must not have old TYPE_A/TYPE_B compound structure");
   // The gate logic must not read metric_progress from dashboard (that would couple to review output)
   // -- we test that the Phase 3 arithmetic section doesn't reference it.
-  const gateStart = loop.indexOf("## Phase 3: Metric Evaluation");
-  const gateEnd = loop.indexOf("## Phase 4:");
+  const gateStart = loop.indexOf("## Gate: Metric Evaluation");
+  const gateEnd = loop.indexOf("## Summary (on stop)");
+  assert.ok(gateStart >= 0 && gateEnd > gateStart, "must find the metric gate section");
   const gateSection = loop.slice(gateStart, gateEnd);
-  assert.ok(!gateSection.includes("metric_progress"), "stop gate (Phase 3) must not consume metric_progress");
+  assert.ok(!gateSection.includes("metric_progress"), "the stop gate must not consume metric_progress");
   assert.ok(!gateSection.includes("REVIEW_VERDICT"), "stop gate must not use REVIEW_VERDICT");
   // Verify stop_reason vocabulary
   for (const reason of ["metric_met", "budget_exhausted", "patience_exhausted", "invalid_metric"]) {
@@ -1611,6 +1624,67 @@ test("metric-gate evaluate: lower_better patience streak computed correctly", ()
     const dec = JSON.parse(r.stdout.trim());
     assert.equal(dec.stop_reason, "patience_exhausted");
     assert.equal(dec.no_progress_streak, 2);
+  } finally { cleanup(d); }
+});
+
+test("metric-gate evaluate: the anchored baseline is the incumbent patience measures against", () => {
+  const d = tmpDir();
+  try {
+    // Every iteration sits far below the baseline the run has to beat, but each
+    // edges past the previous one. Comparing only neighbours scores this streak 0
+    // and burns the whole budget on a run that never once beat its own start.
+    const dash = makeDashboard({
+      iteration: 4,
+      max_iterations: 20,
+      config: { patience: 2 },
+      metric: { name: "F1", target: 0.85, direction: "higher_better", tolerance: 0.01, current: 0.52, baseline: 0.80, history: [{ iter: 1, value: 0.80 }, { iter: 2, value: 0.50 }, { iter: 3, value: 0.51 }, { iter: 4, value: 0.52 }] },
+    });
+    writeDash(d, "run1", dash);
+    const r = metricGateCli("evaluate", d, "run1");
+    assert.equal(r.exitCode, 0, r.stderr);
+    const dec = JSON.parse(r.stdout.trim());
+    assert.equal(dec.no_progress_streak, 3, "iters 2-4 all fail to beat the baseline");
+    assert.equal(dec.stop_reason, "patience_exhausted");
+  } finally { cleanup(d); }
+});
+
+test("metric-gate evaluate: iteration 1 is the baseline reproduction, not a challenger", () => {
+  const d = tmpDir();
+  try {
+    // iter 1 reproduces the baseline, so it cannot count against patience even
+    // though it does not beat it. iter 2 improves -> streak 0.
+    const dash = makeDashboard({
+      iteration: 2,
+      max_iterations: 10,
+      config: { patience: 2 },
+      metric: { name: "F1", target: 0.85, direction: "higher_better", tolerance: 0.01, current: 0.82, baseline: 0.80, history: [{ iter: 1, value: 0.795 }, { iter: 2, value: 0.82 }] },
+    });
+    writeDash(d, "run1", dash);
+    const r = metricGateCli("evaluate", d, "run1");
+    assert.equal(r.exitCode, 0, r.stderr);
+    const dec = JSON.parse(r.stdout.trim());
+    assert.equal(dec.no_progress_streak, 0);
+    assert.equal(dec.stop_reason, null);
+  } finally { cleanup(d); }
+});
+
+test("metric-gate evaluate: without an anchored baseline, history[0] is still the incumbent", () => {
+  const d = tmpDir();
+  try {
+    // A run whose CLAUDE.md left `baseline:` blank keeps the old semantics —
+    // the first recorded value seeds the incumbent and never counts as a miss.
+    const dash = makeDashboard({
+      iteration: 3,
+      max_iterations: 10,
+      config: { patience: 2 },
+      metric: { name: "F1", target: 0.85, direction: "higher_better", tolerance: 0.01, current: 0.68, baseline: null, history: [{ iter: 1, value: 0.70 }, { iter: 2, value: 0.69 }, { iter: 3, value: 0.68 }] },
+    });
+    writeDash(d, "run1", dash);
+    const r = metricGateCli("evaluate", d, "run1");
+    assert.equal(r.exitCode, 0, r.stderr);
+    const dec = JSON.parse(r.stdout.trim());
+    assert.equal(dec.no_progress_streak, 2, "iters 2 and 3 miss the iter-1 incumbent");
+    assert.equal(dec.stop_reason, "patience_exhausted");
   } finally { cleanup(d); }
 });
 
@@ -1960,12 +2034,12 @@ test("dashboard-merge: an applied receipt remains idempotent after the phase adv
 
 test("contract: auto-research-loop invalid_metric uses failed status, not accept or completed", () => {
   const arl = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
-  const metricEvalStart = arl.indexOf("## Phase 3: Metric Evaluation");
-  const gapStart = arl.indexOf("## Phase 4:");
-  const metricEval = arl.slice(metricEvalStart, gapStart);
+  const metricEvalStart = arl.indexOf("## Gate: Metric Evaluation");
+  const summaryStart = arl.indexOf("## Summary (on stop)");
+  const metricEval = arl.slice(metricEvalStart, summaryStart);
 
   // Must handle invalid_metric
-  assert.ok(metricEval.includes("invalid_metric"), "Phase 3 must handle invalid_metric");
+  assert.ok(metricEval.includes("invalid_metric"), "the gate must handle invalid_metric");
 
   // Extract the invalid_metric code block (```bash ... ```)
   const invalidStart = metricEval.indexOf('stop_reason == "invalid_metric"');
@@ -2083,28 +2157,34 @@ test("contract: analyze-results verifier is cross-model (not claude)", () => {
 });
 
 // ============================================================================
-// Contract: one post-idea gap-planner owns the audit stage
+// Contract: the loop is thin — one iteration = research-pipeline Stage 1-3
 // ============================================================================
 
-test("contract: auto-research-loop runs one gap audit and plan stage after idea discovery", () => {
+test("contract: auto-research-loop runs Stage 1-3 and owns no audit or wiki stage of its own", () => {
   const arl = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
-  const ideaStart = arl.indexOf("## Phase 4: Idea Discovery");
-  const gapStart = arl.indexOf("## Phase 4.5: Gap Planner");
-  const summaryStart = arl.indexOf("## Phase 5:");
-  assert.ok(ideaStart >= 0 && ideaStart < gapStart && gapStart < summaryStart,
-    "idea discovery must run before the single gap-planner stage");
+  const s1 = arl.indexOf("## Stage 1: Idea Discovery");
+  const s2 = arl.indexOf("## Stage 2: Experiment Bridge");
+  const s3 = arl.indexOf("## Stage 3: Auto Review");
+  const gate = arl.indexOf("## Gate: Metric Evaluation");
+  assert.ok(s1 >= 0 && s1 < s2 && s2 < s3 && s3 < gate,
+    "one iteration must be idea-discovery -> experiment-bridge -> auto-review, then the gate");
 
-  const gapPhase = arl.slice(gapStart, summaryStart);
-  assert.ok(gapPhase.includes("Dispatch `/gap-planner` once"),
-    "the loop must call gap-planner only once");
-  assert.ok(gapPhase.includes("Gap-planner itself is the audit stage"),
-    "gap-planner itself must own gap rulings");
-  assert.ok(gapPhase.includes("dispatches no separate gap auditor"),
-    "the loop must not add another gap audit inside gap-planner");
-  assert.ok(gapPhase.includes("mechanically composes"),
-    "the same stage must mechanically compose the selected idea and audited gaps");
-  assert.ok(!arl.includes("gap-planner-audit") && !arl.includes("Phase 4.75"),
-    "the loop must not retain a pre-idea audit or a second gap-planner phase");
+  // The audit stage is gone with gap-planner; nothing replaced it inside the loop.
+  assert.ok(!arl.includes("gap-planner") && !arl.includes("Gap Planner"),
+    "gap-planner is retired — its audit moved into the skills that write problems");
+  assert.ok(!arl.includes("GAP_AUDIT.json"),
+    "the loop must not consume a gap audit artifact");
+
+  // Rule 5: every wiki birth point lives in a dispatched pipeline skill.
+  assert.ok(!/\$WIKI_SCRIPT"?\s+(add_experiment|upsert_idea|add_claim|add_problem)/.test(arl),
+    "the orchestrator must not write the research wiki (result-to-claim owns absorption)");
+  assert.ok(!arl.includes("WIKI_SCRIPT="),
+    "the orchestrator must not even resolve the wiki helper");
+
+  // The absorption path the loop depends on has to still exist upstream.
+  const review = fs.readFileSync(path.resolve("skills/auto-review-loop/SKILL.md"), "utf-8");
+  assert.ok(review.includes("/result-to-claim"),
+    "auto-review-loop termination must dispatch /result-to-claim — the loop's only wiki write path");
 });
 
 // ============================================================================
@@ -2131,28 +2211,32 @@ test("contract: metric-gate.ts uses abs-based threshold", () => {
 });
 
 // ============================================================================
-// Contract: iteration 1 skips idea-discovery (baseline)
+// Contract: iteration 1 is a normal iteration (no baseline special case)
 // ============================================================================
 
-test("contract: auto-research-loop runs idea-discovery on every iteration (no baseline iteration)", () => {
+test("contract: auto-research-loop has no baseline branch — iteration 1 runs the same stages", () => {
   const arl = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
-  const phase1Start = arl.indexOf("## Phase 1: Experiment Bridge");
-  const phase2Start = arl.indexOf("## Phase 2:");
-  const phase1 = arl.slice(phase1Start, phase2Start);
-  assert.ok(!/Iteration 1:.*baseline plan/i.test(phase1),
-    "the loop no longer reproduces a baseline in iteration 1 (that moved to /research-setup Phase 7.6)");
-  assert.ok(/every iteration/i.test(phase1),
-    "Phase 1 must state that the plan+idea source is the same on every iteration");
+  const s1 = arl.indexOf("## Stage 1: Idea Discovery");
+  const s2 = arl.indexOf("## Stage 2: Experiment Bridge");
+  const stage1 = arl.slice(s1, s2);
 
-  const ideaStart = arl.indexOf("## Phase 4: Idea Discovery");
-  const gapStart = arl.indexOf("## Phase 4.5: Gap Planner");
-  const ideaPhase = arl.slice(ideaStart, gapStart);
-  // Loop start opens directly at idea-discovery with SOURCE_ITERATION=0; only
-  // iteration transitions advance the dashboard, and they do so exactly once.
-  assert.ok(/loop start/i.test(ideaPhase) && ideaPhase.includes("SOURCE_ITERATION = 0"),
-    "Phase 4 must document the loop-start entry case reading setup-time baseline evidence");
-  assert.ok(ideaPhase.includes("advance the dashboard") && ideaPhase.includes("exactly once"),
-    "an iteration transition must advance the dashboard exactly once");
+  // Iteration 1 differs only by what rides in manifest.context; the brief tells
+  // idea-creator to pick the baseline reproduction as its first candidate.
+  assert.ok(stage1.includes("RESEARCH_BRIEF") || stage1.includes("research_brief"),
+    "Stage 1 must feed RESEARCH_BRIEF, which carries the baseline reproduction description");
+  assert.ok(/iteration 1/i.test(stage1),
+    "Stage 1 must say what iteration 1 does differently in context (and only in context)");
+
+  // No skip, no alternative dispatch, no setup-produced baseline evidence.
+  assert.ok(!/skip .{0,24}idea.discovery/i.test(arl),
+    "no iteration may skip idea-discovery");
+  assert.ok(!arl.includes("refine-logs/EXPERIMENT_RESULTS.md"),
+    "the loop must not read /research-setup baseline artifacts — setup no longer reproduces a baseline");
+
+  // The one thing iteration 1 does own: anchoring metric.baseline afterward.
+  const anchor = arl.indexOf("## Baseline Anchoring");
+  assert.ok(anchor > s1 && anchor < arl.indexOf("## Gate: Metric Evaluation"),
+    "baseline anchoring must happen after the stages and before the gate");
 });
 
 // ============================================================================
@@ -2161,7 +2245,7 @@ test("contract: auto-research-loop runs idea-discovery on every iteration (no ba
 
 test("contract: auto-research-loop dispatch tokens match worker detection tokens", () => {
   const arl = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
-  const workers = ["idea-discovery", "experiment-bridge", "auto-review-loop", "gap-planner"];
+  const workers = ["idea-discovery", "experiment-bridge", "auto-review-loop"];
   const skillsDir = path.resolve("skills");
 
   for (const w of workers) {
@@ -2198,32 +2282,173 @@ test("contract: auto-research-loop dispatch tokens match worker detection tokens
 });
 
 // ============================================================================
-// Gap-planner manifest context must use flat metric_* keys
+// Problem entities: the graph the loop actually reads back
 // ============================================================================
 
-test("contract: post-idea gap-planner context uses flat metric_* keys matching its schema", () => {
-  const arl = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
-  const gp = fs.readFileSync(path.resolve("skills/gap-planner/SKILL.md"), "utf-8");
-
-  const gapPhaseStart = arl.indexOf("## Phase 4.5: Gap Planner");
-  const summaryPhaseStart = arl.indexOf("## Phase 5:");
-  const gapPhase = arl.slice(gapPhaseStart, summaryPhaseStart);
-  const contextLine = gapPhase.slice(gapPhase.indexOf("Context:"), gapPhase.indexOf("\n\n", gapPhase.indexOf("Context:")));
-
-  // Must NOT use nested "metric" object — gap-planner expects flat keys
-  assert.ok(!contextLine.includes("`metric` (") && !contextLine.includes("`metric`("),
-    "gap-planner context must not pass a nested metric object");
-
-  // Extract the gap-planner manifest context keys
-  const gpManifest = gp.slice(gp.indexOf('"context"'), gp.indexOf('"output_dir"'));
-  const gpKeys = [...gpManifest.matchAll(/"(metric_\w+)"/g)].map(m => m[1]);
-  assert.ok(gpKeys.length >= 5, `gap-planner must declare at least 5 metric_* keys (got ${gpKeys.length})`);
-
-  // Every gap-planner flat key must appear in the one post-idea context.
-  for (const key of gpKeys) {
-    assert.ok(contextLine.includes(key),
-      `post-idea gap-planner context must include '${key}'`);
+function wikiCli(...args: string[]): { stdout: string; stderr: string; exitCode: number } {
+  const WIKI_TS = path.resolve("src/tools/research-wiki.ts");
+  try {
+    const stdout = execFileSync("npx", ["tsx", WIKI_TS, ...args], {
+      encoding: "utf-8",
+      timeout: 30_000,
+    });
+    return { stdout, stderr: "", exitCode: 0 };
+  } catch (err: unknown) {
+    const e = err as { stdout?: string; stderr?: string; status?: number };
+    return { stdout: e.stdout ?? "", stderr: e.stderr ?? "", exitCode: e.status ?? 1 };
   }
+}
+
+test("research-wiki: a problem tree survives round-trip into edges and query_pack", () => {
+  const d = tmpDir();
+  try {
+    const wiki = path.join(d, "research-wiki");
+    assert.equal(wikiCli("init", wiki).exitCode, 0, "init");
+
+    // Root problem: no parent. This is what /research-setup writes.
+    let r = wikiCli("add_problem", wiki,
+      "--slug", "root", "--title", "close accuracy gap: 71.2 -> 78",
+      "--severity", "high", "--statement", "reach 78 accuracy from the baseline");
+    assert.equal(r.exitCode, 0, r.stderr);
+
+    // Child problem: what /result-to-claim files on a partial verdict.
+    r = wikiCli("add_problem", wiki,
+      "--slug", "leaked-eval-split", "--title", "eval split leaks into training",
+      "--parent", "problem:root", "--severity", "high",
+      "--statement", "the gain vanishes under a clean split",
+      "--origin", "idea:aug-v1 tested by exp:001; verdict=partial");
+    assert.equal(r.exitCode, 0, r.stderr);
+
+    // An idea addresses the child problem.
+    r = wikiCli("upsert_idea", wiki,
+      "--slug", "clean-split-v2", "--title", "rebuild the split",
+      "--target-problems", "problem:leaked-eval-split");
+    assert.equal(r.exitCode, 0, r.stderr);
+
+    r = wikiCli("add_experiment", wiki,
+      "--slug", "exp-002", "--idea", "idea:clean-split-v2", "--verdict", "partial");
+    assert.equal(r.exitCode, 0, r.stderr);
+
+    const edges = fs.readFileSync(path.join(wiki, "graph", "edges.jsonl"), "utf-8")
+      .split("\n").filter(Boolean).map((l) => JSON.parse(l));
+    const has = (from: string, to: string, type: string) =>
+      edges.some((e) => e.from === from && e.to === to && e.type === type);
+    assert.ok(has("problem:leaked-eval-split", "problem:root", "child_of"),
+      "--parent must write the child_of edge that makes the problem tree a tree");
+    assert.ok(has("idea:clean-split-v2", "problem:leaked-eval-split", "addresses"),
+      "--target-problems must write an addresses edge (renamed from addresses_gap)");
+    assert.ok(has("idea:clean-split-v2", "exp:exp-002", "tested_by"),
+      "--idea must write the tested_by edge");
+
+    // No edge may point at a node that was never born.
+    const nodeIds = new Set<string>();
+    for (const [dir, prefix] of [["problems", "problem"], ["ideas", "idea"], ["experiments", "exp"]]) {
+      const dirPath = path.join(wiki, dir);
+      if (!fs.existsSync(dirPath)) continue;
+      for (const f of fs.readdirSync(dirPath)) {
+        if (f.endsWith(".md")) nodeIds.add(`${prefix}:${f.slice(0, -3)}`);
+      }
+    }
+    for (const e of edges) {
+      assert.ok(nodeIds.has(e.from), `dangling edge source ${e.from}`);
+      assert.ok(nodeIds.has(e.to), `dangling edge target ${e.to}`);
+    }
+
+    // query_pack is how /idea-creator Phase 0 sees any of this. The section is a
+    // per-problem listing now, not a truncated slice of a free-text gap map.
+    assert.equal(wikiCli("rebuild_query_pack", wiki).exitCode, 0);
+    const pack = fs.readFileSync(path.join(wiki, "query_pack.md"), "utf-8");
+    assert.ok(/## Open Problems/.test(pack), "query_pack must have an Open Problems section");
+    assert.ok(pack.includes("eval split leaks into training"),
+      "a child problem must be listed as a search seed for the next iteration");
+    assert.ok(!pack.includes("gap_map"), "the free-text gap map is retired");
+
+    // Solving a problem takes it off the seed list without deleting the page.
+    r = wikiCli("add_problem", wiki,
+      "--slug", "leaked-eval-split", "--title", "eval split leaks into training",
+      "--status", "solved", "--evidence", "results/clean.json: 77.9", "--update-on-exist");
+    assert.equal(r.exitCode, 0, r.stderr);
+    assert.equal(wikiCli("rebuild_query_pack", wiki).exitCode, 0);
+    const pack2 = fs.readFileSync(path.join(wiki, "query_pack.md"), "utf-8");
+    assert.ok(!pack2.includes("eval split leaks into training"),
+      "a solved problem must stop being offered as an open search seed");
+    assert.ok(fs.existsSync(path.join(wiki, "problems", "leaked-eval-split.md")),
+      "solved is a status change, not a deletion — the history stays readable");
+  } finally { cleanup(d); }
+});
+
+test("contract: research-setup carries the baseline into the brief and dispatches no experiment", () => {
+  const setup = fs.readFileSync(path.resolve("skills/research-setup/SKILL.md"), "utf-8");
+
+  assert.ok(setup.includes("## Baseline Reproduction (first experiment)"),
+    "setup must write the Baseline Reproduction section idea-discovery Phase 0 reads");
+  const flat = setup.replace(/\s+/g, " ");
+  for (const field of ["**Method**", "**Code / run location**", "**Expected metric**", "**Tolerance**"]) {
+    assert.ok(setup.includes(field), `Baseline Reproduction must carry ${field}`);
+  }
+
+  // Setup describes the baseline; the loop runs it. A dispatch here would be a
+  // second, differently-shaped path into the wiki.
+  // Naming the loop's stages in prose is fine; dispatching one is not.
+  const dispatched = [...setup.matchAll(/(?:initialPrompt:[^\n]*|Dispatch[^\n]*)\/([a-z-]+)/g)]
+    .map((m) => m[1]);
+  for (const forbidden of ["experiment-bridge", "run-experiment", "auto-review-loop", "idea-discovery"]) {
+    assert.ok(!dispatched.includes(forbidden),
+      `research-setup must not dispatch /${forbidden} — iteration 1 of the loop reproduces the baseline`);
+  }
+  assert.ok(flat.includes("Do not dispatch any agent in this phase"),
+    "the baseline phase must state that it dispatches nothing");
+
+  // Invariant: claims are born only at /proof-checker.
+  const loop = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
+  for (const [name, text] of [["research-setup", setup], ["auto-research-loop", loop]] as const) {
+    assert.ok(!/add_claim/.test(text),
+      `${name} must not create claim nodes — /proof-checker owns the claim birth point`);
+  }
+
+  // The root problem is setup's one wiki write beyond init.
+  assert.ok(/add_problem research-wiki\/[\s\S]{0,200}--slug "root"/.test(setup),
+    "setup must create problem:root — every derived problem attaches to it");
+});
+
+// ============================================================================
+// Stage 1 input contract: the loop must supply what idea-discovery requires
+// ============================================================================
+
+test("contract: loop Stage 1 manifest satisfies idea-discovery's declared context keys", () => {
+  const arl = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
+  const idea = fs.readFileSync(path.resolve("skills/idea-discovery/SKILL.md"), "utf-8");
+
+  const stage1 = arl.slice(
+    arl.indexOf("## Stage 1: Idea Discovery"),
+    arl.indexOf("## Stage 2: Experiment Bridge"),
+  );
+  assert.ok(stage1.length > 0, "must find Stage 1");
+
+  // idea-discovery declares which loop-supplied context keys it reads.
+  const declared = idea.slice(
+    idea.indexOf("### Loop-iteration context"),
+    idea.indexOf("## Pipeline"),
+  );
+  assert.ok(declared.length > 0, "idea-discovery must declare its loop-iteration context contract");
+  const required = [...declared.matchAll(/`(metric_\w+|iteration|source_iteration)`/g)]
+    .map((m) => m[1]);
+  assert.ok(required.length >= 6,
+    `idea-discovery must declare at least 6 context keys (got ${required.length})`);
+
+  const flat = stage1.replace(/\s+/g, " ");
+  for (const key of new Set(required)) {
+    // The loop names the metric six-tuple compactly; accept either the full key
+    // or the compact `metric_name/target/...` form that expands to it.
+    const bare = key.replace(/^metric_/, "");
+    assert.ok(flat.includes(key) || flat.includes(`/${bare}`),
+      `Stage 1 manifest must supply idea-discovery's '${key}'`);
+  }
+
+  // Direction is the other half: idea-discovery must not require anything the
+  // loop stopped sending.
+  assert.ok(!idea.includes("inputs.prior_gap_map"),
+    "idea-discovery must not require a gap map the loop no longer produces");
 });
 
 // ============================================================================
@@ -2323,13 +2548,14 @@ test("contract: auto-research-loop resolves verify_paper_audits.sh via AUDIT_VER
     "AUDIT_VERIFIER resolver must check both .aris/tools/ and tools/ paths");
 
   // Paper Writing phase must call via $AUDIT_VERIFIER, not bare path
-  const phase6Start = arl.indexOf("## Phase 6: Paper Writing");
+  const phase6Start = arl.indexOf("## Paper Writing (optional)");
   const resumeStart = arl.indexOf("## Resume Protocol");
+  assert.ok(phase6Start >= 0 && resumeStart > phase6Start, "must find the Paper Writing section");
   const phase6 = arl.slice(phase6Start, resumeStart);
 
   // Must have $AUDIT_VERIFIER invocation
   assert.ok(phase6.includes('$AUDIT_VERIFIER') || phase6.includes('"$AUDIT_VERIFIER"'),
-    "Phase 6 (Paper Writing) must invoke verify_paper_audits.sh via $AUDIT_VERIFIER variable");
+    "Paper Writing must invoke verify_paper_audits.sh via $AUDIT_VERIFIER variable");
 
   // Actual run commands (lines starting with bash/sh or standalone calls)
   // must not use bare verify_paper_audits.sh — provenance labels in --verdict-id are fine
@@ -2340,7 +2566,7 @@ test("contract: auto-research-loop resolves verify_paper_audits.sh via AUDIT_VER
       if (line.includes("verify_paper_audits.sh") && !line.includes("$AUDIT_VERIFIER") &&
           !line.includes("--verdict-id") && !line.includes("--reviewer") &&
           !line.includes("AUDIT_VERIFIER=")) {
-        assert.fail(`Phase 6 invokes verify_paper_audits.sh without $AUDIT_VERIFIER: ${line.trim()}`);
+        assert.fail(`Paper Writing invokes verify_paper_audits.sh without $AUDIT_VERIFIER: ${line.trim()}`);
       }
     }
   }
@@ -2415,10 +2641,10 @@ test("run-state: done→failed is technically allowed but auto-research-loop avo
     const r = cli("set", d, "run-a", "W1", "failed");
     assert.equal(r.exitCode, 0, "done→failed is technically allowed by run-state");
 
-    // But auto-research-loop Phase 3 branches BEFORE setting done, so this path never fires
+    // But the loop's gate branches BEFORE setting done, so this path never fires
     const arl = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
-    const phase3Start = arl.indexOf("## Phase 3: Metric Evaluation");
-    const phase4Start = arl.indexOf("## Phase 4:");
+    const phase3Start = arl.indexOf("## Gate: Metric Evaluation");
+    const phase4Start = arl.indexOf("## Summary (on stop)");
     const phase3 = arl.slice(phase3Start, phase4Start);
 
     // The "done" set must come AFTER the invalid_metric branch, not before
@@ -2435,62 +2661,54 @@ test("run-state: done→failed is technically allowed but auto-research-loop avo
 });
 
 // ============================================================================
-// Issue 3: auto-research-loop dispatches metric-gap-constrained idea-discovery
-// for iteration 2+, and experiment-bridge consumes both gap-planner's plan
-// and idea-discovery's IDEA_REPORT.md together
+// Issue 3: every iteration runs the full idea-discovery pipeline, and
+// experiment-bridge consumes that same worker's plan and report
 // ============================================================================
 
-test("contract: auto-research-loop dispatches idea-discovery for iteration 2+ (metric-gap constrained)", () => {
+test("contract: auto-research-loop dispatches the full idea-discovery pipeline every iteration", () => {
   const arl = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
 
-  // Phase 4 exists and dispatches idea-discovery before gap-planner.
-  const phase4Start = arl.indexOf("## Phase 4: Idea Discovery");
-  const gapStart = arl.indexOf("## Phase 4.5: Gap Planner");
-  const phase5Start = arl.indexOf("## Phase 5:");
-  assert.ok(phase4Start >= 0 && phase4Start < gapStart,
-    "auto-research-loop must run Phase 4 idea discovery before gap-planner");
-  const phase4 = arl.slice(phase4Start, gapStart);
+  const stage1 = arl.slice(
+    arl.indexOf("## Stage 1: Idea Discovery"),
+    arl.indexOf("## Stage 2: Experiment Bridge"),
+  );
+  assert.ok(stage1.includes("/idea-discovery"), "Stage 1 must dispatch /idea-discovery");
+  assert.ok(!stage1.includes("metric_gap_constrained"),
+    "there is no constrained mode — the loop runs the same pipeline research-pipeline does");
+  assert.ok(!/no literature survey/i.test(arl),
+    "the loop must not suppress the literature phases of idea-discovery");
 
-  assert.ok(phase4.includes("/idea-discovery"), "Phase 4 must dispatch /idea-discovery");
-  assert.ok(phase4.includes("metric_gap_constrained"),
-    "Phase 4 must set metric_gap_constrained in the idea-discovery context");
-  assert.ok(phase4.includes("no literature survey") && phase4.includes("Every retry"),
-    "iteration 2+ idea discovery must stay on the no-literature short branch");
-
-  // Phase 4 advances once, then hands the selected idea to one gap-planner run.
+  // Stage 1 hands straight to Stage 2; nothing sits between them.
   assert.ok(arl.includes('current_phase = "idea-discovery"'),
     "the continuing loop must set current_phase to idea-discovery");
-  assert.ok(phase4.includes('current_phase = "gap-planner"'),
-    "idea discovery must hand the selected idea to gap-planner");
+  assert.ok(stage1.includes('current_phase = "experiment-bridge"'),
+    "idea discovery must hand its plan directly to experiment-bridge");
 
-  const gapPhase = arl.slice(gapStart, phase5Start);
-  assert.ok(gapPhase.includes('current_phase = "experiment-bridge"'),
-    "gap-planner must hand the completed plan to the next experiment-bridge run");
-
-  const ideaSkill = fs.readFileSync(path.resolve("skills/idea-discovery/SKILL.md"), "utf-8");
-  const shortBranch = ideaSkill.slice(
-    ideaSkill.indexOf("### Metric-gap constrained branch"),
-    ideaSkill.indexOf("## Phase 0:"),
-  );
-  assert.ok(shortBranch.includes("forbid web search, literature\n   lookup"),
-    "the short branch's reviewer must not restart literature research");
+  // idea-discovery must actually produce the plan the loop promises to consume.
+  const idea = fs.readFileSync(path.resolve("skills/idea-discovery/SKILL.md"), "utf-8");
+  assert.ok(!idea.includes("### Metric-gap constrained branch"),
+    "the constrained branch must be gone from idea-discovery");
+  assert.ok(idea.includes('"primary_output": "EXPERIMENT_PLAN.md"'),
+    "idea-discovery's receipt must name EXPERIMENT_PLAN.md as its primary output");
+  assert.ok(/"plan_path"/.test(idea),
+    "idea-discovery's dashboard_patch must carry plan_path");
 });
 
 test("contract: auto-research-loop experiment-bridge input references idea_report every iteration", () => {
   const arl = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
-  // Phase 1 consumes artifacts prepared for the iteration that is now running.
-  const phase1Start = arl.indexOf("## Phase 1: Experiment Bridge");
-  const phase2Start = arl.indexOf("## Phase 2:");
-  const phase1 = arl.slice(phase1Start, phase2Start);
-  assert.ok(phase1.includes("idea_report"), "Phase 1 input must include idea_report");
-  assert.ok(phase1.includes("${ITERATION}-idea-discovery/outputs/IDEA_REPORT.md"),
-    "Phase 1 idea_report must point at the current iteration's prepared idea");
-  assert.ok(phase1.includes("${ITERATION}-gap-planner/outputs/EXPERIMENT_PLAN.md"),
-    "Phase 1 plan must point at the current iteration's post-idea plan");
-  assert.ok(!phase1.includes("${PREV_ITERATION}"),
-    "Phase 1 must not look one iteration behind after the dashboard has advanced");
-  assert.ok(!/omitted \(iter ?1\)/i.test(phase1),
-    "idea_report is never omitted now - idea-discovery runs before every iteration's bridge");
+  const stage2 = arl.slice(
+    arl.indexOf("## Stage 2: Experiment Bridge"),
+    arl.indexOf("## Stage 3: Auto Review"),
+  );
+  assert.ok(stage2.includes("idea_report"), "Stage 2 input must include idea_report");
+  assert.ok(stage2.includes("${ITERATION}-idea-discovery/outputs/IDEA_REPORT.md"),
+    "idea_report must point at this iteration's idea worker");
+  assert.ok(stage2.includes("${ITERATION}-idea-discovery/outputs/EXPERIMENT_PLAN.md"),
+    "the plan must come from the same worker that produced the report");
+  assert.ok(!stage2.includes("${PREV_ITERATION}"),
+    "Stage 2 must not look one iteration behind after the dashboard has advanced");
+  assert.ok(!/omitted \(iter ?1\)/i.test(stage2),
+    "idea_report is never omitted — idea-discovery runs before every iteration's bridge");
 });
 
 // ============================================================================

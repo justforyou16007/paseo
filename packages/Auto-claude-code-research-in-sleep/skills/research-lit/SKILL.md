@@ -687,7 +687,7 @@ WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
           add an edge:
           node "$WIKI_SCRIPT" add_edge research-wiki/ \
               --from "paper:<slug>" --to "<target_node_id>" \
-              --type <extends|contradicts|addresses_gap|inspired_by|...> \
+              --type <extends|contradicts|addresses|inspired_by|...> \
               --evidence "<one-sentence quote or reasoning>"
    [ ] 5. Confirm papers/<slug>.md files were created (helper prints
           "Paper ingested: ..."); if any failed with a network error,

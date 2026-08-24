@@ -37,7 +37,7 @@ This contradicts the Karpathy LLM-wiki design (https://gist.github.com/karpathy/
   8. `Open Questions` (marker: `_TODO._`)
   9. `Claims` (marker: `_TODO._`) — fill with `_No claims tracked yet._` if no `claim:` edges point to this paper; otherwise list them.
   10. `Connections` — **NEVER edit** (auto-generated from `graph/edges.jsonl`).
-  11. `Relevance to This Project` (marker: `_TODO._`) — use `RESEARCH_BRIEF.md`, `CLAUDE.md`, or `gap_map.md` for project context. If no project context exists, leave as TODO and report it.
+  11. `Relevance to This Project` (marker: `_TODO._`) — use `RESEARCH_BRIEF.md`, `CLAUDE.md`, or the wiki's `query_pack.md` Open Problems section for project context. If no project context exists, leave as TODO and report it.
   12. `Abstract (original)` — leave alone (already populated by `ingest_paper` when `--arxiv-id` was used).
 
 > 💡 Examples:
@@ -109,7 +109,7 @@ Additionally, on the FIRST paper of the batch (cache for the rest), read project
 - `research-wiki/graph/edges.jsonl` — scan for `claim:` edges pointing to the current paper's `node_id`
 - `RESEARCH_BRIEF.md` (project root) — if present, source for project goals
 - `CLAUDE.md` (project root) — if present, fallback for project context
-- `research-wiki/gap_map.md` — if non-empty, source for gap framing
+- `research-wiki/query_pack.md` — its Open Problems section is the source for problem framing
 
 If none of the project-context files exist, the `Relevance to This Project` section will be filled with the literal "context not yet set" line (see Step 2.4 table).
 
@@ -165,7 +165,7 @@ Write each TODO section's body following these rules:
 | Reusable Ingredients        | 1-3 bullets                  | Concrete                      | Techniques / datasets / insights from this paper that could be ported elsewhere. **Highest value for `/idea-creator` — write carefully.**                                                                                                           |
 | Open Questions              | 1-2 bullets                  | Question form                 | What the paper does NOT answer but raises                                                                                                                                                                                                           |
 | Claims                      | 1 line                       | Static                        | If no `claim:` edges in `graph/edges.jsonl` reference this paper, write the literal italic line: `_No claims tracked yet — populate via /proof-checker._`. Else list claim node IDs.                                                                |
-| Relevance to This Project   | 1-2 sentences                | Project-contextual            | Use `RESEARCH_BRIEF.md` / `CLAUDE.md` / `gap_map.md` to phrase the connection. If no project context, write the literal italic line: `_Project context not yet set — populate RESEARCH_BRIEF.md or gap_map.md to enable this section._` and report. |
+| Relevance to This Project   | 1-2 sentences                | Project-contextual            | Use `RESEARCH_BRIEF.md` / `CLAUDE.md` / `query_pack.md`'s Open Problems to phrase the connection. If no project context, write the literal italic line: `_Project context not yet set — populate RESEARCH_BRIEF.md or file a problem with add_problem to enable this section._` and report. |
 
 **Rules** (Karpathy fidelity):
 

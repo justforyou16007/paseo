@@ -185,12 +185,12 @@ This creates a `research-wiki/` directory. See [`research_wiki.py`](tools/resear
 research-wiki/
   index.md               ← categorical index (auto-generated)
   log.md                 ← append-only timeline
-  gap_map.md             ← field gap map
   query_pack.md          ← compressed summary (for /idea-creator)
   papers/                ← auto-populated by /alphaxiv, /arxiv, etc.
   ideas/                 ← auto-populated by /idea-creator
   experiments/           ← auto-populated by /result-to-claim
   claims/                ← scientific claims
+  problems/              ← open problems (root + sub-problems)
   graph/                 ← relationship graph (edges.jsonl)
 ```
 

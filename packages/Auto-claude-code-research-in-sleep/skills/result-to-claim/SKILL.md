@@ -206,7 +206,8 @@ See `shared-references/experiment-integrity.md` for the full integrity protocol.
 #### `partial` — Claim partially supported
 
 1. Update the working claim to reflect what IS supported
-2. Record the gap in findings.md
+2. Record the gap in findings.md — Step 5 also files it as an open `problem`
+   entity so the next iteration's idea discovery reads it as a search seed
 3. Design and run supplementary experiments to fill evidence gaps
 4. Re-run result-to-claim after supplementary experiments complete
 5. **Multiple rounds of `partial` on the same claim** → record analysis in findings.md, consider whether to narrow the claim scope or switch ideas
@@ -226,9 +227,12 @@ chain documented in
 [`shared-references/wiki-helper-resolution.md`](../shared-references/wiki-helper-resolution.md)
 (Variant B — warn-and-skip for caller skills). The verdict / idea-outcome
 page edits below run on raw markdown and don't need the helper, but edges,
-query-pack rebuild, and the log line do. **This skill never edits a claim's
-`status` field and never creates a claim node** — claims are born (and their
-proof `status` set) by `/proof-checker`; here we only attach experiment edges.
+problem entities, query-pack rebuild, and the log line do. **This skill never
+edits a claim's `status` field and never creates a claim node** — claims are
+born (and their proof `status` set) by `/proof-checker`; here we only attach
+experiment edges. It IS a birth point for `problem` entities: an unresolved
+cause found in a `partial` / `no` verdict becomes a child of the run's root
+problem (see #4 below).
 
 ```bash
 _pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
@@ -282,11 +286,40 @@ if research-wiki/ exists:
       - If negative: fill "Failure / Risk Notes" and "Lessons Learned"
       - If positive: fill "Actual Outcome" and "Reusable Components"
 
-    # 4. Rebuild + log (only if $WIKI_SCRIPT resolved)
+    # 4. Problem entities: the failure analysis becomes the next iteration's search seed.
+    #    Sub-problems attach to the run's root problem via --parent, so /idea-creator's
+    #    Phase 0 read of query_pack's "Open Problems" section picks them up next round.
+    #    Every problem is born here or at /research-setup (root) or /kill-argument
+    #    (attack-derived) — never freehand markdown.
+    if [ -n "$WIKI_SCRIPT" ]; then
+      if verdict == "partial" or verdict == "no":
+          # one call per distinct unresolved cause named in the Codex reasoning /
+          # missing_evidence / next_experiments_needed fields (do NOT emit one per metric)
+          node "$WIKI_SCRIPT" add_problem research-wiki/ \
+            --slug "<stable-kebab-slug>" --title "<what is unsolved, one line>" \
+            --parent "problem:root" --status open \
+            --severity "<high|medium|low>" \
+            --statement "<what is unsolved and why it blocks the metric>" \
+            --origin "to close <parent problem>, idea:<idea_id> was tested by exp:<exp_id>; verdict=<partial|no>" \
+            --evidence "<evidence paths + the concrete values that show the failure>" \
+            --what-would-solve "<the measurable result that would close or refute this>" \
+            --caveats "<confounders; what NOT to conclude from this run>" \
+            || echo "WARN: add_problem failed for <slug> (continuing)" >&2
+      elif verdict == "yes":
+          # close only the problems this experiment's evidence actually settles;
+          # --update-on-exist is required to move an existing page's status
+          for each problem id in idea page's `target_problems`:
+              node "$WIKI_SCRIPT" add_problem research-wiki/ \
+                --slug "<slug>" --title "<unchanged title>" --status solved \
+                --evidence "<closing evidence path + value>" --update-on-exist \
+                || echo "WARN: could not close problem:<slug> (continuing)" >&2
+    fi
+
+    # 5. Rebuild + log (only if $WIKI_SCRIPT resolved)
     [ -n "$WIKI_SCRIPT" ] && node "$WIKI_SCRIPT" rebuild_query_pack research-wiki/
     [ -n "$WIKI_SCRIPT" ] && node "$WIKI_SCRIPT" log research-wiki/ "result-to-claim: exp:<id> verdict=<verdict> for idea:<idea_id>"
 
-    # 5. Re-ideation suggestion
+    # 6. Re-ideation suggestion
     Count failed/partial ideas since last /idea-creator run.
     If >= 3: print "💡 3+ ideas tested since last ideation. Consider re-running /idea-creator — the wiki now knows what doesn't work."
 ```

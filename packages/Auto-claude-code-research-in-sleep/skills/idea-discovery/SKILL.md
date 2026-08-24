@@ -47,16 +47,13 @@ When invoked with `— manifest: <path>`, this skill runs as a worker under an
 orchestrator (`/research-pipeline` or `/auto-research-loop`). The manifest
 provides all inputs; the skill writes its receipt to the manifest's directory.
 
-**Metric-gap constrained mode.** `/auto-research-loop` iteration 2+ sets
-`manifest.context.metric_gap_constrained: true` and passes the latest final
-experiment evidence, the previously persisted gap map, and metric context.
-This is a separate short branch: generate a few concrete methods, run one fresh
-cross-model method audit, write `IDEA_REPORT.md` and the receipt, then return.
-Gap ids mentioned here are provisional references; `/gap-planner`, which runs
-next, owns all merge, close, add, and priority rulings. This branch never enters
-the literature, open-ended ideation, pilot, checkpoint, method-refinement,
-experiment-planning, or rendering phases below. `/research-pipeline` and direct
-calls omit this flag and retain the normal pipeline unchanged.
+**One mode only.** Worker mode runs the same full pipeline as a direct call —
+`/research-pipeline` and `/auto-research-loop` differ only in what they put in
+`manifest.context`. There is no short branch and no per-orchestrator variant.
+The loop's later iterations supply the previous iteration's evidence paths in
+`inputs` and its metric state in `context`; Phase 0 reads those alongside
+`RESEARCH_BRIEF.md` and the research wiki's `query_pack.md`, whose Open Problems
+and Failed Ideas sections already carry what earlier iterations produced.
 
 **Startup check:**
 ```
@@ -79,11 +76,12 @@ fi
   "run_id": "<run-id>",
   "status": "done",
   "error": null,
-  "primary_output": "IDEA_REPORT.md",
+  "primary_output": "EXPERIMENT_PLAN.md",
   "summary": { "num_ideas": "<int>", "top_idea": "<title>" },
   "dashboard_patch": {
     "best_idea": {"id": "idea-1", "title": "top-ranked idea title", "metric": null, "iteration": 1},
-    "idea_ids": ["idea-1-id", "idea-2-id"]
+    "idea_ids": ["idea-1-id", "idea-2-id"],
+    "plan_path": ".aris/runs/<run-id>/workers/<iter>-idea-discovery/outputs/EXPERIMENT_PLAN.md"
   },
   "ranked_ideas": [
     {"id": "idea-1", "title": "top-ranked idea title", "rank": 1, "score": 8.5},
@@ -130,73 +128,25 @@ paths below are project-root-relative as written.
 | `refine-logs/FINAL_PROPOSAL.md` | `$OUTPUT_DIR/FINAL_PROPOSAL.md` |
 | `refine-logs/EXPERIMENT_PLAN.md` | `$OUTPUT_DIR/EXPERIMENT_PLAN.md` |
 
-### Metric-gap constrained branch (iteration 2+ only)
+### Loop-iteration context (`/auto-research-loop`)
 
-When `manifest.context.metric_gap_constrained == true`, execute only this
-branch and **return immediately after writing its receipt**:
+The loop supplies the same manifest shape every iteration; only `context`
+changes. Read these keys when present, and treat them as additional context
+for the normal pipeline below — they do not switch on a different behaviour:
 
-1. Require `inputs.prior_gap_map`, `inputs.analysis`, `inputs.tracker`,
-   `inputs.results`, and `inputs.review`. Require
-   `context.source_iteration == iteration - 1`. Read metric name, target,
-   direction, current value, and history only from manifest context.
-2. Generate 3-5 implementation-ready candidate methods from those supplied
-   artifacts and the current codebase. Prefer unresolved ids already present in
-   the prior gap map, but describe newly observed issues with evidence paths
-   instead of assigning authoritative new ids. Do not merge, close, add,
-   refute, defer, or reprioritize gaps; `/gap-planner` does that after this
-   worker finishes.
-3. Do not search the web or invoke `/research-lit`, `/idea-creator`,
-   `/novelty-check`, `/research-review`, `/research-refine-pipeline`, or any
-   pilot/experiment skill. This prohibition applies to every retry in this
-   branch.
-4. For every candidate record: existing target gap ids or provisional target
-   descriptions, evidence paths, mechanism, exact code/config change, command,
-   dataset/split, seeds, metric, closing threshold, expected artifact, runtime
-   estimate, and main risk. Reject a candidate missing any field; gap-planner is
-   forbidden to invent it.
-5. Read `.aris/runs/<run_id>.paseo-config.json` and create one fresh reviewer
-   using its reviewer provider/mode/thinking. The reviewer sees the candidate
-   report, prior gap map, and final experiment evidence. It checks evidence fit,
-   feasibility, isolation of cause, measurement quality, and whether each
-   proposed threshold is testable. Its prompt must forbid web search, literature
-   lookup, and any literature or novelty skill; it judges only the supplied
-   artifacts and current code. It does not make novelty claims or gap-state
-   rulings.
-6. If the reviewer fails the candidates, make one bounded correction using
-   only its stated issues and re-audit with a fresh reviewer. On a second fail,
-   write a failed receipt. On pass/warn, rank the candidates, mark exactly one
-   `selected_idea_id`, and write only `$OUTPUT_DIR/IDEA_REPORT.md`.
-7. Do not ask the user a checkpoint, run pilots, write `EXPERIMENT_PLAN.md` or
-   `FINAL_PROPOSAL.md`, or continue into Phase 0 below.
+| Key | Meaning |
+|---|---|
+| `iteration` | 1-based loop iteration |
+| `source_iteration` | iteration whose evidence is attached (absent on iteration 1) |
+| `metric_name` / `metric_target` / `metric_direction` / `metric_tolerance` / `metric_current` / `metric_history` | the run's Metric Target state |
+| `note` | free-text steer, e.g. iteration 1's "select the baseline reproduction idea from the brief" |
 
-Constrained receipt:
-
-```json
-{
-  "worker": "idea-discovery",
-  "iteration": 3,
-  "run_id": "<run-id>",
-  "status": "done",
-  "error": null,
-  "primary_output": "IDEA_REPORT.md",
-  "summary": {"num_ideas": 3, "top_idea": "<title>", "mode": "metric-gap-constrained"},
-  "dashboard_patch": {
-    "best_idea": {"id": "idea-3-1", "title": "<title>", "metric": null, "iteration": 3},
-    "idea_ids": ["idea-3-1", "idea-3-2", "idea-3-3"]
-  },
-  "ranked_ideas": [
-    {"id": "idea-3-1", "title": "<title>", "rank": 1, "score": 8.4}
-  ],
-  "method_review": {
-    "verdict": "pass|warn",
-    "review_agent_id": "<fresh-reviewer-id>",
-    "reviewer_provider": "<provider>"
-  },
-  "completed_at": "<ISO-8601>",
-  "has_errors": false,
-  "error_count": 0
-}
-```
+From iteration 2 the loop also attaches the previous iteration's evidence as
+`inputs.analysis`, `inputs.tracker`, `inputs.results`, and `inputs.review`.
+Use them as prior-results context in Phase 0. What earlier iterations already
+tried, and which directions failed, comes from the research wiki: `/idea-creator`
+reads `research-wiki/query_pack.md`, whose **Open Problems** and **Failed Ideas**
+sections are maintained by `/result-to-claim` at the end of each iteration.
 
 ## Pipeline
 

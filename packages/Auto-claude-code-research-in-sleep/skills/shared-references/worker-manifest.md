@@ -206,7 +206,7 @@ One line per error, max 120 chars: `LEVEL | location | reason`
 ```
 ERROR | research-wiki.js:add_edge | not found at .aris/dist/tools/research-wiki.js
 WARN  | receipt.json:dashboard_patch | field "metric.current" null, skipped
-ERROR | manifest:inputs.gap_map | file missing: research-wiki/gap_map.md
+ERROR | manifest:inputs.query_pack | file missing: research-wiki/query_pack.md
 ERROR | mcp__paseo__create_agent | provider "codex" unavailable
 ```
 

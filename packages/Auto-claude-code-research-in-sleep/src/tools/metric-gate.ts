@@ -158,9 +158,23 @@ function isBetter(candidate: number, incumbent: number, direction: string): bool
 // Trailing count of history entries that did not improve on the best value
 // seen before them. Derived from history alone - no counter to double-count
 // across a crash + resume.
-function noProgressStreak(history: HistoryEntry[], direction: string): number {
-  const entries = [...history].sort((a, b) => a.iter - b.iter);
-  let best: number | null = null;
+//
+// The incumbent is seeded from `metric.baseline` when it is anchored, because
+// the baseline is the value a run has to beat: without it, a run whose every
+// iteration sits far below its own baseline still scores streak 0 as long as
+// each iteration edges past the previous one, and burns the whole budget. When
+// the baseline is anchored, iteration 1 is the reproduction that produced it,
+// not a challenger, so it does not count against patience.
+function noProgressStreak(
+  history: HistoryEntry[],
+  direction: string,
+  baseline: number | null,
+): number {
+  const hasBaseline = isFiniteNumber(baseline);
+  const entries = [...history]
+    .sort((a, b) => a.iter - b.iter)
+    .filter((e) => !hasBaseline || e.iter > 1);
+  let best: number | null = hasBaseline ? baseline : null;
   let streak = 0;
   for (const e of entries) {
     if (best === null || isBetter(e.value, best, direction)) {
@@ -269,6 +283,7 @@ function evaluateDashboard(root: string, runId: string): Decision {
   }
 
   const current = metric.current;
+  const baseline = isFiniteNumber(metric.baseline) ? metric.baseline : null;
   let stopReason: Decision["stop_reason"] = null;
   if (!isFiniteNumber(current)) {
     stopReason = "invalid_metric";
@@ -277,13 +292,13 @@ function evaluateDashboard(root: string, runId: string): Decision {
   } else if ((iteration as number) >= (maxIterations as number)) {
     stopReason = "budget_exhausted";
   } else {
-    const streak = noProgressStreak(history, direction);
+    const streak = noProgressStreak(history, direction, baseline);
     if (streak >= (patience as number)) {
       stopReason = "patience_exhausted";
     }
   }
 
-  const streak = noProgressStreak(history, direction);
+  const streak = noProgressStreak(history, direction, baseline);
   return {
     stop_reason: stopReason,
     metric_met:
