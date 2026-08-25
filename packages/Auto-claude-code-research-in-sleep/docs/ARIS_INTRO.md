@@ -4,11 +4,11 @@
 
 ## TL;DR
 
-ARIS is a collection of **87 composable Claude Code skills** that orchestrate **cross-model collaboration**: Claude Code drives the research (reads files, writes code, deploys experiments) while an external LLM (GPT-5.5 / 5.5 via [Codex MCP](https://github.com/openai/codex)) acts as a critical reviewer. The two models disagree, debate, and force each other to do better — adversarial, not self-play.
+ARIS is a collection of **84 composable Claude Code skills** that orchestrate **cross-model collaboration**: Paseo Claude agents drive the research (read files, write code, deploy experiments) while a Paseo codex agent (GPT-5.5) acts as the default critical reviewer. The two model families disagree, debate, and force each other to do better — adversarial, not self-play.
 
 Seven workflows (W1 / W1.5 / W2 / W3 / W4 / W5 / W6) compose into a full research lifecycle: idea discovery → experiment bridge → auto-review → paper writing → rebuttal → resubmit → conference talk. Tested end-to-end on real ICLR/NeurIPS submissions. Score progression on a real overnight run: **5/10 → 7.5/10 with 20+ GPU experiments**.
 
-> 💡 **The ARIS bet.** Markdown is for writers. HTML is for readers. Every workflow artifact stays in Markdown (auditable, machine-parseable, future-proof). When a human needs to actually _read_ one, [`/render-html`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/render-html/SKILL.md) produces this view — gated by a fresh cross-model Codex review (the same ARIS invariant every other audit-class skill follows).
+> 💡 **The ARIS bet.** Markdown is for writers. HTML is for readers. Every workflow artifact stays in Markdown (auditable, machine-parseable, future-proof). When a human needs to actually _read_ one, [`/render-html`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/render-html/SKILL.md) produces this view — gated by a fresh Paseo codex review (the same ARIS invariant every other audit-class skill follows).
 
 ---
 
@@ -40,12 +40,12 @@ where $U_{\text{exec}}$ is the utility of an executor model writing code / runni
 
 ### The reviewer-independence protocol
 
-Every review round uses a **fresh codex thread**. We never use `codex-reply` to continue a previous review conversation. This is a hard rule, learned from a real NeurIPS run where `codex-reply` chains inflated scores from 3/10 → 8/10 through narrative accumulation (the reviewer started defending its earlier criticism instead of evaluating the current artifact). The protocol is codified at [`skills/shared-references/reviewer-independence.md`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/shared-references/reviewer-independence.md).
+Every fresh review round uses a **new Paseo codex child** with no prior review context. A continuation is allowed only inside a skill that explicitly needs reviewer memory, such as `/auto-review-loop` round 2+. The protocol is codified at [`skills/shared-references/reviewer-independence.md`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/shared-references/reviewer-independence.md).
 
 ```
 ┌──────────────────────┐
 │  ARIS — execution    │     ┌───────────────────────┐
-│  (Claude Code)       │────▶│  Codex MCP (GPT-5.5)  │
+│  (Paseo Claude)      │────▶│ Paseo codex (GPT-5.5) │
 │  — reads files       │     │  — reads paper cold   │
 │  — writes code       │     │  — fresh thread       │
 │  — deploys to GPU    │     │  — scores 1-10        │
@@ -59,7 +59,7 @@ Every review round uses a **fresh codex thread**. We never use `codex-reply` to 
                         └─────────────────────────┘
 ```
 
-> 🔒 **Cross-family invariant.** The executor and reviewer **must** be different model families (Claude × GPT, GLM × DeepSeek, Antigravity × Gemini, …). Same-family review is a non-feature; if you only have one provider, the cheapest fix is to add a free DeepSeek or Gemini reviewer via [`llm-chat` MCP](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/tree/main/mcp-servers/llm-chat).
+> 🔒 **Cross-family invariant.** The executor and reviewer **must** be different model families. Configure an explicitly supported external reviewer; if that reviewer is unavailable, stop the workflow.
 
 ---
 
@@ -135,7 +135,9 @@ Every review round uses a **fresh codex thread**. We never use `codex-reply` to 
     --- effort: max
 ```
 
-The `difficulty: nightmare` flag lets GPT-5.5 read your repo directly via `codex exec` — Claude can't filter what it sees. Maximum stress test before submission.
+The `difficulty: nightmare` flag gives the Paseo codex reviewer full repository
+access for the strongest stress test before submission. The review still runs
+through the configured Paseo child-agent contract.
 
 <details>
 <summary><b>Key safety features (click to expand)</b></summary>
@@ -263,7 +265,7 @@ A real overnight 4-round run on an ML research project, from borderline reject t
 
 ---
 
-## The 87 Skills
+## The 84 Skills
 
 Grouped by role (full catalog: [`docs/SKILLS_CATALOG.md`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/docs/SKILLS_CATALOG.md)).
 
@@ -308,15 +310,15 @@ ARIS skills are plain `SKILL.md` files. They run anywhere an agent reads markdow
 
 ## 中文版速览
 
-ARIS（**A**utonomous **R**esearch via Adversarial **M**ulti-Agent Collaboration，**梦中科研**）是一组 87 个可组合的 Claude Code skills，编排**跨模型对抗式协作**：
+ARIS（**A**utonomous **R**esearch via Adversarial **M**ulti-Agent Collaboration，**梦中科研**）是一组 84 个可组合的 Claude Code skills，编排**跨模型对抗式协作**：
 
-- **执行**：Claude Code 读文件、写代码、跑实验、改论文
-- **审稿**：GPT-5.5/5.5（via [Codex MCP](https://github.com/openai/codex)）以**跨家族**审稿人身份打分、找弱点、提建议
+- **执行**：Paseo Claude agent 读文件、写代码、跑实验、改论文
+- **审稿**：Paseo codex agent（GPT-5.5）以**跨家族**审稿人身份打分、找弱点、提建议
 - **关键**：每轮 review 用新 thread；执行者绝不审判自己的实验诚实度
 
 七条工作流（W1 / W1.5 / W2 / W3 / W4 / W5 / W6）端到端贯通：找 idea → 实验桥接 → 自动审稿循环 → 写论文 → 写 rebuttal → 跨 venue 移植 → 会议演讲。在真实 ICLR/NeurIPS 投稿上验证过。
 
-> 🆕 **新加入的 skill**：[`/render-html`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/render-html/SKILL.md) —— 把任何 ARIS 产出的 MD（如 `IDEA_REPORT.md`、`AUTO_REVIEW.md`、`KILL_ARGUMENT.md`）渲染成单文件 HTML，适合给人类读。Markdown 仍是 canonical source，HTML 是 generated view，永远嵌入源 SHA256 + 渲染时间戳防 drift。**academic 模板默认走跨模型 Codex review gate**——同样的 ARIS 不变量。
+> **HTML 阅读视图**：[`/render-html`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/render-html/SKILL.md) 把 ARIS 产出的 MD（如 `IDEA_REPORT.md`、`AUTO_REVIEW.md`、`KILL_ARGUMENT.md`）渲染成单文件 HTML，供人类阅读。Markdown 是 canonical source，HTML 是带源 SHA256 和渲染时间戳的 generated view。**academic 模板默认走 Paseo codex review gate**，遵循同一审查不变量。
 
 ---
 
@@ -332,17 +334,14 @@ cd ~/your-paper-project
 mkdir -p .claude/skills && cp -r ~/aris_repo/skills/* .claude/skills/
 export ARIS_REPO=~/aris_repo
 
-# 3. Configure the GPT-5.5 reviewer (Codex MCP)
-npm install -g @openai/codex
-codex setup                                    # pick gpt-5.5 when asked
-claude mcp add codex -s user -- codex mcp-server
+# 3. Start Paseo, which provides the workflow and reviewer agents
+paseo daemon start
+paseo daemon status                            # verify the agent MCP is ready
 
 # 4. Use in Claude Code
 claude
 > /research-pipeline "factorized gap in discrete diffusion LMs"
 ```
-
-> ⚙️ **Alternative model combinations** — no Claude or OpenAI API required. See the [Alt routes](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep#-alternative-model-combinations) (Alt B/E for GLM × MiniMax-M3 or free DeepSeek-V3.1 via ModelScope; nine routes total, including Antigravity-as-executor and Gemini-direct-API-as-reviewer).
 
 ---
 

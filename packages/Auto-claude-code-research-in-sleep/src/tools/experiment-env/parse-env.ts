@@ -79,11 +79,6 @@ const ENV_SCHEMAS: Record<string, Record<string, FieldSpec>> = {
   },
 };
 
-const ALIASES: Record<string, string> = {
-  vast_instance: "instance_id",
-  modal_app: "modal_app_file",
-};
-
 export class ValidationError extends Error {
   override message: string;
   constructor(message: string) {
@@ -107,14 +102,6 @@ function checkType(value: unknown, expected: FieldType): boolean {
     case "string_or_number":
       return typeof value === "string" || typeof value === "number";
   }
-}
-
-function coerceStrList(value: unknown, warnings: string[], field: string): unknown[] {
-  if (typeof value === "string") {
-    warnings.push(`${field} given as str, coerced to list['${value}'] (agent should emit a list)`);
-    return [value];
-  }
-  return value as unknown[];
 }
 
 function applyAutoDestroyDefault(vastCfg: Record<string, unknown>, warnings: string[]): void {
@@ -174,25 +161,14 @@ export function validate(
     const out: Record<string, unknown> = {};
 
     for (const [k, v] of Object.entries(block)) {
-      if (k in ALIASES) {
-        warnings.push(
-          `'${k}' is deprecated; use '${ALIASES[k]}' (agent should translate; not auto-converted)`,
-        );
-        continue;
-      }
       if (!(k in spec)) {
-        warnings.push(`unknown field ${etype}.${k} (ignored)`);
-        continue;
+        throw new ValidationError(`unknown field ${etype}.${k}`);
       }
       const expectedType = spec[k].type;
-      let val = v;
-      if (k === "modal_secrets" && etype === "modal") {
-        val = coerceStrList(val, warnings, k);
+      if (!checkType(v, expectedType)) {
+        throw new ValidationError(`${etype}.${k} must be ${expectedType}, got ${typeof v}`);
       }
-      if (!checkType(val, expectedType)) {
-        throw new ValidationError(`${etype}.${k} must be ${expectedType}, got ${typeof val}`);
-      }
-      out[k] = val;
+      out[k] = v;
     }
 
     for (const [k, fieldSpec] of Object.entries(spec)) {
@@ -231,15 +207,11 @@ export function validate(
   if (sourcePath) {
     const sp = path.resolve(sourcePath);
     result.source = path.basename(sourcePath);
-    result.source_path = fs.existsSync(sourcePath) ? sp : sourcePath;
-    try {
-      const st = fs.statSync(sourcePath);
-      result.source_mtime = Math.floor(st.mtimeMs / 1000);
-      const content = fs.readFileSync(sourcePath);
-      result.source_hash = crypto.createHash("sha256").update(content).digest("hex");
-    } catch {
-      // path may be valid but unreadable in sandbox
-    }
+    const st = fs.statSync(sourcePath);
+    const content = fs.readFileSync(sourcePath);
+    result.source_path = sp;
+    result.source_mtime = Math.floor(st.mtimeMs / 1000);
+    result.source_hash = crypto.createHash("sha256").update(content).digest("hex");
   }
   result.parsed_at = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
   return result;

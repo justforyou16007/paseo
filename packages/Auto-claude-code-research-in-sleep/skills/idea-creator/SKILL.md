@@ -21,8 +21,9 @@ Given a broad research direction from the user, systematically generate, validat
 - **PILOT_TIMEOUT_HOURS = 3** — Hard timeout: kill pilots exceeding 3 hours. Collect partial results if available.
 - **MAX_PILOT_IDEAS = 3** — Pilot at most 3 ideas in parallel. Additional ideas are validated on paper only.
 - **MAX_TOTAL_GPU_HOURS = 8** — Total GPU budget for all pilots combined.
-- **REVIEWER_MODEL = `gpt-5.5`** — Default model for the Codex backend. Must be an OpenAI model (e.g., `gpt-5.5`, `o3`, `gpt-4o`). Manual backend uses whatever model the user chooses, **but it must be a non-Claude model** — the executor is Claude, so pasting into any Claude product makes Claude judge Claude and voids the cross-model invariant (see `shared-references/reviewer-routing.md`).
-- **REVIEWER_BACKEND = `codex`** — Default: Codex MCP (xhigh). Override with `— reviewer: oracle-pro` for Oracle MCP, or `— reviewer: manual` for Manual Review MCP. If manual-review MCP is unavailable, stop and print the install command; do not fall back to Codex. See `shared-references/reviewer-routing.md`.
+- **PILOT = `true`** — Empirical pilots are required by default. Set `false` before starting for an explicitly theory-only run.
+- **REVIEWER_MODEL = `gpt-5.5`** — Default model for the Paseo codex reviewer. Must be an OpenAI model (e.g., `gpt-5.5`, `o3`, `gpt-4o`). Manual backend uses whatever model the user chooses, **but it must be a non-Claude model** — the executor is Claude, so pasting into any Claude product makes Claude judge Claude and voids the cross-model invariant (see `shared-references/reviewer-routing.md`).
+- **REVIEWER_BACKEND = `codex`** — Default: Paseo codex reviewer (xhigh). Override with `— reviewer: oracle-pro` for Oracle MCP, or `— reviewer: manual` for Manual Review MCP. If the selected backend is unavailable, stop and print its install/configuration requirement; do not fall back to another backend. See `shared-references/reviewer-routing.md`.
 - **OUTPUT_DIR = `idea-stage/`** — All idea-stage outputs go here. Create the directory if it doesn't exist.
 
 > 💡 Override via argument, e.g., `/idea-creator "topic" — pilot budget: 4h per idea, 20h total`.
@@ -93,19 +94,9 @@ fi
 On failure, write receipt with `"status": "failed"` and structured `error` object
 per `worker-manifest.md`. Append system errors to `$WORKER_DIR/progress_error.md`.
 
-**Direct-call mode:** When invoked WITHOUT `— manifest:`, the skill operates
-normally using its own argument parsing. No receipt is written.
-
-**Output path mapping:** In worker mode, every hardcoded output path in this
-skill's body (listed below) maps to `$OUTPUT_DIR/<filename>`. The orchestrator's
-subsequent input-manifests reference prior workers' outputs using their full
-`$WORKERS_DIR/<iter>-<phase>/outputs/<file>` path. In direct-call mode, the
-paths below are project-root-relative as written.
-
-| Direct-call path | Worker-mode path |
-|---|---|
-| `idea-stage/IDEA_REPORT.md` | `$OUTPUT_DIR/IDEA_REPORT.md` |
-| `idea-stage/claude_brainstorm_bundle.md` | `$OUTPUT_DIR/claude_brainstorm_bundle.md` |
+**Worker mode is required.** The manifest supplies all inputs and
+`$OUTPUT_DIR`; the skill writes its receipt beside the manifest. There is no
+project-root direct-call path.
 
 ## Workflow
 
@@ -124,11 +115,10 @@ cd "${_pr:-$(pwd)}" || exit 1
 WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
 [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
 [ -f "$WIKI_SCRIPT" ] || {
-  echo "WARN: research-wiki.js not found at .aris/dist/tools/ or dist/tools/." >&2
-  echo "      The idea-creation primary output (idea ranking) will still be produced." >&2
-  echo "      Wiki integration (load query_pack, write idea pages, add edges, rebuild query_pack) will be skipped." >&2
-  echo "      Fix: run /aris-update to refresh the project runtime." >&2
-  WIKI_SCRIPT=""
+  echo "ERROR: research-wiki.js not found at .aris/dist/tools/ or dist/tools/." >&2
+  echo "       Idea creation requires the Wiki helper when research-wiki/ is active." >&2
+  echo "       Fix: run /aris-update to refresh the project runtime." >&2
+  exit 1
 }
 ```
 
@@ -202,7 +192,7 @@ mark the phase BLOCKED; do not use the host `Skill`, `Task`, or `Agent` tools
 and do not execute the shard in-process.
 
 > **Why the lens shards are Claude, not Codex.** Generation is candidate
-> production, not a verdict, so same-family is safe — and Codex MCP is
+> production, not a verdict, so same-family is safe — and the Paseo codex child is
 > **serial** (concurrent codex calls hang), so spending its scarce capacity
 > on parallel generation is both unsafe-to-parallelize and wasteful. Reserve
 > Codex exclusively for the Phase-4 cross-model jury (novelty/quality verdict).
@@ -264,13 +254,12 @@ mcp__paseo__create_agent:
   notifyOnFinish: true
 ```
 
-On the finish notification, read the bundle's internal receipt file from
-`.aris/runs/<run_id>.idea-generation.done.json` (direct-call internal sub-agent receipt only;
-in worker mode the orchestrator reads `receipt.json` instead). The authoritative payload
-is the file; `<agent-response>` is at most a one-line status.
+On the finish notification, read the child worker's `receipt.json`. The
+authoritative payload is the file; `<agent-response>` is at most a one-line
+status.
 
-If paseo MCP is unavailable, run the brainstorm inline in the
-current Claude session instead of dispatching a sub-agent.
+If Paseo MCP is unavailable, fail the idea-generation phase. Do not run the
+brainstorm inline.
 
 Bundle contents (write to `idea-stage/claude_brainstorm_bundle.md`):
 
@@ -301,8 +290,7 @@ Bundle contents (write to `idea-stage/claude_brainstorm_bundle.md`):
 
     Be creative but grounded. A great idea is one where the answer matters regardless of which way it goes.
 
-    When done, write your internal direct-call receipt to .aris/runs/<run_id>.idea-generation.done.json:
-    **Legacy:** This receipt format is used as an internal sub-agent receipt in direct-call mode only. In worker mode (manifest protocol), the receipt is written to `$WORKER_DIR/receipt.json` instead.
+    When done, write `$WORKER_DIR/receipt.json` with:
     { "phase": "idea-generation", "num_ideas": <int>, "summary": "<1-2 lines>" }
 ```
 
@@ -420,7 +408,9 @@ Before committing to a full research effort, run cheap pilot experiments to get 
 
 4. **Re-rank based on empirical evidence**: Update the idea ranking using pilot results. An idea with strong pilot signal jumps ahead of a theoretically appealing but untested idea.
 
-Note: Skip this phase if the ideas are purely theoretical or if no GPU is available. Flag skipped ideas as "needs pilot validation" in the report.
+If `PILOT=false` was set before the run, record `pilot_status: not_requested` and
+continue with a theory-only report. If `PILOT=true` and no usable GPU is
+available, mark the worker BLOCKED and stop; do not silently omit the pilots.
 
 ### Phase 6: Output — Ranked Idea Report
 
@@ -501,9 +491,9 @@ generation, including a re-run with updated constraints, records reliably**
 writes the page, wires the `inspired_by` / `addresses` edges, and rebuilds
 index + query_pack in a single call. **Default skip-on-exist**: a re-ideation
 run records NEW ideas without clobbering an existing idea whose `outcome`
-`/result-to-claim` may already have enriched. If `$WIKI_SCRIPT` is empty
-(helper unreachable) the ideas are **NOT** recorded and a single WARN prints
-(fix: run `/aris-update`).
+`/result-to-claim` may already have enriched. If the helper cannot be resolved
+or any Wiki write fails, mark the worker failed and stop. Do not publish an
+idea report that omits the active Wiki record.
 
 ```
 if research-wiki/ exists AND [ -n "$WIKI_SCRIPT" ]:
@@ -517,10 +507,11 @@ if research-wiki/ exists AND [ -n "$WIKI_SCRIPT" ]:
           --thesis "<core hypothesis / direction>" \
           --risks "<novelty / feasibility risks; why killed if eliminated>" \
           --based-on "<paper:slug,paper:slug2>" --target-problems "<problem:root,problem:slug>" \
-          || echo "WARN: upsert_idea failed for <id> (continuing; audit/report unaffected)" >&2
+          || { echo "ERROR: upsert_idea failed for <id>; idea recording is incomplete." >&2; exit 1; }
     node "$WIKI_SCRIPT" log research-wiki/ "idea-creator wrote N ideas (M recommended, K eliminated)"
 elif research-wiki/ exists AND [ -z "$WIKI_SCRIPT" ]:
-    echo "WARN: ideas NOT recorded — research-wiki.js unreachable (see Phase 0). Fix: run /aris-update to refresh the project runtime." >&2
+    echo "ERROR: research-wiki.js is required when research-wiki/ exists; idea recording is blocked." >&2
+    exit 1
 ```
 
 ## Output Protocols
@@ -546,7 +537,8 @@ elif research-wiki/ exists AND [ -z "$WIKI_SCRIPT" ]:
 
 ## Key Rules
 
-- **Large file handling**: If the Write tool fails due to file size, immediately retry using Bash (`cat << 'EOF' > file`) to write in chunks. Do NOT ask the user for permission — just do it silently.
+- **Large file handling**: A write failure fails the worker. Do not switch to a
+  second writer inside this skill.
 
 - The user provides a DIRECTION, not an idea. Your job is to generate the ideas.
 - Quantity first, quality second: brainstorm broadly, then filter ruthlessly.
@@ -556,7 +548,10 @@ elif research-wiki/ exists AND [ -z "$WIKI_SCRIPT" ]:
 - "Apply X to Y" is the lowest form of research idea. Push for deeper questions.
 - Include eliminated ideas in the report — they save future time by documenting dead ends.
 - **If the user's direction is too broad (e.g., "NLP", "computer vision", "reinforcement learning"), STOP and ask them to narrow it.** A good direction is 1-2 sentences specifying the problem, domain, and constraint — e.g., "factorized gap in discrete diffusion LMs" or "sample efficiency of offline RL with image observations". Without sufficient specificity, generated ideas will be too vague to run experiments on.
-- **Anti-hallucination for cited papers.** When the landscape survey or novelty justification cites specific papers, every cited paper must pass pre-search verification (`verify-papers.js`, canonical name resolved per [`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2; 3-layer arXiv / CrossRef / S2 fallback inside the helper itself). Policy D1 (primary + degraded-output fallback): if the helper is unresolved **or** its invocation fails, mark candidates `[UNVERIFIED]` and continue rather than dropping or guessing. Never fabricate arXiv IDs, DOIs, or titles from memory. Full protocol in [`shared-references/citation-discipline.md`](../shared-references/citation-discipline.md) § Pre-Search Verification Protocol.
+- **Anti-hallucination for cited papers.** Every cited paper must pass
+  `verify-papers.js` before it enters the report. If the helper is missing or
+  fails, fail the phase. Never fabricate arXiv IDs, DOIs, or titles from
+  memory. See [`shared-references/citation-discipline.md`](../shared-references/citation-discipline.md).
 
 ## Composing with Other Skills
 
@@ -573,4 +568,4 @@ implement                     → write code
 
 ## Review Tracing
 
-After each reviewer call (`mcp__paseo__create_agent`, `mcp__paseo__send_agent_prompt`, `mcp__manual_review__review`, or `mcp__manual_review__review_reply`), save the trace following `shared-references/review-tracing.md` (Policy C — forensic; never silently skip). Use `save_trace.sh` (resolved per the chain in `shared-references/integration-contract.md` §2) or write files directly to `.aris/traces/<skill>/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).
+After each reviewer call (`mcp__paseo__create_agent`, `mcp__paseo__send_agent_prompt`, `mcp__manual_review__review`, or `mcp__manual_review__review_reply`), save the trace with `save_trace.sh` resolved through `shared-references/integration-contract.md` §2. If the helper is missing or fails, stop the gate. Respect the `--- trace:` parameter (default: `full`).

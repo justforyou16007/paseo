@@ -151,14 +151,17 @@ export async function cmdMeasure(args: MeasureArgs): Promise<number> {
   const { viewport } = resolved;
 
   const { browser, page } = await _render.openPrintEmulatedPageAsync(pw, viewport);
-  let navTimedOut = false;
   try {
     await page.goto(_canvas.htmlFileUrl(htmlPath), {
       waitUntil: "networkidle",
       timeout: args.mathjaxTimeoutMs,
     });
-  } catch {
-    navTimedOut = true;
+  } catch (e) {
+    await browser.close();
+    process.stderr.write(
+      `ERROR: page load failed; refusing to measure a partial poster: ${asciiSafe(String(e))}\n`,
+    );
+    return 2;
   }
 
   const settle = await _render.settlePage(page, {
@@ -171,18 +174,6 @@ export async function cmdMeasure(args: MeasureArgs): Promise<number> {
     process.stderr.write(`FAIL: ${fail}\n`);
     return 1;
   }
-  if (navTimedOut) {
-    await browser.close();
-    process.stderr.write(
-      `FAIL: page did not reach network-idle within ` +
-        `${args.mathjaxTimeoutMs} ms; refusing to measure a ` +
-        `partially loaded poster. A blocked/slow remote resource ` +
-        `(CDN image, web font, MathJax) is the usual cause -- ` +
-        `inline assets, or raise --mathjax-timeout-ms.\n`,
-    );
-    return 1;
-  }
-
   const data = (await page.evaluate(MEASURE_JS)) as MeasureElement[];
   await browser.close();
 

@@ -23,65 +23,15 @@ git clone https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep.git
 
 > **Important:** Open this repo (or add it as a workspace folder) in Cursor. The `@skills/...` references throughout this guide use Cursor's `@`-file feature, which only resolves files within your open workspace. If you work in a separate project, either copy the `skills/` folder into it or add the ARIS repo as a second workspace folder (File → Add Folder to Workspace).
 
-### 2.2 Set up Codex MCP in Cursor (for review skills)
+### 2.2 Connect Paseo MCP (required for workflow skills)
 
-ARIS uses an external LLM (GPT-5.5 via Codex) as a critical reviewer. To enable this in Cursor:
+ARIS workflow skills use Paseo parent-child agents for delegated phases and
+cross-model review. Connect the current Paseo MCP integration in Cursor and
+verify `mcp__paseo__list_agents`, `mcp__paseo__create_agent`, and
+`mcp__paseo__send_agent_prompt`.
 
-1. Install Codex CLI and authenticate:
-
-   ```bash
-   npm install -g @openai/codex
-   codex login   # authenticate with your ChatGPT or API key
-   ```
-
-2. Add MCP server in Cursor — create or edit `.cursor/mcp.json` in your project root:
-
-   ```json
-   {
-     "mcpServers": {
-       "codex": {
-         "command": "codex",
-         "args": ["mcp-server"]
-       }
-     }
-   }
-   ```
-
-3. Restart Cursor. Verify the MCP server appears under Settings → Features → MCP.
-
-### 2.3 Set up alternative reviewer (no OpenAI API)
-
-If you don't have an OpenAI API key, use the [`llm-chat`](../mcp-servers/llm-chat/) MCP server with any OpenAI-compatible API (DeepSeek, GLM, MiniMax, Kimi, etc.):
-
-1. Create a virtual environment and install the required dependency (the server needs `httpx`):
-
-   ```bash
-   cd /path/to/Auto-claude-code-research-in-sleep
-   python3 -m venv .venv
-    .venv/bin/pip install -r mcp-servers/llm-chat/requirements.txt
-   ```
-
-2. Add MCP server in Cursor — create or edit `.cursor/mcp.json`. Both paths must be **absolute** — `command` points to the venv python (not system python, otherwise `httpx` won't be found), and `args` points to the server script:
-
-   ```json
-   {
-     "mcpServers": {
-       "llm-chat": {
-         "command": "/path/to/Auto-claude-code-research-in-sleep/.venv/bin/python3",
-         "args": ["/path/to/Auto-claude-code-research-in-sleep/mcp-servers/llm-chat/server.py"],
-         "env": {
-           "LLM_BASE_URL": "https://api.deepseek.com/v1",
-           "LLM_API_KEY": "your_key",
-           "LLM_MODEL": "deepseek-chat"
-         }
-       }
-     }
-   }
-   ```
-
-3. Restart Cursor. Verify the MCP server appears (green dot) under Settings → Features → MCP. If it shows a red dot, check `llm-chat-mcp-debug.log` in your system temp directory (run `python3 -c "import tempfile; print(tempfile.gettempdir())"` to locate it).
-
-See [LLM_API_MIX_MATCH_GUIDE.md](LLM_API_MIX_MATCH_GUIDE.md) for tested provider configurations.
+If Paseo MCP is unavailable, the workflow is blocked. Do not replace it with a
+provider-native sub-agent, a direct model call, or in-process skill execution.
 
 ## 3. How to Invoke Skills
 
@@ -184,10 +134,8 @@ Deploy to GPU via @skills/run-experiment/SKILL.md.
 
 Run the auto review loop for "your paper topic".
 Read project narrative docs, memory files, experiment results.
-Use MCP tool mcp__codex__codex for external review.
+Use the configured Paseo reviewer child for external review.
 ```
-
-> **Important:** If using the `llm-chat` MCP instead of Codex, replace `mcp__codex__codex` with `mcp__llm-chat__chat` in your prompt. See [auto-review-loop-llm](../skills/auto-review-loop-llm/SKILL.md) for the adapted skill.
 
 ### Workflow 3: Paper Writing
 
@@ -230,13 +178,15 @@ Each stage reads the previous stage's output files, so context carries forward e
 
 ## 5. MCP Tool Calls
 
-ARIS skills reference MCP tools by name (e.g., `mcp__codex__codex`). Cursor supports MCP tool calls in agent mode — when the SKILL.md instructions say to call an MCP tool, Cursor's agent will invoke it if the server is configured.
+ARIS skills use the Paseo MCP lifecycle in agent mode. The skill's instructions
+name the required tool; Cursor must have the corresponding Paseo server
+configured before the phase starts.
 
-| ARIS MCP tool             | What it does                               | Required MCP server                      |
-| ------------------------- | ------------------------------------------ | ---------------------------------------- |
-| `mcp__codex__codex`       | Send prompt to GPT-5.5                     | Codex                                    |
-| `mcp__codex__codex-reply` | Continue conversation thread               | Codex                                    |
-| `mcp__llm-chat__chat`     | Send prompt to any OpenAI-compatible model | llm-chat                                 |
+| ARIS MCP tool                   | What it does                       | Required MCP server |
+| ------------------------------- | ---------------------------------- | ------------------- |
+| `mcp__paseo__create_agent`      | Start a child workflow or reviewer | Paseo               |
+| `mcp__paseo__send_agent_prompt` | Continue the same child            | Paseo               |
+| `mcp__paseo__list_agents`       | Check child state and availability | Paseo               |
 | `mcp__zotero__*`          | Search Zotero library                      | zotero (name may vary by config)         |
 | `mcp__obsidian-vault__*`  | Search Obsidian vault                      | obsidian-vault (name may vary by config) |
 

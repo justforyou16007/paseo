@@ -32,7 +32,7 @@ Each phase builds on the previous one's output. The final deliverables are a val
 - **MAX_PILOT_IDEAS = 3** — Run pilots for at most 3 top ideas in parallel. Additional ideas are validated on paper only.
 - **MAX_TOTAL_GPU_HOURS = 8** — Total GPU budget across all pilots. If exceeded, skip remaining pilots and note in report.
 - **AUTO_PROCEED = true** — If user doesn't respond at a checkpoint, automatically proceed with the best option after presenting results. Set to `false` to always wait for explicit user confirmation.
-- **REVIEWER_MODEL = `gpt-5.5`** — Model used via Codex MCP. Must be an OpenAI model (e.g., `gpt-5.5`, `o3`, `gpt-4o`). Passed to sub-skills.
+- **REVIEWER_MODEL = `gpt-5.5`** — Model used by the Paseo codex reviewer. Must be an OpenAI model (e.g., `gpt-5.5`, `o3`, `gpt-4o`). Passed to sub-skills.
 - **OUTPUT_DIR = `idea-stage/`** — All idea-stage outputs go here. Create the directory if it doesn't exist.
 - **ARXIV_DOWNLOAD = false** — When `true`, `/research-lit` downloads the top relevant arXiv PDFs during Phase 1. When `false` (default), only fetches metadata. Passed through to `/research-lit`.
 - **COMPACT = false** — When `true`, generate compact summary files for short-context models and session recovery. Writes `idea-stage/IDEA_CANDIDATES.md` (top 3-5 ideas only) at the end of this workflow. Downstream skills read this instead of the full `idea-stage/IDEA_REPORT.md`.
@@ -47,7 +47,7 @@ When invoked with `— manifest: <path>`, this skill runs as a worker under an
 orchestrator (`/research-pipeline` or `/auto-research-loop`). The manifest
 provides all inputs; the skill writes its receipt to the manifest's directory.
 
-**One mode only.** Worker mode runs the same full pipeline as a direct call —
+**Worker mode only.** The worker runs the full pipeline —
 `/research-pipeline` and `/auto-research-loop` differ only in what they put in
 `manifest.context`. There is no short branch and no per-orchestrator variant.
 The loop's later iterations supply the previous iteration's evidence paths in
@@ -65,6 +65,12 @@ if "$ARGUMENTS" contains "— manifest:"; then
     mkdir -p "$OUTPUT_DIR"
     # Read inputs from manifest.inputs (file paths)
     # Read context from manifest.context (scalar values)
+    # Forward NOTHING to sub-skills: a sub-skill seeing "— manifest:" in its own
+    # arguments would enter ITS worker mode against OUR manifest and write a
+    # mismatched receipt into our worker directory.
+    SUB_ARGS=""
+else
+    SUB_ARGS="$ARGUMENTS"
 fi
 ```
 
@@ -112,21 +118,9 @@ parse IDEA_REPORT.md (Rule 5).
 On failure, write receipt with `"status": "failed"` and structured `error` object
 per `worker-manifest.md`. Append system errors to `$WORKER_DIR/progress_error.md`.
 
-**Direct-call mode:** When invoked WITHOUT `— manifest:`, the skill operates
-normally using its own argument parsing. No receipt is written.
-
-**Output path mapping:** In worker mode, every hardcoded output path in this
-skill's body (listed below) maps to `$OUTPUT_DIR/<filename>`. The orchestrator's
-subsequent input-manifests reference prior workers' outputs using their full
-`$WORKERS_DIR/<iter>-<phase>/outputs/<file>` path. In direct-call mode, the
-paths below are project-root-relative as written.
-
-| Direct-call path | Worker-mode path |
-|---|---|
-| `idea-stage/IDEA_REPORT.md` | `$OUTPUT_DIR/IDEA_REPORT.md` |
-| `idea-stage/IDEA_REPORT.html` | `$OUTPUT_DIR/IDEA_REPORT.html` |
-| `refine-logs/FINAL_PROPOSAL.md` | `$OUTPUT_DIR/FINAL_PROPOSAL.md` |
-| `refine-logs/EXPERIMENT_PLAN.md` | `$OUTPUT_DIR/EXPERIMENT_PLAN.md` |
+**Worker mode is required.** The manifest supplies all inputs and
+`$OUTPUT_DIR`; the skill writes its receipt beside the manifest. There is no
+project-root direct-call path.
 
 ### Loop-iteration context (`/auto-research-loop`)
 
@@ -136,9 +130,10 @@ for the normal pipeline below — they do not switch on a different behaviour:
 
 | Key | Meaning |
 |---|---|
+| `direction` | the run's research direction from the brief — not a metric direction |
 | `iteration` | 1-based loop iteration |
 | `source_iteration` | iteration whose evidence is attached (absent on iteration 1) |
-| `metric_name` / `metric_target` / `metric_direction` / `metric_tolerance` / `metric_current` / `metric_history` | the run's Metric Target state |
+| `metric_name` / `metric_target` / `metric_direction` / `metric_tolerance` / `metric_current` / `metric_baseline` / `metric_history` | the run's Metric Target state |
 | `note` | free-text steer, e.g. iteration 1's "select the baseline reproduction idea from the brief" |
 
 From iteration 2 the loop also attaches the previous iteration's evidence as
@@ -229,20 +224,20 @@ Phase 1 and Phase 2 will use `idea-stage/REF_PAPER_SUMMARY.md` as additional con
 
 ### Phase 1: Literature Survey
 
-Dispatch a paseo claude sub-agent for `/research-lit` per `shared-references/paseo-subagent-dispatch.md`; after dispatch, immediately wait for that child. No host-harness fallback is allowed. Idea discovery is exactly the place where Gemini's AI-driven broad coverage adds value, so include `gemini` as a source by default unless the user already specified an explicit `— sources:` directive in their idea-discovery invocation:
+Dispatch a paseo claude sub-agent for `/research-lit` per
+`shared-references/paseo-subagent-dispatch.md`; after dispatch, immediately
+wait for that child. Pass an explicit source list when the manifest supplies
+one. Otherwise `/research-lit` uses its fixed `web` source.
 
 ```
-# If $ARGUMENTS already contains "— sources:", pass through unchanged
-# (the user is in control of source selection):
-/research-lit "$ARGUMENTS" — composed: idea-stage/IDEA_REPORT.md
-
-# Otherwise (the common case), include gemini explicitly for broader discovery:
-/research-lit "$ARGUMENTS" — sources: all, gemini — composed: idea-stage/IDEA_REPORT.md
+# Use the source list from the manifest when present:
+/research-lit "$SUB_ARGS" — composed: idea-stage/IDEA_REPORT.md
 ```
 
 `— composed: idea-stage/IDEA_REPORT.md` puts `/research-lit` in composed mode (see _Output hygiene_ above): it returns the landscape for folding into the report instead of writing a standalone landscape file. The report doesn't exist yet at Phase 1 — the directive names the _forthcoming_ canonical doc, and `/idea-creator` creates it in Phase 2.
 
-If `gemini-cli` is not installed, `/research-lit` skips the Gemini source gracefully with a warning — no break to the pipeline. Users who want to force-disable Gemini in idea-discovery can pass `/idea-discovery "topic" — sources: all` explicitly (which becomes the literal source list, no auto-injection).
+Gemini is used only when the manifest explicitly requests `gemini` and the
+Gemini MCP is available. A missing requested source fails the literature phase.
 
 **What this does:**
 
@@ -270,7 +265,7 @@ Does this match your understanding? Should I adjust the scope before generating 
 Dispatch a paseo claude sub-agent for `/idea-creator` per `shared-references/paseo-subagent-dispatch.md`, then immediately wait for it, with the landscape context (and `idea-stage/REF_PAPER_SUMMARY.md` if available):
 
 ```
-/idea-creator "$ARGUMENTS" — composed: idea-stage/IDEA_REPORT.md
+/idea-creator "$SUB_ARGS" — composed: idea-stage/IDEA_REPORT.md
 ```
 
 `/idea-creator` owns `idea-stage/IDEA_REPORT.md` as the canonical deliverable; the `— composed:` directive tells it to fold the survey/novelty findings in rather than emitting `LIT_LANDSCAPE.md` / `RESEARCH_REVIEW.md` / `MANIFEST.md` alongside.
@@ -500,13 +495,16 @@ After Phase 4 finalizes `idea-stage/IDEA_REPORT.md` (and the optional `IDEA_CAND
 
 `--no-review` is intentional: source MD already passed this skill's own novelty + cross-model review. HTML render is a structural conversion, not a new claim-audit gate. Output lands at `idea-stage/IDEA_REPORT.html` with embedded source SHA256 + render timestamp.
 
-**Non-blocking**: if `/render-html` fails (helper missing, Codex MCP unavailable, file write error), log the failure and continue — the HTML view is a convenience artifact, not a Phase 4 prerequisite.
+If `/render-html` fails (helper missing, Paseo MCP unavailable, or file write
+error), fail the worker. Set `RENDER_HTML = false` before the run to omit the
+HTML artifact.
 
 Skip this step if `RENDER_HTML = false`.
 
 ## Key Rules
 
-- **Large file handling**: If the Write tool fails due to file size, immediately retry using Bash (`cat << 'EOF' > file`) to write in chunks. Do NOT ask the user for permission — just do it silently.
+- **Large file handling**: A write failure fails the worker. Do not switch to a
+  second writer inside this skill.
 
 - **Don't skip phases.** Each phase filters and validates — skipping leads to wasted effort later.
 - **Checkpoint between phases.** Briefly summarize what was found before moving on.

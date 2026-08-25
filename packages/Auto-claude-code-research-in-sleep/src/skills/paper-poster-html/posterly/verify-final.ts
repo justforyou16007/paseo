@@ -52,7 +52,7 @@ export function cmdVerifyFinal(args: VerifyFinalArgs): number {
     if (parsed === null) {
       process.stderr.write(
         `ERROR: no \`@page { size }\` found in ` +
-          `${asciiSafe(htmlPath)}. Fall back to --canvas.\n`,
+          `${asciiSafe(htmlPath)}. Pass --canvas explicitly if that is the intended source.\n`,
       );
       return 2;
     }

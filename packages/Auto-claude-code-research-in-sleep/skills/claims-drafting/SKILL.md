@@ -236,4 +236,4 @@ Write `patent/CLAIMS.md`:
 - Never include result-to-be-achieved language in claims ("configured to achieve high accuracy").
 - Never fabricate claim language -- every element must come from the actual invention.
 - If drafting for ALL jurisdictions, produce separate claim sets for CN, US, and EP.
-- If Paseo codex sub-agent is not available, skip cross-model examiner review and note it in the output.
+- If the explicitly configured Paseo codex reviewer is unavailable or fails, mark the examiner review BLOCKED and stop this stage. Do not publish claims as reviewed.

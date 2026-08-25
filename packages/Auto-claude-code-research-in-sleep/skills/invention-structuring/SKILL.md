@@ -201,4 +201,4 @@ Write `patent/INVENTION_DISCLOSURE.md`:
 - The core inventive concept must be the minimum set of features for patentability.
 - Supporting features should be independently valuable -- each should provide a meaningful technical benefit even if other supporting features are removed.
 - Never invent embodiments that do not correspond to the actual invention or user-provided materials.
-- If the paseo codex reviewer is not available, skip cross-model validation and note it in the output.
+- If the explicitly configured Paseo codex reviewer is unavailable or fails, mark cross-model validation BLOCKED and stop this stage. Do not publish the structure as validated.

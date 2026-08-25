@@ -15,7 +15,7 @@ Check whether a proposed method/idea has already been done in the literature: **
 
 ## Constants
 
-- REVIEWER_MODEL = `gpt-5.5` — Model used via Codex MCP. Must be an OpenAI model (e.g., `gpt-5.5`, `o3`, `gpt-4o`)
+- REVIEWER_MODEL = `gpt-5.5` — Model used by the Paseo codex reviewer. Must be an OpenAI model (e.g., `gpt-5.5`, `o3`, `gpt-4o`)
 
 ## Instructions
 
@@ -109,8 +109,8 @@ Output a structured report:
 - Check both the method AND the experimental setting for novelty
 - If the method is not novel but the FINDING would be, say so explicitly
 - Always check the most recent 6 months of arXiv — the field moves fast
-- **Anti-hallucination for Closest Prior Work.** Every paper in the prior-work table must pass pre-search verification via `verify-papers.js` (canonical name resolved per [`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2; 3-layer arXiv / CrossRef / Semantic Scholar fallback inside the helper itself). Policy D1 (primary + degraded-output fallback): if the helper is unresolved **or** its invocation fails, tag candidate entries `[UNVERIFIED]` and surface the uncertainty rather than dropping them. Never fabricate arXiv IDs, DOIs, or titles from memory. Full protocol in [`shared-references/citation-discipline.md`](../shared-references/citation-discipline.md) § Pre-Search Verification Protocol.
+- **Anti-hallucination for Closest Prior Work.** Every paper in the prior-work table must pass pre-search verification via `verify-papers.js` (canonical name resolved per [`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2). If the helper is unresolved or fails, stop the novelty check; do not emit `[UNVERIFIED]` rows as if they were usable evidence. Never fabricate arXiv IDs, DOIs, or titles from memory. Full protocol in [`shared-references/citation-discipline.md`](../shared-references/citation-discipline.md) § Pre-Search Verification Protocol.
 
 ## Review Tracing
 
-After each paseo codex reviewer call, save the trace following `shared-references/review-tracing.md` (Policy C — forensic; never silently skip). Use `save_trace.sh` (resolved per the chain in `shared-references/integration-contract.md` §2) or write files directly to `.aris/traces/<skill>/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`). `save_trace.sh --thread-id` passes a paseo codex agent-id.
+After each paseo codex reviewer call, save the trace with `save_trace.sh` resolved through `shared-references/integration-contract.md` §2. If the helper is missing or fails, stop the gate. Respect the `--- trace:` parameter (default: `full`). `save_trace.sh --thread-id` passes a paseo codex agent-id.

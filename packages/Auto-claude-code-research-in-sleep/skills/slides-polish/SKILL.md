@@ -36,7 +36,7 @@ manually) — do not run `/slides-polish` for that.
 
 ## Constants
 
-- **REVIEWER_MODEL = `gpt-5.5`** — Codex MCP model for per-page review. xhigh reasoning is non-negotiable (see `../shared-references/effort-contract.md`). `gpt-5.4` is acceptable when the user has no `gpt-5.5` access; `gpt-5.5` is preferred for visual nuance.
+- **REVIEWER_MODEL = `gpt-5.5`** — Paseo codex model for per-page review. xhigh reasoning is non-negotiable (see `../shared-references/effort-contract.md`). `gpt-5.4` is acceptable when the user has no `gpt-5.5` access; `gpt-5.5` is preferred for visual nuance.
 - **REVIEWER_REASONING = `xhigh`** — Hard invariant; the effort knob does **not** change this.
 - **CONTEXT_POLICY = `fresh`** — Each per-page review uses a **fresh** paseo codex sub-agent (`mcp__paseo__create_agent`, never continue an existing agent). See `../shared-references/reviewer-independence.md`. This prevents the reviewer from anchoring on prior fixes.
 - **REFERENCE_VISUAL** — Path to a PDF the user wants the polished deck to **align with** in visual weight (typography proportion, color discipline, callout density). Required input. If polishing PPTX only, the **Beamer compile of the same talk** is the ideal reference. If no reference exists yet, ask the user; do not silently default to "Why-RF" or any preset.
@@ -60,9 +60,9 @@ auto-install. Required:
 - **PDF inspection**: `pdfinfo` and either `pdftoppm` (poppler, preferred) or `mutool draw` (mupdf) for rendering slides to PNG. Required so the per-page Codex call sees actual slide pixels, not text extraction alone. Render command: `pdftoppm -r 150 -png <pdf> <out-stem>` (or `mutool draw -o <out-stem>-%d.png -r 150 <pdf>`).
 - **PPTX → PDF rendering**: `soffice` (LibreOffice headless) preferred; otherwise the user must export PDF manually from PowerPoint/Keynote.
 - **LaTeX** (Beamer side only): `xelatex` (CJK) or `pdflatex`, plus `latexmk` for clean recompiles. The Beamer fix patterns in Phase 2 may require these LaTeX packages: `microtype` (letter-spacing in section labels), `array` (raggedright p-columns), `tcolorbox` (banners and callouts), `ctex` or `xeCJK` (CJK), `tikz` + `tikz-cd` (diagrams).
-- **Codex MCP**: Paseo codex sub-agent must be available (the user must have Paseo MCP wired). The skill aborts at Phase 0 if Paseo MCP cannot be reached.
+- **Paseo MCP**: Paseo codex sub-agent must be available. The skill aborts at Phase 0 if Paseo MCP cannot be reached.
 
-Fallback rules:
+Dependency rules:
 
 - If `pdftoppm`/`mutool` missing → ask user to install, do not proceed (visual review without rendered pages produces low-confidence Codex feedback).
 - If `soffice` missing and PPTX is the input → ask user to export PDF from their slide tool; resume after.
@@ -118,7 +118,10 @@ in `.aris/` to keep the deck directory free of polish-specific cruft.
 2. **Confirm reference PDF**: validate the file exists and has the same slide count (or at least ≥ slide count) as the input. If a mismatch, ask user.
 3. **Inspect shapes**: run the inspector (Phase 0 sub-step below) to produce `INSPECT_<stem>.json` listing every text-frame and shape on every slide with: shape id, type, text content (escaped), font sizes per run, bbox in inches, fill/line color, image dimensions for pictures, presence of speaker notes. This file is the ground truth for "find shape by text" downstream.
 4. **Snapshot original**: `cp <stem>.pptx <stem>_pre_polish.pptx` (and `.tex` if Beamer present). All subsequent edits target `_polished` copy.
-5. **Render PPTX → PDF if needed** (`soffice --headless --convert-to pdf`). If unavailable, prompt user to export.
+5. **Render PPTX → PDF if needed** (`soffice --headless --convert-to pdf`). If
+   `soffice` is unavailable or the conversion fails, block the phase and ask
+   the user to install it before rerunning. Do not continue with an unrendered
+   deck.
 6. **Render PDF → PNG**: `pdftoppm -r 150 <pdf> .aris/slides-polish/<stem>/png/page` produces one PNG per slide; passed to Codex during per-page review.
 7. **Triage pass**: a single fresh Codex call sweeps all N slides comparing PPTX-PDF (or Beamer PDF) against the reference. Output: per-slide verdict matrix.
 
@@ -332,8 +335,8 @@ dependencies:
   BREAKS because `\MakeUppercase` uppercases color name → undefined-color
   error. Put `\textcolor` outside or define a colored `\sectionlabel*` variant.
 - **CJK + math**: with `xelatex`, use `\usepackage[fontset=fandol]{ctex}` or
-  set EA fonts explicitly. Mixed Chinese-English in titles needs the EA font
-  hint or characters fall back to Latin.
+  set EA fonts explicitly. Mixed Chinese-English in titles requires the EA
+  font hint; missing glyphs are an error, not a reason to use a Latin font.
 
 ### Phase 3: PPTX-Side Polish
 
@@ -393,8 +396,8 @@ the inspector's bbox primitives.
   `{\itshape ...}` or scope to a single run.
 - **Chinese rendering**: PowerPoint needs the East Asian font hint
   (`<a:ea typeface="PingFang SC"/>` for macOS, `Microsoft YaHei` for
-  Windows). Without it, characters fall back to a Latin font and render
-  as tofu boxes.
+  Windows). Without it, fail the render rather than silently selecting a
+  Latin font.
 - **Em-dash spacing**: bare `—` in titles often renders with collapsed
   spaces. Insert literal spaces (`" — "`) or use figure-space.
 - **Cycle-arrow / feedback-loop labels**: ensure label bbox stays inside
@@ -505,7 +508,7 @@ These are non-negotiable:
 3. **Speaker notes are preserved verbatim.** Every PPTX edit must preserve `slide.notes_slide` content. Phase 4.4 verifies this byte-for-byte against the snapshot.
 4. **No content edits.** No new claims, numbers, citations, URLs, author names, affiliations, or experiment results. No equation or figure-content changes. No paraphrasing of body text — only style/typography/box edits. If a Codex fix proposal would change content, the skill stops and reports it.
 5. **No slide reordering, addition, or deletion** unless the user passes an explicit flag (`— add-slide-K-after-J`, `— drop-slide-K`).
-6. **Cross-model independence**: per-page Codex calls are fresh threads, not `codex-reply`. Reviewer never sees prior fix lists. See `reviewer-independence.md`.
+6. **Cross-model independence**: per-page Paseo codex calls use fresh children. Reviewer never sees prior fix lists. See `reviewer-independence.md`.
 7. **Anonymity placeholders fail closed.** If a Codex fix proposes filling in a real title, count, or URL where a placeholder was, the skill rejects it and surfaces the proposal for human review. See `experiment-integrity.md`.
 8. **Page numbers stay ≤ 16pt.** Why-RF discipline; never bump them.
 9. **`reasoning_effort: xhigh`** is invariant across all `effort` levels.

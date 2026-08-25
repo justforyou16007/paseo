@@ -277,8 +277,9 @@ If the context window compacts mid-run, the loop recovers from `DSE_STATE.json` 
 - **Parse metrics programmatically** — write a parsing script, don't eyeball logs
 - **Keep raw outputs** — save each run's full output in `dse_results/outputs/iter_N/`
 - **Constraint violations are not improvements** — a design point that violates constraints is never "best", regardless of the metric
-- If a run crashes, log the error, skip that point, and continue with the next
-- If the same crash repeats 3 times with different configs, stop and report the issue
+- If a run crashes, log the error and stop the invocation. Do not skip the
+  failed point and continue with another configuration; fix the run command or
+  inputs, then start a new `/dse-loop` invocation.
 
 ## Example Invocations
 

@@ -9,7 +9,6 @@ import fs from "fs";
 import path from "path";
 import { execSync } from "child_process";
 import { createCli, runCli } from "../../lib/cli.js";
-import { readCanvasFromHtml } from "./posterly/canvas.js";
 import { asciiSafe } from "./posterly/textutil.js";
 
 const SCHEMA_VERSION = 1;
@@ -38,9 +37,9 @@ interface GateEntry {
 
 interface CanvasInfo {
   source: string;
-  width_cm: number | null;
-  height_cm: number | null;
-  orientation: string | null;
+  width_cm: number;
+  height_cm: number;
+  orientation: string;
   source_url: string | null;
 }
 
@@ -72,57 +71,54 @@ function orientation(width: number, height: number): string {
   return width > height ? "landscape" : "portrait";
 }
 
-function canvasFromState(statePath: string): CanvasInfo | null {
+function canvasFromState(statePath: string): CanvasInfo {
+  let data: unknown;
   try {
-    const data = JSON.parse(fs.readFileSync(statePath, "utf-8"));
-    if (typeof data !== "object" || data === null) return null;
-    const canvas = typeof data.canvas === "object" && data.canvas !== null ? data.canvas : data;
-    const width = canvas.width_cm;
-    const height = canvas.height_cm;
-    if (typeof width !== "number" || typeof height !== "number") return null;
-    let orient = canvas.orientation;
-    if (orient !== "landscape" && orient !== "portrait") {
-      orient = orientation(width, height);
-    }
-    return {
-      source: canvas.source || "poster-state",
-      width_cm: Math.round(width * 100) / 100,
-      height_cm: Math.round(height * 100) / 100,
-      orientation: orient,
-      source_url: canvas.source_url || null,
-    };
-  } catch {
-    return null;
+    data = JSON.parse(fs.readFileSync(statePath, "utf-8"));
+  } catch (error) {
+    throw new Error(`POSTER_STATE.json is unreadable: ${String(error)}`);
   }
+  if (typeof data !== "object" || data === null || Array.isArray(data)) {
+    throw new Error("POSTER_STATE.json must contain an object");
+  }
+  const canvas = (data as Record<string, unknown>).canvas;
+  if (typeof canvas !== "object" || canvas === null || Array.isArray(canvas)) {
+    throw new Error("POSTER_STATE.json must contain a canvas object");
+  }
+  const stateCanvas = canvas as Record<string, unknown>;
+  const width = stateCanvas.width_cm;
+  const height = stateCanvas.height_cm;
+  if (
+    typeof width !== "number" ||
+    !Number.isFinite(width) ||
+    width <= 0 ||
+    typeof height !== "number" ||
+    !Number.isFinite(height) ||
+    height <= 0
+  ) {
+    throw new Error(
+      "POSTER_STATE.json canvas.width_cm and canvas.height_cm must be positive numbers",
+    );
+  }
+  const orient = stateCanvas.orientation;
+  if (orient !== undefined && orient !== "landscape" && orient !== "portrait") {
+    throw new Error("POSTER_STATE.json canvas.orientation must be landscape or portrait");
+  }
+  return {
+    source: typeof stateCanvas.source === "string" ? stateCanvas.source : "poster-state",
+    width_cm: Math.round(width * 100) / 100,
+    height_cm: Math.round(height * 100) / 100,
+    orientation: orient === undefined ? orientation(width, height) : orient,
+    source_url: typeof stateCanvas.source_url === "string" ? stateCanvas.source_url : null,
+  };
 }
 
 function resolveCanvasInfo(htmlPath: string): CanvasInfo {
   const statePath = path.join(path.dirname(htmlPath), "POSTER_STATE.json");
-  if (fs.existsSync(statePath)) {
-    const block = canvasFromState(statePath);
-    if (block !== null) return block;
+  if (!fs.existsSync(statePath)) {
+    throw new Error(`required POSTER_STATE.json is missing: ${statePath}`);
   }
-
-  const parsed = readCanvasFromHtml(htmlPath);
-  if (parsed !== null) {
-    const wCm = Math.round(parsed[0] * 2.54 * 100) / 100;
-    const hCm = Math.round(parsed[1] * 2.54 * 100) / 100;
-    return {
-      source: "page-rule",
-      width_cm: wCm,
-      height_cm: hCm,
-      orientation: orientation(wCm, hCm),
-      source_url: null,
-    };
-  }
-
-  return {
-    source: "unknown",
-    width_cm: null,
-    height_cm: null,
-    orientation: null,
-    source_url: null,
-  };
+  return canvasFromState(statePath);
 }
 
 function runChild(
@@ -147,21 +143,10 @@ function runChild(
   }
 }
 
-function parseJsonGate(stdout: string): Record<string, unknown> | null {
-  const start = stdout.lastIndexOf("{");
-  if (start === -1) return null;
-  try {
-    const obj = JSON.parse(stdout.substring(start));
-    return typeof obj === "object" && obj !== null ? obj : null;
-  } catch {
-    return null;
-  }
-}
-
 function statusFromReturncode(returncode: number, severity: string): string {
   if (returncode === 0) return "PASS";
   if (returncode === 1) return severity === "hard" ? "FAIL" : "WARN";
-  return "SKIPPED";
+  return "ERROR";
 }
 
 interface RunGateOpts {
@@ -223,29 +208,33 @@ function summarizeGate(
   stdout: string,
   stderr: string,
   reportJsonDir: string,
-): { summary: unknown; artifacts: string[] } {
+): { summary: unknown; artifacts: string[]; error: string | null } {
   const artifacts: string[] = [];
 
   if (gate === "style" || gate === "asset") {
     const sidecar = path.join(reportJsonDir, `${gate}_check.json`);
-    if (fs.existsSync(sidecar)) {
-      try {
-        const obj = JSON.parse(fs.readFileSync(sidecar, "utf-8"));
-        artifacts.push(sidecar);
-        return { summary: obj, artifacts };
-      } catch {
-        // fall through
-      }
+    if (!fs.existsSync(sidecar)) {
+      return {
+        summary: { error: `required gate report is missing: ${sidecar}` },
+        artifacts,
+        error: `required gate report is missing: ${sidecar}`,
+      };
     }
-    const obj = parseJsonGate(stdout);
-    if (obj !== null) return { summary: obj, artifacts };
-    return { summary: tail(stdout + "\n" + stderr), artifacts };
+    try {
+      const obj = JSON.parse(fs.readFileSync(sidecar, "utf-8"));
+      artifacts.push(sidecar);
+      return { summary: obj, artifacts, error: null };
+    } catch (e) {
+      const error = `required gate report is invalid: ${sidecar}: ${String(e)}`;
+      return { summary: { error }, artifacts: [sidecar], error };
+    }
   }
 
   const combined = (stdout + "\n" + stderr).trim();
   return {
     summary: { exit_code: returncode, tail: tail(combined) },
     artifacts,
+    error: null,
   };
 }
 
@@ -259,8 +248,9 @@ function runGate(
   const severity = GATE_SEVERITY[gate];
   const argv = buildArgv(gate, scriptsDir, htmlPath, opts, reportJsonDir);
   const { returncode, stdout, stderr } = runChild(argv, path.dirname(htmlPath));
-  const status = statusFromReturncode(returncode, severity);
-  const { summary, artifacts } = summarizeGate(gate, returncode, stdout, stderr, reportJsonDir);
+  const summaryResult = summarizeGate(gate, returncode, stdout, stderr, reportJsonDir);
+  const status = summaryResult.error ? "ERROR" : statusFromReturncode(returncode, severity);
+  const { summary, artifacts } = summaryResult;
   return { name: gate, severity, status, command: argv, summary, artifacts };
 }
 
@@ -280,6 +270,7 @@ function runAll(htmlPath: string, opts: RunGateOpts): GateReport {
   const scriptsDir = path.dirname(path.resolve(__filename));
   const reportPath = path.join(path.dirname(htmlPath), "GATE_REPORT.json");
   const reportJsonDir = path.dirname(reportPath);
+  const canvas = resolveCanvasInfo(htmlPath);
 
   const gates: GateEntry[] = [];
   let hardFailures = 0;
@@ -290,9 +281,8 @@ function runAll(htmlPath: string, opts: RunGateOpts): GateReport {
     gates.push(entry);
     const isHard = entry.severity === "hard";
 
-    if (entry.status === "FAIL") {
-      if (isHard) hardFailures++;
-      else hardFailures++;
+    if (entry.status === "FAIL" || entry.status === "ERROR") {
+      if (isHard || entry.status === "ERROR") hardFailures++;
       if (opts.failFast) {
         gates.push(...skippedRemainder(gate));
         break;
@@ -307,7 +297,7 @@ function runAll(htmlPath: string, opts: RunGateOpts): GateReport {
     skill: SKILL_NAME,
     timestamp: nowIso(),
     poster_html: htmlPath,
-    canvas: resolveCanvasInfo(htmlPath),
+    canvas,
     overall: hardFailures === 0 ? "PASS" : "FAIL",
     hard_failures: hardFailures,
     warnings,
@@ -318,14 +308,10 @@ function runAll(htmlPath: string, opts: RunGateOpts): GateReport {
 function printHumanSummary(report: GateReport): void {
   console.log(`[run_gates] ${asciiSafe(report.poster_html)}`);
   const canvas = report.canvas;
-  if (canvas.width_cm !== null) {
-    console.log(
-      `  canvas: ${canvas.width_cm} x ${canvas.height_cm} cm ` +
-        `${canvas.orientation} (source: ${canvas.source})`,
-    );
-  } else {
-    console.log(`  canvas: UNRESOLVED (source: ${canvas.source})`);
-  }
+  console.log(
+    `  canvas: ${canvas.width_cm} x ${canvas.height_cm} cm ` +
+      `${canvas.orientation} (source: ${canvas.source})`,
+  );
   for (const g of report.gates) {
     console.log(`  ${g.name.padEnd(9)} [${g.severity.padEnd(4)}] -> ${g.status}`);
   }

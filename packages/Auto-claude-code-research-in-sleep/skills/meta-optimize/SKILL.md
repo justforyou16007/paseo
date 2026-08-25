@@ -324,4 +324,4 @@ Inspired by [Meta-Harness](https://arxiv.org/abs/2603.28052) (Lee et al., 2026) 
 
 ## Review Tracing
 
-After each paseo codex sub-agent reviewer call (`mcp__paseo__create_agent` or `mcp__paseo__send_agent_prompt`), save the trace following `shared-references/review-tracing.md` (Policy C — forensic; never silently skip). Use `save_trace.sh` (resolved per the chain in `shared-references/integration-contract.md` §2) or write files directly to `.aris/traces/<skill>/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).
+After each paseo codex sub-agent reviewer call (`mcp__paseo__create_agent` or `mcp__paseo__send_agent_prompt`), save the trace with `save_trace.sh` resolved through `shared-references/integration-contract.md` §2. If the helper is missing or fails, stop the gate. Respect the `--- trace:` parameter (default: `full`).

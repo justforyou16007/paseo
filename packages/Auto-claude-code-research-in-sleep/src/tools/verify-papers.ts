@@ -105,18 +105,14 @@ function resolveCachePath(scope: string, cacheDir: string | null): string | null
 }
 
 function loadCache(cachePath: string, ttlDays: number): Record<string, CacheEntry> {
-  try {
-    if (!fs.existsSync(cachePath)) return {};
-    const raw = JSON.parse(fs.readFileSync(cachePath, "utf-8")) as Record<string, CacheEntry>;
-    const cutoff = Date.now() / 1000 - ttlDays * 86400;
-    const result: Record<string, CacheEntry> = {};
-    for (const [k, v] of Object.entries(raw)) {
-      if ((v.ts ?? 0) >= cutoff) result[k] = v;
-    }
-    return result;
-  } catch {
-    return {};
+  if (!fs.existsSync(cachePath)) return {};
+  const raw = JSON.parse(fs.readFileSync(cachePath, "utf-8")) as Record<string, CacheEntry>;
+  const cutoff = Date.now() / 1000 - ttlDays * 86400;
+  const result: Record<string, CacheEntry> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if ((v.ts ?? 0) >= cutoff) result[k] = v;
   }
+  return result;
 }
 
 function saveCache(cachePath: string, cache: Record<string, CacheEntry>): void {
@@ -125,7 +121,7 @@ function saveCache(cachePath: string, cache: Record<string, CacheEntry>): void {
   fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2));
 }
 
-// --- HTTP + retry ---
+// --- HTTP ---
 
 async function httpGet(
   url: string,
@@ -141,23 +137,9 @@ async function httpGet(
     });
     const body = await resp.text();
     return { status: resp.status, body };
-  } catch {
-    return { status: -1, body: null };
   } finally {
     clearTimeout(timer);
   }
-}
-
-function isTransient(status: number): boolean {
-  return status === -1 || status === 429 || (status >= 500 && status < 600);
-}
-
-function backoff(attempt: number): number {
-  return Math.min(2 ** attempt + Math.random(), 30);
-}
-
-function sleep(seconds: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, seconds * 1000));
 }
 
 // --- Layer 1: arXiv batch verification ---
@@ -170,44 +152,30 @@ async function verifyArxivBatch(
   const result: Record<string, string> = {};
   for (let i = 0; i < ids.length; i += batchSize) {
     const batch = ids.slice(i, i + batchSize);
-    const batchResult = await verifyArxivBatchWithRetry(batch);
+    const batchResult = await verifyArxivBatchOnce(batch);
     Object.assign(result, batchResult);
   }
   return result;
 }
 
-async function verifyArxivBatchWithRetry(batch: string[]): Promise<Record<string, string>> {
+async function verifyArxivBatchOnce(batch: string[]): Promise<Record<string, string>> {
   const baseIds = batch.map((x) => normalizeArxivId(x).id);
   const url = `${ARXIV_API}?id_list=${baseIds.join(",")}&max_results=${baseIds.length}`;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const { status, body } = await httpGet(url, { "User-Agent": arxivUserAgent() }, 30000);
-    if (status === 200 && body !== null) {
-      const found = new Set<string>();
-      for (const bid of baseIds) {
-        if (body.includes(`<id>http://arxiv.org/abs/${bid}`)) {
-          found.add(bid);
-        }
-      }
-      const result: Record<string, string> = {};
-      for (const orig of batch) {
-        result[orig] = found.has(normalizeArxivId(orig).id) ? "verified" : "unverified";
-      }
-      return result;
-    }
-    if (!isTransient(status)) {
-      const result: Record<string, string> = {};
-      for (const orig of batch) result[orig] = "unverified";
-      return result;
-    }
-    await sleep(backoff(attempt));
+  const { status, body } = await httpGet(url, { "User-Agent": arxivUserAgent() }, 30000);
+  if (status !== 200 || body === null) {
+    throw new Error(`arXiv verification failed: HTTP ${status}`);
   }
-  if (batch.length > 1) {
-    const mid = Math.floor(batch.length / 2);
-    const left = await verifyArxivBatchWithRetry(batch.slice(0, mid));
-    const right = await verifyArxivBatchWithRetry(batch.slice(mid));
-    return { ...left, ...right };
+  const found = new Set<string>();
+  for (const bid of baseIds) {
+    if (body.includes(`<id>http://arxiv.org/abs/${bid}`)) {
+      found.add(bid);
+    }
   }
-  return { [batch[0]]: "verify_pending" };
+  const result: Record<string, string> = {};
+  for (const orig of batch) {
+    result[orig] = found.has(normalizeArxivId(orig).id) ? "verified" : "unverified";
+  }
+  return result;
 }
 
 // --- Layer 2: CrossRef DOI verification ---
@@ -216,14 +184,10 @@ async function verifyDoi(doi: string, userEmail: string): Promise<string> {
   const encoded = encodeURIComponent(normalizeDoi(doi)).replace(/%2F/gi, "/");
   const url = `${CROSSREF_API}/${encoded}`;
   const headers = { "User-Agent": `ARIS-verify-papers/1.0 (mailto:${userEmail})` };
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const { status } = await httpGet(url, headers, 15000);
-    if (status === 200) return "verified";
-    if (status === 404) return "unverified";
-    if (!isTransient(status)) return "unverified";
-    await sleep(backoff(attempt));
-  }
-  return "verify_pending";
+  const { status } = await httpGet(url, headers, 15000);
+  if (status === 200) return "verified";
+  if (status === 404) return "unverified";
+  throw new Error(`CrossRef verification failed: HTTP ${status}`);
 }
 
 // --- Layer 3: Semantic Scholar fuzzy title match ---
@@ -236,45 +200,37 @@ async function verifyTitleS2(
   if (!normalized) return { status: "unverified", identifiers: null };
   const q = encodeURIComponent(normalized.slice(0, 200));
   const url = `${S2_API}?query=${q}&limit=3&fields=title,year,externalIds`;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const { status, body } = await httpGet(url, undefined, 15000);
-    if (status === 200 && body !== null) {
-      let data: { data?: Array<{ title?: string; externalIds?: Record<string, string> }> };
-      try {
-        data = JSON.parse(body);
-      } catch {
-        return { status: "verify_pending", identifiers: null };
-      }
-      const userWords = new Set(normalized.split(" ").filter(Boolean));
-      if (userWords.size === 0) return { status: "unverified", identifiers: null };
-      for (const p of data.data ?? []) {
-        const pNorm = normalizeTitle(p.title ?? "");
-        const pWords = new Set(pNorm.split(" ").filter(Boolean));
-        if (pWords.size === 0) continue;
-        let overlapCount = 0;
-        for (const w of userWords) {
-          if (pWords.has(w)) overlapCount++;
-        }
-        const overlap = overlapCount / Math.max(userWords.size, pWords.size);
-        if (overlap >= fuzzyThreshold) {
-          const ext = p.externalIds ?? {};
-          return {
-            status: "verified",
-            identifiers: {
-              s2_title: p.title ?? "",
-              arxiv_id: ext.ArXiv ?? "",
-              doi: ext.DOI ?? "",
-            },
-          };
-        }
-      }
-      return { status: "unverified", identifiers: null };
-    }
-    if (status === 429) return { status: "verify_pending", identifiers: null };
-    if (!isTransient(status)) return { status: "unverified", identifiers: null };
-    await sleep(backoff(attempt));
+  const { status, body } = await httpGet(url, undefined, 15000);
+  if (status !== 200 || body === null) {
+    throw new Error(`Semantic Scholar verification failed: HTTP ${status}`);
   }
-  return { status: "verify_pending", identifiers: null };
+  const data = JSON.parse(body) as {
+    data?: Array<{ title?: string; externalIds?: Record<string, string> }>;
+  };
+  const userWords = new Set(normalized.split(" ").filter(Boolean));
+  if (userWords.size === 0) return { status: "unverified", identifiers: null };
+  for (const p of data.data ?? []) {
+    const pNorm = normalizeTitle(p.title ?? "");
+    const pWords = new Set(pNorm.split(" ").filter(Boolean));
+    if (pWords.size === 0) continue;
+    let overlapCount = 0;
+    for (const w of userWords) {
+      if (pWords.has(w)) overlapCount++;
+    }
+    const overlap = overlapCount / Math.max(userWords.size, pWords.size);
+    if (overlap >= fuzzyThreshold) {
+      const ext = p.externalIds ?? {};
+      return {
+        status: "verified",
+        identifiers: {
+          s2_title: p.title ?? "",
+          arxiv_id: ext.ArXiv ?? "",
+          doi: ext.DOI ?? "",
+        },
+      };
+    }
+  }
+  return { status: "unverified", identifiers: null };
 }
 
 // --- Orchestration ---
@@ -332,7 +288,7 @@ async function verifyPapers(
   if (Object.keys(toVerifyArxiv).length > 0) {
     const arxivResults = await verifyArxivBatch(Object.keys(toVerifyArxiv), opts.arxivBatchSize);
     for (const [baseId, paperIds] of Object.entries(toVerifyArxiv)) {
-      const status = arxivResults[baseId] ?? "verify_pending";
+      const status = arxivResults[baseId] ?? "unverified";
       for (const pid of paperIds) {
         results[pid] = {
           id: pid,
@@ -367,22 +323,6 @@ async function verifyPapers(
       reason: status === "verified" ? null : `crossref_${status}`,
       identifiers: { doi: normalizeDoi(p.doi ?? "") },
     };
-    if (status === "unverified" && p.title) {
-      const s2 = await verifyTitleS2(p.title, opts.fuzzyThreshold);
-      if (s2.status === "verified") {
-        result = {
-          id: p.id,
-          status: "verified",
-          method: "s2_fallback_from_doi",
-          confidence: "medium",
-          reason: null,
-          identifiers: { doi: normalizeDoi(p.doi ?? ""), ...(s2.identifiers ?? {}) },
-        };
-      } else if (s2.status === "verify_pending") {
-        result.status = "verify_pending";
-        result.reason = "crossref_unverified_s2_pending";
-      }
-    }
     results[p.id] = result;
     if (opts.cache !== null) {
       opts.cache[`doi:${normalizeDoi(p.doi ?? "")}`] = {
@@ -463,22 +403,19 @@ function computeVerdict(
   threshold: number,
 ): { verdict: string; metrics: Record<string, unknown> } {
   const terminal = results.filter((r) => r.status === "verified" || r.status === "unverified");
-  const pending = results.filter((r) => r.status === "verify_pending");
   const errors = results.filter((r) => r.status === "error");
   const unverified = results.filter((r) => r.status === "unverified");
 
   const hRate = terminal.length > 0 ? unverified.length / terminal.length : 0;
-  const pRate = results.length > 0 ? pending.length / results.length : 0;
 
   const warnings: string[] = [];
   if (hRate > threshold) warnings.push("high_hallucination_rate");
-  if (pending.length > 0) warnings.push("transient_failures_present");
   if (errors.length > 0) warnings.push("malformed_inputs_present");
 
   let verdict: string;
   if (results.length === 0) {
     verdict = "BLOCKED";
-  } else if (errors.length > 0 && terminal.length === 0 && pending.length === 0) {
+  } else if (errors.length > 0 && terminal.length === 0) {
     verdict = "ERROR";
   } else if (warnings.length > 0) {
     verdict = "WARN";
@@ -490,7 +427,6 @@ function computeVerdict(
     verdict,
     metrics: {
       hallucination_rate: Math.round(hRate * 10000) / 10000,
-      pending_rate: Math.round(pRate * 10000) / 10000,
       warnings,
     },
   };
@@ -537,7 +473,6 @@ program.action(
       const out = {
         verdict: "BLOCKED",
         hallucination_rate: 0,
-        pending_rate: 0,
         warnings: ["input_unreadable"],
         papers: [],
         error: String(e),

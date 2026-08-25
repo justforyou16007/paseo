@@ -11,11 +11,11 @@ Draft a LaTeX paper based on: **$ARGUMENTS**
 
 ## Constants
 
-- **REVIEWER_MODEL = `gpt-5.5`** — Model used via Codex MCP for section review. Must be an OpenAI model.
+- **REVIEWER_MODEL = `gpt-5.5`** — Model used by the Paseo codex reviewer for section review. Must be an OpenAI model.
 - **TARGET_VENUE = `ICLR`** — Default venue. Supported: `ICLR`, `NeurIPS`, `ICML`, `CVPR` (also ICCV/ECCV), `ACL` (also EMNLP/NAACL), `AAAI`, `ACM` (ACM MM, SIGIR, KDD, CHI, etc.), `IEEE_JOURNAL` (IEEE Transactions / Letters, e.g., T-PAMI, JSAC, TWC, TCOM, TSP, TIP), `IEEE_CONF` (IEEE conferences, e.g., ICC, GLOBECOM, INFOCOM, ICASSP). Determines style file and formatting.
 - **ANONYMOUS = true** — If true, use anonymous author block. Set `false` for camera-ready. Note: most IEEE venues do NOT use anonymous submission — set `false` for IEEE.
 - **MAX_PAGES = 9** — Main body page limit. For ML conferences: counts from first page to end of Conclusion section, references and appendix NOT counted. **For IEEE venues: references ARE counted toward the page limit.** Typical limits: IEEE journal = no strict limit (but 12-14 pages typical for Transactions, 4-5 for Letters), IEEE conference = 5-8 pages including references.
-- **DBLP_BIBTEX = true** — Fetch real BibTeX from DBLP/CrossRef instead of LLM-generated entries. Eliminates hallucinated citations. Zero install required. Set `false` to use legacy behavior (LLM search + `[VERIFY]` markers).
+- **DBLP_BIBTEX = true** — Fetch real BibTeX from DBLP instead of generating entries from model memory. If DBLP cannot resolve a cited work, stop and report the unresolved citation.
 
 ## Inputs
 
@@ -39,7 +39,7 @@ These references are support material, not extra workflow phases.
 
 ## Optional: Style reference (`— style-ref: <source>`, opt-in)
 
-Lets the user steer **structural** style (section ordering, theorem density, sentence cadence, figure density, bibliography style) toward a reference paper. **Default OFF — when the user does not pass `— style-ref`, do nothing differently from before.**
+Lets the user steer **structural** style (section ordering, theorem density, sentence cadence, figure density, bibliography style) toward a reference paper. **Default OFF — the normal writer path does not read a style reference.**
 
 Only when `— style-ref: <source>` appears in `$ARGUMENTS`, run the helper FIRST, before drafting:
 
@@ -61,7 +61,7 @@ STYLE_STATUS=0
 CACHE=$(node "$STYLE_HELPER" --source "<source>") || STYLE_STATUS=$?
 case "$STYLE_STATUS" in
   0) ;;                                       # use $CACHE/style_profile.md as structural guidance
-  2) echo "warning: style-ref skipped (missing optional dep)" >&2 ;;
+  2) echo "error: --style-ref requires the optional dependency; aborting draft" >&2 ; exit 1 ;;
   3) echo "error: --style-ref source failed; aborting draft" >&2 ; exit 1 ;;
   *) echo "error: helper failed unexpectedly; aborting draft" >&2 ; exit 1 ;;
 esac
@@ -170,7 +170,9 @@ paper/
 
 If `paper/` already exists, back up to `paper-backup-{timestamp}/` before overwriting. Never silently destroy existing work.
 
-**CRITICAL: Clean stale files.** When changing section structure (e.g., 5 sections → 7 sections), delete section files that are no longer referenced by `main.tex`. Stale files (e.g., old `5_conclusion.tex` left behind when conclusion moved to `7_conclusion.tex`) cause confusion and waste space.
+**CRITICAL: Clean stale files.** When changing section structure, delete section
+files that are no longer referenced by `main.tex`. Stale section files cause
+confusion and waste space.
 
 ### Step 1: Initialize Project
 
@@ -312,8 +314,6 @@ If no standalone full-proof source exists:
 - If the appendix needs different wording, add an explicit notation bridge instead of silently renaming concepts
 - Resolve all mismatches before Step 4
 
-**Empirical motivation:** in a real theory-paper run, the default behavior generated `"see supplementary proof document"` placeholders in the appendix. The author had to manually pull hundreds of lines of full proofs from a standalone proofs file (e.g. `proof_full.tex`). Without this pass, theory papers ship with sketch-only appendices that fail at theory venues.
-
 ### Step 4: Build Bibliography
 
 **CRITICAL: Only include entries that are actually cited in the paper.**
@@ -322,14 +322,14 @@ If no standalone full-proof source exists:
 2. Build a citation key list
 3. For each citation key:
    - Check existing `.bib` files in the project/narrative docs
-   - If not found and **DBLP_BIBTEX = true**, use the verified fetch chain below
-   - If not found and **DBLP_BIBTEX = false**, search arXiv/Scholar for correct BibTeX
-   - **NEVER fabricate BibTeX entries** — mark unknown ones with `[VERIFY]` comment
+   - If not found, use the DBLP lookup below
+   - If DBLP cannot resolve it, stop the draft and report the citation key
+   - **NEVER fabricate BibTeX entries**
 4. Write `references.bib` containing ONLY cited entries (no bloat)
 
 #### Verified BibTeX Fetch (when DBLP_BIBTEX = true)
 
-Three-step fallback chain — zero install, zero auth, all real BibTeX:
+Use one canonical lookup — DBLP returns the venue metadata used by this skill:
 
 **Step A: DBLP (best quality — full venue, pages, editors)**
 
@@ -341,19 +341,12 @@ curl -s "https://dblp.org/search/publ/api?q=TITLE+AUTHOR&format=json&h=3"
 curl -s "https://dblp.org/rec/{key}.bib"
 ```
 
-**Step B: CrossRef DOI (fallback — works for arXiv preprints)**
-
-```bash
-# If paper has a DOI or arXiv ID (arXiv DOI = 10.48550/arXiv.{id})
-curl -sLH "Accept: application/x-bibtex" "https://doi.org/{doi}"
-```
-
-**Step C: Mark `[VERIFY]` (last resort)**
-If both DBLP and CrossRef return nothing, mark the entry with `% [VERIFY]` comment. Do NOT fabricate.
+If DBLP returns no unambiguous record, stop. Do not substitute another
+metadata service or leave a placeholder entry.
 
 **Why this matters:** LLM-generated BibTeX frequently hallucinates venue names, page numbers, or even co-authors. DBLP and CrossRef return publisher-verified metadata. Upstream skills (`/research-lit`, `/novelty-check`) may mention papers from LLM memory — this fetch chain is the gate that prevents hallucinated citations from entering the final `.bib`.
 
-If the DBLP/CrossRef flow is not enough, load `../shared-references/citation-discipline.md` for stricter fallback rules before adding placeholders.
+If a citation is ambiguous, load `../shared-references/citation-discipline.md` for the resolution rules and stop until the ambiguity is resolved.
 
 **Automated bib cleaning** — use this Python pattern to extract only cited entries:
 
@@ -453,9 +446,8 @@ PY
 If `DEAD ENTRIES` is printed, remove those keys from `references.bib` before continuing.
 If `VERIFY` or `MISMATCH` is printed, do not invent metadata:
 
-- prefer DBLP when it returns a clear hit
-- if DBLP misses and a DOI is available, fall back to CrossRef
-- if both disagree or still cannot verify, keep the entry only with a `% [VERIFY]` marker
+- require a clear DBLP hit
+- if DBLP misses or the metadata disagrees, stop and report the entry
 - uncited entries must be deleted, not left behind as dead bibliography bloat
 
 **Citation reachability rule:** an entry is dead if its key does not appear in any `\cite...{}` command in `paper/main.tex` or any `paper/sections/*.tex` file.
@@ -590,7 +582,7 @@ Before declaring done:
 
 ## Key Rules
 
-- **Large file handling**: If the Write tool fails due to file size, immediately retry using Bash (`cat << 'EOF' > file`) to write in chunks. Do NOT ask the user for permission — just do it silently.
+- **Large file handling**: If the Write tool fails, stop and report the write error. Do not switch to a second writer.
 - **Do NOT generate author names, emails, or affiliations** — use anonymous block or placeholder
 - **Write complete sections, not outlines** — the output should be compilable LaTeX
 - **One file per section** — modular structure for easy editing
@@ -608,7 +600,7 @@ Before declaring done:
 
 - `../shared-references/writing-principles.md` — story framing, abstract/introduction patterns, sentence-level clarity, reviewer reading order
 - `../shared-references/venue-checklists.md` — ICLR/NeurIPS/ICML/IEEE submission requirements to check before declaring done
-- `../shared-references/citation-discipline.md` — stricter fallback for ambiguous citations
+- `../shared-references/citation-discipline.md` — rules for resolving ambiguous citations
 
 Keep using the reverse-outline test and anti-inflation polish from the main workflow above; the shared references are there to improve quality without adding a new phase.
 

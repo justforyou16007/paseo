@@ -60,7 +60,7 @@ Written by the orchestrator before dispatching the worker.
   - Project-level files (CLAUDE.md, research-wiki/, etc.)
   - The dashboard itself (for top-level context)
 - **`context`** — small scalar/array values the worker needs without reading
-  files (open gap IDs, metric target, reference knowledge). Keep this bounded.
+  files (open problem ids, metric target, reference knowledge). Keep this bounded.
 - **`output_dir`** — where the worker MUST write all its output files
 
 ### Worker behavior on startup
@@ -130,7 +130,7 @@ Written by the worker after completing its work.
 - **`primary_output`** — the main output file path (relative to output_dir)
 - **`summary`** — worker-specific scalar data. The orchestrator reads these
   fields for gate arithmetic (e.g., `primary_metric`, `ideas_count`,
-  `gap_ids`, `verdict`). Keep bounded.
+  `problem_ids`, `verdict`). Keep bounded.
 - **`dashboard_patch`** — a JSON patch object that the orchestrator merges
   into `dashboard.json`. This is how workers update the orchestrator's state
   without the orchestrator reading output files.
@@ -166,8 +166,9 @@ using a **dot-notation-aware, idempotent merge**:
    same iteration replaces that row. This is how auto-review-loop publishes
    the post-fix metric after experiment-bridge's initial analysis without
    double-counting history. `metric.baseline` is not patchable by any worker —
-   it is anchored during `/research-setup` Phase 7.6 and written at dashboard
-   init. Concretely:
+   dashboard init seeds it with the prior-work expectation from the brief, and
+   `/auto-research-loop`'s iteration-1 Baseline Anchoring step (after Stage 3,
+   before the gate) rewrites it to the reproduced value. Concretely:
    ```
    if patch has metric.current:
        upsert history[receipt.iteration] = patch["metric.current"]
@@ -253,10 +254,10 @@ The orchestrator's single state source. ~50 lines, ~300 tokens.
     "iteration": 2
   },
 
-  "gaps": {
-    "open": ["G3", "G5"],
-    "closed": ["G1", "G2", "G4"],
-    "total": 5
+  "problems": {
+    "open": ["problem:long-context-drift", "problem:eval-split-leak"],
+    "closed": ["problem:baseline-verify", "problem:metric-noise"],
+    "total": 4
   },
 
   "last_review": {
@@ -324,16 +325,11 @@ not successful completion. There is no `stopped` status.
 11. → next phase or stop
 ```
 
-## Backward Compatibility
+## Invocation modes
 
-All orchestrator-dispatched workers use the manifest protocol. Skills that
-are also invoked directly (e.g. `/idea-discovery` from the command line)
-retain their direct-call argument parsing; the manifest startup check
-(`if "$ARGUMENTS" contains "— manifest:"`) selects the mode.
-
-Legacy receipt paths (`.aris/runs/<run_id>.<phase>.done.json`) are used only
-in direct-call mode for internal sub-agent coordination within a skill.
-Orchestrators never read these paths.
+Orchestrator-dispatched workers use the manifest protocol. A skill that also
+supports a standalone invocation keeps its own argument parser; the manifest
+startup check (`if "$ARGUMENTS" contains "— manifest:"`) selects the mode.
 
 ## Anti-patterns
 

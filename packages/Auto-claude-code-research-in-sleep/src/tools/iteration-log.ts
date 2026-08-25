@@ -19,22 +19,22 @@ function logPath(root: string, runId: string): string {
 
 function lastStale(filePath: string): number {
   if (!fs.existsSync(filePath)) return 0;
+  const content = fs.readFileSync(filePath, "utf-8");
   let last = 0;
-  try {
-    const content = fs.readFileSync(filePath, "utf-8");
-    for (const raw of content.split("\n")) {
-      const line = raw.trim();
-      if (!line) continue;
-      try {
-        const parsed = JSON.parse(line) as Record<string, unknown>;
-        const sc = parsed["stale_count"];
-        if (typeof sc === "number") last = sc;
-      } catch {
-        continue;
-      }
+  for (const [index, raw] of content.split("\n").entries()) {
+    const line = raw.trim();
+    if (!line) continue;
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(line) as Record<string, unknown>;
+    } catch (e) {
+      throw new Error(`invalid iteration log line ${index + 1}: ${String(e)}`);
     }
-  } catch {
-    return 0;
+    const sc = parsed["stale_count"];
+    if (typeof sc !== "number" || !Number.isInteger(sc) || sc < 0) {
+      throw new Error(`iteration log line ${index + 1} has invalid stale_count`);
+    }
+    last = sc;
   }
   return last;
 }

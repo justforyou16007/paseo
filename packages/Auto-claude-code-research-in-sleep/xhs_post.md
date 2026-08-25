@@ -95,7 +95,7 @@ AI帮你加速，但最终决策权在你 🧠
 ⚙️ 三步安装
 
 1️⃣ 装 Claude Code
-2️⃣ 装 Codex MCP（review类需要）
+2️⃣ 启动 Paseo daemon（review 和子 agent 都走 Paseo）
 3️⃣ cp -r skills/\* ~/.claude/skills/
 
 就这么简单 🎯

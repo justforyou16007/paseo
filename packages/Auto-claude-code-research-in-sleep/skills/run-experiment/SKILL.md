@@ -147,10 +147,9 @@ Then:
    heartbeat — your finish notification then re-invokes the parent
    (`/experiment-bridge`), which reads the receipt and advances to Phase 5.
 
-**Degradation:** if this is not an agent-scoped session or
-`create_heartbeat` is unavailable, print the poll command
-(`sh "$OPS/job-status.sh" "$EXP_NAME"`) and note "monitor manually" in the
-receipt — do not block the launch.
+If this is not an agent-scoped session or `create_heartbeat` is unavailable,
+mark monitoring `BLOCKED` and stop. Do not replace the required heartbeat with
+a manual poll command.
 
 ### Step 6: Feishu Notification (if configured)
 

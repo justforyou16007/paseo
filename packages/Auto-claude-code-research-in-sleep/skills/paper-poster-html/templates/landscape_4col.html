@@ -10,8 +10,8 @@
     1. Copy this file to your working directory as `poster.html`.
     2. Edit the DESIGN TOKENS in `:root` to your lab/venue colors.
     3. Replace TODO content placeholders (search for "TODO").
-    4. Run `python tools/poster_check.py measure poster.html` to align columns.
-    5. Run `python tools/render_preview.py poster.html` to produce the PDF.
+    4. Run `node "$SKILL_SCRIPTS/poster-check.js" measure poster.html` to align columns.
+    5. Run `node "$SKILL_SCRIPTS/render-preview.js" poster.html` to produce the PDF.
   NOTE: as shipped, this scaffold passes `preflight` (structure) but is
     EXPECTED to FAIL `measure`/`polish` -- figures are commented out and copy
     is TODO stubs, so columns only fill the top of the canvas. Those two gates
@@ -161,7 +161,7 @@
          (AR width tweak; prefer the .w-NN classes below where possible)
      ========================================================= */
 
-      /* Poster container — exact print dimensions; data-measure-role="poster" so poster_check.py
+      /* Poster container — exact print dimensions; data-measure-role="poster" so poster-check.js
      can verify the canvas size. */
       .poster {
         width: calc(1524 * var(--u));

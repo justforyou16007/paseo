@@ -112,16 +112,12 @@ flowchart TD
 **Claude MUST verify the generated Mermaid code by running the Mermaid CLI (`mmdc`).**
 
 ```bash
-# Check if mermaid-cli is available
-if command -v mmdc &> /dev/null; then
-    # Render to PNG to verify syntax is correct
-    mmdc -i figures/<diagram-name>.mmd -o figures/<diagram-name>.png -b transparent
-    echo "✅ Syntax valid — PNG rendered to figures/<diagram-name>.png"
-else
-    # Try npx as fallback
-    npx -y @mermaid-js/mermaid-cli@latest -i figures/<diagram-name>.mmd -o figures/<diagram-name>.png -b transparent
-    echo "✅ Syntax valid — PNG rendered to figures/<diagram-name>.png"
-fi
+command -v mmdc >/dev/null 2>&1 || {
+    echo "ERROR: mmdc is required to verify Mermaid output." >&2
+    exit 1
+}
+mmdc -i figures/<diagram-name>.mmd -o figures/<diagram-name>.png -b transparent
+echo "✅ Syntax valid — PNG rendered to figures/<diagram-name>.png"
 ```
 
 **If the verification fails:**
@@ -129,7 +125,7 @@ fi
 1. Read the error message carefully
 2. Fix the syntax issue in both `.mmd` and `.md` files
 3. Re-run verification
-4. Repeat up to MAX_ITERATIONS (3) times
+4. Stop after the failed verification and report the syntax error to the caller.
 
 ### Step 5: Claude STRICT Visual Review & Scoring (MANDATORY)
 

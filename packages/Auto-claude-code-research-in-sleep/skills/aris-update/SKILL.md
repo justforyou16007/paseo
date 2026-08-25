@@ -71,8 +71,8 @@ MANIFEST=".aris/installed-skills.txt"
    fi
 
    if [ -z "$ARIS_REPO" ]; then
-     # Fall back to manifest's repo_root
-     ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' "$MANIFEST")
+     echo "ERROR: ARIS_REPO is required; the manifest repo_root is not used as an implicit substitute." >&2
+     exit 1
    fi
 
    test -d "$ARIS_REPO/skills" || {
@@ -103,7 +103,7 @@ MANIFEST=".aris/installed-skills.txt"
    ```bash
    MANIFEST_VERSION=$(awk -F'\t' '$1=="version"{print $2; exit}' "$MANIFEST")
    MANIFEST_GENERATED=$(awk -F'\t' '$1=="generated"{print $2; exit}' "$MANIFEST")
-   OLD_REPO_ROOT=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' "$MANIFEST")
+   MANIFEST_REPO_ROOT=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' "$MANIFEST")
    ```
 
 4. Parse flags (`— force`, `— dry-run`) from `$ARGUMENTS`.

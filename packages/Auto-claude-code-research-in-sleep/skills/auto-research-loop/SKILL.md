@@ -90,7 +90,7 @@ For the full manifest and receipt JSON schemas, see `shared-references/worker-ma
    finish notification re-invoke this agent (never poll).
 
 6. Read $WORKER_DIR/receipt.json:
-   - If status=failed -> log and decide (retry or stop)
+   - If status=failed -> record the failed receipt and stop the iteration. Do not retry the worker here; experiment failures use the experiment repair contract inside `/experiment-bridge`.
    - Merge atomically and idempotently:
      node "$DASH_MERGE" apply --root "$ROOT" --run-id "$RUN_ID" \
           --receipt "$WORKER_DIR/receipt.json"
@@ -197,21 +197,36 @@ ROOT=$(pwd)
 # Resolve helpers (integration-contract.md §2 - project-local only)
 RUN_STATE=".aris/dist/tools/run-state.js"
 [ -f "$RUN_STATE" ] || RUN_STATE="dist/tools/run-state.js"
-[ -f "$RUN_STATE" ] || RUN_STATE=""
+[ -f "$RUN_STATE" ] || {
+  echo "ERROR: run-state.js is required by /auto-research-loop. Run /aris-update or build the ARIS runtime." >&2
+  exit 1
+}
 METRIC_GATE=".aris/dist/tools/metric-gate.js"
 [ -f "$METRIC_GATE" ] || METRIC_GATE="dist/tools/metric-gate.js"
-[ -f "$METRIC_GATE" ] || METRIC_GATE=""
+[ -f "$METRIC_GATE" ] || {
+  echo "ERROR: metric-gate.js is required by /auto-research-loop. Run /aris-update or build the ARIS runtime." >&2
+  exit 1
+}
 DASH_MERGE=".aris/dist/tools/dashboard-merge.js"
 [ -f "$DASH_MERGE" ] || DASH_MERGE="dist/tools/dashboard-merge.js"
-[ -f "$DASH_MERGE" ] || DASH_MERGE=""
+[ -f "$DASH_MERGE" ] || {
+  echo "ERROR: dashboard-merge.js is required by /auto-research-loop. Run /aris-update or build the ARIS runtime." >&2
+  exit 1
+}
 # Paseo substrate config emitter (shared shell helper, integration-contract.md §2)
 RENDER=".aris/tools/render_w_agent_prompt.sh"
 [ -f "$RENDER" ] || RENDER="tools/render_w_agent_prompt.sh"
-[ -f "$RENDER" ] || RENDER=""
-# Paper audit verifier (shell helper, integration-contract.md §2, Policy A)
+[ -f "$RENDER" ] || {
+  echo "ERROR: render_w_agent_prompt.sh is required by /auto-research-loop. Run /aris-update or build the ARIS runtime." >&2
+  exit 1
+}
+# Paper audit verifier (shell helper, integration-contract.md §2)
 AUDIT_VERIFIER=".aris/tools/verify_paper_audits.sh"
 [ -f "$AUDIT_VERIFIER" ] || AUDIT_VERIFIER="tools/verify_paper_audits.sh"
-[ -f "$AUDIT_VERIFIER" ] || AUDIT_VERIFIER=""
+[ -f "$AUDIT_VERIFIER" ] || {
+  echo "ERROR: verify_paper_audits.sh is required by /auto-research-loop. Run /aris-update or build the ARIS runtime." >&2
+  exit 1
+}
 
 # Preconditions are a callable step. Fresh start calls it once; resume calls it
 # only when run-state reports the unfinished `init` phase.
@@ -256,8 +271,8 @@ if [ "$ENV_CONFIGURED" = "false" ]; then
     # Waiting is mandatory: end the turn and resume on the env-manager's
     # finish notification. Never inspect env.json immediately after create.
 
-    # The known receipt is checked when present; env.json remains the final
-    # authority because an older env-manager may only signal completion.
+    # The receipt confirms the child result when present; env.json is the
+    # configuration authority.
     if [ -f "$ENV_RECEIPT" ]; then
         jq -e --arg p "$PROJECT_NAME" '
           .skill == "experiment-env-manager" and .project == $p and
@@ -404,7 +419,7 @@ else
   },
   "metric": $METRIC_JSON,
   "best_idea": null,
-  "gaps": { "open": [], "closed": [], "total": 0 },
+  "problems": { "open": [], "closed": [], "total": 0 },
   "last_review": { "verdict": null, "score": null, "reviewer_id": null },
   "stop_reason": null,
   "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
@@ -433,6 +448,14 @@ DASH
         "$DASHBOARD" > "$DASHBOARD.tmp" && mv "$DASHBOARD.tmp" "$DASHBOARD"
 fi
 ```
+
+`problems.open` / `problems.closed` hold `problem:<slug>` node ids from the
+research wiki. The loop initializes them empty and never writes them itself.
+They are published once per run, by the summary worker, from a single scan of
+the wiki (`research-wiki.js stats --json`) — see the Summary section. No
+in-loop worker patches them: each problem writer knows only the problems it
+just filed, and these fields are whole-list replacements, so a partial writer
+would erase the other writers' problems.
 
 ---
 
@@ -672,10 +695,16 @@ The orchestrator dispatches a claude sub-agent with a prompt to write
 `NARRATIVE_REPORT.md` from the dashboard and wiki state. The sub-agent reads the
 inputs, generates the report to `$WORKER_DIR/outputs/`, and writes its receipt.
 
+This worker also closes the run's books on the research wiki. It is the only
+worker that runs after the stop gate, so it is the only one that can see the
+run's final verdict and the whole problem tree at once. The orchestrator still
+writes nothing to the wiki itself.
+
 | Input | Path |
 |-------|------|
 | dashboard | `$ROOT/$DASHBOARD` |
 | wiki_index | `$ROOT/research-wiki/index.md` |
+| wiki_root | `$ROOT/research-wiki/` |
 | last_analysis | `$WORKERS_DIR/${ITERATION}-auto-review-loop/outputs/final-analysis/EXPERIMENT_RESULTS.md` |
 | last_review | `$WORKERS_DIR/${ITERATION}-auto-review-loop/outputs/AUTO_REVIEW.md` |
 
@@ -687,15 +716,38 @@ Dispatch: summary sub-agent via `mcp__paseo__create_agent` with prompt:
 ```
 Generate NARRATIVE_REPORT.md from the provided inputs. Required sections:
 metric_trajectory, stop_reason, iteration_log, open_problems, artifacts.
-Write to the output_dir specified in the manifest. Write receipt.json when done.
-The receipt must set worker="summary", run_id/iteration from the manifest,
-primary_output="NARRATIVE_REPORT.md", and dashboard_patch.summary_path to the
-run-relative report path.
+Write to the output_dir specified in the manifest.
+
+Then close the run's books on the research wiki, in this order:
+1. If manifest.context.stop_reason == "metric_met", close the run's root
+   problem — the target it names has now been reached:
+     node "$WIKI_SCRIPT" add_problem <wiki_root> --slug root --status solved \
+       --evidence "<final metric value + the analysis path that measured it>" \
+       --update-on-exist || exit 1
+   For any other stop_reason the target was NOT reached, so root stays open.
+2. node "$WIKI_SCRIPT" rebuild_query_pack <wiki_root> || exit 1
+3. Read the final tally back from the wiki, after the close:
+     node "$WIKI_SCRIPT" stats <wiki_root> --json
+   Copy its .problems.open, .problems.closed and .problems.total verbatim
+   into the receipt. Do not assemble these lists by hand.
+
+Write receipt.json last. The receipt must set worker="summary", run_id/iteration
+from the manifest, primary_output="NARRATIVE_REPORT.md",
+dashboard_patch.summary_path to the run-relative report path, and
+dashboard_patch."problems.open" / "problems.closed" / "problems.total" from
+step 3.
 ```
 
-**Post-receipt (optional):** If `RENDER_HTML=true`, dispatch `/render-html` to render
-the generated `NARRATIVE_REPORT.md` to HTML (non-blocking, failure is logged
-but does not block acceptance).
+Resolve `$WIKI_SCRIPT` per
+[`shared-references/wiki-helper-resolution.md`](../shared-references/wiki-helper-resolution.md).
+Closing root here rather than in the stop gate keeps the gate pure arithmetic
+on the dashboard, and keeps every wiki write inside a worker. A run that stops
+without `metric_met` leaves root open on purpose: the next run's query pack
+should still carry the unmet target as the seed problem.
+
+**Post-receipt:** If `RENDER_HTML=true`, dispatch `/render-html` to render
+the generated `NARRATIVE_REPORT.md` to HTML. A render failure fails the summary
+phase. Set `RENDER_HTML=false` before the run to omit this artifact.
 
 **Run-state transitions:** Accept the `loop` phase with the deterministic
 provenance recorded by the stop gate (the actual termination basis - never a
@@ -789,13 +841,20 @@ STATUS=$(jq -r '.status' "$DASHBOARD")
 | `paper-writing` | `finishing` | Resume paper-writing |
 
 Within the iteration loop, `current_phase` tells the orchestrator which stage
-was last started (`idea-discovery` -> `experiment-bridge` -> `auto-review-loop`).
-The orchestrator checks for existing `$WORKERS_DIR/${ITERATION}-<phase>/receipt.json`:
+was last started (`idea-discovery` -> `experiment-bridge` -> `auto-review-loop` ->
+`metric-gate`). The orchestrator checks for existing
+`$WORKERS_DIR/${ITERATION}-<phase>/receipt.json`:
 - Receipt exists -> stage completed; merge with
   `dashboard-merge.js apply` (it skips receipts already in
   `dashboard.applied_receipts`, so a crash between merge and bookkeeping
   cannot double-apply), then advance
 - No receipt -> re-dispatch the stage
+- `current_phase == "metric-gate"` -> no worker directory exists for this phase, and
+  none is needed: the Stage 3 receipt is already merged (it is what moved
+  `current_phase` past `auto-review-loop`). On resume, run the Baseline
+  Anchoring step if `iteration == 1` and `metric.baseline` is still the
+  un-anchored prior-work expectation, then run the Gate directly. Never
+  re-dispatch Stage 3 from here.
 
 The stage-to-directory mapping is exact. After a continuing gate evaluation,
 the dashboard increments once and enters `${ITERATION}-idea-discovery`; the
@@ -805,7 +864,7 @@ post-increment stages derive their evidence source as `ITERATION-1`. Resume
 uses the persisted iteration and current phase and never increments a second
 time.
 
-Never infer corruption from dashboard age. An old run remains resumable; use
+Never infer corruption from dashboard age. A prior run remains resumable; use
 run-state, receipts, and live-agent checks to decide whether to re-attach or
 re-dispatch. Start a fresh run only when explicitly requested or when persisted
 state fails validation.
@@ -848,7 +907,7 @@ state fails validation.
 
 9. **One long-lived agent, loops internally.** This skill runs as ONE paseo agent. Do NOT wrap in `/loop` / `create_heartbeat`.
 
-10. **Providers come from the run's paseo-config.json.** `render_w_agent_prompt.sh --emit-config` emits it once at startup; every `create_agent` reads `executor_provider`/`executor_mode`/`executor_thinking` from it. Never hardcode a provider, never fall back to a different one.
+10. **Providers come from the run's paseo-config.json.** `render_w_agent_prompt.sh --emit-config` emits it once at startup; every `create_agent` reads `executor_provider`/`executor_mode`/`executor_thinking` from it. A missing or invalid provider configuration fails dispatch.
 
 11. **Patience enforcement.** `metric-gate.js evaluate` derives the no-progress streak from `metric.history` (direction-aware, seeded from `metric.baseline`) and stops with `patience_exhausted` when it reaches `config.patience`. No counter is accumulated, so resume is idempotent.
 

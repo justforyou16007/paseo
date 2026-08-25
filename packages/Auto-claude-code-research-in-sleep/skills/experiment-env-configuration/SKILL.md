@@ -84,7 +84,7 @@ Rows 1–14 are written to a **staging directory first** and only moved into
 2. **Derive the project slug.** `basename "$ROOT"`, lowercased, consecutive
    non-alphanumerics collapsed to a single `-`, leading/trailing `-` stripped.
    This becomes `<project>` in `run-<project>-experiment`.
-   Validate against `/^[a-z0-9][a-z0-9-]*$/`; if it fails, fall back to `project`.
+   Validate against `/^[a-z0-9][a-z0-9-]*$/`; if it fails, stop and report the invalid project slug.
 
    Example: `Foo__Bar!` → `foo-bar` (not `foo--bar-`).
 
@@ -489,8 +489,8 @@ stdout. Downstream skills call this instead of reading `env.json` directly:
 
 `connection.ssh_alias` is `null` for local environments. `resources` is the
 canonical resource slot config read by `/experiment-queue` for scheduling;
-`hardware` is a backward-compatible alias computed from `resources` when the
-resource type is `"gpu"`. `/experiment-plan` reads `hardware`; `/experiment-bridge`
+`hardware` is the resource view computed from `resources` when the resource type
+is `"gpu"`. `/experiment-plan` reads `hardware`; `/experiment-bridge`
 reads `error_patterns` and `wandb`; `/experiment-queue` reads `connection`.
 
 **`query-resources.sh`** — live free-resource query. Runs
@@ -588,8 +588,9 @@ Writes the enriched receipt to `.aris/runs/<run_id>.experiment.<exp_name>.done.j
 
 `result_files` is the manifest `/analyze-results` reads as input — analysis
 sub-skills start from this list, so no separate manifest script is needed.
-This receipt replaces multiple formerly separate data sources (env-helper
-monitor output, SSH W&B queries, CLAUDE.md parsing, hardcoded error patterns).
+This receipt is the single input record for downstream analysis; it contains
+the environment, result paths, metrics, and failure details needed by the
+analysis skills.
 
 **`stop-job.sh <exp_name> [--force]`** — stop one running job. `screen -X
 quit` / `tmux kill-session` / `kill <pid>` / `modal app stop` per handle +
@@ -917,10 +918,9 @@ When `— patch: <path>` is provided:
    | `feedback.result.*` | `collect-outputs.sh` |
    | `monitor.*` | `job-status.sh` (facts surfacing) |
 
-   **Version gate:** if the existing `env.json` has `version < 2`, the patch
-   cannot be mapped onto the old layout — regenerate the whole bundle from the
-   patched `env.json` (preserve `handles/` in place) instead of partial
-   regeneration.
+   **Version requirement:** patches apply only to `env.json` version `2`. For
+   any other version, stop and regenerate the bundle from the current schema;
+   preserve `handles/` in place.
 
 5. **Regenerate only affected ops** from the updated `env.json` values.
    Leave unaffected scripts untouched. When a patched field changes what a
@@ -964,9 +964,10 @@ When `— patch: <path>` is provided:
 4. **Never guess a run command.** If the PRD does not provide `run.entry_point`
    or `run.template`, error exit. A guessed command wastes GPU hours and
    produces results that look real.
-5. **Prefer an existing backend.** If `local`/`remote`/`vast`/`modal`/`docker`
+5. **Use one explicit backend.** If `local`/`remote`/`vast`/`modal`/`docker`
    covers the environment, set `backend_hint` and call `env-helper.js` from the
-   generated scripts. Only fall back to `custom` direct commands when none fits.
+   generated scripts. Use `custom` only when the PRD explicitly selects it and
+   provides its commands; never infer it after another backend fails.
 6. **Analysis is driven by `/analyze-results`.** `collect-outputs.sh` provides
    data collection (the `result_files` manifest in its receipt);
    `/analyze-results` and its sub-skills (`skills/analyze-results-tools/`)

@@ -424,11 +424,7 @@ export class VastEnv extends EnvBackend {
       return this._announce("destroy", `vastai destroy instance ${instanceId}`);
     }
 
-    try {
-      this.collectResults();
-    } catch {
-      // results may already be collected; proceed to destroy
-    }
+    this.collectResults();
 
     const { stdout: out, returncode: rc } = runShell(
       `vastai destroy instance ${shellQuote(String(instanceId))}`,

@@ -60,7 +60,7 @@ if [ -n "${CLAUDE_SKILL_DIR:-}" ]; then
   [ -f "$_PROJECT_ROOT/.aris/dist/skills/figure-spec/figure-renderer.js" ] && FIGURE_RENDERER="$_PROJECT_ROOT/.aris/dist/skills/figure-spec/figure-renderer.js"
   [ -z "$FIGURE_RENDERER" ] && [ -f "$_PROJECT_ROOT/dist/skills/figure-spec/figure-renderer.js" ] && FIGURE_RENDERER="$_PROJECT_ROOT/dist/skills/figure-spec/figure-renderer.js"
 fi
-# Layers 1-2: shared-runtime chain (legacy compatibility + non-CC hosts).
+# Shared runtime resolution for installed and development checkouts.
 if [ -z "$FIGURE_RENDERER" ]; then
   _pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
 cd "${_pr:-$(pwd)}" || exit 1
@@ -261,9 +261,9 @@ Three-stage horizontal cascade with inputs feeding in from top, outputs exiting 
 
 - **`/paper-writing`** (Workflow 3): when `illustration: figurespec` (default for architecture figures), this skill handles Phase 2b
 - **`/paper-figure`**: handles data plots; they complement each other (data + architecture = complete figure set)
-- **`/paper-illustration`**: fallback for figures that need natural/qualitative style (method illustrations with photos, qualitative result grids)
+- **`/paper-illustration`**: explicitly choose this skill for natural/qualitative figures (method illustrations with photos, qualitative result grids)
 - **`/mermaid-diagram`**: lighter alternative for simple flowcharts
 
 ## Review Tracing
 
-After each paseo codex reviewer sub-agent call (fresh or continuation via `send_agent_prompt`), save the trace following `shared-references/review-tracing.md` (Policy C — forensic; never silently skip). Use `save_trace.sh` (resolved per the chain in `shared-references/integration-contract.md` §2) or write files directly to `.aris/traces/<skill>/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).
+After each paseo codex reviewer sub-agent call (fresh or continuation via `send_agent_prompt`), save the trace with `save_trace.sh` resolved through `shared-references/integration-contract.md` §2. If the helper is missing or fails, stop the gate. Respect the `--- trace:` parameter (default: `full`).

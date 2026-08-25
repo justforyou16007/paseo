@@ -122,8 +122,8 @@ def parse_claude_json(raw_stdout: str) -> tuple[dict[str, Any] | None, str | Non
     if not stripped:
         return None, "Claude CLI returned empty output"
 
-    # CLI 2.x: try whole stdout as a single JSON value first.
-    # Handles both compact one-line arrays and pretty-printed multi-line arrays.
+    # The selected CLI contract is one complete JSON value. Do not recover a
+    # result from banners or another output shape.
     try:
         payload = json.loads(stripped)
     except json.JSONDecodeError:
@@ -143,34 +143,6 @@ def parse_claude_json(raw_stdout: str) -> tuple[dict[str, Any] | None, str | Non
                 return item, None
         return None, "Claude CLI returned a JSON array without a 'result' event"
 
-    # Legacy CLI 1.x: NDJSON stream of dicts, walk lines in reverse for the
-    # last useful payload. Same array-vs-dict policy as above so a CLI 2.x
-    # JSON-array line surrounded by non-JSON noise (wrapper warnings, nvm/asdf
-    # banners, future CLI debug prints) still surfaces the result event
-    # instead of being silently dropped.
-    saw_array_without_result = False
-    for candidate in reversed(stripped.splitlines()):
-        candidate = candidate.strip()
-        if not candidate:
-            continue
-        try:
-            line_payload = json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(line_payload, dict):
-            if saw_array_without_result and line_payload.get("type") != "result":
-                continue
-            return line_payload, None
-        if isinstance(line_payload, list):
-            for item in reversed(line_payload):
-                if isinstance(item, dict) and item.get("type") == "result":
-                    return item, None
-            # fall through: this line was an array without a result event,
-            # but earlier lines might still carry one — keep scanning.
-            saw_array_without_result = True
-
-    if saw_array_without_result:
-        return None, "Claude CLI returned a JSON array without a 'result' event"
     return None, "Claude CLI did not return JSON output"
 
 

@@ -113,51 +113,18 @@ function parseEntry(entryXml: string): ArxivEntry {
 
 async function fetchAtom(url: string): Promise<string> {
   await sleep(500);
-
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const resp = await fetch(url, {
-        headers: { "User-Agent": arxivUserAgent() },
-        signal: AbortSignal.timeout(30_000),
-      });
-
-      if (resp.status === 429 && attempt < 3) {
-        const delay = 5 * attempt;
-        console.error(`  [429 rate-limited, retrying in ${delay}s...]`);
-        await sleep(delay * 1000);
-        continue;
-      }
-
-      if (!resp.ok) {
-        throw new Error(`arXiv API fetch failed: HTTP ${resp.status}`);
-      }
-
-      const body = await resp.text();
-
-      if (body.trim() === "Rate exceeded.") {
-        if (attempt < 3) {
-          const delay = 5 * attempt;
-          console.error(`  [rate-limited (plain-text body), retrying in ${delay}s...]`);
-          await sleep(delay * 1000);
-          continue;
-        }
-        throw new Error("arXiv API rate-limited after 3 attempts");
-      }
-
-      return body;
-    } catch (err) {
-      if (err instanceof Error && err.message.startsWith("arXiv API")) throw err;
-      if (attempt < 3) {
-        const delay = 2 * attempt;
-        console.error(`  [network error, retrying in ${delay}s...]`);
-        await sleep(delay * 1000);
-        continue;
-      }
-      throw new Error(`arXiv API fetch failed: ${err}`);
-    }
+  const resp = await fetch(url, {
+    headers: { "User-Agent": arxivUserAgent() },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!resp.ok) {
+    throw new Error(`arXiv API fetch failed: HTTP ${resp.status}`);
   }
-
-  throw new Error("arXiv API fetch failed: exhausted retries");
+  const body = await resp.text();
+  if (body.trim() === "Rate exceeded.") {
+    throw new Error("arXiv API rate-limited");
+  }
+  return body;
 }
 
 async function searchArxiv(query: string, maxResults = 10, start = 0): Promise<ArxivEntry[]> {
@@ -200,35 +167,14 @@ async function download(arxivId: string, outputDir = "papers"): Promise<Download
 
   const pdfUrl = `https://arxiv.org/pdf/${cleanId}.pdf`;
 
-  let data: ArrayBuffer | null = null;
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const resp = await fetch(pdfUrl, {
-        headers: { "User-Agent": arxivUserAgent() },
-        signal: AbortSignal.timeout(60_000),
-      });
-
-      if (resp.status === 429 && attempt < 3) {
-        await sleep(5 * attempt * 1000);
-        continue;
-      }
-
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-
-      data = await resp.arrayBuffer();
-      break;
-    } catch (err) {
-      if (attempt < 3) {
-        await sleep(2 * attempt * 1000);
-        continue;
-      }
-      throw new Error(`Failed to download ${pdfUrl}: ${err}`);
-    }
+  const resp = await fetch(pdfUrl, {
+    headers: { "User-Agent": arxivUserAgent() },
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!resp.ok) {
+    throw new Error(`Failed to download ${pdfUrl}: HTTP ${resp.status}`);
   }
-
-  if (!data) {
-    throw new Error(`Failed to download ${pdfUrl} after 3 attempts`);
-  }
+  const data = await resp.arrayBuffer();
 
   if (data.byteLength < MIN_PDF_BYTES) {
     throw new Error(

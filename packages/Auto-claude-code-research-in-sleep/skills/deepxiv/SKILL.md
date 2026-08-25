@@ -1,254 +1,68 @@
 ---
 name: deepxiv
-description: Search and progressively read open-access academic papers through DeepXiv. Use when the user wants layered paper access, section-level reading, trending papers, or DeepXiv-backed literature retrieval.
+description: Search and progressively read papers through DeepXiv. Use for paper briefs, section maps, section reads, trending papers, and DeepXiv web search.
 argument-hint: [query-or-paper-id]
 allowed-tools: Bash(*), Read, Write
 ---
 
-# DeepXiv Paper Search & Progressive Reading
+# DeepXiv Progressive Reading
 
-Search topic or paper ID: $ARGUMENTS
+Query or paper ID: `$ARGUMENTS`
 
-## Role & Positioning
+## Contract
 
-DeepXiv is the **progressive-reading** literature source:
+This skill has one implementation: `deepxiv-fetch.js`. The helper is the only
+caller of the DeepXiv SDK and CLI. The skill never runs raw CLI commands as a
+second path and never substitutes arXiv, Semantic Scholar, or AlphaXiv.
 
-| Skill               | Source          | Best for                                                               |
-| ------------------- | --------------- | ---------------------------------------------------------------------- |
-| `/arxiv`            | arXiv API       | Batch search, PDF download, metadata                                   |
-| **`/deepxiv`**      | **DeepXiv SDK** | **Progressive section-level reading**                                  |
-| `/semantic-scholar` | S2 API          | Published venue metadata, citation counts                              |
-| `/alphaxiv`         | alphaxiv.org    | Instant LLM-optimized summary of one paper, with LaTeX source fallback |
-
-Use DeepXiv when you want to avoid loading full papers too early.
-
-## Constants
-
-- **DEEPXIV_FETCHER** — canonical name `deepxiv-fetch.js`, resolved per
-  [`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2
-  (Policy D1 — primary + fallback cascade). If unresolved (canonical
-  chain exhausted), fall back to the raw `deepxiv` CLI (documented per
-  command below).
-- **MAX_RESULTS = 10** — Default number of results to return.
-
-> Overrides (append to arguments):
->
-> - `/deepxiv "agent memory" - max: 5` — top 5 results
-> - `/deepxiv "2409.05591" - brief` — quick paper summary
-> - `/deepxiv "2409.05591" - head` — metadata + section overview
-> - `/deepxiv "2409.05591" - section: Introduction` — read one section only
-> - `/deepxiv "trending" - days: 14 - max: 10` — trending papers
-> - `/deepxiv "karpathy" - web` — DeepXiv web search
-> - `/deepxiv "258001" - sc` — Semantic Scholar metadata by ID
-
-## Setup
-
-DeepXiv is optional. If the CLI is not installed, tell the user:
+Resolve the project root with the shared resolver, then require both the
+compiled helper and the DeepXiv CLI:
 
 ```bash
-pip install deepxiv-sdk
+DEEPXIV_FETCHER=".aris/dist/tools/deepxiv-fetch.js"
+[ -f "$DEEPXIV_FETCHER" ] || DEEPXIV_FETCHER="dist/tools/deepxiv-fetch.js"
+[ -f "$DEEPXIV_FETCHER" ] || {
+  echo "ERROR: deepxiv-fetch.js is required. Run /aris-update or build ARIS." >&2
+  exit 1
+}
+command -v deepxiv >/dev/null 2>&1 || {
+  echo "ERROR: install the DeepXiv CLI before running this skill." >&2
+  exit 1
+}
 ```
-
-On first use, `deepxiv` auto-registers a free token and stores it in `~/.env`.
 
 ## Workflow
 
-### Step 1: Parse Arguments
+Parse one operation from `$ARGUMENTS`:
 
-Parse `$ARGUMENTS` for:
+- query: `search QUERY --max N`;
+- paper ID: `paper-brief`, `paper-head`, or `paper-section ID SECTION`;
+- `trending` with an explicit `--days` and `--max`;
+- `web QUERY`;
+- `sc ID`.
 
-- **Query or ID**: a paper topic, arXiv ID, or Semantic Scholar ID
-- **`- max: N`**: override `MAX_RESULTS`
-- **`- brief`**: fetch paper brief
-- **`- head`**: fetch metadata and section map
-- **`- section: NAME`**: fetch one named section
-- **`- trending`** or query `trending`: fetch trending papers
-- **`- days: 7|14|30`**: trending time window
-- **`- web`**: run DeepXiv web search
-- **`- sc`**: fetch Semantic Scholar metadata by ID
-
-If the main argument looks like an arXiv ID and no explicit mode is given, default to `- brief`.
-
-### Step 2: Locate the Adapter
-
-Resolve `$DEEPXIV_FETCHER` via the canonical strict-safe chain (see
-[`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2).
-Policy D1 cascade: the resolved adapter is preferred; if unresolved
-(canonical chain exhausted), fall back to raw `deepxiv` CLI commands
-documented in Step 3.
+Run the matching helper subcommand exactly once. For example:
 
 ```bash
-_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
-cd "${_pr:-$(pwd)}" || exit 1
-DEEPXIV_FETCHER=".aris/dist/tools/deepxiv-fetch.js"
-[ -f "$DEEPXIV_FETCHER" ] || DEEPXIV_FETCHER="dist/tools/deepxiv-fetch.js"
-[ -f "$DEEPXIV_FETCHER" ] || DEEPXIV_FETCHER=""
-
-# Smoke test (optional — adapter resolution shown to user). The cascade
-# in Step 3 below branches purely on `[ -n "$DEEPXIV_FETCHER" ]`; a
-# resolved-but-non-functional adapter is not currently auto-demoted.
-if [ -n "$DEEPXIV_FETCHER" ]; then
-  echo "DeepXiv adapter resolved at: $DEEPXIV_FETCHER" >&2
-else
-  echo "DeepXiv adapter unresolved (canonical chain exhausted); raw deepxiv CLI fallback will be used." >&2
-fi
+node "$DEEPXIV_FETCHER" search "QUERY" --max 10 || exit 1
+node "$DEEPXIV_FETCHER" paper-brief "ARXIV_ID" || exit 1
+node "$DEEPXIV_FETCHER" paper-head "ARXIV_ID" || exit 1
+node "$DEEPXIV_FETCHER" paper-section "ARXIV_ID" "SECTION" || exit 1
 ```
 
-### Step 3: Execute the Minimal Command
+An error or empty required response fails the requested operation. Do not
+deepen with another command after a failed fetch.
 
-**Search papers**
+## Research Wiki
+
+If `research-wiki/` exists, resolve the required Wiki helper and ingest the
+papers returned by this invocation. A failed ingest fails the skill.
 
 ```bash
-node "$DEEPXIV_FETCHER" search "QUERY" --max MAX_RESULTS
+node "$WIKI_SCRIPT" ingest_paper research-wiki/ --arxiv-id "$ARXIV_ID" || exit 1
 ```
 
-Fallback:
+## Output
 
-```bash
-deepxiv search "QUERY" --limit MAX_RESULTS --format json
-```
-
-**Brief summary**
-
-```bash
-node "$DEEPXIV_FETCHER" paper-brief ARXIV_ID
-```
-
-Fallback:
-
-```bash
-deepxiv paper ARXIV_ID --brief --format json
-```
-
-**Section map**
-
-```bash
-node "$DEEPXIV_FETCHER" paper-head ARXIV_ID
-```
-
-Fallback:
-
-```bash
-deepxiv paper ARXIV_ID --head --format json
-```
-
-**Specific section**
-
-```bash
-node "$DEEPXIV_FETCHER" paper-section ARXIV_ID "SECTION_NAME"
-```
-
-Fallback:
-
-```bash
-deepxiv paper ARXIV_ID --section "SECTION_NAME" --format json
-```
-
-**Trending**
-
-```bash
-node "$DEEPXIV_FETCHER" trending --days 7 --max MAX_RESULTS
-```
-
-Fallback:
-
-```bash
-deepxiv trending --days 7 --limit MAX_RESULTS --output json
-```
-
-**Web search**
-
-```bash
-node "$DEEPXIV_FETCHER" wsearch "QUERY"
-```
-
-Fallback:
-
-```bash
-deepxiv wsearch "QUERY" --output json
-```
-
-**Semantic Scholar metadata**
-
-```bash
-node "$DEEPXIV_FETCHER" sc "SEMANTIC_SCHOLAR_ID"
-```
-
-Fallback:
-
-```bash
-deepxiv sc "SEMANTIC_SCHOLAR_ID" --output json
-```
-
-### Step 4: Present Results
-
-When searching, present a compact table:
-
-```text
-| # | ID | Title | Year | Citations | Notes |
-|---|----|-------|------|-----------|-------|
-```
-
-When reading a paper, show:
-
-- title
-- arXiv ID
-- authors
-- venue/date if available
-- TLDR or abstract summary
-- suggested next step: `brief` → `head` → `section`
-
-### Step 5: Escalate Depth Only When Needed
-
-Use this progression:
-
-1. `search`
-2. `paper-brief`
-3. `paper-head`
-4. `paper-section`
-5. full paper only if necessary
-
-Do not jump to full-paper reads when a brief or one section answers the question.
-
-### Step 6: Update Research Wiki (if active)
-
-**Required when `research-wiki/` exists in the project**; skip silently
-otherwise. When the wiki dir exists, resolve `$WIKI_SCRIPT` per the
-canonical chain at
-[`shared-references/wiki-helper-resolution.md`](../shared-references/wiki-helper-resolution.md)
-(Variant B — warn-and-skip). Ingest papers that were meaningfully
-read (brief / head / section / full) during this invocation — mere
-`search` hits without a depth read do not need ingestion:
-
-```bash
-if [ -d research-wiki/ ]; then
-  _pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
-cd "${_pr:-$(pwd)}" || exit 1
-  WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
-  [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
-  [ -f "$WIKI_SCRIPT" ] || {
-    echo "WARN: research-wiki.js not found; depth-read summary delivered, wiki ingest skipped. Fix: run /aris-update to refresh the project runtime." >&2
-    WIKI_SCRIPT=""
-  }
-  if [ -n "$WIKI_SCRIPT" ]; then
-    for each arxiv_id the user asked this skill to read in depth:
-        node "$WIKI_SCRIPT" ingest_paper research-wiki/ \
-            --arxiv-id "<arxiv_id>"
-  fi
-fi
-```
-
-The helper handles metadata / slug / dedup / page / index / log in one
-call — **do not handwrite `papers/<slug>.md`**. See
-[`shared-references/integration-contract.md`](../shared-references/integration-contract.md).
-Backfill missed ingests with
-`node "$WIKI_SCRIPT" sync research-wiki/ --arxiv-ids <id1>,<id2>,...`
-after resolving `$WIKI_SCRIPT` as above.
-
-## Key Rules
-
-- Prefer the adapter script over raw `deepxiv` commands when available.
-- DeepXiv is optional. If unavailable, give the install command and suggest `/arxiv` or `/research-lit "topic" - sources: web`.
-- Use section-level reads to save tokens.
-- Treat DeepXiv as complementary to `/arxiv` and `/semantic-scholar`, not a replacement.
-- If the result overlaps with a published venue paper from Semantic Scholar, keep the richer venue metadata in the final summary.
+Show the operation, source, paper identity, retrieved text, and section name.
+Do not claim a paper was read when the requested DeepXiv operation failed.

@@ -2,7 +2,7 @@
 
 > Get ARIS fully configured from scratch. Once done, you're ready to use the complete research workflow.
 >
-> This guide targets a **macOS local + remote Linux GPU server** setup with the recommended configuration: **Claude Code as executor, Codex MCP (GPT) as reviewer**.
+> This guide targets a **macOS local + remote Linux GPU server** setup with the current configuration: **Paseo parent-child agents for execution and the cross-model reviewer**.
 >
 > English | [中文版](SETUP_GUIDE_CN.md)
 
@@ -18,28 +18,21 @@ Claude Code is Anthropic's CLI tool — all ARIS skills run on top of it. See th
 claude --version   # verify installation
 ```
 
-### 1.2 Codex CLI + MCP Registration
+### 1.2 Paseo MCP
 
-Codex CLI is OpenAI's CLI tool — ARIS uses it to call GPT as a cross-model reviewer. See the [Codex CLI docs](https://developers.openai.com/codex) for installation.
-
-After installing, authenticate Codex (one-time, opens a browser to log in to ChatGPT) and register it as a Claude Code MCP server:
-
-```bash
-codex --version   # verify installation
-codex login       # one-time ChatGPT auth (skip if already logged in)
-claude mcp add codex -s user -- codex mcp-server
-```
-
-- `codex` (after `add`) — the registered name. ARIS skills hardcode this name, **do not change it**
-- `-s user` — applies globally to all projects
-- `codex mcp-server` — built-in subcommand that starts the MCP server mode
-
-Restart Claude Code after registration. Verify:
+ARIS delegates workflow phases and cross-model review to Paseo parent-child
+agents. Start the Paseo daemon for the project and confirm the agent MCP is
+available before invoking a workflow:
 
 ```bash
-claude mcp list | grep codex
-# should show: codex: codex mcp-server - ✓ Connected
+paseo daemon start
+paseo daemon status
 ```
+
+The host must expose `mcp__paseo__list_agents`,
+`mcp__paseo__create_agent`, and `mcp__paseo__send_agent_prompt`. If any of
+these are unavailable, the workflow is blocked; do not install a second
+reviewer transport or run the skill in-process.
 
 ### 1.3 LaTeX Environment (Optional)
 
@@ -179,7 +172,9 @@ Open Claude Code in your research project directory and enter:
 /research-wiki init
 ```
 
-This creates a `research-wiki/` directory. See [`research_wiki.py`](tools/research_wiki.py):
+This creates a `research-wiki/` directory. The current command contract is in
+[`skills/research-wiki/SKILL.md`](skills/research-wiki/SKILL.md); wiki writes
+use the compiled `research-wiki.js` helper and stop when that helper fails.
 
 ```
 research-wiki/
@@ -198,13 +193,13 @@ research-wiki/
 
 Restart Claude Code and test in your research project directory:
 
-**1. Test MCP connectivity** — enter in Claude Code:
+**1. Test Paseo connectivity** — enter in Claude Code:
 
 ```
-Ask GPT via codex MCP: what is 1+1?
+Check that Paseo MCP can list agents, then create and finish a test child.
 ```
 
-Receiving GPT's answer means cross-model communication is working.
+The workflow is ready only when the Paseo child receipt is available.
 
 **2. Test skill recognition** — enter in Claude Code:
 

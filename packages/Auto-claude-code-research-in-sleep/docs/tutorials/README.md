@@ -1,6 +1,6 @@
 # ARIS Tutorials
 
-Long-form interview-prep cheat sheets, written in Markdown and rendered to single-file HTML via the `/render-html` skill (academic-newspaper template, sticky TOC, MathJax + highlight.js, cross-model codex review gate).
+Long-form interview-prep cheat sheets, written in Markdown and rendered to single-file HTML via the `/render-html` skill (academic-newspaper template, sticky TOC, MathJax + highlight.js, Paseo codex review gate).
 
 > 📖 **Curated collection**: [github.com/wanshuiyin/ARIS-in-AI-Offer](https://github.com/wanshuiyin/ARIS-in-AI-Offer) — interview-prep cheat sheets organized into 6 categories with bilingual README.
 
@@ -68,7 +68,7 @@ The two pilots were drafted by hand and rendered via `/render-html`. Subsequent 
 
 1. Plans a 12-14 section structure (TL;DR · intuition · formula+derivation · from-scratch PyTorch · variants · 25 高频面试题 L1/L2/L3)
 2. Drafts the MD following the canonical style of the two pilot tutorials (heading conventions, table-pipe escapes, callout-list separation rules — all bugs caught during the pilot reviews are now encoded into the style guide)
-3. Cross-model `codex gpt-5.5 xhigh` review on math / code / interview-answer / citation correctness + personal-info redaction (fresh thread, never `codex-reply`)
+3. Paseo codex child review on math / code / interview-answer / citation correctness + personal-info redaction
 4. Fix-and-loop — trajectory-based (no hard cap; stop if same issue recurs or ~6 rounds without convergence)
 5. Renders via `/render-html` (which itself runs a 13-check codex review on the rendered output)
 6. Writes a combined audit trail to `*.review.json`

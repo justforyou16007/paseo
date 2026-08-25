@@ -59,7 +59,7 @@ ENV_INFO=$(sh .claude/skills/run-<project>-experiment/scripts/ops/env-info.sh 2>
 When available, use `hardware.gpu_type`, `hardware.gpu_count`, `hardware.device`,
 and `compute_budget` from the JSON output to fill the plan's "Compute and Data
 Budget" section with verified estimates. When the skill is absent, derive from
-CLAUDE.md prose as before but mark as "unverified estimate".
+CLAUDE.md prose and mark the estimate as "unverified".
 
 ### Phase 1: Freeze the Paper Claims
 
@@ -249,7 +249,7 @@ Tracker file: refine-logs/EXPERIMENT_TRACKER.md
 
 ## Key Rules
 
-- **Large file handling**: If the Write tool fails due to file size, immediately retry using Bash (`cat << 'EOF' > file`) to write in chunks. Do NOT ask the user for permission — just do it silently.
+- **Large file handling**: If the Write tool fails, stop and report the write error. Do not switch to a second writer.
 
 - **Every experiment must defend a claim.** If it does not change a reviewer belief, cut it.
 - **Prefer a compact paper story.** Design the main table first, then add only the ablations that defend it.

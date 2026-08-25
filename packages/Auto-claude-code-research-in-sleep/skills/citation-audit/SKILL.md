@@ -51,13 +51,13 @@ The dangerous citation problems are **not** wildly fake citations — those are 
 
 ## Constants
 
-- **REVIEWER_MODEL = `gpt-5.5`** — Used via Codex MCP. Default for cross-model review with web access.
-- **CONTEXT_POLICY = `fresh`** — Each audit run uses a new reviewer thread (REVIEWER_BIAS_GUARD). Never `codex-reply`.
+- **REVIEWER_MODEL = `gpt-5.5`** — Used by the Paseo codex reviewer. Default for cross-model review with web access.
+- **CONTEXT_POLICY = `fresh`** — Each audit run uses a new Paseo reviewer child (REVIEWER_BIAS_GUARD).
 - **WEB_SEARCH = required** — The reviewer must perform real web/DBLP/arXiv lookups, not pattern-match from memory.
 - **OUTPUT = `CITATION_AUDIT.md`** — Human-readable per-entry verdict report.
 - **STATE = `CITATION_AUDIT.json`** — Machine-readable verdict ledger consumable by downstream tools.
 - **SOFT_ONLY = `false`** — When true (set via `— soft-only` / `— soft_only` flag), the audit runs all three layers normally but **forbids any `.bib` file mutation**. Findings that would otherwise mutate the bib (FIX / REPLACE / REMOVE) are translated into per-occurrence sentence-rewrite proposals against the citing `*.tex` files. Used by `/resubmit-pipeline` Phase 1 to honor the user's hard "freeze the bib" constraint.
-- **RENDER_HTML = true** — When `true` (default), auto-render `CITATION_AUDIT.md` to HTML after writing the report. Uses **full Codex review gate** (audit-class artifact — render-fidelity check matches the skill's cross-model audit invariant). Set `false` to skip, or pass `— render html: false`.
+- **RENDER_HTML = true** — When `true` (default), auto-render `CITATION_AUDIT.md` to HTML after writing the report. Uses **full Paseo codex review gate** (audit-class artifact — render-fidelity check matches the skill's cross-model audit invariant). Set `false` to skip, or pass `— render html: false`.
 
 ## Workflow
 
@@ -255,13 +255,15 @@ Confirm:
 
 ## Uncited Entry Detection (opt-in)
 
-**Default**: disabled. Existing users see no behavior change — only `\cite{...}` keys are audited, and bib entries with no `\cite` reference in the manuscript are silently ignored.
+**Default**: disabled. Audit only `\cite{...}` keys; bib entries with no
+`\cite` reference in the manuscript are ignored.
 
 **Opt-in**: pass `--uncited` on invocation. The skill then performs a set-diff after Step 2 and reports bib entries that appear in any audited bib file(s) but are not cited anywhere in the paper. Detect-only — uncited entries are **not** sent to the cross-model reviewer, so there is no extra reviewer/web-lookup cost.
 
 ### Why opt-in
 
-This skill's headline output is the three-axis audit on cited entries. Surfacing uncited bib entries by default would (a) change long-form output for every existing run, and (b) noise up the verdict for users who intentionally maintain a superset bib file (e.g., shared lab bib, in-progress section reorder where the cite has been removed but the entry intentionally retained). The flag preserves zero behavior change for existing callers.
+The main audit covers cited entries. Uncited-entry detection is separate so
+callers can request bibliography cleanup without changing the citation audit.
 
 ### Effect when enabled
 
@@ -269,7 +271,8 @@ When `--uncited` is set:
 
 - `CITATION_AUDIT.md` gains a `## Uncited Entries (opt-in)` section listing the keys with a one-line suggestion each: `prune` (entry is dead weight; recommend deleting) or `check` (entry might be intentional; flag for user review). Default suggestion is `prune`; only emit `check` when there is concrete local evidence (e.g., a TODO comment in a `.tex` file mentioning the key, or a recently removed `\cite` visible in `git diff`). Do not infer intent from the bib key string alone.
 - `CITATION_AUDIT.json` `details` gains an `uncited_entries` array; see "Submission Artifact Emission" below for the schema.
-- The top-level `verdict` is **unchanged**: uncited entries do not upgrade or downgrade the PASS / WARN / FAIL / etc. classification. The `reason_code` and `summary` are likewise unchanged in shape; only the `details.uncited_entries` field appears.
+- The top-level `verdict` is based on cited-entry checks. `uncited_entries` is
+  diagnostic and never blocks downstream gates.
 - Verifier gates and downstream skills (`paper-writing` Phase 6, `verify_paper_audits.sh`) MUST NOT treat the presence of `uncited_entries` as a blocking signal.
 
 ### When opt-in is appropriate
@@ -278,16 +281,18 @@ When `--uncited` is set:
 - Shared lab bib file where the paper uses a subset and the user wants to confirm what is in scope.
 - Recurring audits where the user has previously seen the uncited count and wants to track whether it changed.
 
-### Fallback when bib enumeration fails
+### When bib enumeration fails
 
-If `--uncited` is enabled but full bib-key enumeration fails (e.g., malformed bib syntax that the parser cannot recover), the cited-entry audit must still proceed if at all possible. In that case:
+If `--uncited` is enabled but full bib-key enumeration fails (for example,
+because the bib syntax is malformed), return an `ERROR` verdict for the audit.
+Do not emit an empty list that makes the requested enumeration look complete.
+In that case:
 
-- Do **not** alter the top-level `verdict`, `reason_code`, or `summary`.
-- Emit `details.uncited_entries` as an empty array `[]`.
-- Add `details.uncited_entries_status: "unavailable"` plus a one-line note explaining why (e.g., `"bib parser could not enumerate keys; cited-entry audit completed normally"`).
-- Verifier gates and downstream skills MUST treat `unavailable` the same as the field being absent: not blocking.
+- The top-level verdict is `ERROR`; no successful `uncited_entries` result is emitted.
 
-If the bib file cannot be read well enough to audit even the cited entries, fall back to the existing `BLOCKED` / `bib_unreadable` path defined in the verdict decision table; this is the same behavior as the no-flag default.
+If the bib file cannot be read well enough to audit even the cited entries,
+return the explicit `BLOCKED` / `bib_unreadable` verdict defined in the verdict
+decision table.
 
 ## Key Rules
 
@@ -297,8 +302,13 @@ If the bib file cannot be read well enough to audit even the cited entries, fall
 - **REPLACE/REMOVE require human approval** — never auto-modify content claims
 - **Always emit, never block** — this skill always writes `CITATION_AUDIT.json` with a verdict; the decision to block finalization lives in `paper-writing` Phase 6 + `verify_paper_audits.sh`, driven by the `assurance` level. See "Submission Artifact Emission" below.
 - **Run once per submission** — the audit is wall-clock expensive (web lookups for each entry); not for every save
-- **Uncited detection is opt-in only** — never auto-enable; never block on uncited entries; existing callers must observe identical output if they do not pass `--uncited`
-- **Under `--soft-only`, citation-audit emits text-rewrite proposals only; bib files are never mutated regardless of finding severity.** The audit semantics (existence + metadata + context) and the per-entry KEEP/FIX/REPLACE/REMOVE ledger are preserved verbatim; only the action layer is translated to per-occurrence sentence rewrites in the citing `*.tex` files. Refuse any downstream-proposed bib edit while `--soft-only` is set.
+- **Uncited detection is opt-in only** — never auto-enable and never block on
+  uncited entries.
+- **Under `--soft-only`, citation-audit emits text-rewrite proposals only; bib
+  files are never mutated regardless of finding severity.** The audit checks
+  existence, metadata, and context, then translates each per-entry verdict into
+  sentence rewrites in the citing `*.tex` files. Refuse any downstream-proposed
+  bib edit while `--soft-only` is set.
 
 ## Comparison with Other Audit Skills
 
@@ -313,14 +323,15 @@ Together: code → result → numerical claim → cited claim. Each layer has cr
 
 ## Known Limitations
 
-- **DBLP coverage gap**: very recent papers (< 2 weeks) may not yet be in DBLP. Reviewer should fall back to arXiv.
+- **DBLP coverage gap**: very recent papers may not yet be in DBLP. Report the
+  citation as unresolved; do not substitute arXiv automatically.
 - **Pre-print vs published**: when both exist, reviewer should prefer the published venue (ICML 2024 over arXiv 2401.xxxxx) but flag both.
 - **Anthology vs OpenReview**: NeurIPS/ICLR papers have OpenReview entries before official proceedings; both are valid sources.
 - **Multi-author truncation**: bib entries with 6+ authors using `and others` are conventional and not flagged unless the truncation hides a co-author the user explicitly cares about.
 
 ## Review Tracing
 
-After each paseo codex reviewer call, save the trace following `shared-references/review-tracing.md` (Policy C — forensic; never silently skip). Use `save_trace.sh` (resolved per the chain in `shared-references/integration-contract.md` §2) or write files directly to `.aris/traces/citation-audit/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).
+After each paseo codex reviewer call, save the trace with `save_trace.sh` resolved through `shared-references/integration-contract.md` §2. If the helper is missing or fails, stop the gate. Respect the `--- trace:` parameter (default: `full`).
 
 ## Output Contract
 
@@ -329,7 +340,7 @@ After each paseo codex reviewer call, save the trace following `shared-reference
 - `.aris/traces/citation-audit/<date>_runNN/` (per-entry review traces)
 - Optional: applied fixes to `references.bib` + `sec/*.tex` (with `--apply` flag)
 - Optional: `details.uncited_entries` field in JSON + `## Uncited Entries (opt-in)` MD section (with `--uncited` flag; field absent and section omitted when flag is unset)
-- `CITATION_AUDIT.html` (when `RENDER_HTML = true`, default) — auto-rendered single-file HTML view via `/render-html "CITATION_AUDIT.md" --json "CITATION_AUDIT.json"`. Full review gate. Sidecar `.review.json` carries render-fidelity verdict. **Non-blocking**: if `/render-html` fails (helper missing, Codex MCP unavailable, file write error), log the failure and treat the audit as complete — the JSON + MD ledger are the canonical outputs.
+- `CITATION_AUDIT.html` (when `RENDER_HTML = true`, default) — auto-rendered single-file HTML view via `/render-html "CITATION_AUDIT.md" --json "CITATION_AUDIT.json"`. Full review gate. Sidecar `.review.json` carries render-fidelity verdict. If rendering fails, fail the audit; set `RENDER_HTML=false` explicitly to omit the HTML artifact.
 
 ## Optional: Soft-Only Mode (— soft-only)
 
@@ -339,7 +350,9 @@ After each paseo codex reviewer call, save the trace following `shared-reference
 
 ### What soft-only changes
 
-The audit semantics are **unchanged**: existence + metadata + context-appropriateness checks all run, the reviewer is still invoked once per cited entry, and the per-entry KEEP/FIX/REPLACE/REMOVE verdicts are still computed and emitted exactly as in default mode. Only the **action layer** changes — soft-only translates each base verdict into a text-rewrite proposal instead of a bib mutation.
+The audit runs the existence, metadata, and context-appropriateness checks for
+each cited entry. Soft-only changes the action layer: it translates each base
+verdict into a text-rewrite proposal instead of a bib mutation.
 
 ### Verdict translation table
 
@@ -404,13 +417,16 @@ The bib file is frozen. The following sentence rewrites are proposed in lieu of 
 - **Rationale**: Original sentence claims smith2023 "proves" a result, but smith2023 actually only conjectures it. Softened to "discusses ... motivates" to remove the unsupported claim.
 ```
 
-The existing per-entry verdict table in the Summary block is **kept** but FIX/REPLACE/REMOVE rows are annotated with a `🔒 bib frozen by --soft-only` badge so downstream readers see immediately why the bib was not mutated.
+The per-entry verdict table in the Summary block includes a `🔒 bib frozen by
+--soft-only` badge on FIX/REPLACE/REMOVE rows so readers can see why the bib
+was not mutated.
 
 ### Hard guarantees under `--soft-only`
 
 - **No `.bib` file mutations under any circumstance.** Step 6 ("Apply fixes (interactive)") is bypassed for the bib file; only `*.tex` rewrite proposals are produced (and still require human approval before any text edit).
 - If a downstream caller — including `paper-writing` Phase 6 or any wrapper — proposes a bib edit while `--soft-only` is set, **refuse it**: emit a one-line refusal in the trace and continue to the next finding.
-- The top-level `verdict` decision table is **unchanged**: a wrong-context cite still produces `FAIL` with `reason_code: wrong_context`. Soft-only does not silence the finding; it only constrains the action layer.
+- A wrong-context cite still produces `FAIL` with `reason_code: wrong_context`.
+  Soft-only does not silence the finding; it constrains only the action layer.
 - `--soft-only` composes with `--uncited`: both flags can be set together. Uncited entries remain detect-only and are not subject to soft-only translation (there is no citing sentence to soften).
 
 ## Submission Artifact Emission
@@ -435,7 +451,7 @@ The artifact conforms to the schema in `shared-references/assurance-contract.md`
     "sections/3.related.tex":     "sha256:..."
   },
   "trace_path":       ".aris/traces/citation-audit/<date>_run<NN>/",
-  "thread_id":        "<codex mcp thread id>",
+    "thread_id":        "<paseo codex agent id>",
   "reviewer_model":   "gpt-5.5",
   "reviewer_reasoning": "xhigh",
   "generated_at":     "<UTC ISO-8601>",
@@ -457,7 +473,7 @@ The artifact conforms to the schema in `shared-references/assurance-contract.md`
   "uncited_entries": [
     {"key": "<bibkey>", "suggestion": "prune" | "check", "note": "..."}
   ],
-  "uncited_entries_status": "ok" | "unavailable"
+  "uncited_entries_status": "ok" | "error"
 }
 ```
 
@@ -465,7 +481,8 @@ Field semantics:
 
 - Both fields are **omitted entirely** when the flag is not set. The default schema does not include either key.
 - When the flag is set and the set-diff completes normally, `uncited_entries_status` is `"ok"` and `uncited_entries` lists the detected keys (possibly empty if every bib entry is cited).
-- When the flag is set but bib-key enumeration fails (per "Fallback when bib enumeration fails" above), `uncited_entries_status` is `"unavailable"` and `uncited_entries` is `[]`. Downstream consumers MUST treat `"unavailable"` identically to the field being absent: not blocking.
+- When the flag is set but bib-key enumeration fails, return an `ERROR`
+  verdict and do not emit `uncited_entries` as a successful result.
 - Downstream consumers MUST treat absence of either field as the only valid default state and MUST NOT raise on missing.
 - `suggestion` is advisory only; the verifier and `paper-writing` Phase 6 do not block on it.
 
@@ -506,9 +523,9 @@ prior audit outputs (PROOF_AUDIT, PAPER_CLAIM_AUDIT, EXPERIMENT_LOG) as
 input — the fresh agent preserves reviewer independence per
 `shared-references/reviewer-independence.md`.
 
-This skill never blocks by itself; `paper-writing` Phase 6 plus the
-verifier decide whether the verdict blocks finalization based on the
-`assurance` level.
+This skill blocks the consuming phase on `WARN`, `FAIL`, `BLOCKED`, or `ERROR`.
+`NOT_APPLICABLE` is the only non-blocking result and is valid only when no citations
+are present.
 
 ## See Also
 

@@ -5,9 +5,9 @@ The cross-model reviewer in ARIS is a **GPT-5.5** verdict rendered against a
 spawned by the Claude executor (a workflow agent or a leaf verdict skill
 running inside one), not called through an in-process MCP tool.
 
-This document is the **single place** that maps today's codex-MCP reviewer
-discipline to paseo agent semantics. It is the jury half of the migration;
-the executor half is [`paseo-subagent-dispatch.md`](paseo-subagent-dispatch.md).
+This document is the **single place** that defines the Paseo codex reviewer
+discipline. The executor half is
+[`paseo-subagent-dispatch.md`](paseo-subagent-dispatch.md).
 
 Rule of thumb: **fresh review = new codex agent each time; continuation
 review = `send_agent_prompt` to the same codex agent.** Nothing else
@@ -80,7 +80,7 @@ interpretation of that feedback (the same exclusion that
 
 See [`paseo-subagent-dispatch.md`](paseo-subagent-dispatch.md)
 §"Rule 4". The reviewer is a Paseo agent (`provider: "codex/gpt-5.5"`
-via `create_agent`); it MUST NOT be called via legacy MCP tools. The only allowed
+via `create_agent`); it MUST NOT be called through another MCP tool. The only allowed
 MCP exception is `mcp__manual_review__*` for `— reviewer: manual`.
 
 #### Rule 4a — Creator Owns Lifecycle (reviewer view; sub-rule of Rule 4)
@@ -154,10 +154,8 @@ Read from `third_parties/paseo/` (untouched):
   `currentThreadId` (continuation). So: **`create_agent` = fresh review;
   `send_agent_prompt` to the same agent = continuation review.** The mapping
   is exact.
-- **The codex child is self-contained.** It runs Codex CLI with native tools
-  (shell, apply_patch, web_search) + only the paseo MCP server injected. It
-  does NOT recursively spawn sub-agents — that is the whole point of
-  having a dedicated paseo codex agent.
+- **The codex child is self-contained.** It uses its native tools to read the
+  listed files and write its verdict. It does not recursively spawn agents.
 - **Cross-provider spawn REQUIRES explicit `settings.modeId`.** Without it,
   the spawn throws "cannot inherit mode" (`create-agent-mode.ts`). This is
   the single most common reviewer-spawn bug.
@@ -190,15 +188,15 @@ mcp__paseo__create_agent:
 
 | mode                    | sandbox              | approvals    | use                                                                                                                                                                |
 | ----------------------- | -------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `full-access` (default) | `danger-full-access` | `never`      | autonomous repo read — the `codex exec` analog. The reviewer reads the whole project, runs shell to inspect, returns a verdict. Use this for every default review. |
+| `full-access` (default) | `danger-full-access` | `never`      | autonomous repo read. The reviewer reads the project, inspects the evidence, and returns a verdict. Use this for every default review. |
 | `auto`                  | `workspace-write`    | `on-request` | when the reviewer must also apply a fix (rare; most reviewers judge, not fix)                                                                                      |
 | `read-only`             | —                    | —            | **cannot write the verdict file** — do NOT use for a reviewer that must emit an artifact                                                                           |
 | `auto-review`           | —                    | —            | Codex's _internal_ guardian mode. NOT our reviewer. Do not confuse the names.                                                                                      |
 
 `full-access` is the default because the reviewer needs to read the whole
-project (code, results, paper draft) to form an independent assessment,
-exactly as `codex exec` does today. Network is on (the reviewer may fetch a
-citation to verify it); approvals are `never` (autonomous overnight).
+project (code, results, paper draft) to form an independent assessment.
+Network is on (the reviewer may fetch a citation to verify it); approvals are
+`never` (autonomous overnight).
 
 ### The `initialPrompt` contract (reviewer-independence is absolute)
 
@@ -262,7 +260,7 @@ what it flagged. So round 2 continues the SAME codex agent — `send_agent_promp
 to the agent-id persisted in `REVIEW_STATE.json` — and the reviewer checks
 resolution against its own prior critique (the `reviewer-independence.md`
 Exception). The Debate ruling is likewise a continuation. This is the
-exact analog of today's `codex-reply` reusing `threadId`.
+  same Paseo agent-id is reused for this continuation.
 
 ### The lifecycle rule (用完即 archive)
 
@@ -282,11 +280,11 @@ workspace. The parent reads the file in its SHORT notification turn
 (preemption-safe). The file is the authoritative payload; `<agent-response>`
 is at most a one-line status.
 
-Per-skill verdict files (paths unchanged from today):
+Per-skill verdict files:
 
 | Skill                         | Verdict file                                        | Schema                                                                      |
 | ----------------------------- | --------------------------------------------------- | --------------------------------------------------------------------------- |
-| `auto-review-loop`            | `.aris/runs/<run_id>.auto-review.REVIEW_STATE.json` | 6-state verdict + score + `threadId` (= codex agent-id now)                 |
+| `auto-review-loop`            | `.aris/runs/<run_id>.auto-review.REVIEW_STATE.json` | 6-state verdict + score + `threadId` (codex agent-id)                       |
 | `auto-paper-improvement-loop` | `PAPER_IMPROVEMENT_STATE.json`                      | per-round verdict + `threadId` (per-round codex agent-id, bookkeeping only) |
 | `proof-checker`               | `paper/PROOF_AUDIT.json`                            | 6-state + `trace_path` + `thread_id`                                        |
 | `paper-claim-audit`           | `paper/PAPER_CLAIM_AUDIT.json`                      | 6-state + `trace_path` + `thread_id`                                        |
@@ -294,16 +292,14 @@ Per-skill verdict files (paths unchanged from today):
 | `kill-argument`               | computed from per-point counts                      | the skill computes the verdict; codex only classifies points                |
 
 `verify_paper_audits.sh` validates `trace_path` / `thread_id` as non-empty
-strings — **unchanged**. The values now hold paseo codex agent-ids instead
-of codex-MCP thread ids; both fit the "durable handle string" contract.
+strings. The values hold Paseo codex agent ids.
 
 ## The trace contract (`save_trace.sh`)
 
 After **every** reviewer round, the parent (the claude agent that spawned
 the reviewer) runs `save_trace.sh`, resolved via `integration-contract.md`
-§2 (Policy C, forensic — never skip; write inline if the helper is
-unresolved). The only thing that changes is the `--thread-id` value: it now
-holds the **paseo codex agent-id**.
+§2. The helper is required; if it is missing or fails, the review gate stops.
+`--thread-id` stores the **paseo codex agent-id** for the reviewer round.
 
 ```bash
 # Resolve $TRACE_HELPER (canonical 2-layer chain; see integration-contract.md §2).
@@ -311,53 +307,44 @@ _pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" !
 cd "${_pr:-$(pwd)}" || exit 1
 TRACE_HELPER=".aris/tools/save_trace.sh"
 [ -f "$TRACE_HELPER" ] || TRACE_HELPER="tools/save_trace.sh"
-[ -f "$TRACE_HELPER" ] || TRACE_HELPER=""
+[ -f "$TRACE_HELPER" ] || {
+  echo "ERROR: save_trace.sh is required for reviewer tracing. Run /aris-update or build the ARIS runtime." >&2
+  exit 1
+}
 
 # <codex_agent_id> is the paseo agent-id returned by create_agent / read from REVIEW_STATE.json
-if [ -n "$TRACE_HELPER" ]; then
-  if ! bash "$TRACE_HELPER" \
-    --skill "<skill-name>" \
-    --purpose "<purpose>" \
-    --model "gpt-5.5" \
-    --thread-id "<codex_agent_id>" \
-    --prompt "<full prompt as sent>" \
-    --response "<full response content>"; then
-    echo "ERROR: resolved save_trace.sh failed; trace was not saved." >&2
-    exit 1
-  fi
-else
-  # Policy C fallback: write run.meta.json + request.json + response.md + meta.json
-  # directly per review-tracing.md schema. Do NOT silently skip.
-  echo "WARN: save_trace.sh not resolved; writing trace files directly per review-tracing.md." >&2
+if ! bash "$TRACE_HELPER" \
+  --skill "<skill-name>" \
+  --purpose "<purpose>" \
+  --model "gpt-5.5" \
+  --thread-id "<codex_agent_id>" \
+  --prompt "<full prompt as sent>" \
+  --response "<full response content>"; then
+  echo "ERROR: resolved save_trace.sh failed; trace was not saved." >&2
+  exit 1
 fi
 ```
 
 The trace's `meta.json` `thread_id` field therefore holds a paseo codex
 agent-id; the `request.json` `tool` field is now `paseo:create_agent` (fresh)
 or `paseo:send_agent_prompt` (continuation). `save_trace.sh` treats
-`--thread-id` as an opaque string. Policy C direct-write fallback applies
-only when the resolver cannot find the helper. A resolved helper returning
-non-zero is an execution error and MUST NOT be relabeled as "unresolved."
+`--thread-id` as an opaque string. A missing helper or non-zero exit is an
+execution error and stops the review gate.
 
-## Persisting the handle (state-schema adaptation, helpers UNCHANGED)
+## Persisting the reviewer handle
 
-The state files that carry `threadId` are repurposed to hold paseo codex
-agent-ids. **Field names are unchanged** (zero helper churn — they are
-opaque strings to the helpers):
+Store the reviewer agent id in the existing state fields:
 
-| File                                 | Field                      | Today                   | After                                                                                           |
-| ------------------------------------ | -------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------- |
-| `REVIEW_STATE.json`                  | `threadId`                 | codex MCP thread id     | paseo codex agent-id (continuation: round 2+ `send_agent_prompt` targets this)                  |
-| `PAPER_IMPROVEMENT_STATE.json`       | `threadId`                 | codex MCP thread id     | paseo codex agent-id (per-round, bookkeeping only — NOT reused; REVIEWER_BIAS_GUARD)            |
-| `run-state.js accept --verdict-id`   | `verdict_id`               | codex thread / trace id | paseo codex agent-id (codex-accepted phases) or verifier-report path/sha (deterministic phases) |
-| audit JSON (`PROOF_AUDIT.json` etc.) | `thread_id` / `trace_path` | codex thread id         | paseo codex agent-id / trace dir                                                                |
+| File                                 | Field                      | Current meaning                                                                                  |
+| ------------------------------------ | -------------------------- | ------------------------------------------------------------------------------------------------ |
+| `REVIEW_STATE.json`                  | `threadId`                 | Paseo codex agent-id; round 2+ continuation targets this child                                   |
+| `PAPER_IMPROVEMENT_STATE.json`       | `threadId`                 | Paseo codex agent-id for bookkeeping; fresh per round under `REVIEWER_BIAS_GUARD`                |
+| `run-state.js accept --verdict-id`   | `verdict_id`               | Paseo codex agent-id, or verifier-report path/sha for deterministic phases                     |
+| audit JSON (`PROOF_AUDIT.json` etc.) | `thread_id` / `trace_path` | Paseo codex agent-id / trace directory                                                          |
 
-On resume, a workflow agent reads the persisted codex agent-id from
-`REVIEW_STATE.json` and: if that agent is still alive (`list_agents`),
-continue it (`send_agent_prompt`); else create a fresh codex agent (reviewer
-memory may be lost — same risk as today's codex-server-restart; the trace
-files survive, the live thread may not). This is `resumable-runs.md` applied
-to the reviewer layer.
+On resume, read the persisted codex agent id from `REVIEW_STATE.json`. If the
+agent is alive (`list_agents`), continue it with `send_agent_prompt`; otherwise
+create a fresh codex agent. Trace files remain the durable review record.
 
 ## The fence, restated for the reviewer
 
@@ -378,27 +365,25 @@ nudge stalled Type-A sub-phases. It never renders a quality verdict.
 
 ## Reviewer backend selection (passes through `— reviewer:`)
 
-`reviewer-routing.md`'s directive still selects the reviewer backend. After
-migration:
+`reviewer-routing.md` selects the reviewer backend:
 
 - `— reviewer: codex` (default) **or unset** → paseo codex sub-agent per
   this doc (`codex/gpt-5.5`, `full-access`, `xhigh`).
-- `— reviewer: oracle-pro` / `agy` → still MCP (`mcp__oracle__consult` /
+- `— reviewer: oracle-pro` / `agy` → MCP (`mcp__oracle__consult` /
   `mcp__gemini_review__review`). These are alternate cross-model backends;
   they stay MCP because they are not the codex-as-paseo-agent path. The
   independence + tracing contracts apply identically.
-- `— reviewer: manual` → still the manual-review MCP (human-in-browser).
-  This cannot be a paseo agent (it is a human). Stays as-is.
+- `— reviewer: manual` → the manual-review MCP (human-in-browser). This is a
+  human review path, not a paseo agent.
 
-The `REVIEWER_DIFFICULTY` / `REVIEWER_BACKEND` pass-throughs are unchanged;
-they now select a paseo codex agent (default) vs an MCP fallback.
+`REVIEWER_DIFFICULTY` and `REVIEWER_BACKEND` pass through the selected values.
 
 ## Anti-patterns to refuse in review
 
 - **"Continue the same codex agent in auto-paper-improvement-loop round 2."**
   That is the bias guard violation — round 2 must be a FRESH agent.
 - **"Create a fresh codex agent for auto-review-loop round 2."** That loses
-  reviewer memory and breaks the continuation that `codex-reply` provided.
+  reviewer memory; round 2+ continues the round-1 agent.
   Round 2+ continues the round-1 agent.
 - **"Omit `settings.modeId` on the codex spawn."** Throws (cross-provider).
   Always pass it explicitly.
@@ -479,9 +464,8 @@ reads it before sending the next prompt).
   half (claude parent → claude child). Shares lifecycle / fanout / fence;
   differs in provider, independence, and continuity defaults.
 - [`reviewer-routing.md`](reviewer-routing.md) — backend selection. The
-  default codex reviewer is now a paseo codex agent; `oracle-pro`/`agy`/
-  `manual` stay MCP. `codex exec` CLI (nightmare mode) maps to a paseo
-  codex agent in `full-access` mode.
+  default codex reviewer is a Paseo codex agent; `oracle-pro`/`agy`/`manual`
+  are explicit alternate backends.
 - [`reviewer-independence.md`](reviewer-independence.md) — reviewer prompt
   is file-paths-only; the continuation Exception (reviewer may reference
   its OWN prior feedback).

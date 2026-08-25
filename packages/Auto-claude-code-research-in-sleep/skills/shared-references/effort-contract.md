@@ -8,7 +8,7 @@ Every ARIS skill accepts an optional `effort` parameter that controls how much w
 /any-skill "args" — effort: lite | balanced | max | beast
 ```
 
-Default: `balanced` (current behavior, zero change for existing users).
+Default: `balanced`.
 
 ## Hard Invariants (NEVER changed by effort)
 
@@ -33,7 +33,7 @@ Implies `assurance: draft` (see below).
 
 ### `balanced` (1x tokens) — DEFAULT
 
-Current ARIS behavior. What existing users get today. No breakage.
+Default depth and breadth.
 Implies `assurance: draft`.
 
 ### `max` (~2.5x tokens)
@@ -60,17 +60,15 @@ Default mapping (if `assurance` not given explicitly):
 
 | `effort`   | implied `assurance` | Behavior                                                                                        |
 | ---------- | ------------------- | ----------------------------------------------------------------------------------------------- |
-| `lite`     | `draft`             | Audits run only if content detector matches; silent skip allowed                                |
-| `balanced` | `draft`             | Same as lite — current behavior, zero breakage                                                  |
+| `lite`     | `draft`             | Detector-negative audits emit `NOT_APPLICABLE`; requested audits still emit a verdict           |
+| `balanced` | `draft`             | Same audit contract as lite                                                                      |
 | `max`      | `submission`        | Every mandatory audit emits a verdict; verifier blocks Final Report on FAIL/BLOCKED/ERROR/STALE |
 | `beast`    | `submission`        | Same as max + final report tagged `submission-ready`                                            |
 
 User can override independently:
 
 - `— effort: balanced, assurance: submission` → normal depth, strict audits
-- `— effort: beast, assurance: draft` → maximum depth, no audit gate (legal but discouraged for real submissions)
-
-**Why split the axes?** Historically `effort: beast` did not enforce audits — phases like `/proof-checker`, `/paper-claim-audit`, `/citation-audit` were gated by content detectors that allowed silent skip. A user reported `effort: beast` produced a "draft-quality" paper with all three submission gates skipped. The split makes audit strictness independently verifiable and stops conflating "do more work" with "be more rigorous."
+- `— effort: beast, assurance: draft` → maximum depth with diagnostic audits
 
 ## Per-Skill Profiles
 

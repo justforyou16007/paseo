@@ -41,9 +41,8 @@ claude mcp add zotero -s user -- zotero-mcp \
 
 可以用 `— sources: zotero, web` 或 `— sources: all` 覆盖默认。
 
-## 不用 Zotero？
-
-没配置时 `/research-lit` 自动跳过，用本地 PDF + 网络搜索。无报错无警告。
+如果显式选择 `zotero`，但没有配置对应 MCP，`/research-lit` 会因配置错误停止。
+想使用网络或本地 PDF 时，请显式指定不包含 Zotero 的 source 列表。
 
 ## Zotero + Obsidian 组合工作流
 

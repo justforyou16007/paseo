@@ -508,44 +508,56 @@ Resolve `$WIKI_SCRIPT` via the canonical chain:
 # --- resolve research-wiki helper (integration-contract.md §2) ---
 WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
 [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
-[ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT=""
+[ -f "$WIKI_SCRIPT" ] || {
+  echo "ERROR: research-wiki.js is required for setup. Run /aris-update or build the ARIS runtime." >&2
+  exit 1
+}
 ```
 
 **If `research-wiki/` does NOT exist or is empty:**
 
 ```bash
-if [ -n "$WIKI_SCRIPT" ]; then
-  node "$WIKI_SCRIPT" init research-wiki/
-else
-  # Fallback: create structure manually
-  mkdir -p research-wiki/{papers,ideas,experiments,claims,problems,graph}
-  echo "# Research Wiki Index\n\n_Auto-generated. Do not edit._" > research-wiki/index.md
-  echo "# Research Wiki Log\n\n_Append-only timeline._" > research-wiki/log.md
-  echo "# Query Pack\n\n_Auto-generated for /idea-creator. Max 8000 chars._" > research-wiki/query_pack.md
-  touch research-wiki/graph/edges.jsonl
-fi
+node "$WIKI_SCRIPT" init research-wiki/ || {
+  echo "ERROR: research-wiki.js failed to initialize the project Wiki." >&2
+  exit 1
+}
 ```
 
-**Root problem entity.** If `answers.metric_target` is set and
-`research-wiki/problems/` contains no problem yet, create the project's root
-open problem (the baseline->target distance):
+**Root problem entity.** If `answers.metric_target` is set — same condition as
+the `## Metric Target` block above: non-empty and not `"No specific target
+yet"` — and `research-wiki/problems/` contains no problem yet, create the
+project's root open problem (the baseline->target distance).
+
+`answers` is the setup state object, not a shell variable. Substitute the
+recorded values into the command below before running it; `$answers.field` in
+bash would expand to the empty string plus the literal text `.field`:
 
 ```bash
-if [ -n "$WIKI_SCRIPT" ] && [ -n "$answers.metric_target" ]; then
+if [ ! -f research-wiki/problems/root.md ]; then
   node "$WIKI_SCRIPT" add_problem research-wiki/ \
     --slug "root" \
-    --title "close $answers.primary_metric gap: baseline -> $answers.metric_target" \
+    --title "close <answers.primary_metric> gap: baseline -> <answers.metric_target>" \
     --severity high \
-    --statement "Reach $answers.metric_target $answers.primary_metric ($answers.metric_direction) from the reproduced baseline. /auto-research-loop iteration 1 reproduces the baseline method; subsequent iterations address sub-problems of this problem." \
-    --origin "root problem created by /research-setup from the Metric Target"
+    --statement "Reach <answers.metric_target> <answers.primary_metric> (<answers.metric_direction>) from the reproduced baseline. /auto-research-loop iteration 1 reproduces the baseline method; subsequent iterations address sub-problems of this problem." \
+    --origin "root problem created by /research-setup from the Metric Target" || {
+      echo "ERROR: research-wiki.js failed to create the root problem." >&2
+      exit 1
+    }
 fi
 ```
+
+Without a metric target there is no root problem: `/auto-research-loop` refuses
+to start without an active `## Metric Target` anyway, and a root problem whose
+closing condition is unstated could never be closed.
 
 **If key papers were provided as arXiv IDs** (detected by `\d{4}\.\d{4,5}` pattern):
 
 ```bash
-if [ -n "$WIKI_SCRIPT" ] && [ -n "$ARXIV_IDS" ]; then
-  node "$WIKI_SCRIPT" sync research-wiki/ --arxiv-ids "$ARXIV_IDS"
+if [ -n "$ARXIV_IDS" ]; then
+  node "$WIKI_SCRIPT" sync research-wiki/ --arxiv-ids "$ARXIV_IDS" || {
+    echo "ERROR: research-wiki.js failed to sync the key papers the user supplied." >&2
+    exit 1
+  }
 fi
 ```
 
@@ -609,8 +621,9 @@ After it completes, transcribe results (do NOT judge them):
    check for file existence first.
 
 If configuration did not succeed (env.json is missing or status is not
-`complete`): set `answers.gpu_type = "none"`, print the draft and audit report
-paths, and **continue to Phase 7g/8 — do not block setup**.
+`complete`), stop setup with the environment-manager failure receipt. Do not
+write a successful setup state that points downstream skills at an incomplete
+experiment environment.
 
 ### Phase 7.6: Baseline Info -> RESEARCH_BRIEF (no reproduction)
 
@@ -741,8 +754,8 @@ Suggested next steps:
 6. **Template required.** Templates are resolved from `$TEMPLATES_DIR`. If templates cannot be
    found, emit an error and exit — do not generate config from memory.
 
-7. **Wiki helper optional.** If `research-wiki.js` cannot be resolved, fall back to manual
-   directory creation. Never block on a missing helper for an optional artifact.
+7. **Wiki helper required.** If `research-wiki.js` cannot be resolved or an operation fails,
+   stop setup and write a failed receipt. Do not create Wiki files by hand.
 
 8. **Environment configuration goes exclusively through `/experiment-env-manager`.**
    This skill never asks about backend types, never writes `## Experiment Environment`

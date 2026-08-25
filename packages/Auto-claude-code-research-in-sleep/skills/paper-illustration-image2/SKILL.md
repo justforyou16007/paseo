@@ -68,7 +68,6 @@ and a **local Codex app-server MCP bridge** as the raster renderer.
 ## Constants
 
 - **RENDERER = `codex-image2`** — Native image generation bridge exposed through local Codex app-server
-- **OPTIONAL_TEXT_CRITIC = paseo codex sub-agent** — Optional text-only second opinion for layout/style checks (via `mcp__paseo__create_agent`)
 - **MAX_ITERATIONS = 5** — Maximum refinement rounds
 - **TARGET_SCORE = 9** — Minimum acceptable score (1-10)
 - **OUTPUT_DIR = `figures/ai_generated/`** — Output directory
@@ -240,17 +239,6 @@ layout plan:
 - relative module prominence
 - arrow routing and likely collision points
 
-If a paseo codex sub-agent is available, you may ask it for a short second-opinion
-layout critique here, but Claude should still complete this step even without
-Codex.
-
-Use Codex layout critique for:
-
-- missing components
-- confusing layout
-- weak flow hierarchy
-- likely arrow-direction ambiguity or clutter
-
 ## Step 3: Style Verification
 
 This step is also required. Check the prompt against the intended paper style
@@ -261,9 +249,6 @@ before rendering:
 - labels are concise and in English unless requested otherwise
 - the figure will read clearly in grayscale / print
 - no glow, rainbow gradient, or slide-deck decoration slips in
-
-If a paseo codex sub-agent is available, you may ask it for a short text-only
-style audit, but do not block on it.
 
 ## Step 4: Generate Through the Bridge
 
@@ -353,8 +338,8 @@ Suggested LaTeX:
 9. Use specific, actionable refinement feedback instead of vague comments.
 10. Review arrow direction, label clarity, and visual hierarchy every round.
 11. Accept only figures that look paper-ready, not slide-ready.
-12. Always use `tools/paper-illustration-image2.js finalize` to emit the final artifacts.
-13. Always use `tools/paper-illustration-image2.js verify` before claiming success.
+12. Always use `node "$IMAGE2_HELPER" finalize` to emit the final artifacts.
+13. Always use `node "$IMAGE2_HELPER" verify` before claiming success.
 
 ## Repair Path
 
@@ -390,8 +375,8 @@ figures/ai_generated/
 | ------ | ------------------------------------------------------- | ---------------------------------------------------------- |
 | Step 0 | `node "$IMAGE2_HELPER" preflight`                    | Observable activation predicate and preflight receipt      |
 | Step 1 | Claude                                                  | Parse request and create the initial figure prompt         |
-| Step 2 | Claude (+ optional Codex critique)                      | Refine layout, grouping, spacing, and arrow routing        |
-| Step 3 | Claude (+ optional Codex critique)                      | Verify academic visual style before rendering              |
+| Step 2 | Claude                                                  | Refine layout, grouping, spacing, and arrow routing        |
+| Step 3 | Claude                                                  | Verify academic visual style before rendering              |
 | Step 4 | `mcp__codex-image2__generate_start` + `generate_status` | Native raster image generation through Codex app-server    |
 | Step 5 | Claude                                                  | Strict visual review and scoring                           |
 | Step 7 | `node "$IMAGE2_HELPER" finalize` + `verify`          | Emit canonical artifacts and external verification receipt |

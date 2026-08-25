@@ -2,7 +2,7 @@
 
 > 从零开始，手把手完成 ARIS 的全部配置。完成后你就可以使用 ARIS 的完整研究工作流。
 >
-> 本指南面向 **macOS 本地 + 远程 Linux GPU 服务器** 环境，使用 **Claude Code 作为执行者、Codex MCP（GPT）作为审稿人** 的推荐配置。
+> 本指南面向 **macOS 本地 + 远程 Linux GPU 服务器** 环境，使用当前的 **Paseo 父子 agent 执行工作流和跨模型审阅** 配置。
 >
 > [English](SETUP_GUIDE.md) | 中文版
 
@@ -18,28 +18,20 @@ Claude Code 是 Anthropic 的 CLI 工具，ARIS 的所有 skill 都在它上面�
 claude --version   # 验证安装
 ```
 
-### 1.2 Codex CLI + MCP 注册
+### 1.2 Paseo MCP
 
-Codex CLI 是 OpenAI 的 CLI 工具，ARIS 通过它调用 GPT 作为跨模型审稿人。安装方式见 [Codex CLI 官方文档](https://developers.openai.com/codex)。
-
-安装完成后，先做一次性 ChatGPT 登录（浏览器流程），再把 Codex CLI 注册成 Claude Code 的 MCP server：
-
-```bash
-codex --version   # 验证安装
-codex login       # 一次性 ChatGPT 登录（已登录可跳过）
-claude mcp add codex -s user -- codex mcp-server
-```
-
-- `codex`（add 后面）— 注册名称。ARIS 的 skill 硬编码了这个名字，**不要改**
-- `-s user` — 全局生效，所有项目都能用
-- `codex mcp-server` — Codex CLI 内置的子命令，启动 MCP 服务模式
-
-注册后需要**重启 Claude Code** 才会生效。验证：
+ARIS 通过 Paseo 父子 agent 委派工作流阶段和跨模型审阅。先启动当前项目
+使用的 Paseo daemon，再确认 agent MCP 可用：
 
 ```bash
-claude mcp list | grep codex
-# 应显示: codex: codex mcp-server - ✓ Connected
+paseo daemon start
+paseo daemon status
 ```
+
+宿主必须提供 `mcp__paseo__list_agents`、
+`mcp__paseo__create_agent`、`mcp__paseo__send_agent_prompt`。其中任何工具
+不可用时，工作流都必须阻断；不要安装第二套审阅传输，也不要在进程内执行
+技能。
 
 ### 1.3 LaTeX 环境（可选）
 
@@ -177,7 +169,9 @@ Research Wiki 是 ARIS 的核心知识库，自动积累你整个研究过程中
 /research-wiki init
 ```
 
-它会创建 `research-wiki/` 目录，详见 [`research_wiki.py`](tools/research_wiki.py)：
+它会创建 `research-wiki/` 目录，当前调用契约见
+[`skills/research-wiki/SKILL.md`](skills/research-wiki/SKILL.md)。知识库写入
+统一使用编译后的 `research-wiki.js` helper，helper 失败时停止当前阶段。
 
 ```
 research-wiki/
@@ -196,13 +190,13 @@ research-wiki/
 
 重启 Claude Code，在研究项目目录下测试：
 
-**1. 测试 MCP 连通性** — 在 Claude Code 中输入：
+**1. 测试 Paseo 连通性** — 在 Claude Code 中输入：
 
 ```
-用 codex MCP 问一下 GPT：1+1 等于几
+确认 Paseo MCP 可以列出 agent，并创建和完成一个测试子 agent。
 ```
 
-收到 GPT 的回答说明跨模型通信正常。
+只有拿到测试子 agent 的 receipt，工作流才算准备完成。
 
 **2. 测试技能识别** — 在 Claude Code 中输入：
 

@@ -120,6 +120,7 @@ class FloatWidget:
         self._scanning = False   # True while a worker-thread scan is in flight
         self._show_more = False   # toggled by clicking the "+N more" overflow line
         self._last_sessions = []  # last scan, so the toggle re-renders w/o a re-scan
+        self._scan_error = None
 
         self._build_header()
         self.body = tk.Frame(self.root, bg=BG)
@@ -222,35 +223,53 @@ class FloatWidget:
     def _scan_worker(self):
         """Read-only scan OFF the UI thread; hands results back via after(0)."""
         try:
-            sessions = scanner.scan()      # read-only; returns [] on any failure
-        except Exception:
+            sessions = scanner.scan()
+            error = None
+        except Exception as exc:
             sessions = []
+            error = f"{type(exc).__name__}: {exc}"
         if self._stopped:
             return
         try:
-            self.root.after(0, lambda: self._apply(sessions))
+            self.root.after(0, lambda: self._apply(sessions, error))
         except (tk.TclError, RuntimeError):
             # window torn down mid-scan -- nothing to render
             pass
 
-    def _apply(self, sessions):
+    def _apply(self, sessions, error=None):
         """Render scan results on the Tk main thread; clears the in-flight flag."""
         self._scanning = False
         if self._stopped:
             return
-        try:
-            self._render(sessions)
-        except Exception:
-            pass
+        self._render(sessions, error)
 
     def _toggle_more(self):
         """Show/hide visible sessions beyond the top MAX_VISIBLE. Pure display."""
         self._show_more = not self._show_more
-        self._render(self._last_sessions)
+        self._render(self._last_sessions, self._scan_error)
 
-    def _render(self, sessions):
+    def _render(self, sessions, error=None):
         self._last_sessions = sessions
+        self._scan_error = error
         self._clear_body()
+
+        if error:
+            self.count_lbl.config(text="!", fg=RED, bg=HEADER_RED)
+            self.title_lbl.config(fg=RED, text="  ARIS-Monitor — SCAN ERROR", bg=HEADER_RED)
+            self.header.config(bg=HEADER_RED)
+            lbl = tk.Label(
+                self.body,
+                text=error,
+                bg=BG,
+                fg=RED,
+                font=self._small,
+                anchor="w",
+                justify="left",
+                wraplength=WIDTH - 16,
+            )
+            lbl.pack(fill="x", pady=2)
+            self._rows.append(lbl)
+            return
 
         need = sum(1 for s in sessions if s.triage == scanner.NEEDS_APPROVAL)
 
@@ -267,7 +286,7 @@ class FloatWidget:
             self.title_lbl.config(fg=FG, text="  ARIS-Monitor", bg=HEADER_BG)
             self.header.config(bg=HEADER_BG)
 
-        # calm empty state -- stay visible, never flash red on zero sessions
+        # Empty state is distinct from a scan error, which returned above.
         if not sessions:
             lbl = tk.Label(self.body, text="no active Claude sessions",
                            bg=BG, fg=DIM, font=self._mono, anchor="w")
@@ -352,18 +371,14 @@ class FloatWidget:
 
 def main():
     # Probe GENUINE Tk availability with a throwaway hidden root, separately
-    # from running the app. If the probe fails, Tk really is unavailable (no
-    # _tkinter / no display) -> fall back to the ticker. If the probe SUCCEEDS,
-    # run the widget and let any real bug surface as a traceback instead of
-    # being mislabeled "Tkinter unavailable" (which masked a geometry bug).
+    # from running the app. If the probe fails, report the GUI error and stop.
+    # Do not disguise a widget failure as a different interface.
     try:
         _probe = tk.Tk()
         _probe.withdraw()
         _probe.destroy()
     except Exception as ex:
         print("[ARIS-Monitor] Tkinter unavailable (%s)." % ex)
-        print("[ARIS-Monitor] Falling back to the read-only terminal ticker.")
-        print("[ARIS-Monitor] Run:  python3 ticker.py")
         raise SystemExit(1)
     FloatWidget().run()
 

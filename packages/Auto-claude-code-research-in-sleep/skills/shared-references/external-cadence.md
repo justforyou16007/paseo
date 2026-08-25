@@ -35,13 +35,11 @@ harmful case has a specific pathology:
   to do with whether the artifact changed. Zero new signal, full token
   cost.
 - **Thread discontinuity.** ARIS's multi-round review skills carry state
-  across rounds in the reviewer's own thread: `codex-reply` reuses the
-  round-1 `threadId` and the accumulated `REVIEWER_MEMORY` so the
-  reviewer can check resolution against its _own_ prior critique
-  (`reviewer-independence.md`, Exception). An external `/loop` re-enters
-  the skill from the top each tick, starting a _fresh_ `threadId`. The
-  reviewer loses its memory of what it already flagged; "did you fix
-  round 1's gap?" becomes unanswerable.
+  across rounds in the same Paseo reviewer child and its accumulated
+  `REVIEWER_MEMORY` so the reviewer can check resolution against its _own_
+  prior critique (`reviewer-independence.md`, Exception). An external `/loop`
+  re-enters the skill from the top each tick and loses that continuation state;
+  "did you fix round 1's gap?" becomes unanswerable.
 - **Duplicated scheduling.** `/experiment-queue` already runs a
   detached server-side scheduler that polls job status every 60s and
   enforces `depends_on`. Wrapping the queue skill in an external poll
@@ -100,10 +98,7 @@ The generated experiment skill's ops make the additive shape explicit:
 _so that_ a low-frequency heartbeat can read completion state cheaply,
 without holding a session open. The per-tick line appended to
 `.aris/runs/<run_id>.monitor.jsonl` serves the same role for the
-heartbeat's own liveness evidence. (Historical note: this was previously
-the standalone `tools/watchdog.py` daemon writing `summary.txt` for
-CronCreate polling; the bounded paseo heartbeat replaced it.)
-completion state cheaply, without holding a session open.
+heartbeat's own liveness evidence.
 
 ### Why these are safe same-model
 
@@ -141,13 +136,9 @@ uses), and must terminate in the cross-model jury. Never put one inside
 `/loop`, `/schedule`, or `CronCreate`:
 
 - `/auto-review-loop` — already loops internally; reviewer carries
-  round-to-round memory in one `threadId` (`codex-reply`)
-- `/auto-review-loop-llm`, `/auto-review-loop-minimax` — same loop, alternate
-  reviewer backend; same internal round cadence (each round's prior-round
-  summary is fed into the next prompt — a stateless per-round API call, not a
-  shared thread, but still verdict-bearing and self-iterating)
+  round-to-round memory in one Paseo agent
 - `/auto-paper-improvement-loop` — review → fix → recompile loop with its own
-  round structure and a fresh-reviewer bias guard each round (no `codex-reply`)
+  round structure and a fresh-reviewer bias guard each round
 - `/research-review` — produces a cross-model review verdict
 - `/result-to-claim` — judges whether results support a claim
 - `/experiment-audit` — judges experiment integrity
@@ -205,9 +196,8 @@ One-liner: **a heartbeat may say "keep going," never "good enough."**
 
 When the pipeline runs on the paseo substrate (orchestrator + W-agents as
 paseo parent-child agents per `paseo-subagent-dispatch.md`), the **driver** is
-the orchestrator session's self-target `create_heartbeat`. The **doctrine
-above is unchanged** — only the mechanism that delivers the tick is paseo's,
-not `/loop` / `CronCreate`.
+the orchestrator session's self-target `create_heartbeat`. `/loop` and
+`CronCreate` are not ARIS scheduling mechanisms.
 
 > The Paseo MCP substrate is **mandatory** for any scheduled run per
 > Global Rule 4 in
@@ -277,7 +267,7 @@ tuning of the same frame.
   added entries — new evidence, a falsified hypothesis, a candidate direction — _not_ a
   subjective "valuable result"). Resolve the helper via the canonical chain
   (integration-contract §2): `.aris/dist/tools/iteration-log.js` → `dist/tools/iteration-log.js`
-  (warn-and-skip if unresolved), then
+  (fail if unresolved), then
   `node "$ITER_LOG" note <root> <run_id> <phase> <new_findings> [--direction "..."]`.
   Consecutive zero-finding iterations accumulate a `stale_count` in
   `.aris/runs/<run_id>.iterations.jsonl` — a sidecar that does **not** touch run_state's
@@ -315,11 +305,9 @@ from tuning parameters harder within it.
 5. **Preserves thread continuity for any judgment it precedes.** If the
    external wait ends in a verdict step, that verdict step runs _once_,
    in its own thread, after the wait clears — not re-entered per tick.
-6. **Degrades gracefully when no scheduler exists.** External cadence is
-   additive runtime sugar, never load-bearing. On a runtime with no
-   `/loop` / `CronCreate`, the same work still terminates correctly via
-   a blocking poll or a manual re-invocation; the cross-model jury at
-   the end is identical either way (`fan-out-pattern.md`).
+6. **No scheduler means cadence is blocked.** Do not replace a missing
+   `/loop` / `CronCreate` with a blocking poll, a manual poll command, or a
+   hidden re-invocation. The caller must explicitly disable cadence or stop.
 
 ## Autonomous-mode discipline (when the human checkpoint is off)
 
@@ -352,23 +340,20 @@ The heartbeat's stall-detection responsibility uses the
    matrix in [`paseo-subagent-dispatch.md`](paseo-subagent-dispatch.md)
    §"Idle agent supervision":
    - Child waiting for its own sub-agent → do nothing.
-   - Child stalled with no sub-agents → the lifecycle owner sends a
-     continuation prompt, ends its turn, and awaits that child's next
-     finish notification.
-     A non-owner heartbeat nudges the owner; it never prompts the child
-     directly.
+   - Child stalled with no sub-agents → report BLOCKED and stop the
+     supervision branch. Do not send a continuation prompt or do the
+     child's work through the heartbeat.
    - Child errored → report BLOCKED.
 4. **The heartbeat never does the child's work.** If a child is stalled,
-   the heartbeat continues it or escalates — it never implements the
-   stalled task itself.
+   the heartbeat reports BLOCKED and escalates; it never continues or
+   implements the stalled task itself.
 
 ## Cross-references
 
 - `acceptance-gate.md` — who is allowed to ACCEPT. Cadence drives;
   it does not acquit. The overnight nudge is bound by this rule.
-- `fan-out-pattern.md` — fan-out (and cadence) are runtime accelerants
-  for a prompt-level pattern; both must degrade gracefully and always
-  terminate in the identical cross-model jury.
+- `fan-out-pattern.md` — fan-out and cadence are explicit runtime choices;
+  neither creates a second completion path.
 - `reviewer-independence.md` — why wrapping a multi-round review in an
   external timer breaks reviewer thread/memory continuity.
 - `experiment-integrity.md` — the executor never judges its own

@@ -35,7 +35,7 @@ Grant proposals argue for **future work** (feasibility + potential), not complet
 
 - **GRANT_TYPE = `KAKENHI`** — Default grant type. Supported: `KAKENHI`, `NSF`, `NSFC`, `ERC`, `DFG`, `SNSF`, `ARC`, `NWO`, `GENERIC`. Override via argument (e.g., `/grant-proposal "topic — NSF"`).
 - **GRANT_SUBTYPE = `auto`** — Sub-type within the grant agency. Examples: KAKENHI `Start-up`/`Wakate`/`Kiban-B`; NSFC `Youth`/`Excellent-Youth`/`Distinguished`/`Overseas`/`Key`; NSF `CAREER`/`CRII`/`Standard`. Auto-detected from argument or defaults to the most common sub-type.
-- **REVIEWER_MODEL = `gpt-5.5`** — Model used via Codex MCP for proposal review. Must be an OpenAI model (e.g., `gpt-5.5`, `o3`, `gpt-4o`).
+- **REVIEWER_MODEL = `gpt-5.5`** — Model used by the Paseo codex reviewer for proposal review. Must be an OpenAI model (e.g., `gpt-5.5`, `o3`, `gpt-4o`).
 - **OUTPUT_FORMAT = `markdown`** — Output format. Supported: `markdown`, `latex`. LaTeX uses grant-specific templates when available.
 - **MAX_REVIEW_ROUNDS = 2** — Maximum external review-revise cycles before finalizing.
 - **OUTPUT_DIR = `grant-proposal/`** — Directory for generated proposal files.
@@ -46,7 +46,7 @@ Grant proposals argue for **future work** (feasibility + potential), not complet
 
 ## Optional: Style reference (`— style-ref: <source>`, opt-in)
 
-Lets the PI steer the proposal's **structural** layout (section order tendency, paragraph length, figure density, citation style) toward a successful past proposal or paper they'd like to mirror. **Default OFF — when the user does not pass `— style-ref`, do nothing differently from before.**
+Lets the PI steer the proposal's **structural** layout (section order tendency, paragraph length, figure density, citation style) toward a successful past proposal or paper they'd like to mirror. **Default OFF — the normal proposal path does not read a style reference.**
 
 Only when `— style-ref: <source>` appears in `$ARGUMENTS`, run the helper FIRST, before drafting:
 
@@ -68,7 +68,7 @@ STYLE_STATUS=0
 CACHE=$(node "$STYLE_HELPER" --source "<source>") || STYLE_STATUS=$?
 case "$STYLE_STATUS" in
   0) ;;                                       # use $CACHE/style_profile.md as structural guidance
-  2) echo "warning: style-ref skipped (missing optional dep)" >&2 ;;
+  2) echo "error: --style-ref requires the optional dependency; aborting proposal" >&2 ; exit 1 ;;
   3) echo "error: --style-ref source failed; aborting proposal" >&2 ; exit 1 ;;
   *) echo "error: helper failed unexpectedly; aborting proposal" >&2 ; exit 1 ;;
 esac
@@ -203,10 +203,10 @@ Parse `$ARGUMENTS` to extract:
 
 Then gather context from the project directory:
 
-1. Read `idea-stage/IDEA_REPORT.md` if it exists (from `/idea-discovery`); fall back to `./IDEA_REPORT.md` if not found
+1. Read `idea-stage/IDEA_REPORT.md` if it exists (from `/idea-discovery`); do not use a project-root copy when the stage artifact is absent
 2. Read `refine-logs/FINAL_PROPOSAL.md` if it exists (from `/research-refine`)
 3. Read `refine-logs/EXPERIMENT_PLAN.md` if it exists (from `/experiment-plan`)
-4. Read `review-stage/AUTO_REVIEW.md` if it exists (from `/auto-review-loop` — prior review feedback is gold for grants); fall back to `./AUTO_REVIEW.md` if not found
+4. Read `review-stage/AUTO_REVIEW.md` if it exists (from `/auto-review-loop` — prior review feedback is gold for grants); do not use a project-root copy when the stage artifact is absent
 5. Read `NARRATIVE_REPORT.md` or `STORY.md` if they exist
 6. Read any existing literature notes or survey documents
 7. Scan for the user's publication list (e.g., `publications.md`, `cv.md`, `bio.md`, `CV.pdf`)
@@ -479,7 +479,7 @@ Invoke `/research-review` on the complete draft for grant-type-specific evaluati
 - Provides ranked action items for improvement
 - All feedback saved to `grant-proposal/GRANT_REVIEW.md`
 
-> **Codex MCP fallback**: If Paseo codex sub-agent is not available (no Paseo MCP wired), skip external review. Note "External review skipped — no Paseo MCP available. Consider running `/auto-review-loop-llm` separately." in GRANT_REVIEW.md. The proposal is still usable without external review.
+> **External review gate**: Paseo codex review is required for this workflow. If the reviewer cannot be dispatched, write a failed receipt and stop. Do not declare the proposal complete without the review artifact.
 
 If `/research-review` is invoked (preferred), it handles the Codex call internally. If calling Codex directly (e.g., to maintain thread context from Phase 2):
 
@@ -487,7 +487,7 @@ If `/research-review` is invoked (preferred), it handles the Codex call internal
 
 Write `grant-proposal/codex_panel_review_bundle_round_1.md` containing the
 criteria below plus the absolute path to `grant-proposal/GRANT_PROPOSAL.md`,
-then keep the Codex MCP prompt short:
+then keep the Paseo codex reviewer prompt short:
 
 ```
 
@@ -640,7 +640,7 @@ What would you like to do next?
 
 ## Key Rules
 
-- **Large file handling**: If the Write tool fails due to file size, immediately retry using Bash (`cat << 'EOF' > file`) to write in chunks. Do NOT ask the user for permission — just do it silently.
+- **Large file handling**: If the Write tool fails, stop and report the write error. Do not switch to a second writer.
 
 - **Do NOT fabricate budget amounts.** Generate narrative budget justification only. Leave specific dollar/yen/yuan/euro amounts as `[AMOUNT]` placeholders for the user to fill in.
 - **Do NOT fabricate PI information.** If no publication list is available, leave `[TODO: Add publications]` placeholders. Never invent papers, grants, or credentials.
@@ -669,7 +669,7 @@ Parameters can be passed inline with `—` separator. They flow to sub-skills wh
 | `max review rounds` | 2        | External review cycles                                 | —                 |
 | `sources`           | all      | Literature sources                                     | → `/research-lit` |
 | `arxiv download`    | false    | Download arXiv PDFs                                    | → `/research-lit` |
-| `reviewer model`    | gpt-5.5  | Codex review model                                     | → Codex MCP       |
+| `reviewer model`    | gpt-5.5  | Paseo codex review model                               | → Paseo MCP       |
 | `auto proceed`      | false    | Skip checkpoints                                       | —                 |
 
 ## Composing with Other Skills

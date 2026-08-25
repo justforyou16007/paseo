@@ -49,6 +49,7 @@ Read from the input manifest (worker mode) or arguments (direct):
 
 - No interpretation — export numbers and state, nothing else. Analysis of
   the series belongs to the other sub-skills.
-- When a run is unreachable (deleted, permissions), record the failure in
-  the output contract and continue with the rest; never abort the batch.
+- When a run is unreachable (deleted, permissions), record the failure in the
+  output contract and stop the batch. Do not present the remaining runs as a
+  complete retrieval; start a new invocation after access is fixed.
 - Report file paths, not inline numbers, in the final reply.

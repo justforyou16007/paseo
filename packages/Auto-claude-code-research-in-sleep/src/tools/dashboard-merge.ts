@@ -28,7 +28,7 @@ interface WorkerRule {
 const RUN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
 // Problem entity node ids (research-wiki `problems/<slug>.md`). Replaces the old
-// free-text gap ids (G1, G2, ...); the dashboard field names stayed `gaps.*`.
+// free-text gap ids (G1, G2, ...).
 const PROBLEM_ID_PATTERN = /^problem:[a-z0-9][a-z0-9._-]*$/;
 const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
@@ -54,7 +54,7 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every(isNonEmptyString);
 }
 
-function isGapIdArray(value: unknown): value is string[] {
+function isProblemIdArray(value: unknown): value is string[] {
   return isStringArray(value) && value.every((item) => PROBLEM_ID_PATTERN.test(item));
 }
 
@@ -134,20 +134,20 @@ const WORKER_RULES: Readonly<Record<string, WorkerRule>> = {
   "kill-argument": {
     phases: ["kill-argument", "paper-writing"],
     patchKeys: {
-      "gaps.open": isGapIdArray,
-      "gaps.closed": isGapIdArray,
-      "gaps.total": (value) => Number.isInteger(value) && (value as number) >= 0,
       plan_path: (value) => value === null || isPlanPath(value),
       overall_verdict: (value) => value === "PASS" || value === "WARN" || value === "FAIL",
     },
-    requiredPatchKeys: ["gaps.open", "gaps.closed", "gaps.total", "overall_verdict"],
+    requiredPatchKeys: ["overall_verdict"],
   },
   summary: {
     phases: ["summary"],
     patchKeys: {
       summary_path: isPlanPath,
+      "problems.open": isProblemIdArray,
+      "problems.closed": isProblemIdArray,
+      "problems.total": (value) => Number.isInteger(value) && (value as number) >= 0,
     },
-    requiredPatchKeys: ["summary_path"],
+    requiredPatchKeys: ["summary_path", "problems.open", "problems.closed", "problems.total"],
   },
   "paper-writing": {
     phases: ["paper-writing"],
@@ -253,12 +253,12 @@ function validateDashboard(raw: unknown, runId: string, dashboardPath: string): 
     }
   }
 
-  if (!isObject(raw.gaps)) fail("dashboard.gaps must be an object");
-  if (!isGapIdArray(raw.gaps.open) || !isGapIdArray(raw.gaps.closed)) {
-    fail("dashboard.gaps.open/closed must be arrays of gap ids");
+  if (!isObject(raw.problems)) fail("dashboard.problems must be an object");
+  if (!isProblemIdArray(raw.problems.open) || !isProblemIdArray(raw.problems.closed)) {
+    fail("dashboard.problems.open/closed must be arrays of problem node ids");
   }
-  if (!Number.isInteger(raw.gaps.total) || (raw.gaps.total as number) < 0) {
-    fail("dashboard.gaps.total must be an integer >= 0");
+  if (!Number.isInteger(raw.problems.total) || (raw.problems.total as number) < 0) {
+    fail("dashboard.problems.total must be an integer >= 0");
   }
   if (!isObject(raw.last_review)) fail("dashboard.last_review must be an object");
   if (!isObject(raw.system_errors)) fail("dashboard.system_errors must be an object");
@@ -476,6 +476,9 @@ function validatePatch(receipt: Receipt, dashboard: JsonObject): void {
       fail(`worker '${receipt.worker}' receipt is missing required patch '${required}'`);
     }
   }
+  // Every cross-check below reads required keys, so it runs only once they are
+  // all present — otherwise a missing key surfaces as a TypeError instead of the
+  // message that names it.
 
   if (receipt.worker === "experiment-bridge") {
     validateExperiments(receipt);
@@ -488,16 +491,18 @@ function validatePatch(receipt: Receipt, dashboard: JsonObject): void {
     }
   }
 
-  if (receipt.worker === "kill-argument") {
-    const open = receipt.dashboard_patch["gaps.open"] as string[];
-    const closed = receipt.dashboard_patch["gaps.closed"] as string[];
-    const total = receipt.dashboard_patch["gaps.total"] as number;
+  if (receipt.worker === "summary") {
+    const open = receipt.dashboard_patch["problems.open"] as string[];
+    const closed = receipt.dashboard_patch["problems.closed"] as string[];
+    const total = receipt.dashboard_patch["problems.total"] as number;
     if (new Set(open).size !== open.length || new Set(closed).size !== closed.length) {
-      fail("gap lists must not contain duplicates");
+      fail("problem lists must not contain duplicates");
     }
-    if (open.some((gap) => closed.includes(gap))) fail("a gap cannot be both open and closed");
+    if (open.some((problem) => closed.includes(problem))) {
+      fail("a problem cannot be both open and closed");
+    }
     if (total < new Set([...open, ...closed]).size) {
-      fail("gaps.total cannot be smaller than the adjudicated gap set");
+      fail("problems.total cannot be smaller than the adjudicated problem set");
     }
   }
 }
@@ -522,20 +527,19 @@ function updateMetricHistory(dashboard: JsonObject, receipt: Receipt): void {
   const metric = dashboard.metric as JsonObject;
   const history = metric.history as JsonObject[];
   const existingIndex = history.findIndex((entry) => entry.iter === receipt.iteration);
+  const replacement = {
+    iter: receipt.iteration,
+    value,
+    source: receipt.worker,
+    timestamp: new Date().toISOString(),
+  };
   if (existingIndex >= 0) {
-    history[existingIndex] = {
-      iter: receipt.iteration,
-      value,
-      source: receipt.worker,
-      timestamp: new Date().toISOString(),
-    };
+    history[existingIndex] = replacement;
+    for (let index = history.length - 1; index > existingIndex; index -= 1) {
+      if (history[index]!.iter === receipt.iteration) history.splice(index, 1);
+    }
   } else {
-    history.push({
-      iter: receipt.iteration,
-      value,
-      source: receipt.worker,
-      timestamp: new Date().toISOString(),
-    });
+    history.push(replacement);
   }
 }
 

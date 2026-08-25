@@ -1,9 +1,8 @@
 """Unit tests for parse_claude_json and run_claude_review in the claude-review MCP bridge.
 
-parse_claude_json tests cover the JSON-shape change between claude CLI 1.x
-(NDJSON of dicts) and 2.x (single JSON array of events under --output-format json),
-plus defensive cases for pretty-printed arrays and arrays missing the terminal
-result event.
+parse_claude_json tests cover the current CLI contract: one complete JSON value
+under --output-format json, plus defensive cases for pretty-printed arrays and
+arrays missing the terminal result event.
 
 run_claude_review tests cover the end-to-end mapping from a parsed result event
 into the (threadId, response, model, duration_ms, stop_reason) dict the MCP
@@ -79,20 +78,6 @@ class ParseClaudeJsonTests(unittest.TestCase):
         self.assertEqual(payload["result"], "hello world")
         self.assertEqual(payload["session_id"], "sess-456")
 
-    def test_legacy_ndjson_dicts(self) -> None:
-        """CLI 1.x backward compat: NDJSON stream of dicts, last dict wins."""
-        lines = [
-            json.dumps(_system_init_event()),
-            json.dumps(_assistant_event()),
-            json.dumps(_result_event("legacy ok", "sess-789")),
-        ]
-        stdout = "\n".join(lines) + "\n"
-        payload, err = MODULE.parse_claude_json(stdout)
-        self.assertIsNone(err)
-        self.assertIsNotNone(payload)
-        self.assertEqual(payload["result"], "legacy ok")
-        self.assertEqual(payload["session_id"], "sess-789")
-
     def test_empty_stdout(self) -> None:
         for raw in ("", "   ", "\n\n", "\t\n  "):
             with self.subTest(raw=repr(raw)):
@@ -116,40 +101,21 @@ class ParseClaudeJsonTests(unittest.TestCase):
         self.assertEqual(err, "Claude CLI returned a JSON array without a 'result' event")
 
     def test_garbage_stdout(self) -> None:
-        """Non-JSON stdout falls through to the legacy 'did not return JSON output' error."""
+        """Non-JSON stdout is rejected instead of being scanned for a result."""
         payload, err = MODULE.parse_claude_json("hello world\nthis is not json\n")
         self.assertIsNone(payload)
         self.assertEqual(err, "Claude CLI did not return JSON output")
 
-    def test_noisy_stdout_with_compact_array_line_recovers(self) -> None:
-        """Wrapper banner + compact JSON-array line on the next line still recovers result.
-
-        Defends against Codex adversarial review finding: CLI wrappers (nvm,
-        asdf, mise, future claude --debug) may print non-JSON banners to
-        stdout before/after the JSON. Whole-stdout json.loads fails; the
-        per-line fallback must scan list payloads too, not only dicts.
-        """
+    def test_noisy_stdout_is_rejected(self) -> None:
+        """A wrapper banner invalidates the selected single-value CLI contract."""
         events = [_system_init_event(), _assistant_event(), _result_event("recovered", "sess-noisy")]
         stdout = (
             "warning: nvm couldn't find xyz\n"
             + json.dumps(events) + "\n"
         )
         payload, err = MODULE.parse_claude_json(stdout)
-        self.assertIsNone(err)
-        self.assertIsNotNone(payload)
-        self.assertEqual(payload["result"], "recovered")
-        self.assertEqual(payload["session_id"], "sess-noisy")
-
-    def test_noisy_stdout_with_array_line_no_result_surfaces_specific_diagnostic(self) -> None:
-        """Noisy stdout + JSON-array line with no result event: surface the specific 'array without result event' diagnostic (symmetry with the whole-stdout path)."""
-        events_no_result = [_system_init_event(), _assistant_event()]
-        stdout = (
-            "warning: banner\n"
-            + json.dumps(events_no_result) + "\n"
-        )
-        payload, err = MODULE.parse_claude_json(stdout)
         self.assertIsNone(payload)
-        self.assertEqual(err, "Claude CLI returned a JSON array without a 'result' event")
+        self.assertEqual(err, "Claude CLI did not return JSON output")
 
 
 def _completed_process(stdout: str, returncode: int = 0, stderr: str = "") -> subprocess.CompletedProcess:
@@ -192,28 +158,6 @@ class RunClaudeReviewTests(unittest.TestCase):
         called_cmd = run.call_args.args[0]
         self.assertIn("--output-format", called_cmd)
         self.assertEqual(called_cmd[called_cmd.index("--output-format") + 1], "json")
-
-    def test_legacy_ndjson_stdout_maps_correctly_end_to_end(self) -> None:
-        """CLI 1.x NDJSON path -> downstream consumer still gets correct fields."""
-        result = _result_event("legacy review", "sess-legacy")
-        result["model"] = "claude-sonnet-4-6"
-        result["duration_ms"] = 4321
-        stdout = "\n".join([
-            json.dumps(_system_init_event()),
-            json.dumps(_assistant_event()),
-            json.dumps(result),
-        ]) + "\n"
-
-        with mock.patch.object(MODULE, "find_claude_bin", return_value="/fake/claude"), \
-             mock.patch.object(MODULE.subprocess, "run", return_value=_completed_process(stdout)):
-            payload, err = MODULE.run_claude_review("hello")
-
-        self.assertIsNone(err)
-        assert payload is not None
-        self.assertEqual(payload["threadId"], "sess-legacy")
-        self.assertEqual(payload["response"], "legacy review")
-        self.assertEqual(payload["model"], "claude-sonnet-4-6")
-        self.assertEqual(payload["duration_ms"], 4321)
 
     def test_array_without_result_event_surfaces_clear_error(self) -> None:
         """Maintainer's fail-fast requirement holds end-to-end (no silent empty review)."""

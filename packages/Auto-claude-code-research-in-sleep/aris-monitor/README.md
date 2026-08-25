@@ -109,7 +109,9 @@ visually distinct from "needs approval".
 - `widget.py` — the Tkinter floating panel (UI; imports `scanner.scan()` for the
   read-only display and `focus.focus()` for the click-to-raise action).
 - `scanner.py` — the strictly read-only classifier. Public: `scan()`,
-  `summary()`. `python3 scanner.py` is a GUI-less smoke test.
+  `summary()`. A malformed or unreadable registry raises and is shown as a
+  scan error; it is never treated as an empty machine. `python3 scanner.py` is
+  a GUI-less smoke test.
 - `focus.py` — the ONE non-read action: raise a session's terminal (`ps` for
   the tty + `focus-tty.sh`). Strictly raise-only; never kills/writes/signals.
 - `focus-tty.sh` — bundled raise-only shim (Terminal.app / iTerm2 / tmux pane).
@@ -117,10 +119,10 @@ visually distinct from "needs approval".
   so the focus action's command surface stays provably bounded to this reviewed
   shim — osascript `activate`/`select` + read-only `tmux list-*` discovery, never
   `kill`/`send-keys`/session mutation.
-- `ticker.py` — headless terminal fallback (same scanner, same 2 s loop), used
-  automatically when Tkinter is unavailable.
-- `run.sh` — launcher: verifies Tk, starts the widget, falls back to the
-  ticker. Supports `--check` and `--ticker`.
+- `ticker.py` — explicit headless terminal monitor (same scanner, same 2 s
+  loop). It runs only when selected with `--ticker`; scan errors stop it.
+- `run.sh` — launcher: verifies Tk and starts the widget. Supports `--check`
+  and the explicit `--ticker` mode.
 
 ## Dependencies
 

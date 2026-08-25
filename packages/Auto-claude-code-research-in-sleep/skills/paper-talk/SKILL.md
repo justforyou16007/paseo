@@ -39,10 +39,10 @@ These are non-negotiable across all phases:
 3. **Speaker notes are byte-stable.** Polish must not change `slide.notes_slide` content. Phase 4 verifies this.
 4. **No new content anywhere in the pipeline.** All slide text, speaker notes, talk script, Q&A answers, claims, numbers, citations, URLs, author names, affiliations, anonymity placeholders, and experiment results must be either paper-grounded (extracted from `PAPER_DIR/` artefacts) or explicitly user-provided. The pipeline never invents content during outline, build, polish, audit, or export. Phase-4 anonymity scan + claim audit verify this end-to-end.
 5. **No slide reordering.** Add / drop / reorder requires explicit user flags.
-6. **Cross-model independence.** Per-page Codex calls in `/slides-polish` use fresh threads (no `codex-reply`). See `../shared-references/reviewer-independence.md`.
+6. **Cross-model independence.** Per-page Paseo codex calls in `/slides-polish` use fresh children. See `../shared-references/reviewer-independence.md`.
 7. **Anonymity fail-closed.** If any audit (or any Codex fix proposal) would replace a placeholder with a real title / count / URL, the workflow halts and surfaces the proposal for human review. See `../shared-references/experiment-integrity.md`.
 8. **Style references are guidance, not text source.** A `— reference:` PDF or `— style:` preset informs visual weight and structural rhythm; never copy prose, examples, slide titles, or speaker-note text from the reference.
-9. **Final report cannot be `conference-ready` unless required audits pass.** Phase 6 verifies and downgrades verdict if audits fail.
+9. **Final report cannot be `conference-ready` unless required audits pass.** A required audit failure blocks Phase 6.
 10. **`reasoning_effort: xhigh`** is invariant across all `effort` levels for any Codex call invoked by sub-skills.
 
 ## Constants
@@ -118,7 +118,7 @@ The audit JSON files follow the shared 6-state schema; see
    - LaTeX: `which xelatex pdflatex latexmk`
    - PPTX rendering: `which soffice` (LibreOffice headless) — required for Phase 4 export integrity check; otherwise prompt user to export PDF manually.
    - PDF tools: `which pdfinfo pdftoppm` (poppler) — required for `/slides-polish` PNG rendering.
-   - Codex MCP availability.
+   - Paseo MCP availability.
    - python-pptx (`python3 -c 'import pptx'`).
 3. **Resolve overrides** from `$ARGUMENTS`: `talk_type`, `minutes`, `assurance`, `reference`, `style`, `effort`.
 4. **State init**: write `.aris/paper-talk/PIPELINE_STATE.json` with `phase: 0`, timestamp, all resolved overrides.
@@ -159,8 +159,8 @@ running unattended.
 Dispatch a paseo claude sub-agent for `/paper-slides` per
 `shared-references/paseo-subagent-dispatch.md`, then immediately wait for
 that child, to generate Beamer source + PPTX from the approved outline. If
-Paseo MCP is unavailable, mark the phase BLOCKED; do not use a host-harness
-fallback.
+Paseo MCP is unavailable, mark the phase BLOCKED; do not use another dispatch
+mechanism.
 
 ```
 /paper-slides "<paper-dir>" — talk_type: <T> — minutes: <N> — venue: <V> — aspect: 16:9 — notes: true
@@ -262,8 +262,8 @@ The audit emits `audit-input/PAPER_CLAIM_AUDIT.json` with the shared
 `.aris/paper-talk/audits/slide_claim_audit.json` and de-stage the path
 prefix so the verdicts cite slide K rather than synthetic-paper sections.
 
-A `FAIL` or `BLOCKED` verdict on any claim downgrades the Phase-6 final
-verdict from `conference-ready` to `polished`.
+A `FAIL`, `BLOCKED`, or `ERROR` verdict on any claim blocks Phase 6. Fix the
+audit finding and start a new invocation.
 
 #### 4.2 Citation audit
 
@@ -304,7 +304,7 @@ FINAL_PPTX = slides/presentation_polished.pptx  if Phase 3 ran
 Then:
 
 1. **Recompile Beamer cleanly**: `cd slides && latexmk -pdf -xelatex main.tex` (or `pdflatex` for non-CJK). Confirm `main.pdf` page count matches outline slide count.
-2. **Render `FINAL_PPTX` → PDF** via `soffice --headless --convert-to pdf <FINAL_PPTX> -outdir slides/`. If unavailable, prompt user.
+2. **Render `FINAL_PPTX` → PDF** via `soffice --headless --convert-to pdf <FINAL_PPTX> -outdir slides/`. If `soffice` is unavailable or the command fails, block the phase.
 3. **Export integrity check** → `.aris/paper-talk/audits/export_integrity.json` (6-state):
    - PPTX-PDF page count == Beamer-PDF page count.
    - Aspect ratio == declared (16:9 default).
@@ -312,14 +312,14 @@ Then:
    - Speaker notes preserved on every slide that had them in the baseline. When Phase 3 ran, sha256 match against `presentation_pre_polish.pptx`'s notes; when Phase 3 skipped, against `presentation.pptx`'s own notes (no-op).
    - Embedded fonts are appropriate for projector use (e.g., Calibri / Helvetica Neue / PingFang SC for Chinese).
 
-If any integrity check fails, downgrade the Phase-6 verdict and surface
-specifics to the user.
+If any integrity check fails, block Phase 6 and surface the specific failure
+to the user. Do not write a lower-assurance final report.
 
 ### Phase 6: Final Report
 
 Write `.aris/paper-talk/FINAL_REPORT.md` with:
 
-- **Verdict**: `draft` | `polished` | `conference-ready` (downgraded if audits failed).
+- **Verdict**: `draft` | `polished` | `conference-ready`.
 - **Artefact paths**: Beamer source / PDF, baseline PPTX, polished PPTX, polished PDF, notes, script.
 - **Slide count**, time budget vs target.
 - **Audit summary** (one line per audit run + PASS / WARN / FAIL).
@@ -329,15 +329,15 @@ Write `.aris/paper-talk/FINAL_REPORT.md` with:
 A final `conference-ready` verdict requires:
 
 - Phases 0-5 all completed without halt.
-- All Phase-4 audit JSONs returned `PASS` (or `NOT_APPLICABLE` when the
+- All required Phase-4 audit JSONs returned `PASS` (or `NOT_APPLICABLE` when the
   audit's content detector did not match — e.g., no citations on slides).
-  Any `WARN`, `FAIL`, `BLOCKED`, or `ERROR` downgrades the verdict.
+  Any `WARN`, `FAIL`, `BLOCKED`, or `ERROR` blocks Phase 6.
 - Phase-5 export integrity returned `PASS`.
 - No anonymity-scan `FAIL` when anonymous submission is declared.
 
-Otherwise the report emits the highest passing level (`polished` or
-`draft`) and itemises why `conference-ready` was not granted, citing the
-specific audit JSON and the failing verdict line.
+If these conditions are not met, write a failed receipt with the specific
+audit JSON and failing verdict line, then stop. Do not downgrade the result
+and continue with a lower-assurance report.
 
 ## Effort Levels
 

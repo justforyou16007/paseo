@@ -82,7 +82,7 @@ All of these are pure engineering friction that can be orchestrated.
 > # If not fixed: abort queue.
 > ```
 >
-> `queue-manager.js` itself is unchanged — it runs on the remote host and
+> `queue-manager.js` runs on the remote host and
 > batch-schedules jobs. The experiment skill's ops run locally and prepare
 > the host; they are complementary (single-env control vs batch scheduling).
 
@@ -91,6 +91,7 @@ A manifest lists jobs with explicit state:
 ```yaml
 project: my_grid_experiment
 cwd: /home/user/your_project
+launch_op: .claude/skills/run-my_grid_experiment/scripts/ops/launch-job.sh
 conda: my_env
 # Optional: override conda hook path if conda is not at a standard location.
 # Can be a bare path (wrapped automatically) or a full `eval "$(... shell.bash hook)"` string.
@@ -107,8 +108,7 @@ preconditions:
     path: checkpoints/transformer/teacher_L96_K500_N{N}.pt
 
 # Resource scheduling — generic slot model.
-# `resources` replaces the old `gpus` field. When `resources` is absent,
-# the scheduler falls back to `gpus` + `gpu_free_threshold_mib` (legacy).
+# `resources` is required. The scheduler does not read the removed `gpus` form.
 resources:
   type: gpu
   ids: [0, 1, 2, 3, 4, 5, 6, 7]
@@ -122,12 +122,8 @@ resources:
     - "CUDA out of memory"
     - "torch.OutOfMemoryError"
 
-# Legacy GPU form (still accepted, equivalent to the above):
-# gpus: [0, 1, 2, 3, 4, 5, 6, 7]
-# gpu_free_threshold_mib: 500
-
 max_parallel: 8
-retry:
+oom_retry:
   delay: 120
   max_attempts: 3
 
@@ -217,7 +213,8 @@ fi
 [ -z "$QUEUE_TOOLS" ] && { echo "ERROR: experiment-queue helpers not found (layer 0: \$CLAUDE_SKILL_DIR; layers 1-2: .aris/dist/, dist/). Fix: run /aris-update or npm run build in the ARIS repo." >&2; exit 1; }
 ```
 
-After Phase 4 (TypeScript migration), the compiled JS lives at `dist/skills/experiment-queue/`. The `npm run build` step compiles from `src/skills/experiment-queue/` into `dist/`.
+The compiled helper lives at `dist/skills/experiment-queue/`. `npm run build`
+compiles it from `src/skills/experiment-queue/`.
 
 **3b. Compute remote paths.** Use both a remote-relative form (for `scp` destinations — modern `scp` runs in SFTP mode and does NOT reliably expand `$HOME` in destination paths) and a `$HOME`-prefixed form (for `ssh ... command` strings, where remote bash WILL expand `$HOME`):
 
@@ -309,8 +306,9 @@ Write `handles/<RUN_TS>.monitor.json` with the heartbeat id (not listable
 later; delete is creator-only — the id must live on disk). Write receipt
 `status: "monitoring"` and end the turn.
 
-**Degradation:** non-agent-scoped session or `create_heartbeat` unavailable →
-print the poll command and note "monitor manually". Do not block the queue.
+If the session is not agent-scoped or `create_heartbeat` is unavailable, mark
+monitoring `BLOCKED` and stop. Do not replace the required heartbeat with a
+manual poll command.
 
 **Fence note:** the remote scheduler already polls every 60s — the heartbeat
 must NOT become a second scheduler (external-cadence.md: never duplicate an
@@ -319,7 +317,7 @@ and resumes the pipeline.
 
 ### Step 4: Monitoring (manual / visibility)
 
-User can check state anytime, using `$REMOTE_RUN_DIR` from Step 3b (or reload from `$LOCAL_RUN_DIR/run_meta.txt` for an older run):
+User can check state anytime, using `$REMOTE_RUN_DIR` from Step 3b (or reload from `$LOCAL_RUN_DIR/run_meta.txt` for a prior run):
 
 ```bash
 sh "$OPS/job-status.sh" --queue "$REMOTE_RUN_DIR"
@@ -496,8 +494,8 @@ Then user can check anytime or wait for summary report.
 - `/run-experiment` — single experiment deployment
 - monitoring heartbeat (Step 3f) — terminal-state detection over `queue_state.json`
 - `/analyze-results — project: <project>` — post-hoc analysis
-- `dist/skills/experiment-queue/queue-manager.js` — the scheduler implementation; resolved at runtime via the fallback chain in Step 3a.
-- `dist/skills/experiment-queue/build-manifest.js` — build manifest from grid spec; same resolution chain.
+- `.aris/dist/skills/experiment-queue/queue-manager.js` — the installed scheduler implementation; development checkouts use `dist/skills/experiment-queue/queue-manager.js`.
+- `.aris/dist/skills/experiment-queue/build-manifest.js` — build manifest from grid spec; development checkouts use the matching `dist/` path.
 
 ## Rationale / Source
 

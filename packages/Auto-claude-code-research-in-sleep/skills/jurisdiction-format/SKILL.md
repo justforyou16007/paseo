@@ -212,4 +212,4 @@ Write `patent/output/OUTPUT_SUMMARY.md`:
 - For EP output, the two-part claim form is mandatory -- every independent claim must have "characterised in that."
 - Abstract word limits are jurisdiction-specific and must be verified.
 - The jurisdiction-format skill does NOT modify claim content -- it reformats existing content only.
-- If `OUTPUT_FORMAT = "docx"`, check that python-docx is available; if not, fall back to markdown.
+- If `OUTPUT_FORMAT = "docx"`, require python-docx before generating any output. A missing dependency is an error; do not change the requested format.

@@ -13,7 +13,7 @@ Adapted from `/novelty-check` for patent legal standards. Research novelty is NO
 
 ## Constants
 
-- `REVIEWER_MODEL = gpt-5.5` — Model used via Codex MCP for cross-model examiner verification
+- `REVIEWER_MODEL = gpt-5.5` — Model used by the Paseo codex reviewer for cross-model examiner verification
 - `NOVELTY_STANDARD = patent` — Always use legal patentability standard, not research contribution standard
 
 ## Inputs
@@ -161,4 +161,4 @@ Write `patent/NOVELTY_ASSESSMENT.md`:
 - Obviousness requires BOTH: (1) a combination of references AND (2) a motivation to combine them.
 - Never assume the invention is patentable just because no identical patent exists.
 - The assessment is advisory only -- actual prosecution may reveal different prior art.
-- If the paseo codex reviewer is not available, skip cross-model examiner review and note it in the output.
+- If the explicitly configured Paseo codex reviewer is unavailable or fails, mark examiner review BLOCKED and stop this stage. Do not publish the novelty assessment as reviewed.

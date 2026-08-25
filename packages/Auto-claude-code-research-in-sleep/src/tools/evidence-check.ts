@@ -69,31 +69,22 @@ function resolveSources(source: string, root: string): string[] {
   const p = path.join(root, source);
   try {
     if (fs.statSync(p).isFile()) return [p];
-  } catch {
-    // not a direct file, try glob
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
   }
   if (!source.includes("*") && !source.includes("?")) return [];
-  try {
-    const matches = (
-      fs as unknown as { globSync: (pattern: string, opts: { cwd: string }) => string[] }
-    ).globSync(source, { cwd: root });
-    return matches
-      .map((m: string) => path.join(root, m))
-      .filter((f: string) => {
-        try {
-          return fs.statSync(f).isFile();
-        } catch {
-          return false;
-        }
-      })
-      .sort();
-  } catch {
-    return [];
-  }
+  const matches = (
+    fs as unknown as { globSync: (pattern: string, opts: { cwd: string }) => string[] }
+  ).globSync(source, { cwd: root });
+  return matches
+    .map((m: string) => path.join(root, m))
+    .filter((f: string) => fs.statSync(f).isFile())
+    .sort();
 }
 
 interface ClaimResult {
-  status: "verified" | "path_missing" | "value_not_found";
+  status: "verified" | "path_missing" | "source_unreadable" | "value_not_found";
   value: string;
   source: string;
   detail: string;
@@ -109,15 +100,18 @@ export function checkClaim(value: string, source: string, root = "."): ClaimResu
       detail: `no file matches '${source}' under '${root}'`,
     };
   }
-  let readAny = false;
   for (const f of files) {
     let text: string;
     try {
       text = fs.readFileSync(f, "utf-8");
-    } catch {
-      continue;
+    } catch (error) {
+      return {
+        status: "source_unreadable",
+        value,
+        source,
+        detail: `cannot read '${f}': ${String(error)}`,
+      };
     }
-    readAny = true;
     if (valueInText(value, text)) {
       return {
         status: "verified",
@@ -126,14 +120,6 @@ export function checkClaim(value: string, source: string, root = "."): ClaimResu
         detail: `'${value}' found in ${f}`,
       };
     }
-  }
-  if (!readAny) {
-    return {
-      status: "path_missing",
-      value,
-      source,
-      detail: `file(s) matching '${source}' exist but are unreadable`,
-    };
   }
   return {
     status: "value_not_found",
@@ -189,7 +175,7 @@ program.action((root: string, opts: { value?: string; source?: string; batch?: s
     const claims = JSON.parse(raw) as Array<Record<string, unknown>>;
     const out = checkBatch(claims, root);
     console.log(JSON.stringify(out, null, 2));
-    const bad = new Set(["path_missing", "value_not_found"]);
+    const bad = new Set(["path_missing", "source_unreadable", "value_not_found", "unparseable"]);
     const hasBad = out.results.some((r) => bad.has(r.status as string));
     process.exit(hasBad ? 1 : 0);
   }

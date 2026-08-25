@@ -3,7 +3,6 @@
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
-import { execFileSync } from "child_process";
 import { fileURLToPath } from "url";
 import { createCli, runCli } from "../../lib/cli.js";
 
@@ -761,19 +760,8 @@ function sha256Of(text: string): string {
 }
 
 function renderJsonAsPre(jsonPath: string): string {
-  let raw: string;
-  try {
-    raw = fs.readFileSync(jsonPath, "utf-8");
-  } catch {
-    return `<div class="callout callout-bad"><div class="callout-title">JSON read error</div><p>Could not read ${escapeHtml(jsonPath)}</p></div>`;
-  }
-  let pretty: string;
-  try {
-    const obj = JSON.parse(raw);
-    pretty = JSON.stringify(obj, null, 2);
-  } catch (e) {
-    return `<div class="callout callout-bad"><div class="callout-title">JSON parse error</div><p>${escapeHtml(String(e))}</p></div>`;
-  }
+  const raw = fs.readFileSync(jsonPath, "utf-8");
+  const pretty = JSON.stringify(JSON.parse(raw), null, 2);
   return (
     `<details><summary>Sidecar JSON: <code>${escapeHtml(jsonPath)}</code></summary>` +
     `<pre><code class="language-json">${escapeHtml(pretty)}</code></pre>` +
@@ -799,27 +787,7 @@ function jsonForScript(obj: unknown): string {
 }
 
 function repoRelative(inputPath: string): string {
-  try {
-    return path.relative(process.cwd(), inputPath);
-  } catch {
-    // fall through
-  }
-  try {
-    const result = execFileSync("git", ["rev-parse", "--show-toplevel"], {
-      cwd: path.dirname(inputPath),
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    const gitRoot = result.trim();
-    try {
-      return path.relative(gitRoot, inputPath);
-    } catch {
-      // fall through
-    }
-  } catch {
-    // no git
-  }
-  return path.basename(inputPath);
+  return path.relative(process.cwd(), inputPath);
 }
 
 // ---------------------------------------------------------------------------
@@ -877,13 +845,7 @@ program
       const isJson = path.extname(inputPath).toLowerCase() === ".json";
       let mdSource: string;
       if (isJson) {
-        let pretty: string;
-        try {
-          const obj = JSON.parse(raw);
-          pretty = JSON.stringify(obj, null, 2);
-        } catch {
-          pretty = raw;
-        }
+        const pretty = JSON.stringify(JSON.parse(raw), null, 2);
         mdSource = `# ${path.basename(inputPath)}\n\n\`\`\`json\n${pretty}\n\`\`\`\n`;
       } else {
         mdSource = stripFrontmatter(raw);
@@ -925,10 +887,7 @@ program
             );
             extraBlocks.push(renderJsonAsPre(p));
           } else {
-            extraBlocks.push(
-              `<div class="callout callout-warn"><div class="callout-title">Sidecar missing</div>` +
-                `<p><code>${escapeHtml(pathStr)}</code> not found.</p></div>`,
-            );
+            throw new Error(`sidecar not found: ${pathStr}`);
           }
         }
       }
@@ -969,10 +928,10 @@ program
             const obj = JSON.parse(fs.readFileSync(p, "utf-8"));
             papersJson = jsonForScript(obj);
           } catch (e) {
-            console.error(`warning: --papers JSON parse error: ${e}`);
+            throw new Error(`--papers JSON parse error: ${String(e)}`);
           }
         } else {
-          console.error(`warning: --papers file not found: ${p}`);
+          throw new Error(`--papers file not found: ${p}`);
         }
       }
 

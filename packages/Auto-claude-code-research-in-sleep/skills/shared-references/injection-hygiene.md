@@ -11,7 +11,7 @@ turn — including a reviewer's context (a poisoned wiki node that whispers
 ## Two layers — and a clean scan is NOT an acquittal
 
 ```
-layer 1  tools/threat-scan.js   regex · deterministic · block-on-hit (fail-OPEN to novelty) · NO model
+layer 1  tools/threat-scan.js   regex · deterministic · block-on-hit · scanner failure blocks · NO model
 layer 2  the cross-model jury   codex/gemini · catches SEMANTIC poisoning
 ```
 

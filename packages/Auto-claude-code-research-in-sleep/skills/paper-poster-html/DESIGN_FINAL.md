@@ -5,9 +5,7 @@
 
 ## 0. 定位
 
-- HTML+CSS 是新的默认 poster 路径;旧 `/paper-poster`(LaTeX tcbposter)已退役为
-  重定向 stub(2026-06-07 落库决定,较本规格的 legacy 共存方案更进一步;
-  旧实现仅存于 git history)。
+- HTML+CSS 是唯一的 poster 路径。LaTeX poster 实现不再属于仓库运行面。
 - posterly(MIT, github.com/Chenruishuo/posterly)的 tools **vendor 进 skill**,不外部依赖
   不重写;`LICENSES/posterly-MIT.txt` + `NOTICE.md` 注明来源与 ARIS 修改。
 
@@ -27,15 +25,15 @@ skills/paper-poster-html/
 │   └── tokens/
 │       ├── generic.json       # 默认:slate-blue #2D5F8B + gold #C9A24A
 │       ├── iclr.json … cvpr.json   # opt-in venue 包
-└── scripts/
-    ├── poster_check.py        # vendored(measure/preflight/polish/verify-final)
-    ├── render_preview.py      # vendored(Playwright print render)
-    ├── _posterly/…            # vendored 内部模块
-    ├── style_check.py         # 新:风格硬门(12 条规则)
-    ├── asset_check.py         # 新:真图溯源门
-    ├── run_gates.py           # 新:canonical 顺序跑全门,写 GATE_REPORT.json
-    ├── extract_pdf_figures.py # 新:PDF→contact sheet→候选裁剪
-    └── preprocess_figures.py  # 新:autocrop/转格式/分辨率检查
+└── src/skills/paper-poster-html/
+    ├── poster-check.ts        # measure/preflight/polish/verify-final
+    ├── render-preview.ts      # Playwright print render
+    ├── posterly/…             # posterly-derived modules
+    ├── style-check.ts         # 风格硬门
+    ├── asset-check.ts         # 真图溯源门
+    ├── run-gates.ts           # canonical 顺序跑全门,写 GATE_REPORT.json
+    ├── extract-pdf-figures.ts # PDF→contact sheet→明确坐标裁剪
+    └── preprocess-figures.ts  # autocrop/转格式/分辨率检查
 ```
 
 工作目录输出:
@@ -58,7 +56,7 @@ poster_html/
 - serif 正文(Charter/Source Serif Pro/Georgia/Times New Roman)+
   sans 标题(Inter/Aptos/Helvetica Neue/Arial);mono 仅代码(Menlo/Consolas)。
 
-## 3. style_check.py 源门规则(codex 定稿,逐条实现)
+## 3. style-check.js 源门规则(codex 定稿,逐条实现)
 
 | #   | 严重度 | 规则                                                                                                                                        |
 | --- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -72,16 +70,16 @@ poster_html/
 | 8   | HARD   | 字号必须用 `--fs-*` token 或组件 class,禁任意 px 漂移                                                                                       |
 | 9   | WARN   | 字号 token >9 档                                                                                                                            |
 | 10  | HARD   | 契约属性:论文图必须 `data-source="paper"` + `data-asset-id`;logo 豁免必须显式标注                                                           |
-| 11  | HARD   | 禁自造装饰 SVG;inline SVG 仅许 logo / QR fallback / COMPONENTS.md 已收录的结构图                                                            |
+| 11  | HARD   | 禁自造装饰 SVG;inline SVG 仅许 logo / 本地 QR raster / COMPONENTS.md 已收录的结构图                                                            |
 | 12  | WARN   | 大面积深色(L<0.18 且 >8% poster 面积)→ 土嗨预警                                                                                             |
 
-## 4. asset_check.py 真图门
+## 4. asset-check.js 真图门
 
 - ≥2 张 `data-source="paper"` 图;每张面积 ≥ poster 1.5%;paper-image 总面积 ≥ body 12%。
 - raster natural size ≥ rendered size 1.5×(目标 2×)。
 - FIGURE_MANIFEST.json 必填:source PDF hash、page、bbox、crop dpi、asset sha256、是否来自论文。
-- 真图获取链:论文源 figures/(SVG/PDF→SVG 转换优先)→ PDF-only 时 PyMuPDF 300–450 DPI
-  渲染 contact sheet → 自动候选 + 人工选 → 用户给 `page,x0,y0,x1,y1` bbox → 不足 2 张硬失败
+- 真图获取链:论文源 figures/(SVG/PDF→SVG 转换优先)→ PDF-only 时 `pdftoppm` 300–450 DPI
+  渲染 contact sheet → 人工选 → 用户给 `page,x0,y0,x1,y1` bbox → 不足 2 张硬失败
   (除非 human checkpoint 显式 waiver)。
 
 ## 5. 公式门(半硬)
@@ -95,11 +93,11 @@ poster_html/
 Phase 0 下载 tex-svg.js 到 `poster_html/assets/mathjax/`(缓存复用),HTML 引本地路径;
 下载失败 → 询问后 CDN 仅供草稿;final 的 measure 门对 MathJax 失败保持硬失败。
 
-## 7. run_gates.py + GATE_REPORT.json
+## 7. run-gates.js + GATE_REPORT.json
 
 - canonical order:`preflight → style_check → asset_check → measure → polish`。
 - 默认 accumulate(一次给全修复面),`--fail-fast` 可选。
-- style/asset 保持独立 CLI(vendor diff 干净),run_gates.py 做编排。
+- style/asset 保持独立 CLI(vendor diff 干净),run-gates.js 做编排。
 - GATE_REPORT.json schema:schema_version/skill/timestamp/poster_html/canvas{source,width_cm,
   height_cm,orientation,source_url}/overall/hard_failures/warnings/gates[{name,severity,status,
   command,summary,artifacts}]。
@@ -119,9 +117,9 @@ Phase 0 下载 tex-svg.js 到 `poster_html/assets/mathjax/`(缓存复用),HTML �
 | 6     | codex 终审(fresh xhigh,审 final HTML+PDF 不是 plan;fidelity/overclaim/residue/叙事/gate logs;不直接改文件) | 任何 fix 回 Phase 4/5                                                                                    | —                                 |
 | 7     | verify-final + 报告                                                                                        | PDF 1 页/尺寸/≤20MB/无 TODO/无 remote asset                                                              | 完成                              |
 
-Playwright 降级链:bundled Chromium → `python -m playwright install chromium` →
-`channel="chrome"` → 仍失败则只产 content plan/scaffold,标注 "not print verified",
-不许产出最终 PDF。pdfinfo 缺 → PyMuPDF 读尺寸;pdftoppm/PyMuPDF 至少一个用于 PNG。
+Playwright 的 bundled Chromium 必须可用；安装命令只能作为显式环境准备步骤，安装失败就
+停止。`pdfinfo` 和 `pdftoppm` 是固定依赖，缺失或失败就停止，不改用另一套工具，也不
+生成“未验证”的最终 PDF。纯内容草稿只能由上层明确省略渲染阶段生成。
 
 ## 9. Claude 视觉 rubric(Phase 5)
 
@@ -132,7 +130,7 @@ Playwright 降级链:bundled Chromium → `python -m playwright install chromium
 无渐变 kitsch / 组件一体感 / 60 秒叙事。
 输出格式:`SCORE: N/10`、`CAPS_TRIGGERED`、`TOP_ISSUES(≤3)`、
 `ALLOWED_FIX_TYPE: token|component|rebalance|asset|template/canvas`、`PATCH_LOOP_RISK`。
-校准:旧 poster ≤3 分;posterly showcase ≥9 分。
+校准:不满足真图、版式和可读性门槛的成品 ≤3 分;posterly showcase ≥9 分。
 
 ## 10. Fix 词汇表(反补丁循环核心)
 
@@ -167,7 +165,7 @@ remote 资源 networkidle 假死→本地化;logo 豁免走私颜色→显式 da
 
 1. style_check 规则 8:`calc(var(--fs-*) * …)` 仅许预定义组件 variant 使用,否则成漏洞。
 2. asset_check 的"paper-image 总面积 ≥ body 12%"对纯理论论文可 waiver——但首个验收案例不许 waiver。
-3. Phase 0 的 venue 调研在 skill 文案里写成泛化的 "official venue page lookup"(跨工具栈映射,codex 镜像兼容)。
+3. Phase 0 的 venue 调研在 skill 文案里写成泛化的 "official venue page lookup"，并记录官方页面 URL 与日期。
 
 ## 13. 验收
 

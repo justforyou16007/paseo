@@ -20,7 +20,7 @@ ARIS 的全部架构围绕 **一个不可妥协的原则** 展开,它在 `shared
 | 推论                      | 体现在哪里                                                         |
 | ------------------------- | ------------------------------------------------------------------ |
 | 代码评审必须跨模型        | `experiment-bridge` 的 Phase 2.5,GPT-5.5 审 Claude 写的代码        |
-| 论文评审必须跨模型        | `auto-review-loop` 用 Codex MCP (GPT-5.5) 评审论文                 |
+| 论文评审必须跨模型        | `auto-review-loop` 通过 Paseo codex 子 agent（GPT-5.5）评审论文      |
 | 同模型扩样本不等于跨模型  | `acceptance-gate.md`: 10 个 Claude 一致 ≠ 1 个 GPT 意见            |
 | 机械检查可以自判          | 文件是否存在、exit code、N 个 shard 是否返回——这些 executor 可自判 |
 | 外部队列只能"催",不能"判" | `external-cadence.md`: `/loop` 可以说"继续",不能说"够了"           |
@@ -41,7 +41,8 @@ ARIS 的全部架构围绕 **一个不可妥协的原则** 展开,它在 `shared
         ▼                     ▼                      ▼
 ┌─────────────────┐  ┌──────────────────┐  ┌──────────────────┐
 │  Executor 执行器   │  │  Reviewer 评审器    │  │  Deterministic    │
-│ (Claude/GPT/GLM) │  │ (GPT-5.5/Gemini) │  │  Verifier (脚本)   │
+│ (Claude)          │  │ (Paseo codex /   │  │  Verifier (脚本)   │
+│                   │  │ explicit backend)│  │                   │
 │ 写代码、跑实验、    │  │ 审论文、审代码、    │  │ exit code 判定     │
 │ 写论文            │  │ 审 claim          │  │                   │
 └─────────────────┘  └──────────────────┘  └──────────────────┘
@@ -91,7 +92,7 @@ ARIS 的所有 skill 都接受两个正交维度:
 
 | 机制           | 位置                         | 说明                                                |
 | -------------- | ---------------------------- | --------------------------------------------------- |
-| Codex MCP 评审 | `reviewer-routing.md`        | 默认评审器:GPT-5.5 via Codex MCP, `xhigh` reasoning |
+| Paseo codex 评审 | `reviewer-routing.md`        | 默认评审器：Paseo codex 子 agent（GPT-5.5, `xhigh`） |
 | Claude 评审    | `mcp-servers/claude-review/` | Codex 执行 + Claude 评审                            |
 | Gemini 评审    | `mcp-servers/gemini-review/` | Codex 执行 + Gemini 评审                            |
 | 手动评审       | `MANUAL_REVIEW_GUIDE.md`     | 零成本:粘贴 prompt 到任意非 Claude 模型             |
@@ -105,7 +106,7 @@ ARIS 的所有 skill 都接受两个正交维度:
 | ---------- | -------------------- | --------------------------------------------------- |
 | 扇出生成   | `fan-out-pattern.md` | 子 agent 并行**生成候选**,不评分                    |
 | 陪审团裁决 | `fan-out-pattern.md` | 扇出后统一跨模型评审                                |
-| 3 级降级   | `fan-out-pattern.md` | T1 Workflow 并行 → T2 Agent 工具 → T3 顺序,裁决不变 |
+| 扇出执行   | `fan-out-pattern.md` | 使用当前 Paseo 扇出；缺失 shard 阻塞裁决，不自动降级为另一种执行方式 |
 | 去重       | `fan-out-pattern.md` | 机械去重在 executor 侧(安全),不在评审侧             |
 | 只读 shard | `fan-out-pattern.md` | 并行 shard 对共享产物只读                           |
 
@@ -119,7 +120,7 @@ ARIS 的所有 skill 都接受两个正交维度:
 | CronCreate       | `external-cadence.md` | 同上,只能用于 ADDITIVE 场景                            |
 | 禁止包装语义循环 | `external-cadence.md` | `/auto-review-loop` 不可包在 `/loop` 里(破坏 threadId) |
 | 心跳状态文件     | `external-cadence.md` | 每个 loop 必须先写心跳文件                             |
-| 停滞检测         | `external-cadence.md` | 用 `iteration_log.py` 计新发现数,不是凭感觉            |
+| 停滞检测         | `external-cadence.md` | 用 `iteration-log.js` 计新发现数,不是凭感觉            |
 
 > **新功能检查**:如果你的功能需要定时轮询,先判断是"等外部世界"还是"包装语义循环"。前者用 `/loop`/CronCreate,后者用 skill 自身的内部循环。
 
@@ -171,25 +172,25 @@ ARIS 的所有 skill 都接受两个正交维度:
 | 组合模式   | `output-composition.md` | `— composed: <path>` 模式折叠输出                     |
 | 输出语言   | `output-language.md`    | CLAUDE.md language 字段控制,机器标记永不本地化        |
 
-### 3.8 工具链 (tools/)
+### 3.8 工具链 (src/tools/ → dist/tools/)
 
-ARIS 在 `tools/` 下有一整套可复用工具。新增功能前检查是否已存在:
+ARIS 的可复用运行工具在 `src/tools/` 中实现，并编译到 `dist/tools/`。新增功能前检查是否已存在:
 
 | 工具                                                                                                        | 用途                   |
 | ----------------------------------------------------------------------------------------------------------- | ---------------------- |
-| `research_wiki.py`                                                                                          | 持久化知识库           |
-| `run_state.py`                                                                                              | 可恢复运行的阶段状态机 |
-| `iteration_log.py`                                                                                          | 迭代计数/新发现计数    |
+| `research-wiki.js`                                                                                          | 持久化知识库           |
+| `run-state.js`                                                                                              | 可恢复运行的阶段状态机 |
+| `iteration-log.js`                                                                                          | 迭代计数/新发现计数    |
 | `save_trace.sh`                                                                                             | 保存评审追踪           |
 | `verify_paper_audits.sh`                                                                                    | 审计门禁总闸           |
-| `verify_papers.py`                                                                                          | 引用验证               |
-| `evidence_check.py`                                                                                         | 证据存在性检查         |
-| `threat_scan.py`                                                                                            | 提示注入扫描           |
-| `capture_filter.py`                                                                                         | 知识捕获过滤           |
-| `provenance.py`                                                                                             | 溯源验证/跨模型断言    |
-| `extract_paper_style.py`                                                                                    | 论文风格提取           |
-| `figure_renderer.py`                                                                                        | 图表渲染               |
-| `arxiv_fetch.py` / `deepxiv_fetch.py` / `semantic_scholar_fetch.py` / `exa_search.py` / `openalex_fetch.py` | 文献搜索               |
+| `verify-papers.js`                                                                                            | 引用验证               |
+| `evidence-check.js`                                                                                           | 证据存在性检查         |
+| `threat-scan.js`                                                                                              | 提示注入扫描           |
+| `capture-filter.js`                                                                                            | 知识捕获过滤           |
+| `provenance.js`                                                                                               | 溯源验证/跨模型断言    |
+| `extract-paper-style.js`                                                                                      | 论文风格提取           |
+| `figure-renderer.js`                                                                                          | 图表渲染               |
+| `arxiv-fetch.js` / `deepxiv-fetch.js` / `semantic-scholar-fetch.js` / `exa-search.js` / `openalex-fetch.js` | 文献搜索               |
 
 > **新功能检查**:在新增工具前,确认 `tools/` 中没有功能重叠的已有工具。
 
@@ -198,7 +199,7 @@ ARIS 在 `tools/` 下有一整套可复用工具。新增功能前检查是否�
 | 机制      | 位置                      | 说明                                                          |
 | --------- | ------------------------- | ------------------------------------------------------------- |
 | 捕获过滤  | `capture-antipatterns.md` | 四类不可捕获:环境特定失败、瞬态错误、负面能力声明、单实例叙事 |
-| 注入卫生  | `injection-hygiene.md`    | `threat_scan.py` 正则扫描,无模型                              |
+| 注入卫生  | `injection-hygiene.md`    | `threat-scan.js` 正则扫描,无模型                              |
 | 研究 Wiki | `research-wiki` skill     | 持久化论文/想法/实验/claim                                    |
 
 ### 3.10 实验调度与监控
@@ -268,7 +269,7 @@ ARIS 在以下平台均可运行,核心 skill 不变:
 
 | 平台        | Skill 根目录     | 评审机制        | 特殊适配          |
 | ----------- | ---------------- | --------------- | ----------------- |
-| Claude Code | `skills/<name>/` | MCP (Codex MCP) | 原生,最成熟       |
+| Claude Code | `skills/<name>/` | Paseo MCP       | 原生,最成熟       |
 | Cursor      | `skills/<name>/` | MCP             | `@skills/` 引用   |
 | Trae        | `skills/<name>/` | MCP             | 自然语言发现      |
 | Antigravity | `skills/<name>/` | MCP             | `— reviewer: agy` |
@@ -308,7 +309,7 @@ ARIS 在以下平台均可运行,核心 skill 不变:
 ### Step 4: 确认反模式规避
 
 - [ ] 我是否捕获了不该捕获的信息(环境特定失败/瞬态错误/负面能力声明/单实例叙事)?
-- [ ] 我是否使用了 `threat_scan.py` 做注入防护?
+- [ ] 我是否使用了 `threat-scan.js` 做注入防护?
 - [ ] 我是否在评审独立性上让步了(executor 是否向评审传递了摘要/解读)?
 - [ ] 我是否创建了一个"同模型多副本"的假跨模型评审?
 - [ ] 我是否在 skill 内硬编码了工具路径(应该用 helper 解析链)?
@@ -325,7 +326,7 @@ ARIS 在以下平台均可运行,核心 skill 不变:
 | 同模型多副本充陪审团     | 10 个 Claude 投票             | 相关性盲区不破             | Step 4 第四条        |
 | 扇出后做裁决             | 子 agent 并行评分             | 污染评审独立性             | `fan-out-pattern.md` |
 | effort 和 assurance 混淆 | "beast 所以审计会自动跑"      | 审计被跳过                 | Step 2 第二条        |
-| 硬编码工具路径           | `python3 tools/foo.py`        | 安装路径不同时断裂         | Step 4 第五条        |
+| 硬编码工具路径           | `node dist/tools/foo.js`      | 安装路径不同时断裂         | Step 4 第五条        |
 | 不写状态文件             | 长时间运行无 Pipeline Status  | 压缩/新会话后失忆          | Step 2 第七条        |
 | 评审传摘要               | executor 先总结再送审         | 评审被引导偏差             | Step 4 第三条        |
 | 新功能自创并行           | 自己写线程池/子进程           | 和 fan-out 模式不兼容      | Step 2 第四条        |

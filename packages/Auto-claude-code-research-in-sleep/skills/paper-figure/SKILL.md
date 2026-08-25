@@ -26,11 +26,11 @@ Generate all figures and tables for a paper based on: **$ARGUMENTS**
 
 - **STYLE = `publication`** — Visual style preset. Options: `publication` (default, clean for print), `poster` (larger fonts), `slide` (bold colors)
 - **DPI = 300** — Output resolution
-- **FORMAT = `pdf`** — Output format. Options: `pdf` (vector, best for LaTeX), `png` (raster fallback)
+- **FORMAT = `pdf`** — Output format. Options: `pdf` (vector) or `png` (raster). The requested format is fixed for the run; a renderer failure is an error.
 - **COLOR_PALETTE = `tab10`** — Default matplotlib color cycle. Options: `tab10`, `Set2`, `colorblind` (deuteranopia-safe)
 - **FONT_SIZE = 10** — Base font size (matches typical conference body text)
 - **FIG_DIR = `figures/`** — Output directory for generated figures
-- **REVIEWER_MODEL = `gpt-5.5`** — Model used via Codex MCP for figure quality review.
+- **REVIEWER_MODEL = `gpt-5.5`** — Model used by the Paseo codex reviewer for figure quality review.
 
 ## Inputs
 
@@ -257,7 +257,7 @@ figures/
 
 - **Every figure must be reproducible** — save the generation script alongside the output
 - **Do NOT hardcode data** — always read from JSON/CSV files
-- **Use vector format (PDF)** for all plots — PNG only as fallback
+- **Use PDF for plots unless the caller explicitly requests PNG. Never change format after a render failure.**
 - **No decorative elements** — no background colors, no 3D effects, no chart junk
 - **Consistent style across all figures** — same fonts, colors, line widths
 - **Colorblind-safe** — verify with https://davidmathlogic.com/colorblind/ if needed

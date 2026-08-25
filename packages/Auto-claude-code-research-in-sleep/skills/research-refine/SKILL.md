@@ -33,7 +33,7 @@ User input (PROBLEM + vague APPROACH)
 
 ## Constants
 
-- **REVIEWER_MODEL = `gpt-5.5`** — Reviewer model used via Codex MCP.
+- **REVIEWER_MODEL = `gpt-5.5`** — Reviewer model used by the Paseo codex child.
 - **MAX_ROUNDS = 5** — Maximum review-revise rounds.
 - **SCORE_THRESHOLD = 9** — Minimum overall score to stop.
 - **OUTPUT_DIR = `refine-logs/`** — Directory for round files and final report.
@@ -66,7 +66,7 @@ Long-running refinement sessions may fail mid-way (e.g., API timeout, context co
 | -------------- | -------------------------------------------------------------- | ----------------------------------------------- |
 | `phase`        | `"anchor"` / `"proposal"` / `"review"` / `"refine"` / `"done"` | Last **completed** phase                        |
 | `round`        | 0–MAX_ROUNDS                                                   | Current round number                            |
-| `threadId`     | string or null                                                 | Reviewer thread ID for `codex-reply` continuity |
+| `threadId`     | string or null                                                 | Paseo reviewer agent ID for explicit continuation |
 | `last_score`   | number or null                                                 | Most recent overall score from reviewer         |
 | `last_verdict` | string or null                                                 | Most recent verdict (READY / REVISE / RETHINK)  |
 | `status`       | `"in_progress"` / `"completed"`                                | Loop status                                     |
@@ -195,7 +195,7 @@ Cover:
 7. **Inference path**: how the trained components are used at test time and what signals flow where.
 8. **Why the mechanism stays small**: why a larger stack is unnecessary.
 9. **Exact role of any frontier primitive**: if you use an LLM / VLM / Diffusion / RL component, specify whether it acts as planner, teacher, critic, reward model, generator prior, search controller, or distillation source.
-10. **Failure handling**: what could go wrong and what fallback or diagnostic exists?
+10. **Failure handling**: what could go wrong, what diagnostic identifies it, and when must the method stop?
 11. **Novelty and elegance argument**: why this is more than naming a module and why the paper still looks focused.
 
 If the method is still only described as "add a module" or "use a planner," it is not concrete enough.
@@ -295,7 +295,7 @@ Use this structure:
 
 - [Failure mode]:
 - [How to detect]:
-- [Fallback or mitigation]:
+- [Resolution or next action]:
 
 ### Novelty and Elegance Argument
 
@@ -337,7 +337,7 @@ Use this structure:
 
 Send the proposal to GPT-5.5 for an **elegance-first, frontier-aware,
 method-first** review. The reviewer should spend most of the critique budget
-on the method itself, not on expanding the experiment menu. For Codex MCP, do
+on the method itself, not on expanding the experiment menu. For the Paseo codex reviewer, do
 not inline the whole rubric + proposal once the prompt becomes large. Instead,
 write `refine-logs/codex_round_1_review_bundle.md` containing the instructions
 below plus the absolute path to `refine-logs/round-0-initial-proposal.md`, then
@@ -761,7 +761,7 @@ Suggested next step: /experiment-plan
 
 ## Key Rules
 
-- **Large file handling**: If the Write tool fails due to file size, immediately retry using Bash (`cat << 'EOF' > file`) to write in chunks. Do NOT ask the user for permission — just do it silently.
+- **Large file handling**: If the Write tool fails, stop and report the write error. Do not switch to a second writer.
 
 - **Anchor first, every round.** Always carry forward the same Problem Anchor.
 - **One paper, one dominant contribution.** Avoid multiple parallel contributions unless the paper truly needs them.

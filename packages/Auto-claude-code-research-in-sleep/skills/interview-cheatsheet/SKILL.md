@@ -36,7 +36,7 @@ Generate one comprehensive Chinese cheat sheet per invocation: formulas + deriva
 
 | Rule                                                                                                            | Why                                                                                                 | Example                                                                        |
 | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| Heading format `## §N Title` with **space after §N**                                                            | Older versions had `§0TL;DR` glued                                                                  | `## §0 TL;DR Cheat Sheet`                                                      |
+| Heading format `## §N Title` with **space after §N**                                                            | Keeps section identifiers readable                                                                    | `## §0 TL;DR Cheat Sheet`                                                      |
 | Math in table cells: use `\lvert ... \rvert` not `\|...\|`                                                      | `\|` inside markdown table = cell separator → row break                                             | `$\text{score}_{ij} - m \cdot \lvert i-j \rvert$`                              |
 | Callouts with body list: **split** into callout intro line + separate list                                      | Otherwise the list's first item is swallowed by the callout, then items 2..N restart numbering at 1 | `> 💡 **Sampler 选择** — 按 NFE/质量排序如下。`<br/>`- Euler …`<br/>`- Heun …` |
 | Callout prefixes only: `💡` `⚠️` `✅` `❌` (others won't get class)                                             | renderer maps these to `callout-info/warn/good/bad`                                                 | `> ⚠️ **FP16 overflow** — 即使除了 √d_k …`                                     |
@@ -130,7 +130,10 @@ Most tutorials converge in 3-5 rounds. Going to 5-6 rounds is fine if substantiv
 Call directly (do not invoke `/render-html` as a sub-skill; call its script — gives clear control):
 
 ```bash
-node skills/render-html/scripts/render-html.js docs/tutorials/<slug>_tutorial.md \
+RENDER_HTML=".aris/dist/skills/render-html/render-html.js"
+[ -f "$RENDER_HTML" ] || RENDER_HTML="dist/skills/render-html/render-html.js"
+[ -f "$RENDER_HTML" ] || { echo "ERROR: render-html.js is not built" >&2; exit 1; }
+node "$RENDER_HTML" docs/tutorials/<slug>_tutorial.md \
   --template academic \
   --out docs/tutorials/<slug>_tutorial.html \
   --title "<Topic> 面试 Cheat Sheet" \

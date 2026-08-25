@@ -1,90 +1,49 @@
-# Wiki helper resolution chain
+# Research Wiki Helper
 
-Canonical resolution chain for the research-wiki helper. Used by every
-SKILL that touches the wiki -- never hard-code `node .aris/dist/tools/research-wiki.js`,
-because that silently fails when `.aris/dist/tools/` is not on disk
-(the normal state before `/aris-update` has run), exactly the failure mode that
-left a real user's `research-wiki/` empty for a week.
+Every skill that writes to `research-wiki/` uses the same compiled helper.
+The helper is required whenever Wiki integration is active.
 
-## The chain
+## Resolution
+
+Resolve the project root with the shared rules, then check these locations
+in order:
 
 ```bash
-_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
-cd "${_pr:-$(pwd)}" || exit 1
 WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
 [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
-```
-
-After the chain runs, exactly one of two outcomes:
-
-- `[ -f "$WIKI_SCRIPT" ]` -- helper located, use as `node "$WIKI_SCRIPT" <subcommand>`
-- `[ ! -f "$WIKI_SCRIPT" ]` -- helper missing; pick a variant below
-
-## Variant A -- hard-fail (for `/research-wiki` itself)
-
-The skill **is** the wiki tool. If the helper is missing, fail loudly.
-
-```bash
 [ -f "$WIKI_SCRIPT" ] || {
-  echo "ERROR: research-wiki.js not found at .aris/dist/tools/ or dist/tools/." >&2
-  echo "       Fix: run /aris-update to refresh the project runtime." >&2
+  echo "ERROR: research-wiki.js is not installed" >&2
+  echo "       Run /aris-update or build the ARIS runtime." >&2
   exit 1
 }
 ```
 
-## Variant B -- warn + skip (for caller skills)
+The second location supports development inside the ARIS repository. It is
+not an alternate implementation.
 
-Used by `/idea-creator`, `/result-to-claim`, `/research-lit`, `/arxiv`,
-`/alphaxiv`, `/deepxiv`, `/exa-search`, `/semantic-scholar`. The
-skill's primary output (idea ranking, claim verdict, paper summary)
-must still be delivered to the user; only the wiki side-effect is
-skipped.
+## Invocation rule
 
-```bash
-[ -f "$WIKI_SCRIPT" ] || {
-  echo "WARN: research-wiki.js not found at .aris/dist/tools/ or dist/tools/." >&2
-  echo "      Primary output will still be produced; wiki update is skipped." >&2
-  echo "      Fix: run /aris-update to refresh the project runtime." >&2
-  WIKI_SCRIPT=""
-}
-```
-
-After Variant B, every helper invocation must be guarded:
+Use the resolved helper for every operation:
 
 ```bash
-[ -n "$WIKI_SCRIPT" ] && node "$WIKI_SCRIPT" ingest_paper research-wiki/ --arxiv-id "$id"
+node "$WIKI_SCRIPT" ingest_paper research-wiki/ --arxiv-id "$id"
 ```
 
-## Why two locations and not one
+If resolution or invocation fails, stop the active phase and write its
+failure receipt. Do not create Wiki directories by hand, omit the Wiki
+side-effect, use manual metadata, or continue with a successful claim.
 
-Two locations correspond to two legitimate install / dev paths:
+## Manual repair
 
-| Location                              | When applicable                                                                     |
-| ------------------------------------- | ----------------------------------------------------------------------------------- |
-| `.aris/dist/tools/research-wiki.js`   | Installed into the project when ARIS runs `/aris-update` (Paseo installs on add)    |
-| `dist/tools/research-wiki.js`         | Running a SKILL from inside the ARIS repo itself                                    |
+Backfill is a separate, explicit operation:
 
-Order matters: the installed copy is preferred because it is what a
-normal project has; the repo-local copy is second because it catches
-dev runs inside the ARIS repo.
+```bash
+node "$WIKI_SCRIPT" sync --arxiv-ids 2501.12345,1706.03762
+```
 
-## What NOT to add
-
-- Do not add a 3rd layer that reads `$ARIS_REPO`. Runtime must never
-  read `ARIS_REPO`; only the installer and `/aris-update` may use it.
-- Do not add a layer at `~/.local/share/aris/...` or `/usr/local/share/...`
-  -- no installer precedent in ARIS today.
-
-Project-root discovery (walking up to find `.aris/installed-skills.txt`)
-is part of the canonical resolver in `integration-contract.md §2`.
-The helper resolution itself stays flat — always `.aris/dist/tools/` then
-`dist/tools/` from the discovered root.
-
-If resolution fails, the fix is always: **run `/aris-update` to refresh
-the project runtime.**
+It is never called automatically as a reaction to a failed ingest.
 
 ## See also
 
-- [`integration-contract.md`](integration-contract.md) $2 -- canonical-helper invariant
-- `skills/research-wiki/SKILL.md` -- the wiki tool itself; uses Variant A
-- PR #193 -- the parallel fix for `experiment-queue` helpers (same pattern, different helper)
+- `integration-contract.md`
+- `output-versioning.md`

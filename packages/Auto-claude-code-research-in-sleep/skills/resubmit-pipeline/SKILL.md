@@ -38,7 +38,7 @@ Existing skills cover adjacent territory but none of this exact composition: `/r
 
 ## Constants
 
-- **REVIEWER_MODEL** = inherits from `/auto-paper-improvement-loop`'s default (`gpt-5.5` via Codex MCP) unless the user passes `— reviewer-model: gpt-5.4` (legacy) or another OpenAI model. Codex reasoning effort is fixed at `xhigh` for all reviewer calls per the existing skill convention.
+- **REVIEWER_MODEL** = `gpt-5.5` via the Paseo codex reviewer. Reasoning effort is fixed at `xhigh` for all reviewer calls.
 - **ROUNDS** = 2 (default; matches `/auto-paper-improvement-loop`'s diminishing-returns line). A 3rd round only fires if Phase 2 reports non-convergence AND the user explicitly approves at the round-2 checkpoint.
 - **EFFORT** = `max` (default for resubmit; resubmit is high-stakes). The user can override with `— effort: balanced` if time is extremely tight.
 - **EDIT_WHITELIST_PATH** = `<paper-base-dir>/../<NewVenue>/.aris/edit_whitelist.yaml` (auto-generated in Phase 0; user can override with a custom path).
@@ -55,7 +55,6 @@ Three mandatory inputs:
 
 Optional:
 
-- **`— reviewer-model: gpt-5.4`** — override the default reviewer (`gpt-5.5`); use this for legacy reproducibility or to consume the older quota tier.
 - **`— rounds: <int>`** — override default 2.
 - **`— assurance: draft`** — relax MANDATORY gates (default `submission`).
 - **`— effort: balanced`** — relax `max` if time is critical.
@@ -248,8 +247,7 @@ The load-bearing phase. `/auto-paper-improvement-loop` is invoked with **two saf
      if grep -qE 'theorem|lemma|proposition|corollary' "$NEW_VENUE_DIR/.aris/round-$ROUND-diff.txt"; then
          # Dispatch a paseo claude sub-agent for `proof-checker`
          # (`$NEW_VENUE_DIR/main.tex --restatement-check`) per
-         # shared-references/paseo-subagent-dispatch.md (in-process `Skill`
-         # fallback).
+         # shared-references/paseo-subagent-dispatch.md.
      fi
      if grep -qE '[0-9]+(\.[0-9]+)?\s*(%|±|x|×)' "$NEW_VENUE_DIR/.aris/round-$ROUND-diff.txt"; then
          # Dispatch a paseo claude sub-agent for `paper-claim-audit`
@@ -366,7 +364,7 @@ Phase 2's per-round loop terminates when **all three** hold:
 
 1. **No new CRITICAL or MAJOR text-fixable findings** in the round's reviewer output (compared to the running running-deduped weakness list).
 2. **Page budget passes** — `/paper-compile` reports page count ≤ venue limit.
-3. **All audits non-blocking** — `/proof-checker`, `/paper-claim-audit`, `/citation-audit --soft-only` all return `verdict ∈ {PASS, NOT_APPLICABLE}` (not `WARN/FAIL/BLOCKED/ERROR`).
+3. **All audits pass** — `/proof-checker`, `/paper-claim-audit`, `/citation-audit --soft-only` all return `verdict ∈ {PASS, NOT_APPLICABLE}`; any other verdict blocks the round.
 
 If after `ROUNDS` (default 2) any of (1)/(2)/(3) is still failing, emit a checkpoint to the user asking whether to continue with an extra round (not auto-extend). The user explicitly approving an extra round overrides the default-2 cap.
 
@@ -379,7 +377,7 @@ Every resubmit run writes one master report at `$NEW_VENUE_DIR/RESUBMIT_REPORT.{
 - Source dir, target venue, target style files used, run start / end timestamps
 - Pointers to all artifacts: `BASELINE.md`, `PROOF_AUDIT.json`, `PAPER_CLAIM_AUDIT.json`, `CITATION_AUDIT.json`, `KNOWN_WEAKNESSES.md`, `PAPER_IMPROVEMENT_LOG.md`, `KILL_ARGUMENT.json`, `COMPILE_REPORT.json`, `DIFF_REPORT.md`
 - SHA256 hashes of every input file consumed (for `verify_paper_audits.sh` compatibility)
-- All thread IDs — now paseo codex agent-ids (Phase 1 audits + Phase 2 reviewer rounds + Phase 3 kill-argument's two threads); field name unchanged, semantics identical
+- All thread IDs — paseo codex agent-ids for Phase 1 audits, Phase 2 reviewer rounds, and the two Phase 3 kill-argument threads
 - `audit_skill: resubmit-pipeline`, `verdict ∈ {PASS, WARN, FAIL, NOT_APPLICABLE, BLOCKED, ERROR}`, `reason_code: <one of the listed codes>`
 - Decision log: every user checkpoint approval / rejection / escalation, with timestamp
 - "Skipped constraints": if any user override (e.g., `— skip-anonymity-scan`, `— rounds 3`) was passed, recorded with rationale
@@ -403,9 +401,10 @@ The skill emits one of 7 verdicts (the 6 from the assurance contract + a `USER_D
 | `BLOCKED`        | `missing_review_corpus`                | `--review-corpus` not provided AND not detected                                                                                              | User provides the prior reviews                                                                              |
 | `BLOCKED`        | `page_shrink_failed_under_constraints` | Page-shrink heuristic exhausted, paper still overflows                                                                                       | User relaxes a constraint or picks a different venue                                                         |
 | `BLOCKED`        | `out_of_scope_microedit`               | `KNOWN_WEAKNESSES` analysis shows ≥1 critical concern requires new experiments / new theorems / framework change                             | User decides whether to escalate (drop resubmit-pipeline; use full Workflow 1.5 + 3)                         |
-| `ERROR`          | `audit_failure` / `loop_failure`       | Any sub-skill emits `ERROR`                                                                                                                  | Examine sub-skill's report; fix + retry                                                                      |
+| `ERROR`          | `audit_failure` / `loop_failure`       | Any sub-skill emits `ERROR`                                                                                                                  | Examine the report and stop; rerun only after an explicit new invocation                                      |
 
-`BLOCKED` is recoverable; `ERROR` indicates an unexpected sub-skill failure; only `FAIL` and unrecoverable `BLOCKED` block submission.
+`BLOCKED` and `ERROR` both block submission. A new run is an explicit operator decision after
+the reported cause is corrected.
 
 ## Key Rules
 

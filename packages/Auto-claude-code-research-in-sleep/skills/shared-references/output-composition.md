@@ -4,16 +4,13 @@ When a skill runs **inside an orchestrating pipeline** (e.g. `/idea-discovery`,
 `/research-pipeline`, `/grant-proposal`, `/kill-argument`), its intermediate
 findings should fold into the pipeline's single canonical deliverable instead of
 each sub-skill scattering its own overlapping `.md` files. When the same skill
-runs **on its own**, it writes its files exactly as documented — unchanged.
+runs **on its own**, it writes the standalone files documented by its SKILL.md.
 
 This protocol defines the two states, the explicit signal that switches between
 them, and the **enforced default**: with no signal, behave standalone.
 
-> Past idea-discovery runs scattered `LIT_LANDSCAPE.md` + `RESEARCH_REVIEW.md` +
-> `MANIFEST.md` + multiple pilot logs whose content was _also_ summarized inside
-> `IDEA_REPORT.md` — pure duplication. This contract is the fix, lifted out of the
-> individual skills so the ~20 skills that compose these don't each carry (and
-> drift) their own copy.
+The orchestrator owns the canonical deliverable. Sub-skills must not duplicate
+pipeline-level reports that the orchestrator already owns.
 
 ## The two states
 
@@ -34,9 +31,9 @@ A skill is in composed mode **if and only if** an explicit signal is present:
    `— composed: idea-stage/IDEA_REPORT.md`. The value names the canonical doc to
    fold into (it may not exist yet — the orchestrator creates/owns it). Orchestrators
    MUST pass this directive to every sub-skill they want folded.
-2. **Escape hatch.** `— standalone` (or `— composed: false`) forces standalone even
-   if an orchestrator would otherwise pass the directive. Standalone always wins a
-   conflict.
+2. **Standalone override.** `— standalone` (or `— composed: false`) forces
+   standalone even if an orchestrator would otherwise pass the directive.
+   Standalone always wins a conflict.
 
 ### Fail-safe rule (the one regression we cannot ship)
 

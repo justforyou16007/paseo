@@ -132,18 +132,18 @@ Skills 就是普通的 Markdown 文件，fork 后随意改：
 
 </details>
 
-### 通用（所有使用 Codex MCP 的 skill）
+### 通用（所有使用 Paseo codex 审阅器的 skill）
 
-调所有 Codex MCP 调用使用的 reviewer 模型（默认 `gpt-5.5`），或者 fork SKILL.md 定制 prompt 模板与每个 skill 的工具白名单。
+调整所有 Paseo codex 调用使用的 reviewer 模型（默认 `gpt-5.5`），或者 fork SKILL.md 定制 prompt 模板与每个 skill 的工具白名单。
 
 - **Prompt 模板** — 定制评审人格和评估标准
 - **`allowed-tools`** — 限制或扩展每个 skill 可用的工具
 
 <details>
-<summary><b>展开 Codex MCP reviewer 模型选项</b></summary>
+<summary><b>展开 Paseo codex reviewer 模型选项</b></summary>
 
 | 常量             | 默认值    | 说明                                                                                                                                                       |
 | ---------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `REVIEWER_MODEL` | `gpt-5.5` | Codex MCP 调用的 OpenAI 模型。其他可选：`gpt-5.3-codex`、`gpt-5.2-codex`、`o3`。完整列表见 [supported models](https://developers.openai.com/codex/models/) |
+| `REVIEWER_MODEL` | `gpt-5.5` | Paseo codex 调用的 OpenAI 模型。其他可选：`gpt-5.3-codex`、`gpt-5.2-codex`、`o3`。完整列表见 [supported models](https://developers.openai.com/codex/models/) |
 
 </details>

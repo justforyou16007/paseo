@@ -45,7 +45,6 @@ PENDING_DIR = Path(os.environ.get("MANUAL_REVIEW_PENDING_DIR", ".aris/pending_re
 DEBUG_LOG_RAW = os.environ.get("MANUAL_REVIEW_DEBUG_LOG", "").strip()
 DEBUG_LOG = Path(DEBUG_LOG_RAW).expanduser() if DEBUG_LOG_RAW else None
 DEFAULT_PORT = int(os.environ.get("MANUAL_REVIEW_PORT", "17900"))
-MAX_PORT_ATTEMPTS = 10
 
 # File-mode stability: require content unchanged across two reads with this gap
 FILE_STABLE_INTERVAL_SEC = 3
@@ -370,25 +369,17 @@ def wait_for_browser_response(prompt: str, config: dict, thread_id: str,
         _current_session = session
         _auth_token = _generate_token()
 
-    # Try fixed port, increment on conflict
-    server = None
-    port = DEFAULT_PORT
-    for attempt in range(MAX_PORT_ATTEMPTS):
-        try:
-            socketserver.TCPServer.allow_reuse_address = True
-            srv = socketserver.TCPServer(("127.0.0.1", port), _ReviewHandler)
-            server = srv
-            break
-        except OSError:
-            port += 1
-    if server is None:
+    socketserver.TCPServer.allow_reuse_address = True
+    try:
+        server = socketserver.TCPServer(("127.0.0.1", DEFAULT_PORT), _ReviewHandler)
+    except OSError as exc:
         _current_session = None
-        return None, f"Could not bind to any port in range {DEFAULT_PORT}-{DEFAULT_PORT + MAX_PORT_ATTEMPTS - 1}"
+        return None, f"Could not bind manual review server to port {DEFAULT_PORT}: {exc}"
 
     with _active_server_lock:
         _active_server = server
 
-    url = f"http://127.0.0.1:{port}?token={_auth_token}"
+    url = f"http://127.0.0.1:{DEFAULT_PORT}?token={_auth_token}"
 
     write_pending_state(url=url, thread_id=thread_id, prompt_file=None)
     debug_log(f"HTTP server started on {url}")
@@ -396,11 +387,12 @@ def wait_for_browser_response(prompt: str, config: dict, thread_id: str,
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
 
-    if AUTO_OPEN:
-        try:
-            webbrowser.open(url)
-        except Exception:
-            pass
+    if AUTO_OPEN and not webbrowser.open(url):
+        _current_session = None
+        server.shutdown()
+        server.server_close()
+        clear_pending_state(thread_id)
+        return None, f"Could not open the manual review browser for {url}"
 
     response: str | None = None
     error: str | None = None
@@ -492,9 +484,8 @@ def wait_for_file_response(prompt: str, config: dict, thread_id: str,
                 continue
             try:
                 content = response_path.read_text(encoding="utf-8").strip()
-            except OSError:
-                prev_content = None
-                continue
+            except OSError as exc:
+                raise RuntimeError(f"Cannot read manual review response {response_path}: {exc}") from exc
             if not content:
                 prev_content = None
                 continue
@@ -510,9 +501,8 @@ def wait_for_file_response(prompt: str, config: dict, thread_id: str,
 
             try:
                 content2 = response_path.read_text(encoding="utf-8").strip()
-            except OSError:
-                prev_content = None
-                continue
+            except OSError as exc:
+                raise RuntimeError(f"Cannot re-read manual review response {response_path}: {exc}") from exc
             if content2 == content and content2:
                 response = content2
                 break

@@ -823,7 +823,7 @@ function makeDashboard(overrides: Record<string, unknown> = {}): Record<string, 
       history: [{ iter: 1, value: 0.65 }],
     },
     best_idea: null,
-    gaps: { open: [], closed: [], total: 0 },
+    problems: { open: [], closed: [], total: 0 },
     last_review: { verdict: null, score: null, reviewer_id: null },
     stop_reason: null,
     system_errors: { total: 0, last: null },
@@ -1342,7 +1342,7 @@ test("dashboard-merge: rejects an idea-discovery receipt without its own plan", 
   } finally { cleanup(d); }
 });
 
-test("dashboard-merge: gap-planner is retired, and gap ids are problem node ids", () => {
+test("dashboard-merge: gap-planner is retired, and problem ids are problem node ids", () => {
   const d = tmpDir();
   try {
     writeDash(d, "run1", makeDashboard({
@@ -1355,9 +1355,9 @@ test("dashboard-merge: gap-planner is retired, and gap ids are problem node ids"
       primary_output: "EXPERIMENT_PLAN.md",
       summary: { operation: "audit-and-plan" },
       dashboard_patch: {
-        "gaps.open": ["G3"],
-        "gaps.closed": ["G1"],
-        "gaps.total": 2,
+        "problems.open": ["G3"],
+        "problems.closed": ["G1"],
+        "problems.total": 2,
         gap_audit_path: ".aris/runs/run1/workers/2-gap-planner/outputs/GAP_AUDIT.json",
         plan_path: ".aris/runs/run1/workers/2-gap-planner/outputs/EXPERIMENT_PLAN.md",
       },
@@ -1368,34 +1368,32 @@ test("dashboard-merge: gap-planner is retired, and gap ids are problem node ids"
     assert.notEqual(result.exitCode, 0, "gap-planner is no longer a known worker");
   } finally { cleanup(d); }
 
-  // The surviving gaps.* patcher (kill-argument) now carries problem node ids.
+  // The surviving problems.* patcher (the summary worker) carries problem node ids.
   const d2 = tmpDir();
   try {
     writeDash(d2, "run1", makeDashboard({
       iteration: 2,
-      current_phase: "kill-argument",
+      current_phase: "summary",
     }));
-    const receiptPath = writeWorkerReceipt(d2, "run1", "2-kill-argument", {
-      worker: "kill-argument",
+    const receiptPath = writeWorkerReceipt(d2, "run1", "2-summary", {
+      worker: "summary",
       iteration: 2,
-      primary_output: "KILL_ARGUMENT.md",
+      primary_output: "NARRATIVE_REPORT.md",
       summary: { still_unresolved: 1 },
       dashboard_patch: {
-        "gaps.open": ["G7"],
-        "gaps.closed": [],
-        "gaps.total": 1,
-        overall_verdict: "WARN",
+        "problems.open": ["G7"],
+        "problems.closed": [],
+        "problems.total": 1,
+        summary_path: ".aris/runs/run1/workers/2-summary/outputs/NARRATIVE_REPORT.md",
       },
     });
-    const outputDir = path.join(path.dirname(receiptPath), "outputs");
-    fs.writeFileSync(path.join(outputDir, "KILL_ARGUMENT.md"), "report\n", "utf-8");
     let result = dashMergeCli(
       "apply", "--root", d2, "--run-id", "run1", "--receipt", receiptPath,
     );
     assert.notEqual(result.exitCode, 0, "legacy G<n> gap ids must be rejected");
 
     const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf-8"));
-    receipt.dashboard_patch["gaps.open"] = ["problem:leaked-eval-split"];
+    receipt.dashboard_patch["problems.open"] = ["problem:leaked-eval-split"];
     fs.writeFileSync(receiptPath, JSON.stringify(receipt));
     result = dashMergeCli(
       "apply", "--root", d2, "--run-id", "run1", "--receipt", receiptPath,
@@ -2175,10 +2173,16 @@ test("contract: auto-research-loop runs Stage 1-3 and owns no audit or wiki stag
   assert.ok(!arl.includes("GAP_AUDIT.json"),
     "the loop must not consume a gap audit artifact");
 
-  // Rule 5: every wiki birth point lives in a dispatched pipeline skill.
-  assert.ok(!/\$WIKI_SCRIPT"?\s+(add_experiment|upsert_idea|add_claim|add_problem)/.test(arl),
+  // Rule 5: every wiki birth point lives in a dispatched worker. The check is
+  // scoped to ```bash blocks — that is the orchestrator's own shell. Text inside
+  // a bare-fenced dispatch prompt is the *worker's* instructions, and the
+  // summary worker does write the wiki (it closes problem:root on metric_met).
+  const orchestratorShell = [...arl.matchAll(/```bash\n([\s\S]*?)```/g)]
+    .map((m) => m[1])
+    .join("\n");
+  assert.ok(!/\$WIKI_SCRIPT"?\s+(add_experiment|upsert_idea|add_claim|add_problem)/.test(orchestratorShell),
     "the orchestrator must not write the research wiki (result-to-claim owns absorption)");
-  assert.ok(!arl.includes("WIKI_SCRIPT="),
+  assert.ok(!orchestratorShell.includes("WIKI_SCRIPT="),
     "the orchestrator must not even resolve the wiki helper");
 
   // The absorption path the loop depends on has to still exist upstream.
@@ -2375,6 +2379,504 @@ test("research-wiki: a problem tree survives round-trip into edges and query_pac
     assert.ok(fs.existsSync(path.join(wiki, "problems", "leaked-eval-split.md")),
       "solved is a status change, not a deletion — the history stays readable");
   } finally { cleanup(d); }
+});
+
+test("research-wiki: closing a problem preserves the fields the close call omits", () => {
+  const d = tmpDir();
+  try {
+    const wiki = path.join(d, "research-wiki");
+    assert.equal(wikiCli("init", wiki).exitCode, 0, "init");
+    assert.equal(wikiCli("add_problem", wiki,
+      "--slug", "root", "--title", "close F1 gap: 0.71 -> 0.85").exitCode, 0);
+    let r = wikiCli("add_problem", wiki,
+      "--slug", "eval-split-leak", "--title", "eval split leaks into training",
+      "--parent", "problem:root", "--severity", "high",
+      "--statement", "the split overlaps; fixing it should recover several points",
+      "--what-would-solve", "a clean split that scores >= 0.83 on the same budget",
+      "--evidence", "results/dirty-split.json: 0.712 (the failing measurement)");
+    assert.equal(r.exitCode, 0, r.stderr);
+    const before = fs.readFileSync(path.join(wiki, "problems", "eval-split-leak.md"), "utf-8");
+
+    // The close call result-to-claim writes: status + evidence only. Everything
+    // else must survive — a full-rewrite with CLI defaults would reset
+    // severity to medium, blank the parent, and turn the body into TODOs.
+    r = wikiCli("add_problem", wiki,
+      "--slug", "eval-split-leak", "--status", "solved",
+      "--evidence", "results/clean-split.json: 0.841", "--update-on-exist");
+    assert.equal(r.exitCode, 0, r.stderr);
+    const after = fs.readFileSync(path.join(wiki, "problems", "eval-split-leak.md"), "utf-8");
+    assert.ok(after.includes("status: solved"), "the close must move the status");
+    assert.ok(after.includes("severity: high"), "severity must be preserved, not reset to medium");
+    assert.ok(after.includes('parent: "problem:root"'), "the parent link must be preserved");
+    assert.ok(after.includes("eval split leaks into training"), "the title must be preserved");
+    assert.ok(after.includes("the split overlaps"),
+      "the original statement must survive the close");
+    assert.ok(after.includes("a clean split that scores >= 0.83"),
+      "what-would-solve must survive the close");
+    assert.ok(after.includes("results/clean-split.json: 0.841"),
+      "the closing evidence must be recorded");
+    assert.ok(!after.includes("_TODO: what is unsolved") && !after.includes("_TODO: the result that closes"),
+      "a close that wipes the populated sections to TODO placeholders loses the audit trail");
+    // evidence APPENDS (both the failure and the closing evidence stay true)
+    assert.ok(after.includes("results/dirty-split.json: 0.712"),
+      "the original failure evidence must survive the close");
+    assert.ok(after.indexOf("results/dirty-split.json") < after.indexOf("results/clean-split.json"),
+      "closing evidence appends after the failure evidence, it does not replace it");
+  } finally { cleanup(d); }
+});
+
+test("research-wiki: a re-judged experiment drops its previous verdict edges", () => {
+  const d = tmpDir();
+  try {
+    const wiki = path.join(d, "research-wiki");
+    assert.equal(wikiCli("init", wiki).exitCode, 0, "init");
+    assert.equal(wikiCli("add_problem", wiki,
+      "--slug", "root", "--title", "close F1 gap: 0.71 -> 0.85").exitCode, 0);
+    assert.equal(wikiCli("upsert_idea", wiki,
+      "--slug", "clean-split-v2", "--title", "Clean split v2",
+      "--target-problems", "problem:root").exitCode, 0);
+
+    // The idea id is passed exactly as the loop carries it (already prefixed).
+    // add_experiment must NOT prepend a second idea:.
+    let r = wikiCli("add_experiment", wiki,
+      "--slug", "iter-2", "--idea", "idea:clean-split-v2", "--verdict", "no");
+    assert.equal(r.exitCode, 0, r.stderr);
+    assert.equal(wikiCli("add_edge", wiki,
+      "--from", "exp:iter-2", "--to", "claim:split-works", "--type", "invalidates",
+      "--evidence", "0.71").exitCode, 0);
+
+    // Re-judge: same iteration, verdict flips to yes.
+    r = wikiCli("add_experiment", wiki,
+      "--slug", "iter-2", "--idea", "idea:clean-split-v2", "--verdict", "yes",
+      "--update-on-exist");
+    assert.equal(r.exitCode, 0, r.stderr);
+    assert.equal(wikiCli("add_edge", wiki,
+      "--from", "exp:iter-2", "--to", "claim:split-works", "--type", "supports",
+      "--evidence", "0.84").exitCode, 0);
+
+    const edges = fs.readFileSync(path.join(wiki, "graph", "edges.jsonl"), "utf-8")
+      .split("\n").filter(Boolean).map((l) => JSON.parse(l));
+    const fromExp = edges.filter((e) => e.from === "exp:iter-2");
+    assert.ok(!fromExp.some((e) => e.type === "invalidates"),
+      "the stale invalidates edge must be gone - supports+invalidates on one experiment is a contradiction");
+    assert.ok(fromExp.some((e) => e.type === "supports"),
+      "the new supports edge must be present");
+    assert.ok(edges.some((e) => e.from === "idea:clean-split-v2" && e.to === "exp:iter-2" && e.type === "tested_by"),
+      "the tested_by edge must use the idea id verbatim (no idea:idea: prefix)");
+    assert.ok(!edges.some((e) => e.from === "idea:idea:clean-split-v2"),
+      "no double-prefixed idea node may appear in edges");
+  } finally { cleanup(d); }
+});
+
+test("research-wiki: query_pack keeps Open Problems when the brief is huge", () => {
+  const d = tmpDir();
+  try {
+    const wiki = path.join(d, "research-wiki");
+    assert.equal(wikiCli("init", wiki).exitCode, 0, "init");
+    // A near-limit brief: 7 sections x ~1100 chars would overflow 8000 on its own.
+    const sections = ["Problem Statement", "Constraints", "What I'm Looking For", "Background", "Non-Goals", "Domain Knowledge", "Existing Results (if any)"]
+      .map((h) => "## " + h + "\n\n" + "background detail ".repeat(70)).join("\n\n");
+    fs.writeFileSync(path.join(d, "RESEARCH_BRIEF.md"), "# Brief\n\n" + sections + "\n", "utf-8");
+    assert.equal(wikiCli("add_problem", wiki,
+      "--slug", "root", "--title", "close F1 gap: 0.71 -> 0.85").exitCode, 0);
+    assert.equal(wikiCli("add_problem", wiki,
+      "--slug", "eval-split-leak", "--title", "eval split leaks into training",
+      "--parent", "problem:root").exitCode, 0);
+
+    assert.equal(wikiCli("rebuild_query_pack", wiki, "--max-chars", "1200").exitCode, 0);
+    const pack = fs.readFileSync(path.join(wiki, "query_pack.md"), "utf-8");
+    assert.ok(pack.length <= 1200, "pack must respect the budget (got " + pack.length + ")");
+    assert.ok(/## Open Problems/.test(pack),
+      "Open Problems is the next iteration's search seed - a long brief must not push it out of the pack");
+    assert.ok(pack.includes("eval split leaks into training"),
+      "the child problem must still be listed");
+  } finally { cleanup(d); }
+});
+
+test("research-wiki: a missing parent leaves no orphan page behind", () => {
+  const d = tmpDir();
+  try {
+    const wiki = path.join(d, "research-wiki");
+    assert.equal(wikiCli("init", wiki).exitCode, 0, "init");
+    // The root problem was never created (an old project, or a setup that
+    // stopped early). The child must not be written: it would sit in problems/
+    // with no child_of edge, no index entry and no query_pack listing — visible
+    // to a human browsing the directory, invisible to every reader.
+    const r = wikiCli("add_problem", wiki,
+      "--slug", "eval-split-leak", "--title", "eval split leaks into training",
+      "--parent", "problem:root");
+    assert.notEqual(r.exitCode, 0, "a dangling parent must fail the write");
+    assert.ok(!fs.existsSync(path.join(wiki, "problems", "eval-split-leak.md")),
+      "the page must not survive the failed call");
+  } finally { cleanup(d); }
+});
+
+test("research-wiki: stats --json is the single source of truth for the problem tally", () => {
+  const d = tmpDir();
+  try {
+    const wiki = path.join(d, "research-wiki");
+    assert.equal(wikiCli("init", wiki).exitCode, 0, "init");
+    assert.equal(wikiCli("add_problem", wiki,
+      "--slug", "root", "--title", "close F1 gap: 0.71 -> 0.85").exitCode, 0);
+    assert.equal(wikiCli("add_problem", wiki,
+      "--slug", "eval-split-leak", "--title", "eval split leaks",
+      "--parent", "problem:root").exitCode, 0);
+    assert.equal(wikiCli("add_problem", wiki,
+      "--slug", "metric-noise", "--title", "metric is noisy",
+      "--parent", "problem:root", "--status", "solved").exitCode, 0);
+    assert.equal(wikiCli("add_problem", wiki,
+      "--slug", "bad-lead", "--title", "wrong lead",
+      "--parent", "problem:root", "--status", "refuted").exitCode, 0);
+
+    const r = wikiCli("stats", wiki, "--json");
+    assert.equal(r.exitCode, 0, r.stderr);
+    const stats = JSON.parse(r.stdout);
+    assert.deepEqual(stats.problems.open, ["problem:eval-split-leak", "problem:root"],
+      "open must list every open problem, whichever writer filed it");
+    assert.deepEqual(stats.problems.closed, ["problem:bad-lead", "problem:metric-noise"],
+      "closed is solved + refuted: both are adjudicated");
+    assert.equal(stats.problems.total, 4);
+
+    // Closing root the way the summary worker does moves it across.
+    assert.equal(wikiCli("add_problem", wiki,
+      "--slug", "root", "--status", "solved", "--update-on-exist").exitCode, 0);
+    const after = JSON.parse(wikiCli("stats", wiki, "--json").stdout);
+    assert.deepEqual(after.problems.open, ["problem:eval-split-leak"]);
+    assert.ok(after.problems.closed.includes("problem:root"));
+    assert.equal(after.problems.total, 4, "closing a problem does not delete it");
+  } finally { cleanup(d); }
+});
+
+test("metric-gate evaluate: duplicate history rows for one iteration count once", () => {
+  const d = tmpDir();
+  try {
+    // Legacy/corrupted state: iter 2 appears twice. It is ONE no-progress round,
+    // not two -- counting both would fire patience one round early.
+    const dash = makeDashboard({
+      iteration: 3,
+      max_iterations: 10,
+      config: { patience: 2 },
+      metric: { name: "F1", target: 0.85, direction: "higher_better", tolerance: 0.01, current: 0.70, baseline: 0.80, history: [{ iter: 1, value: 0.80 }, { iter: 2, value: 0.70 }, { iter: 2, value: 0.70 }, { iter: 3, value: 0.70 }] },
+    });
+    writeDash(d, "run1", dash);
+    const r = metricGateCli("evaluate", d, "run1");
+    assert.equal(r.exitCode, 0, r.stderr);
+    const dec = JSON.parse(r.stdout.trim());
+    assert.equal(dec.no_progress_streak, 2,
+      "iters 2 and 3 are the only no-progress rounds; the duplicate row must not count");
+    assert.equal(dec.stop_reason, "patience_exhausted");
+  } finally { cleanup(d); }
+});
+
+test("dashboard-merge: a metric write replaces every duplicate row for that iteration", () => {
+  const d = tmpDir();
+  try {
+    writeDash(d, "run1", makeDashboard({
+      iteration: 2,
+      current_phase: "auto-review-loop",
+      metric: { name: "F1", target: 0.85, direction: "higher_better", tolerance: 0.01, current: 0.70, baseline: 0.80, history: [{ iter: 1, value: 0.80 }, { iter: 2, value: 0.70 }, { iter: 2, value: 0.70 }] },
+    }));
+    const receiptPath = writeWorkerReceipt(d, "run1", "2-auto-review-loop", {
+      worker: "auto-review-loop",
+      iteration: 2,
+      primary_output: "AUTO_REVIEW.md",
+      dashboard_patch: {
+        "last_review.verdict": "almost",
+        "last_review.score": 6,
+        "last_review.reviewer_id": "reviewer-1",
+        "metric.current": 0.72,
+      },
+    });
+    const result = dashMergeCli("apply", "--root", d, "--run-id", "run1", "--receipt", receiptPath);
+    assert.equal(result.exitCode, 0, result.stderr);
+    const dash = JSON.parse(fs.readFileSync(path.join(d, ".aris/runs/run1/dashboard.json"), "utf-8"));
+    const iter2 = dash.metric.history.filter((e: { iter: number }) => e.iter === 2);
+    assert.equal(iter2.length, 1,
+      "merge must collapse duplicate iter rows, not leave a sibling the gate would double-count");
+    assert.equal(iter2[0].value, 0.72, "the surviving row carries the final value");
+  } finally { cleanup(d); }
+});
+
+test("contract: auto-review-loop's result-to-claim dispatch is mandatory in worker mode and hands over the loop's ids", () => {
+  const review = fs.readFileSync(path.resolve("skills/auto-review-loop/SKILL.md"), "utf-8");
+  const step6 = review.slice(review.indexOf("**Generate claims from results**"),
+    review.indexOf("7. If stopped at max rounds"));
+  assert.ok(step6.includes("MANDATORY"),
+    "worker mode must treat the result-to-claim dispatch as required - it is the only wiki write path");
+  assert.ok(step6.includes("never a done"),
+    "a failed dispatch must fail the receipt, not pass with the wiki write silently skipped");
+  assert.ok(step6.includes("chosen_idea_id"),
+    "the dispatch must forward the loop's idea id");
+  assert.ok(step6.includes("iter-<iteration>"),
+    "the dispatch must pin the experiment slug so re-judging overwrites instead of duplicating");
+  assert.ok(step6.toLowerCase().includes("not to prepend"),
+    "the dispatch must warn against re-prefixing the already-canonical idea id");
+});
+
+test("contract: research-pipeline Stage 3 supplies chosen_idea_id, not just the title", () => {
+  // auto-review-loop's termination step 6 declares `chosen_idea_id` required and
+  // passes it verbatim to `/result-to-claim --idea`, where research-wiki's edge
+  // writer throws on a target page that does not exist. A title is not a node id
+  // and title→slug is not invertible (idea-creator Phase 7 sets --slug
+  // explicitly), so the id has to travel from the dashboard. auto-research-loop
+  // already supplies it; research-pipeline is the other caller of the same stage.
+  const rp = fs.readFileSync(path.resolve("skills/research-pipeline/SKILL.md"), "utf-8");
+  const stage3 = rp.slice(
+    rp.indexOf("### Stage 3: Auto Review Loop"),
+    rp.indexOf("### Stage 4:"),
+  );
+  assert.ok(stage3.length > 0, "must find research-pipeline Stage 3");
+  assert.ok(stage3.includes("chosen_idea_id"),
+    "Stage 3 context must supply chosen_idea_id — auto-review-loop step 6 requires it");
+  assert.ok(/`chosen_idea_id`[^\n]*best_idea\.id/.test(stage3),
+    "chosen_idea_id must come from dashboard.best_idea.id, not be re-derived from the title");
+});
+
+test("contract: every loop-supplied idea-discovery context key is declared by the worker", () => {
+  // The reverse of the required ⊆ supplied check below: a key the loop sends but
+  // the worker never declares is a silent name collision waiting to happen
+  // (`direction` vs `metric_direction`).
+  const arl = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
+  const idea = fs.readFileSync(path.resolve("skills/idea-discovery/SKILL.md"), "utf-8");
+  const declared = idea.slice(
+    idea.indexOf("### Loop-iteration context"),
+    idea.indexOf("## Pipeline"),
+  );
+  assert.ok(declared.length > 0, "idea-discovery must declare its loop-iteration context contract");
+  for (const key of ["direction", "metric_baseline"]) {
+    assert.ok(new RegExp(`\`[^\`]*\\b${key}\\b`).test(declared),
+      `idea-discovery must declare '${key}' — the loop supplies it every iteration`);
+  }
+  const stage1 = arl.slice(
+    arl.indexOf("## Stage 1: Idea Discovery"),
+    arl.indexOf("## Stage 2: Experiment Bridge"),
+  );
+  assert.ok(stage1.includes("`direction`"),
+    "the loop must still be the one supplying direction (guards against a one-sided doc edit)");
+  assert.ok(/\bdirection\b[^\n]*research direction/.test(declared),
+    "idea-discovery must distinguish the research direction from the metric direction");
+});
+
+test("contract: no skill resolves a helper into a silent empty path", () => {
+  // integration-contract.md Policy A (gate): a missing helper stops the phase.
+  // A ladder ending in `X=""` turns that into `node ""`, which fails later and
+  // elsewhere, naming neither the missing component nor the phase that needed
+  // it. Scanning every skill, not just the loop: the previous version of this
+  // test only read auto-research-loop, so research-pipeline kept two empty
+  // ladders while the suite stayed green.
+  const offenders: string[] = [];
+  for (const entry of fs.readdirSync(path.resolve("skills"), { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    for (const file of fs.readdirSync(path.resolve("skills", entry.name))) {
+      if (!file.endsWith(".md")) continue;
+      const rel = path.join("skills", entry.name, file);
+      const text = fs.readFileSync(path.resolve(rel), "utf-8");
+      for (const m of text.matchAll(/^\[ -f "\$([A-Z_]+)" \] \|\| \1=""/gm)) {
+        offenders.push(`${rel}: ${m[1]}`);
+      }
+    }
+  }
+  assert.deepEqual(offenders, [],
+    `these ladders degrade to an empty path instead of stopping:\n${offenders.join("\n")}`);
+
+  // The loop's five Policy A helpers each end in an actionable exit 1.
+  const arl = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
+  const pipeline = fs.readFileSync(path.resolve("skills/research-pipeline/SKILL.md"), "utf-8");
+  for (const h of ["RUN_STATE", "METRIC_GATE", "DASH_MERGE", "RENDER", "AUDIT_VERIFIER"]) {
+    const rung = new RegExp(`\\[ -f "\\$${h}" \\] \\|\\| \\{[\\s\\S]{0,300}?exit 1`);
+    assert.ok(rung.test(arl),
+      `${h}'s resolution ladder in auto-research-loop must end in 'exit 1' with an actionable error`);
+  }
+  // research-pipeline resolves the two it uses, and must stop the same way.
+  for (const h of ["RUN_STATE", "RENDER"]) {
+    const rung = new RegExp(`\\[ -f "\\$${h}" \\] \\|\\| \\{[\\s\\S]{0,300}?exit 1`);
+    assert.ok(rung.test(pipeline),
+      `${h}'s resolution ladder in research-pipeline must end in 'exit 1' with an actionable error`);
+  }
+});
+
+test("contract: kill-argument maps its audit severity onto the wiki's severity scale", () => {
+  // The audit grades damage (critical/major/minor); add_problem takes priority
+  // (high/medium/low). The two vocabularies do not overlap at all, so passing
+  // severity_if_unresolved straight through makes every add_problem call exit 1
+  // — after both expensive review rounds have already run.
+  const ka = fs.readFileSync(path.resolve("skills/kill-argument/SKILL.md"), "utf-8");
+  const addProblemCall = ka.slice(ka.indexOf('"$WIKI_SCRIPT" add_problem'));
+  const severityArg = /--severity "([^"]*)"/.exec(addProblemCall);
+  assert.ok(severityArg, "kill-argument must pass --severity to add_problem");
+  assert.ok(!severityArg![1].includes("severity_if_unresolved"),
+    "severity_if_unresolved must be mapped, not passed through: add_problem rejects all three of its values");
+  for (const pair of ["critical", "high", "major", "medium", "minor", "low"]) {
+    assert.ok(ka.includes(pair), `the severity mapping must state ${pair}`);
+  }
+});
+
+test("contract: the summary worker closes the root problem and publishes the tally", () => {
+  // Root is the run-level metric gap. result-to-claim refuses to close it (a
+  // supported claim is not a met target) and the metric gate cannot: it is pure
+  // dashboard arithmetic with no wiki access, and the orchestrator writes no
+  // wiki. The summary worker is the only worker that runs after the stop gate.
+  const arl = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
+  const summarySection = arl.slice(arl.indexOf("## Summary (on stop)"));
+  assert.ok(/metric_met/.test(summarySection) && /--slug root --status solved/.test(summarySection),
+    "the summary worker must close problem:root when the gate reported metric_met");
+  assert.ok(/stats <wiki_root> --json/.test(summarySection),
+    "the tally must be read back from the wiki, not assembled by hand");
+
+  // Nothing else may claim ownership of the close.
+  const gate = fs.readFileSync(path.resolve("src/tools/metric-gate.ts"), "utf-8");
+  assert.ok(!/add_problem|research-wiki/.test(gate),
+    "the metric gate stays pure dashboard arithmetic - it cannot close a wiki problem");
+});
+
+test("dashboard-merge: only the summary worker publishes the problem tally", () => {
+  // These fields are whole-list replacements. Each problem writer knows only the
+  // problems it just filed, so letting a partial writer patch them erases the
+  // other writers' problems. The summary worker publishes once, from one scan.
+  const d = tmpDir();
+  try {
+    writeDash(d, "run1", makeDashboard({ iteration: 2, current_phase: "kill-argument" }));
+    const receiptPath = writeWorkerReceipt(d, "run1", "2-kill-argument", {
+      worker: "kill-argument",
+      iteration: 2,
+      primary_output: "KILL_ARGUMENT.md",
+      summary: { still_unresolved: 1 },
+      dashboard_patch: {
+        "problems.open": ["problem:eval-split-leak"],
+        "problems.closed": [],
+        "problems.total": 1,
+        overall_verdict: "WARN",
+      },
+    });
+    const result = dashMergeCli(
+      "apply", "--root", d, "--run-id", "run1", "--receipt", receiptPath,
+    );
+    assert.notEqual(result.exitCode, 0,
+      "kill-argument knows only the problems it filed; it must not replace the whole tally");
+  } finally { cleanup(d); }
+
+  // The summary worker must publish it — a summary receipt without the tally
+  // leaves the dashboard reporting zero problems for the life of the run.
+  const d2 = tmpDir();
+  try {
+    writeDash(d2, "run1", makeDashboard({ iteration: 2, current_phase: "summary" }));
+    const receiptPath = writeWorkerReceipt(d2, "run1", "2-summary", {
+      worker: "summary",
+      iteration: 2,
+      primary_output: "NARRATIVE_REPORT.md",
+      summary: {},
+      dashboard_patch: {
+        summary_path: ".aris/runs/run1/workers/2-summary/outputs/NARRATIVE_REPORT.md",
+      },
+    });
+    const result = dashMergeCli(
+      "apply", "--root", d2, "--run-id", "run1", "--receipt", receiptPath,
+    );
+    assert.notEqual(result.exitCode, 0, "the summary receipt must carry the problem tally");
+    assert.ok(/missing required patch 'problems\.open'/.test(result.stderr),
+      `the rejection must name the missing tally key, got: ${result.stderr}`);
+  } finally { cleanup(d2); }
+});
+
+test("dashboard-merge: the problem tally is problems.*, and gaps.* is gone", () => {
+  // The dashboard field carries `problem:<slug>` node ids, so the field name is
+  // problems.*. No migration shim: an old dashboard fails validation outright.
+  const d = tmpDir();
+  try {
+    const dash = makeDashboard({ iteration: 2, current_phase: "summary" });
+    delete (dash as Record<string, unknown>).problems;
+    (dash as Record<string, unknown>).gaps = { open: [], closed: [], total: 0 };
+    writeDash(d, "run1", dash);
+    const receiptPath = writeWorkerReceipt(d, "run1", "2-summary", {
+      worker: "summary",
+      iteration: 2,
+      primary_output: "NARRATIVE_REPORT.md",
+      summary: {},
+      dashboard_patch: {
+        "problems.open": ["problem:eval-split-leak"],
+        "problems.closed": [],
+        "problems.total": 1,
+        summary_path: ".aris/runs/run1/workers/2-summary/outputs/NARRATIVE_REPORT.md",
+      },
+    });
+    const result = dashMergeCli(
+      "apply", "--root", d, "--run-id", "run1", "--receipt", receiptPath,
+    );
+    assert.notEqual(result.exitCode, 0, "a dashboard with gaps but no problems must be rejected");
+    assert.ok(/dashboard\.problems/.test(result.stderr),
+      `validation must name the problems field, got: ${result.stderr}`);
+  } finally { cleanup(d); }
+
+  // A receipt still patching gaps.* is an unknown key for this worker.
+  const d2 = tmpDir();
+  try {
+    writeDash(d2, "run1", makeDashboard({ iteration: 2, current_phase: "summary" }));
+    const receiptPath = writeWorkerReceipt(d2, "run1", "2-summary", {
+      worker: "summary",
+      iteration: 2,
+      primary_output: "NARRATIVE_REPORT.md",
+      summary: {},
+      dashboard_patch: {
+        "gaps.open": ["problem:eval-split-leak"],
+        "gaps.closed": [],
+        "gaps.total": 1,
+        summary_path: ".aris/runs/run1/workers/2-summary/outputs/NARRATIVE_REPORT.md",
+      },
+    });
+    let result = dashMergeCli(
+      "apply", "--root", d2, "--run-id", "run1", "--receipt", receiptPath,
+    );
+    assert.notEqual(result.exitCode, 0, "a receipt patching the retired gaps.* keys must be rejected");
+
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf-8"));
+    receipt.dashboard_patch = {
+      "problems.open": ["problem:eval-split-leak"],
+      "problems.closed": [],
+      "problems.total": 1,
+      summary_path: ".aris/runs/run1/workers/2-summary/outputs/NARRATIVE_REPORT.md",
+    };
+    fs.writeFileSync(receiptPath, JSON.stringify(receipt));
+    result = dashMergeCli(
+      "apply", "--root", d2, "--run-id", "run1", "--receipt", receiptPath,
+    );
+    assert.equal(result.exitCode, 0, result.stderr);
+    const merged = JSON.parse(
+      fs.readFileSync(path.join(d2, ".aris", "runs", "run1", "dashboard.json"), "utf-8"));
+    assert.deepEqual(merged.problems.open, ["problem:eval-split-leak"]);
+    assert.equal(merged.gaps, undefined, "the merge must not resurrect a gaps field");
+  } finally { cleanup(d2); }
+});
+
+test("contract: result-to-claim closes only evidence-settled problems and never the root", () => {
+  const r2c = fs.readFileSync(path.resolve("skills/result-to-claim/SKILL.md"), "utf-8");
+  assert.ok(r2c.includes("EXCLUDING problem:root"),
+    "a yes verdict must never close the run-level root problem - the summary worker closes it");
+  assert.ok(r2c.includes('--idea "<active_idea>"'),
+    "the idea id passes through verbatim; the CLI adds the prefix only when missing");
+  assert.ok(!r2c.includes('--idea "idea:<active_idea>"'),
+    "unconditionally prefixing produces idea:idea:<slug> dangling edges");
+  const closeBlock = r2c.slice(r2c.indexOf('elif verdict == "yes"'), r2c.indexOf("# 5. Rebuild + log"));
+  assert.ok(!closeBlock.includes("--title"),
+    "the close call must not pass --title: the update path preserves it from the existing page");
+});
+
+test("contract: auto-research-loop resume knows the metric-gate phase", () => {
+  const loop = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
+  const resume = loop.slice(loop.indexOf("## Resume Protocol"), loop.indexOf("## Stop Gate"));
+  assert.ok(resume.includes('current_phase == "metric-gate"'),
+    "a crash between Stage 3 merge and the gate must have a resume branch");
+  assert.ok(resume.toLowerCase().includes("re-dispatch stage 3"),
+    "the metric-gate phase has no worker; resume must run the gate, not redo review");
+});
+
+test("contract: idea-discovery strips the manifest token from sub-skill dispatches", () => {
+  const idea = fs.readFileSync(path.resolve("skills/idea-discovery/SKILL.md"), "utf-8");
+  assert.ok(idea.includes('SUB_ARGS="$ARGUMENTS"') && idea.includes('SUB_ARGS=""'),
+    "worker mode must blank the forwarded arguments; direct mode forwards them");
+  assert.ok(idea.includes('/idea-creator "$SUB_ARGS"'),
+    "the idea-creator dispatch must use the filtered arguments");
+  assert.ok(!idea.includes('/idea-creator "$ARGUMENTS"'),
+    "forwarding $ARGUMENTS verbatim makes idea-creator enter worker mode against idea-discovery's manifest and write a mismatched receipt");
 });
 
 test("contract: research-setup carries the baseline into the brief and dispatches no experiment", () => {

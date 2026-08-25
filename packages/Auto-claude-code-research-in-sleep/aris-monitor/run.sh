@@ -12,8 +12,7 @@
 # would break the GUI. We just verify Tk against your existing python3 and run.
 #
 # Usage:
-#   ./run.sh            # start the floating widget (falls back to the ticker
-#                       # if Tkinter is unavailable)
+#   ./run.sh            # start the floating widget (Tkinter is required)
 #   ./run.sh --ticker   # force the headless terminal ticker
 #   ./run.sh --check    # read-only smoke test (scanner.py), then exit
 #
@@ -38,12 +37,10 @@ if [ "$mode" = "--ticker" ]; then
   exec "$PY" "$DIR/ticker.py"
 fi
 
-# Default: try the GUI; fall back to the ticker if Tk is missing.
-if "$PY" -c "import tkinter" >/dev/null 2>&1; then
-  exec "$PY" "$DIR/widget.py"
-else
+if ! "$PY" -c "import tkinter" >/dev/null 2>&1; then
   echo "ARIS-Monitor: Tkinter not available for $PY." >&2
-  echo "ARIS-Monitor: falling back to the headless terminal ticker." >&2
-  echo "ARIS-Monitor: (to get the GUI, install Tk for this python, e.g. 'brew install python-tk')" >&2
-  exec "$PY" "$DIR/ticker.py"
+  echo "ARIS-Monitor: install Tk for this python, or choose './run.sh --ticker' explicitly." >&2
+  exit 1
 fi
+
+exec "$PY" "$DIR/widget.py"

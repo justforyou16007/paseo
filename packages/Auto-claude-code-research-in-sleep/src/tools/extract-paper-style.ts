@@ -76,11 +76,7 @@ function readLocalDir(dirPath: string): string {
 
   const parts: string[] = [];
   for (const f of texFiles) {
-    try {
-      parts.push(fs.readFileSync(f, "utf-8"));
-    } catch {
-      continue;
-    }
+    parts.push(fs.readFileSync(f, "utf-8"));
   }
   return parts.join("\n\n% --- file boundary ---\n\n");
 }
@@ -385,7 +381,7 @@ function profileFromText(text: string): string {
 
   const md: string[] = ["# Style profile (skeleton-only, from non-TeX source)\n"];
   md.push("**Use as structural guidance for the writer agent. Do NOT copy prose.**\n");
-  md.push("\n## Heuristic section-name candidates (best effort)\n");
+  md.push("\n## Heuristic section-name candidates\n");
   if (headings.length > 0) {
     for (const h of headings.slice(0, 20)) {
       md.push(`- ${h}`);

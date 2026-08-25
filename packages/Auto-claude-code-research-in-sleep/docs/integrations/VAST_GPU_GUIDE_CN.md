@@ -90,9 +90,8 @@ ARIS + Vast.ai 的典型工作负载：
 
 在 `CLAUDE.md` 设置 `max_budget`，ARIS 估算超过这个数会警告——不是硬阻断，而是租之前再确认。
 
-## 没有服务器怎么办
-
-Review 和改写类 skill（`/auto-review-loop`、`/research-review`、`/paper-writing`、`/paper-compile`）不受影响。只有需要跑实验的修复会跳过（标记为"需人工跟进"）。
+如果运行明确要求 `gpu: vast`，但找不到可用的 Vast 实例，实验阶段会标记为 BLOCKED
+并停止，不会静默跳过实验修复。需要时请显式选择可用环境，或运行不包含实验阶段的流程。
 
 ## 相关 skill
 

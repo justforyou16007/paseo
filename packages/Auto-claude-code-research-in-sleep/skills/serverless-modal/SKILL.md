@@ -318,7 +318,7 @@ modal secret create NAME KEY=VALUE       # Create secret
 
 ## Key Tips
 
-- GPU fallback: `gpu=["H100", "A100-80GB", "L40S"]` — Modal tries each in order
+- Choose one GPU type explicitly, for example `gpu="H100"`. If that type is unavailable, report the deployment failure instead of trying another GPU automatically.
 - Multi-GPU: `gpu="H100:4"` (up to 8 GPUs, cost scales linearly)
 - Volume: `modal.Volume.from_name("x", create_if_missing=True)` for persistent storage
 - `@modal.enter()` loads model once per container | `@modal.concurrent()` for concurrent requests

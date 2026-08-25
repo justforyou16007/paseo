@@ -49,6 +49,7 @@ Phase 5    Final output — complete analysis report
 When invoked with `— manifest: <path>`, this skill runs as a worker under an
 orchestrator (`/research-pipeline` or `/auto-research-loop`). The manifest
 provides all inputs; the skill writes its receipt to the manifest's directory.
+The required input-manifest file is the complete input authority for this worker.
 
 **Startup check:**
 ```
@@ -73,10 +74,11 @@ fi
 - use the supplied plan for coverage checks when present; when absent, mark
   plan-coverage as not applicable;
 - do not replace these inputs with project-root `results/`, `logs/`,
-  `refine-logs/`, or an older analysis file. A project-wide scan is forbidden
+  `refine-logs/`, or any analysis file outside the manifest. A project-wide scan is forbidden
   in worker mode — the manifest snapshot is the whole input set.
 
-Direct-call mode retains the project-root discovery behavior below.
+There is no project-root discovery mode. The manifest is the complete input
+set for every invocation.
 
 **Receipt (write last to `$WORKER_DIR/receipt.json`):**
 
@@ -107,49 +109,24 @@ value to `metric.current`. `dashboard-merge.js apply` appends the per-iteration
 On failure, write receipt with `"status": "failed"` and structured `error` object
 per `worker-manifest.md`. Append system errors to `$WORKER_DIR/progress_error.md`.
 
-**Direct-call mode:** When invoked WITHOUT `— manifest:`, the skill operates
-normally using its own argument parsing. No receipt is written.
+The skill requires `— manifest:` and always writes a receipt.
 
-**Output path mapping:** In worker mode, every hardcoded output path in this
-skill's body (listed below) maps to `$OUTPUT_DIR/<filename>`. The orchestrator's
-subsequent input-manifests reference prior workers' outputs using their full
-`$WORKERS_DIR/<iter>-<phase>/outputs/<file>` path. In direct-call mode, the
-paths below are project-root-relative as written.
+**Output path mapping:** Every output path in this skill maps to
+`$OUTPUT_DIR/<filename>`. The orchestrator's input manifests reference these
+paths directly.
 
-| Direct-call path | Worker-mode path |
-|---|---|
-| `refine-logs/EXPERIMENT_RESULTS.md` | `$OUTPUT_DIR/EXPERIMENT_RESULTS.md` |
-| `refine-logs/EXPERIMENT_TRACKER.md` | `$OUTPUT_DIR/EXPERIMENT_TRACKER.md` |
+| Worker output |
+|---|
+| `$OUTPUT_DIR/EXPERIMENT_RESULTS.md`, `$OUTPUT_DIR/EXPERIMENT_TRACKER.md` |
 
 ---
 
 ## Phase 0: Resolve Project
 
-In worker mode, resolve `PROJECT` from manifest context or the repository name.
+Resolve `PROJECT` from manifest context or the repository name.
 If `inputs.experiment_skill` names an `env.json`, derive `SKILL_DIR` from its
 parent and read that exact file. Do not search for another generated experiment
 skill. Then continue with the worker input authority above.
-
-In direct-call mode:
-
-1. **Derive project slug.**
-   ```bash
-   ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-   PROJECT=$(basename "$ROOT" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')
-   ```
-
-2. **Locate generated skill.**
-   ```bash
-   SKILL_DIR=".claude/skills/run-${PROJECT}-experiment"
-   [ -d "$SKILL_DIR/scripts/ops" ] || { echo "ERROR: experiment skill not found at $SKILL_DIR. Run /experiment-env-manager — mode: setup first." >&2; exit 1; }
-   ```
-
-3. **Read config.** Parse `$SKILL_DIR/env.json` for `feedback.result`
-   (`primary_metric_key`), `feedback.error`, `wandb`, and `monitor.early_stop`
-   (thresholds the convergence sub-skill applies).
-
-4. **Parse `— method`** argument if provided. Record as `initial_method`
-   (a script path or shell command the user already uses for analysis).
 
 ---
 
@@ -166,9 +143,8 @@ collected it; this skill never re-scans logs itself.
 pointed at those exact inputs and must not substitute files found under
 project-root result directories. Keep supplemental outputs under `$OUTPUT_DIR`.
 
-**Direct-call mode:** read the newest experiment receipts for the project
-(`.aris/runs/*.experiment.*.done.json`); fall back to scanning `results/` and
-`logs/` only when no receipts exist.
+The manifest's result receipt list is authoritative. Do not scan project-root
+`results/` or `logs/` when the manifest is missing or incomplete.
 
 **If `— method: <path-or-command>` is provided:** execute the user's method,
 capture its output, and seed the first round with it — what it already covers
@@ -213,8 +189,7 @@ only the artifacts' output contracts (file paths + machine-checkable fields)
 ### Step 2z: Assemble the hub artifact
 
 Merge the sub-skills' output contracts (NOT their full artifacts) into
-`EXPERIMENT_RESULTS.md`: in worker mode `$OUTPUT_DIR/EXPERIMENT_RESULTS.md`,
-in direct-call mode `refine-logs/EXPERIMENT_RESULTS.md` (default). The
+`$OUTPUT_DIR/EXPERIMENT_RESULTS.md`. The
 assembled report links each sub-skill's artifact; it does not duplicate them.
 
 ---
@@ -292,8 +267,12 @@ Then end the turn; on the finish notification read the receipt and `mcp__paseo__
 
 Read `ANALYSIS_AUDIT.json`:
 
-**If `overall_verdict == "pass"` or `"warn"`:** proceed to Phase 5.
-On `"warn"`, carry the WARN items as caveats in the final report.
+**If `overall_verdict == "pass"`:** proceed to Phase 5.
+
+**If `overall_verdict == "warn"`:** present the gaps, write a blocked
+receipt, and stop this invocation. Do not turn an incomplete audit into a
+final analysis with caveats. Start a new invocation after the reported gaps
+are resolved.
 
 **If `overall_verdict == "fail"`:** present gaps to the user, then iterate.
 
@@ -377,17 +356,13 @@ Write `refine-logs/EXPERIMENT_RESULTS.md`:
 
 Update `refine-logs/EXPERIMENT_TRACKER.md` with analysis status column.
 
-Write direct-call receipt `.aris/runs/<run_id>.analyze-results.<project>.done.json`:
-
-**Legacy:** This receipt format is used in direct-call mode. In worker mode (manifest protocol), the receipt is written to `$WORKER_DIR/receipt.json` instead.
-
 ```json
 {
   "skill": "analyze-results",
   "project": "<project>",
   "verdict": "pass|warn|user_override",
   "iterations": 0,
-  "output": "refine-logs/EXPERIMENT_RESULTS.md",
+  "output": "$OUTPUT_DIR/EXPERIMENT_RESULTS.md",
   "audit_report": ".aris/env-config/<project>/ANALYSIS_AUDIT.md",
   "completed_at": "<ISO-8601>"
 }

@@ -106,44 +106,6 @@ function parseClaudeJson(rawStdout: string): {
     };
   }
 
-  let sawArrayWithoutResult = false;
-  const lines = stripped.split("\n");
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const candidate = lines[i].trim();
-    if (!candidate) continue;
-    let linePayload: unknown;
-    try {
-      linePayload = JSON.parse(candidate);
-    } catch {
-      continue;
-    }
-    if (typeof linePayload === "object" && linePayload !== null && !Array.isArray(linePayload)) {
-      if (sawArrayWithoutResult && (linePayload as Record<string, unknown>).type !== "result") {
-        continue;
-      }
-      return { payload: linePayload as Record<string, unknown>, error: null };
-    }
-    if (Array.isArray(linePayload)) {
-      for (let j = linePayload.length - 1; j >= 0; j--) {
-        const item = linePayload[j];
-        if (
-          typeof item === "object" &&
-          item !== null &&
-          (item as Record<string, unknown>).type === "result"
-        ) {
-          return { payload: item as Record<string, unknown>, error: null };
-        }
-      }
-      sawArrayWithoutResult = true;
-    }
-  }
-
-  if (sawArrayWithoutResult) {
-    return {
-      payload: null,
-      error: "Claude CLI returned a JSON array without a 'result' event",
-    };
-  }
   return { payload: null, error: "Claude CLI did not return JSON output" };
 }
 

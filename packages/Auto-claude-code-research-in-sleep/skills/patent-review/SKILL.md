@@ -5,7 +5,7 @@ argument-hint: [patent-directory-or-scope]
 allowed-tools: Bash(*), Read, Grep, Glob, Write, Edit
 ---
 
-# Patent Examiner Review via Codex MCP (xhigh reasoning)
+# Patent Examiner Review via Paseo Codex (xhigh reasoning)
 
 Get a multi-round patent examiner review of the patent application based on: **$ARGUMENTS**
 
@@ -13,16 +13,15 @@ Adapted from `/research-review`. The reviewer persona is a patent examiner, not 
 
 ## Constants
 
-- `REVIEWER_MODEL = gpt-5.5` — Model used via Codex MCP
+- `REVIEWER_MODEL = gpt-5.5` — Model used by the Paseo codex reviewer
 - `REVIEW_ROUNDS = 2` — Number of review rounds
 - `EXAMINER_PERSONA = "patent-examiner"` — GPT-5.5 persona
 
 ## Prerequisites
 
-- Codex MCP Server configured:
-  ```bash
-  claude mcp add codex -s user -- codex mcp-server
-  ```
+- Paseo MCP lifecycle must be available. If it is unavailable, block this
+  review and ask the user to start or configure the Paseo daemon. See
+  `shared-references/paseo-reviewer-dispatch.md` for the dispatch contract.
 
 ## Inputs
 

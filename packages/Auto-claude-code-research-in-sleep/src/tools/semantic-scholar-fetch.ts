@@ -23,47 +23,19 @@ function headers(): Record<string, string> {
   return h;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function requestJson(url: string, retries = 2): Promise<any> {
-  let lastErr: Error | null = null;
-
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const resp = await fetch(url, {
-        headers: headers(),
-        signal: AbortSignal.timeout(DEFAULT_TIMEOUT),
-      });
-
-      if ([429, 500, 502, 503, 504].includes(resp.status) && attempt < retries) {
-        await sleep(1500 * (attempt + 1));
-        lastErr = new Error(`HTTP ${resp.status}`);
-        continue;
-      }
-
-      if (!resp.ok) {
-        const body = await resp.text().catch(() => "");
-        let message = `HTTP ${resp.status}`;
-        if (body) message += `: ${body}`;
-        throw new Error(message);
-      }
-
-      return await resp.json();
-    } catch (err) {
-      if (err instanceof Error && err.message.startsWith("HTTP ")) throw err;
-      if (attempt < retries) {
-        await sleep(1500 * (attempt + 1));
-        lastErr = err instanceof Error ? err : new Error(String(err));
-        continue;
-      }
-      throw new Error(`Network error: ${err}`);
-    }
+async function requestJson(url: string): Promise<any> {
+  const resp = await fetch(url, {
+    headers: headers(),
+    signal: AbortSignal.timeout(DEFAULT_TIMEOUT),
+  });
+  if (!resp.ok) {
+    const body = await resp.text();
+    let message = `HTTP ${resp.status}`;
+    if (body) message += `: ${body}`;
+    throw new Error(message);
   }
-
-  throw new Error(`Request failed after retries: ${lastErr}`);
+  return await resp.json();
 }
 
 function cleanText(value: unknown): string | null {

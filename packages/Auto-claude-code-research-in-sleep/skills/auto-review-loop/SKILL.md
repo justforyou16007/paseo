@@ -5,13 +5,13 @@ argument-hint: [topic-or-scope]
 allowed-tools: Bash(*), Read, Grep, Glob, Write, Edit, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent, mcp__manual_review__review, mcp__manual_review__review_reply
 ---
 
-> **Paseo substrate.** This workflow (W2) runs as ONE paseo claude agent looping rounds 1→N internally; round 1 spawns a fresh codex reviewer sub-agent, round 2+ continues it (`send_agent_prompt`, reviewer memory — the codex-reply analog). See `shared-references/paseo-subagent-dispatch.md` (fence) + `paseo-reviewer-dispatch.md` (fresh-vs-continuation).. **Strict mode**: Paseo MCP is required; if unavailable, the run BLOCKS (per `paseo-subagent-dispatch.md`).
+> **Paseo substrate.** This workflow (W2) runs as ONE paseo claude agent looping rounds 1→N internally; round 1 spawns a fresh codex reviewer sub-agent and round 2+ continues it with `send_agent_prompt` when reviewer memory is required. See `shared-references/paseo-subagent-dispatch.md` (fence) + `paseo-reviewer-dispatch.md` (fresh-vs-continuation). **Strict mode**: Paseo MCP is required; if unavailable, the run BLOCKS (per `paseo-subagent-dispatch.md`).
 
 # Auto Review Loop: Autonomous Research Improvement
 
 > 🔒 **Do not wrap this skill in `/loop`, `/schedule`, or `CronCreate`.** It
 > already loops internally (review → fix → re-review) and the reviewer carries
-> round-to-round memory in one `threadId` (`codex-reply`). An external timer
+> round-to-round memory in one Paseo agent ID. An external timer
 > re-enters from the top each tick — fresh `threadId`, reviewer memory reset —
 > firing the verdict on wall-clock time instead of on artifact change: zero new
 > signal, full token cost. If you want to schedule something, schedule the
@@ -25,21 +25,28 @@ Autonomously iterate: review → implement fixes → re-review, until the extern
 ## Constants
 
 - MAX_ROUNDS = 4
-- POSITIVE_THRESHOLD: score >= 6/10 **AND** verdict ∈ {"ready", "almost"} — **both** must hold. This matches the operative Phase-E STOP CONDITION exactly; the verdict vocabulary is {"ready", "almost", "not ready"} (a high score with a "not ready" verdict does NOT stop the loop). Earlier wording here used `or` and a stale verdict set ("accept"/"sufficient"/"ready for submission") — that was an internal inconsistency; the `AND` form is authoritative.
-- REVIEW*DOC: `review-stage/AUTO_REVIEW.md` (cumulative log) *(fall back to `./AUTO_REVIEW.md` for legacy projects)\_
+- POSITIVE_THRESHOLD: score >= 6/10 **AND** verdict ∈ {"ready", "almost"}. Both conditions must hold; a `not ready` verdict always continues the loop.
+- REVIEW*DOC: `$OUTPUT_DIR/AUTO_REVIEW.md` (cumulative log)
 - REVIEWER_MODEL = `gpt-5.5` — Default model for the Codex backend. Must be an OpenAI model (e.g., `gpt-5.5`, `o3`, `gpt-4o`). Manual backend uses whatever model the user chooses.
-- **REVIEWER_BACKEND = `codex`** — Default: paseo codex sub-agent (codex MCP fallback when paseo unavailable; xhigh). Override with `— reviewer: oracle-pro` for Oracle MCP, or `— reviewer: manual` for Manual Review MCP. If manual-review MCP is unavailable, stop and print the install command; do not fall back to Codex. See `shared-references/reviewer-routing.md`.
-- **OUTPUT_DIR = `review-stage/`** — All review-stage outputs go here. Create the directory if it doesn't exist.
+- **REVIEWER_BACKEND = `codex`** — Default: paseo codex sub-agent (xhigh). Override with
+  `— reviewer: oracle-pro` or `— reviewer: manual` explicitly. If the selected
+  reviewer is unavailable, stop and print the install/configuration action.
+- **OUTPUT_DIR** — Supplied by the worker manifest. All review outputs stay in
+  this directory.
 - **HUMAN_CHECKPOINT = false** — When `true`, pause after each round's review (Phase B) and present the score + weaknesses to the user. Wait for user input before proceeding to Phase C. The user can: approve the suggested fixes, provide custom modification instructions, skip specific fixes, or stop the loop early. When `false` (default), the loop runs fully autonomously.
 - **COMPACT = false** — When `true`, (1) read `EXPERIMENT_LOG.md` and `findings.md` instead of parsing full logs on session recovery, (2) append key findings to `findings.md` after each round.
 - **REVIEWER_DIFFICULTY = medium** — Controls how adversarial the reviewer is. Three levels:
-  - `medium` (default): Current behavior — MCP-based review, the executor controls what context the reviewer sees.
+  - `medium` (default): MCP-based review; the executor controls what context the reviewer sees.
   - `hard`: Adds **Reviewer Memory** (the reviewer tracks its own suspicions across rounds) + **Debate Protocol** (the executor can rebut, the reviewer rules).
-  - `nightmare`: Everything in `hard` + **the reviewer reads the repo directly** via a paseo codex agent in `full-access` mode (the `codex exec` analog — the executor cannot filter what the reviewer sees) + **Adversarial Verification** (the reviewer independently checks if code matches claims).
-- **RENDER_HTML = true** — When `true` (default), auto-render `review-stage/AUTO_REVIEW.md` to HTML on loop termination via `/render-html`. Uses `--no-review` (the loop itself IS the cross-model review; the HTML is a structural conversion). Set `false` to skip, or pass `— render html: false`.
+  - `nightmare`: Everything in `hard` + the paseo codex reviewer reads the repo
+    directly in `full-access` mode and independently checks claims.
+- **RENDER_HTML = true** — When `true` (default), render `$OUTPUT_DIR/AUTO_REVIEW.md`
+  to HTML on loop termination via `/render-html`. Set `false` explicitly to
+  disable this artifact.
 
 > ⚠️ **Nightmare + Manual incompatibility**: If `REVIEWER_BACKEND = manual` and `REVIEWER_DIFFICULTY = nightmare`, STOP with:
-> "difficulty: nightmare requires Codex CLI / codex exec and is not compatible with --reviewer: manual. Use difficulty: hard, or switch reviewer to codex."
+> "difficulty: nightmare requires the Paseo Codex reviewer and is not compatible
+> with --reviewer: manual. Use difficulty: hard, or switch reviewer to codex."
 
 > 💡 Override: `/auto-review-loop "topic" — compact: true, human checkpoint: true, difficulty: hard`
 
@@ -49,8 +56,8 @@ When calling the reviewer, branch on REVIEWER_BACKEND:
 
 **If REVIEWER_BACKEND = `codex`** (default):
 Round 1 (fresh): spawn a paseo codex reviewer sub-agent (fresh) per `shared-references/paseo-reviewer-dispatch.md`; persist its agent-id to `REVIEW_STATE.json`'s `threadId` field.
-Round 2+ (continuation): continue the SAME paseo codex reviewer sub-agent via `send_agent_prompt` per `paseo-reviewer-dispatch.md` (the codex-reply analog — the reviewer checks resolution against its OWN prior critique).
-`threadId` now holds the paseo codex agent-id (field name unchanged, semantics identical — it is the continuation handle); the Debate rebuttal step is likewise a continuation.
+Round 2+ (continuation): continue the SAME paseo codex reviewer sub-agent via `send_agent_prompt` per `paseo-reviewer-dispatch.md` so the reviewer checks resolution against its OWN prior critique.
+Store the paseo codex agent-id in `threadId`; use it as the continuation handle for the Debate rebuttal step.
 Paseo MCP is required for reviewer dispatch; the run BLOCKS if unavailable.
 
 **If REVIEWER_BACKEND = `manual`:**
@@ -68,7 +75,7 @@ Review tracing applies equally to both backends.
 
 ## State Persistence (Compact Recovery)
 
-Long-running loops may hit the context window limit, triggering automatic compaction. To survive this, persist state to `review-stage/REVIEW_STATE.json` after each round:
+Long-running loops may hit the context window limit, triggering automatic compaction. To survive this, persist state to `$OUTPUT_DIR/REVIEW_STATE.json` after each round:
 
 ```json
 {
@@ -155,43 +162,29 @@ review fixes and reruns finish.
 On failure, write receipt with `"status": "failed"` and structured `error` object
 per `worker-manifest.md`. Append system errors to `$WORKER_DIR/progress_error.md`.
 
-**Direct-call mode:** When invoked WITHOUT `— manifest:`, the skill operates
-normally using its own argument parsing. No receipt is written.
-
-**Output path mapping:** In worker mode, every hardcoded output path in this
-skill's body (listed below) maps to `$OUTPUT_DIR/<filename>`. The orchestrator's
-subsequent input-manifests reference prior workers' outputs using their full
-`$WORKERS_DIR/<iter>-<phase>/outputs/<file>` path. In direct-call mode, the
-paths below are project-root-relative as written.
-
-| Direct-call path | Worker-mode path |
-|---|---|
-| `review-stage/AUTO_REVIEW.md` | `$OUTPUT_DIR/AUTO_REVIEW.md` |
-| `review-stage/AUTO_REVIEW.html` | `$OUTPUT_DIR/AUTO_REVIEW.html` |
-| `review-stage/REVIEW_STATE.json` | `$OUTPUT_DIR/REVIEW_STATE.json` |
-| final result snapshot | `$OUTPUT_DIR/final-inputs/EXPERIMENT_RESULTS.md` |
-| final tracker snapshot | `$OUTPUT_DIR/final-inputs/EXPERIMENT_TRACKER.md` |
-| final structured analysis | `$OUTPUT_DIR/final-analysis/EXPERIMENT_RESULTS.md` |
+**Worker mode is required.** The manifest supplies all inputs and
+`$OUTPUT_DIR`; the skill writes its receipt beside the manifest. There is no
+manifest-scoped output path.
 
 ## Workflow
 
 ### Initialization
 
-1. **Check for `review-stage/REVIEW_STATE.json`** _(fall back to `./REVIEW_STATE.json` if not found — legacy path)_:
-   - If neither path exists: **fresh start** (normal case, identical to behavior before this feature existed)
+1. **Check for `$OUTPUT_DIR/REVIEW_STATE.json`**:
+   - If it does not exist: **fresh start**
    - If it exists AND `status` is `"completed"`: **fresh start** (previous loop finished normally)
-   - If it exists AND `status` is `"in_progress"` AND `timestamp` is older than 24 hours: **fresh start** (stale state from a killed/abandoned run — delete the file and start over)
+   - If it exists AND `status` is `"in_progress"` AND `timestamp` is older than 24 hours: fail with a stale-state receipt and ask the user to invoke an explicit fresh run
    - If it exists AND `status` is `"in_progress"` AND `timestamp` is within 24 hours: **resume**
      - Read the state file to recover `round`, `threadId`, `last_score`, `pending_experiments`
-     - Read `review-stage/AUTO_REVIEW.md` to restore full context of prior rounds _(fall back to `./AUTO_REVIEW.md`)_
+     - Read `$OUTPUT_DIR/AUTO_REVIEW.md` to restore full context of prior rounds
      - If `pending_experiments` is non-empty, check if they have completed (e.g., check screen sessions)
      - Resume from the next round (round = saved round + 1)
      - Log: "Recovered from context compaction. Resuming at Round N."
-2. Read project narrative documents, memory files, and any prior review documents. **When `COMPACT = true` and compact files exist**: read `findings.md` + `EXPERIMENT_LOG.md` instead of full `review-stage/AUTO_REVIEW.md` and raw logs — saves context window.
+2. Read project narrative documents, memory files, and any prior review documents. **When `COMPACT = true`**: read `findings.md` + `EXPERIMENT_LOG.md` in addition to `$OUTPUT_DIR/AUTO_REVIEW.md`.
 3. Read recent experiment results (check output directories, logs)
 4. Identify current weaknesses and open TODOs from prior reviews
 5. Initialize round counter = 1 (unless recovered from state file)
-6. Create/update `review-stage/AUTO_REVIEW.md` with header and timestamp
+6. Create/update `$OUTPUT_DIR/AUTO_REVIEW.md` with header and timestamp
 
 ### Loop (repeat up to MAX_ROUNDS)
 
@@ -266,44 +259,16 @@ _For codex backend:_
     Be brutally honest. Actively look for things the author might be hiding.
 ```
 
-##### Nightmare — Codex Exec (GPT reads repo directly)
+##### Nightmare — Paseo Codex full-access review
 
-**Do NOT use the curated-prompt review path.** Instead grant the reviewer full repo access — a paseo codex sub-agent in `full-access` mode per `shared-references/paseo-reviewer-dispatch.md` (the `codex exec` analog; round 1 fresh, round 2+ continued via `send_agent_prompt`). The `codex exec` form below is the fallback when paseo MCP is unavailable:
+Use `mcp__paseo__create_agent` with the reviewer dispatch contract and
+`full-access` mode. Continue the same reviewer with
+`mcp__paseo__send_agent_prompt` in later rounds. Paseo MCP is required; a
+missing reviewer is a failed review phase.
 
-```bash
-codex exec "$(cat <<'PROMPT'
-You are an adversarial senior ML reviewer (NeurIPS/ICML level).
-This is Round N/MAX_ROUNDS of an autonomous review loop.
-
-## Your Reviewer Memory (persistent across rounds)
-[Paste full contents of REVIEWER_MEMORY.md]
-
-## Instructions
-You have FULL READ ACCESS to this repository. The author (Claude) does NOT
-control what you see — explore freely. Your job is to find problems the
-author might hide or downplay.
-
-DO THE FOLLOWING:
-1. Read the experiment code, results files (JSON/CSV), and logs YOURSELF
-2. Verify that reported numbers match what's actually in the output files
-3. Check if evaluation metrics are computed correctly (ground truth, not model output)
-4. Look for cherry-picked results, missing ablations, or suspicious hyperparameter choices
-5. Read NARRATIVE_REPORT.md or review-stage/AUTO_REVIEW.md for the author's claims — then verify each against code
-
-OUTPUT FORMAT:
-- Score: X/10
-- Verdict: ready / almost / not ready
-- Verified claims: [which claims you independently confirmed]
-- Unverified/false claims: [which claims don't match the code or results]
-- Weaknesses (ranked): [with MINIMUM fix for each]
-- Memory update: [new suspicions and patterns to track next round]
-
-Be adversarial. Trust nothing the author tells you — verify everything yourself.
-PROMPT
-)" --skip-git-repo-check 2>&1
-```
-
-**Key difference**: In nightmare mode, GPT independently reads code, result files, and logs. Claude cannot filter or curate what GPT sees. This is the closest analog to a real hostile reviewer who reads your actual paper + supplementary materials.
+The reviewer reads code, result files, and logs itself and returns the same
+structured score, verdict, verified claims, weaknesses, and memory update as
+the medium and hard modes.
 
 #### Phase B: Parse Assessment
 
@@ -403,26 +368,9 @@ The prompt content:
     Then update your score if any weaknesses were withdrawn.
 ```
 
-_Nightmare mode — continue the SAME paseo codex reviewer in `full-access` mode via `send_agent_prompt` (the `codex exec` analog; the `codex exec` block below is the fallback when paseo MCP is unavailable):_
-
-```bash
-codex exec "$(cat <<'PROMPT'
-You are the same adversarial reviewer. The author rebuts your review:
-
-[paste executor's rebuttal]
-
-VERIFY the author's evidence claims yourself — read the files they reference.
-Do NOT take their word for it.
-
-For each rebuttal, rule:
-- SUSTAINED (verified and valid)
-- OVERRULED (evidence doesn't check out or argument is weak)
-- PARTIALLY SUSTAINED (partially valid, narrow the weakness)
-
-Update your score. Update your memory.
-PROMPT
-)" --skip-git-repo-check 2>&1
-```
+_Nightmare mode:_ continue the same Paseo Codex reviewer in `full-access`
+mode via `mcp__paseo__send_agent_prompt`. The reviewer verifies the author's
+evidence claims itself before ruling on each rebuttal.
 
 **Step 3 — Update score and action items** based on the ruling:
 
@@ -430,7 +378,7 @@ PROMPT
 - OVERRULED: keep as-is
 - PARTIALLY SUSTAINED: revise scope
 
-Append the full debate transcript to `review-stage/AUTO_REVIEW.md` under the round's entry.
+Append the full debate transcript to `$OUTPUT_DIR/AUTO_REVIEW.md` under the round's entry.
 
 #### Human Checkpoint (if enabled)
 
@@ -487,7 +435,8 @@ For each action item (highest priority first):
 > 1. `sh .claude/skills/run-<project>-experiment/scripts/ops/sync-code.sh` — sync code
 > 2. `sh .claude/skills/run-<project>-experiment/scripts/ops/build-env.sh` — build + verify
 > 3. `sh .claude/skills/run-<project>-experiment/scripts/ops/launch-job.sh <exp_name> --args "..."` — launch
-> Otherwise fall back to manual SSH + screen.
+> If the generated experiment skill is missing, stop and request
+> `/experiment-env-manager — mode: setup`.
 
 Prioritization rules:
 
@@ -518,7 +467,7 @@ If experiments were launched:
 
 #### Phase E: Document Round
 
-Append to `review-stage/AUTO_REVIEW.md`:
+Append to `$OUTPUT_DIR/AUTO_REVIEW.md`:
 
 ```markdown
 ## Round N (timestamp)
@@ -568,7 +517,7 @@ This is the authoritative record. Do NOT truncate or paraphrase.]
 - Difficulty: [medium/hard/nightmare]
 ```
 
-**Write `review-stage/REVIEW_STATE.json`** with current round, threadId, score, verdict, and any pending experiments.
+**Write `$OUTPUT_DIR/REVIEW_STATE.json`** with current round, threadId, score, verdict, and any pending experiments.
 
 **Append to `findings.md`** (when `COMPACT = true`): one-line entry per key finding this round:
 
@@ -582,16 +531,16 @@ Increment round counter → back to Phase A.
 
 When loop ends (positive assessment or max rounds):
 
-1. Update `review-stage/REVIEW_STATE.json` with `"status": "completed"`
-2. Write final summary to `review-stage/AUTO_REVIEW.md`
+1. Update `$OUTPUT_DIR/REVIEW_STATE.json` with `"status": "completed"`
+2. Write final summary to `$OUTPUT_DIR/AUTO_REVIEW.md`
 3. Update project notes with conclusions
-4. **Write method/pipeline description** to `review-stage/AUTO_REVIEW.md` under a `## Method Description` section — a concise 1-2 paragraph description of the final method, its architecture, and data flow. This serves as input for `/paper-illustration` in Workflow 3 (so it can generate architecture diagrams automatically).
+4. **Write method/pipeline description** to `$OUTPUT_DIR/AUTO_REVIEW.md` under a `## Method Description` section — a concise 1-2 paragraph description of the final method, its architecture, and data flow. This serves as input for `/paper-illustration` in Workflow 3.
 5. **Publish the final metric in worker mode.** This step is mandatory before
    writing the outer receipt, even when no fix launched a new experiment:
    - Copy the latest result and tracker snapshots to
      `$OUTPUT_DIR/final-inputs/EXPERIMENT_RESULTS.md` and
      `$OUTPUT_DIR/final-inputs/EXPERIMENT_TRACKER.md`. If no review round changed
-     them, copy the two corresponding manifest inputs unchanged.
+     them, copy the two corresponding manifest inputs.
    - Write `$WORKER_DIR/internal/final-analyze/input-manifest.json` for
      `/analyze-results`, using the same run id and iteration, the final-inputs
      paths, the outer manifest's `experiment_plan` and `experiment_skill`
@@ -613,21 +562,48 @@ When loop ends (positive assessment or max rounds):
    experiment-bridge's initial analyzed value, then auto-review-loop's final
    value. `dashboard-merge` replaces that iteration's history entry instead of
    appending another one, so resume cannot double-count it.
-6. **Generate claims from results** — dispatch a paseo claude sub-agent for `/result-to-claim` per `shared-references/paseo-subagent-dispatch.md` (Paseo claude sub-agent per `paseo-subagent-dispatch.md`) to convert experiment results from `review-stage/AUTO_REVIEW.md` into structured paper claims. Output: `CLAIMS_FROM_RESULTS.md`. This bridges Workflow 2 → Workflow 3 so `/paper-plan` can directly use validated claims instead of extracting them from scratch. If `/result-to-claim` is not available, skip silently.
+6. **Generate claims from results** — dispatch a paseo claude sub-agent for `/result-to-claim` per `shared-references/paseo-subagent-dispatch.md` to convert experiment results from `$OUTPUT_DIR/AUTO_REVIEW.md` into structured paper claims. Output: `CLAIMS_FROM_RESULTS.md`.
+
+   **Worker mode: this step is MANDATORY, not optional.** `/auto-research-loop` relies
+   on this dispatch as the ONLY path that writes the iteration's experiment node,
+   supports/invalidates edges, idea outcome, failure-derived problems, and the rebuilt
+   query pack into the research wiki. Skipping it silently starves the next iteration's
+   idea discovery (no open problems, no failed-ideas banlist). If the `/result-to-claim`
+   sub-agent errors or its output is missing, write the outer receipt with
+   `"status": "failed"` and a structured error naming the failed dispatch — never a done
+   receipt with the wiki write silently skipped.
+
+   The dispatch prompt must hand over the data Step 5 of `/result-to-claim` needs, so it
+   does not have to guess or scan the project root:
+   - Results: `$OUTPUT_DIR/final-analysis/EXPERIMENT_RESULTS.md` and
+     `$OUTPUT_DIR/final-inputs/EXPERIMENT_TRACKER.md` (the step-5 snapshots, not raw logs).
+   - Active idea: `manifest.context.chosen_idea_id` — passed through verbatim; it is
+     already a canonical node id (`idea:<slug>`), so tell the sub-agent NOT to prepend
+     another `idea:` prefix.
+   - Experiment identity: `exp_id = iter-<iteration>` — one experiment node per loop
+     iteration (`exp:iter-<iteration>`), so a re-judged iteration overwrites its own node
+     instead of accumulating duplicates.
+   - Intended claims: the outer manifest's `experiment_plan` input path.
+
+   The worker manifest is required for this dispatch. If `/result-to-claim`
+   fails or its output is missing, the outer receipt is failed.
 7. If stopped at max rounds without positive assessment:
    - List remaining blockers
    - Estimate effort needed for each
    - Suggest whether to continue manually or pivot
 8. **Feishu notification** (if configured): Send `pipeline_done` with final score progression table
-9. **Render HTML view** (if `RENDER_HTML = true`, default): dispatch a paseo claude sub-agent for `/render-html` per `shared-references/paseo-subagent-dispatch.md` (Paseo claude sub-agent per `paseo-subagent-dispatch.md`) on the cumulative review log:
+9. **Render HTML view** (if `RENDER_HTML = true`, default): dispatch a paseo claude sub-agent for `/render-html` per `shared-references/paseo-subagent-dispatch.md` on the cumulative review log:
    ```
-   /render-html "review-stage/AUTO_REVIEW.md" --no-review --state review-stage/REVIEW_STATE.json
+   /render-html "$OUTPUT_DIR/AUTO_REVIEW.md" --no-review --state "$OUTPUT_DIR/REVIEW_STATE.json"
    ```
-   Pass `--state` explicitly (the helper does not auto-discover the sidecar). Drop the `--state` flag if `REVIEW_STATE.json` doesn't exist. HTML lands at `review-stage/AUTO_REVIEW.html` with embedded source SHA256. **Non-blocking**: if `/render-html` fails, log the error and continue — the HTML is a convenience, not a termination prerequisite. Skip if `RENDER_HTML = false`.
+   Pass `--state` explicitly. HTML lands at `$OUTPUT_DIR/AUTO_REVIEW.html` with
+   embedded source SHA256. If `/render-html` fails, fail the worker. Set
+   `RENDER_HTML = false` before the run to omit this artifact.
 
 ## Key Rules
 
-- **Large file handling**: If the Write tool fails due to file size, immediately retry using Bash (`cat << 'EOF' > file`) to write in chunks. Do NOT ask the user for permission — just do it silently.
+- **Large file handling**: A write failure is a worker failure. Do not switch
+  to another writer inside this skill.
 
 - ALWAYS use `config: {"model_reasoning_effort": "xhigh"}` for maximum reasoning depth
 - Save the paseo codex reviewer agent-id (round 1) to `threadId`; continue the SAME agent via `send_agent_prompt` for subsequent rounds (or `mcp__manual_review__review_reply` for the manual backend) per the Reviewer Calling Convention
@@ -635,7 +611,9 @@ When loop ends (positive assessment or max rounds):
 - Be honest — include negative results and failed experiments
 - Do NOT hide weaknesses to game a positive score
 - Implement fixes BEFORE re-reviewing (don't just promise to fix)
-- **Exhaust before surrendering** — before marking any reviewer concern as "cannot address": (1) try at least 2 different solution paths, (2) for experiment issues, adjust hyperparameters or try an alternative baseline, (3) for theory issues, provide a weaker version of the result or an alternative argument, (4) only then concede narrowly and bound the damage. Never give up on the first attempt.
+- **No automatic alternative paths** — apply the permitted fix once. If the concern remains,
+  record the unresolved issue and stop the run; a new baseline, experiment, or argument needs
+  an explicit new invocation.
 - If an experiment takes > 30 minutes, launch it and continue with other fixes while waiting
 - Document EVERYTHING — the review log should be self-contained
 - Update project notes after each round, not just at the end
@@ -663,4 +641,8 @@ Use the selected backend. _For codex:_ continue the SAME paseo codex reviewer su
 
 ## Review Tracing
 
-After each reviewer call (`mcp__paseo__create_agent` fresh / `mcp__paseo__send_agent_prompt` continuation; `mcp__manual_review__review` / `mcp__manual_review__review_reply`; Paseo codex sub-agent (per `paseo-reviewer-dispatch.md`) as fallback), save the trace following `shared-references/review-tracing.md` (Policy C — forensic; never silently skip). Use `save_trace.sh` (resolved per the chain in `shared-references/integration-contract.md` §2) or write files directly to `.aris/traces/<skill>/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).
+After each reviewer call (`mcp__paseo__create_agent` fresh /
+`mcp__paseo__send_agent_prompt` continuation or the explicitly selected
+manual reviewer), save the trace using the required `save_trace.sh` helper
+from `shared-references/review-tracing.md`. If the helper is missing or fails,
+fail the worker; do not write a second trace format inline.

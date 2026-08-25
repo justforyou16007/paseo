@@ -39,7 +39,7 @@ This follows `shared-references/reviewer-independence.md` and `shared-references
 
 ## Constants
 
-- **REVIEWER_BACKEND = `codex`** — Default: Codex MCP (xhigh). Override with `— reviewer: oracle-pro` for Oracle MCP, or `— reviewer: manual` for Manual Review MCP. If manual-review MCP is unavailable, stop and print the install command; do not fall back to Codex. See `shared-references/reviewer-routing.md`.
+- **REVIEWER_BACKEND = `codex`** — Default: Paseo codex reviewer (xhigh). Override with `— reviewer: oracle-pro` for Oracle MCP, or `— reviewer: manual` for Manual Review MCP. If the selected backend is unavailable, stop and print its install/configuration requirement; do not fall back to another backend. See `shared-references/reviewer-routing.md`.
 
 ## Reviewer Calling Convention
 
@@ -262,22 +262,23 @@ Also write `EXPERIMENT_AUDIT.json` for machine consumption:
 
 ## Integration with Other Skills
 
-### Automatic in /research-pipeline (advisory, never blocks)
+### Automatic in /research-pipeline (integrity gate)
 
 When integrated into the pipeline, this skill runs automatically after `/experiment-bridge` and before `/auto-review-loop`:
 
 ```
 /experiment-bridge → results ready
     ↓
-/experiment-audit (automatic, advisory)
+/experiment-audit (automatic, blocking)
     ├── PASS  → continue normally
-    ├── WARN  → print ⚠️ warning, continue, tag claims as [INTEGRITY: WARN]
-    └── FAIL  → print 🔴 alert, continue, tag claims as [INTEGRITY CONCERN]
+    ├── WARN  → print ⚠️ warning, mark BLOCKED, stop
+    └── FAIL  → print 🔴 alert, mark BLOCKED, stop
     ↓
-/auto-review-loop → proceeds with integrity tags visible to reviewer
+next research stage starts only after the audit is fixed
 ```
 
-**Never blocks the pipeline.** Even on FAIL, the pipeline continues — but claims carry visible integrity tags.
+**Blocks the pipeline on WARN or FAIL.** The user must correct the integrity issue or explicitly
+start a new analysis invocation with the reported caveat addressed.
 
 ### Read by /result-to-claim (if exists)
 
@@ -285,25 +286,28 @@ When integrated into the pipeline, this skill runs automatically after `/experim
 if EXPERIMENT_AUDIT.json exists:
     read integrity_status
     attach to verdict: {claim_supported: "yes", integrity_status: "warn"}
-    if integrity_status == "fail":
-        downgrade verdict display: "yes [INTEGRITY CONCERN]"
+    if integrity_status != "pass":
+        block claim generation with the audit receipt
 else:
-    verdict as normal, integrity_status = "unavailable"
-    mark as "provisional — no integrity audit"
+    fail the claim phase with a missing-audit receipt
 ```
 
 ### Read by /paper-write (if exists)
 
 ```
-if EXPERIMENT_AUDIT.json exists AND integrity_status == "fail":
-    add footnote to affected claims: "Note: integrity audit flagged concerns with this evaluation"
+if EXPERIMENT_AUDIT.json is missing:
+    block paper writing for experiment-backed claims
+if integrity_status != "pass":
+    block paper writing for affected claims
 ```
 
 ## Key Rules
 
 - **Reviewer independence**: executor collects paths, reviewer judges. Period.
-- **Never block**: warn loudly, never halt the pipeline.
-- **File-as-switch**: no EXPERIMENT_AUDIT.md = skill was never run = zero impact on existing behavior.
+- **Block on WARN, FAIL, or a missing requested audit**: the next stage cannot
+  treat an unchecked experiment as evidence.
+- **File-as-switch**: no experiment-backed input means the audit is not applicable;
+  an experiment-backed input requires the audit artifact.
 - **Cross-model**: the reviewer MUST be a different model family from the executor.
 - **Honest about limits**: the audit catches common patterns, not all possible fraud. It is a safety net, not a guarantee.
 
@@ -313,4 +317,4 @@ Motivated by community-reported integrity issues (#57, #131) where executor agen
 
 ## Review Tracing
 
-After each reviewer call (a paseo codex sub-agent — fresh `create_agent` or `send_agent_prompt` continuation; or the manual backend `mcp__manual_review__review` / `mcp__manual_review__review_reply`), save the trace following `shared-references/review-tracing.md` (Policy C — forensic; never silently skip). Use `save_trace.sh` (resolved per the chain in `shared-references/integration-contract.md` §2) or write files directly to `.aris/traces/<skill>/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).
+After each reviewer call (a paseo codex sub-agent — fresh `create_agent` or `send_agent_prompt` continuation; or the manual backend `mcp__manual_review__review` / `mcp__manual_review__review_reply`), save the trace with `save_trace.sh` resolved through `shared-references/integration-contract.md` §2. If the helper is missing or fails, stop the gate. Respect the `--- trace:` parameter (default: `full`).

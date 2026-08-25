@@ -16,12 +16,13 @@ Research topic: $ARGUMENTS
 
 ## Constants
 
-- **PAPER_LIBRARY** — Local directory containing user's paper collection (PDFs). Check these paths in order:
-  1. `papers/` in the current project directory
-  2. `literature/` in the current project directory
-  3. Custom path specified by user in `CLAUDE.md` under `## Paper Library`
+- **PAPER_LIBRARY** — Use the explicit path from `CLAUDE.md` under `## Paper Library`,
+  or the current project's `papers/` directory.
 - **MAX_LOCAL_PAPERS = 20** — Maximum number of local PDFs to scan (read first 3 pages each). If more are found, prioritize by filename relevance to the topic.
-- **SOURCES = `all`** — Which literature sources to search. Options: `zotero`, `obsidian`, `local`, `web`, `semantic-scholar`, `deepxiv`, `exa`, `gemini`, `openalex`, `all`. Full source table and selection rules: see `## Data Sources` below.
+- **SOURCES = `web`** — Which literature source to search by default. Options:
+  `zotero`, `obsidian`, `local`, `web`, `semantic-scholar`, `deepxiv`, `exa`,
+  `gemini`, `openalex`, `all`. A requested source is required; it is not replaced
+  by another source.
 - **ARXIV_DOWNLOAD = false** — When `true`, download top 3-5 most relevant arXiv PDFs to PAPER_LIBRARY after search. When `false` (default), only fetch metadata (title, abstract, authors) via arXiv API — no files are downloaded.
 - **ARXIV_MAX_DOWNLOAD = 5** — Maximum number of PDFs to download when `ARXIV_DOWNLOAD = true`.
 
@@ -37,20 +38,24 @@ Research topic: $ARGUMENTS
 
 ## Data Sources
 
-This skill checks multiple sources **in priority order**. All are optional — if a source is not configured or not requested, skip it silently.
+This skill runs only the sources named by `— sources:`. Without that option it
+uses `web`. A source that is not requested is not part of the run. A requested
+source must be available and must complete successfully.
 
 ### Source Selection
 
 Parse `$ARGUMENTS` for a `— sources:` directive:
 
-- **If `— sources:` is specified**: Only search the listed sources (comma-separated). Valid values: `zotero`, `obsidian`, `local`, `web`, `semantic-scholar`, `deepxiv`, `exa`, `gemini`, `openalex`, `all`.
-- **If not specified**: Default to `all` — search every available source in priority order (`semantic-scholar`, `deepxiv`, `exa`, `gemini`, and `openalex` are **excluded** from `all`; they must be explicitly listed).
+- **If `— sources:` is specified**: Search exactly the listed sources. Valid values are
+  `zotero`, `obsidian`, `local`, `web`, `semantic-scholar`, `deepxiv`, `exa`,
+  `gemini`, `openalex`, and `all`.
+- **If not specified**: Use `web` only.
 
 Examples:
 
 ```
-/research-lit "diffusion models"                                    → all (default, no S2)
-/research-lit "diffusion models" — sources: all                     → all (default, no S2)
+/research-lit "diffusion models"                                    → web
+/research-lit "diffusion models" — sources: all                     → every listed source is required
 /research-lit "diffusion models" — sources: zotero                  → Zotero only
 /research-lit "diffusion models" — sources: zotero, web             → Zotero + web
 /research-lit "diffusion models" — sources: local                   → local PDFs only
@@ -72,23 +77,26 @@ Examples:
 
 | Priority | Source                   | ID                 | How to detect                                                                                                                                     | What it provides                                                                                                                                                                                                                                    |
 | -------- | ------------------------ | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1        | **Zotero** (via MCP)     | `zotero`           | Try calling any `mcp__zotero__*` tool — if unavailable, skip                                                                                      | Collections, tags, annotations, PDF highlights, BibTeX, semantic search                                                                                                                                                                             |
-| 2        | **Obsidian** (via MCP)   | `obsidian`         | Try calling any `mcp__obsidian-vault__*` tool — if unavailable, skip                                                                              | Research notes, paper summaries, tagged references, wikilinks                                                                                                                                                                                       |
+| 1        | **Zotero** (via MCP)     | `zotero`           | The requested Zotero MCP tool must be available                                                                                                   | Collections, tags, annotations, PDF highlights, BibTeX, semantic search                                                                                                                                                                             |
+| 2        | **Obsidian** (via MCP)   | `obsidian`         | The requested Obsidian MCP tool must be available                                                                                                 | Research notes, paper summaries, tagged references, wikilinks                                                                                                                                                                                       |
 | 3        | **Local PDFs**           | `local`            | `Glob: papers/**/*.pdf, literature/**/*.pdf`                                                                                                      | Raw PDF content (first 3 pages)                                                                                                                                                                                                                     |
 | 4        | **Web search**           | `web`              | Always available (WebSearch)                                                                                                                      | arXiv, Semantic Scholar, Google Scholar                                                                                                                                                                                                             |
 | 5        | **Semantic Scholar API** | `semantic-scholar` | `$S2_FETCHER` resolves (canonical name `semantic-scholar-fetch.js`, per integration-contract §2)                                                  | Published venue papers (IEEE, ACM, Springer) with structured metadata: citation counts, venue info, TLDR. **Only runs when explicitly requested** via `— sources: semantic-scholar` or `— sources: web, semantic-scholar`                           |
 | 6        | **DeepXiv CLI**          | `deepxiv`          | `$DEEPXIV_FETCHER` resolves (canonical name `deepxiv-fetch.js`, per integration-contract §2) **and** `deepxiv` CLI present (`command -v deepxiv`) | Progressive paper retrieval: search, brief, head, section, trending, web search. **Only runs when explicitly requested** via `— sources: deepxiv` or `— sources: all, deepxiv`                                                                      |
 | 7        | **Exa Search**           | `exa`              | `$EXA_FETCHER` resolves (canonical name `exa-search.js`, per integration-contract §2); fetcher handles `exa-py` SDK + API key internally          | AI-powered broad web search with content extraction (highlights, text, summaries). Covers blogs, docs, news, companies, and research papers beyond arXiv/S2. **Only runs when explicitly requested** via `— sources: exa` or `— sources: all, exa`  |
-| 8        | **Gemini** (MCP / CLI)   | `gemini`           | `mcp__gemini-cli__ask-gemini` tool available, or `gemini` CLI installed                                                                           | AI-powered broad literature discovery — decomposes topics into sub-problems, aliases, and variants for wider retrieval. Prefers MCP, falls back to CLI. **Only runs when explicitly requested** via `— sources: gemini` or `— sources: all, gemini` |
+| 8        | **Gemini MCP**           | `gemini`           | `mcp__gemini-cli__ask-gemini` must be available                                                                                                   | AI-powered broad literature discovery. **Only runs when explicitly requested** |
 | 9        | **OpenAlex**             | `openalex`         | `$OPENALEX_FETCHER` resolves (canonical name `openalex-fetch.js`, per integration-contract §2) **and** `node` available        | Open citation graph with institutional affiliations, funding data, and comprehensive metadata across 250M+ works. Fully open API. **Only runs when explicitly requested** via `— sources: openalex` or `— sources: all, openalex`                   |
 
-> **Graceful degradation**: If no MCP servers are configured, the skill works exactly as before (local PDFs + web search). Zotero and Obsidian are pure additions.
+> If a requested MCP source is not configured, stop with an error naming the
+> missing source. Use a different source only by starting a new run with an
+> explicit `— sources:` value.
 
 ## Workflow
 
-### Step 0a: Search Zotero Library (if available)
+### Step 0a: Search Zotero Library (when requested)
 
-**Skip this step entirely if Zotero MCP is not configured.**
+Run this step only when `zotero` is in the explicit source list. If it is
+requested and the Zotero MCP is not configured, stop with an error.
 
 Try calling a Zotero MCP tool (e.g., search). If it succeeds:
 
@@ -104,9 +112,10 @@ Try calling a Zotero MCP tool (e.g., search). If it succeeds:
 
 > 📚 Zotero annotations are gold — they show what the user personally highlighted as important, which is far more valuable than generic summaries.
 
-### Step 0b: Search Obsidian Vault (if available)
+### Step 0b: Search Obsidian Vault (when requested)
 
-**Skip this step entirely if Obsidian MCP is not configured.**
+Run this step only when `obsidian` is in the explicit source list. If it is
+requested and the Obsidian MCP is not configured, stop with an error.
 
 Try calling an Obsidian MCP tool (e.g., search). If it succeeds:
 
@@ -154,47 +163,27 @@ Before searching online, check if the user already has relevant papers locally:
 
 **arXiv API search** (runs when `— sources:` is unset, contains `web` or `all`; no download by default — arXiv API is part of the Priority-4 Web tier, see Source Table above):
 
-**Policy D2 tracking discipline (orchestrator-managed)**: the
-executor (you, the LLM) maintains an in-context list of contributing
-sources. For **helper-backed bash sources** (arxiv, semantic-scholar,
-deepxiv, exa, openalex), a source contributes iff its bash block
-ran its helper successfully (helper resolved AND invocation exited 0;
-note: the helper exiting 0 with an empty result list still counts as
-"ran" — downstream relevance ranking is what decides whether the user
-actually sees content). For **non-helper sources** (zotero / obsidian /
-local PDF / WebSearch / Gemini), the contribution rule is stated in
-the Step-1 finalization block below — these are tracked separately
-because they don't emit `D2 contribution:` log lines from bash. Sources
-that were not requested via `— sources:` do not count. At the end of
-Step 1 (before "Optional PDF download"), if zero sources contributed,
-surface a D2 empty-aggregate error and stop. (See
-integration-contract.md §2 Policy D2 — the in-context tracking
-replaces a shared bash accumulator because SKILL bash blocks are
-executed as separate shells; state does not survive.)
+Run every requested source once and record its result. The phase succeeds
+only when every requested source completed and produced a valid result set.
+There is no partial aggregate and no source substitution.
 
-Resolve `$ARXIV_FETCHER` via the canonical chain (Policy D2 — this
-source contributes to the multi-source aggregate; warn-and-continue
-on failure, never abort the whole aggregate):
+Resolve `$ARXIV_FETCHER` via the canonical chain. The requested arXiv
+operation is load-bearing for this source:
 
 ```bash
-# Resolve arxiv-fetch.js: installed project → dev ARIS repo → skip.
+# Resolve arxiv-fetch.js: installed project → dev ARIS repo.
 _pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
 cd "${_pr:-$(pwd)}" || exit 1
 ARXIV_FETCHER=".aris/dist/tools/arxiv-fetch.js"
 [ -f "$ARXIV_FETCHER" ] || ARXIV_FETCHER="dist/tools/arxiv-fetch.js"
-[ -f "$ARXIV_FETCHER" ] || ARXIV_FETCHER=""
-
-if [ -n "$ARXIV_FETCHER" ]; then
-  # Search arXiv API for structured results (title, abstract, authors, categories).
-  # Wrap with if/then/else so set -e doesn't abort the SKILL.
-  if node "$ARXIV_FETCHER" search "QUERY" --max 10; then
-    echo "D2 contribution: arxiv (helper invocation exit 0)" >&2
-  else
-    echo "WARN: arxiv-fetch.js invocation failed; D2 aggregate continues with WebSearch results." >&2
-  fi
-else
-  echo "WARN: arxiv-fetch.js not resolved; falling back to WebSearch for arXiv hits." >&2
-fi
+[ -f "$ARXIV_FETCHER" ] || {
+  echo "ERROR: arxiv-fetch.js is required for the requested arXiv source." >&2
+  exit 1
+}
+node "$ARXIV_FETCHER" search "QUERY" --max 10 || {
+  echo "ERROR: arxiv-fetch.js failed." >&2
+  exit 1
+}
 ```
 
 > **Record-keeping**: track the `D2 contribution: …` lines emitted by
@@ -206,8 +195,6 @@ fi
 > records that separately. (The finalization block below restates
 > this rule canonically — both lines must stay in sync.)
 
-If `$ARXIV_FETCHER` is empty (D2 graceful degradation), fall back to WebSearch for arXiv (same as before).
-
 The arXiv API returns structured metadata (title, abstract, full author list, categories, dates) — richer than WebSearch snippets. Merge these results with WebSearch findings and de-duplicate.
 
 **Semantic Scholar API search** (only when `semantic-scholar` is in sources):
@@ -215,27 +202,22 @@ The arXiv API returns structured metadata (title, abstract, full author list, ca
 When the user explicitly requests `— sources: semantic-scholar` (or `— sources: web, semantic-scholar`), search for published venue papers beyond arXiv:
 
 ```bash
-# Resolve semantic-scholar-fetch.js: installed project → dev ARIS repo → skip.
+# Resolve semantic-scholar-fetch.js: installed project → dev ARIS repo.
 _pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
 cd "${_pr:-$(pwd)}" || exit 1
 S2_FETCHER=".aris/dist/tools/semantic-scholar-fetch.js"
 [ -f "$S2_FETCHER" ] || S2_FETCHER="dist/tools/semantic-scholar-fetch.js"
-[ -f "$S2_FETCHER" ] || S2_FETCHER=""
-
-if [ -n "$S2_FETCHER" ]; then
-  # Search for published CS/Engineering papers with quality filters.
-  # Wrap with if/then/else so set -e doesn't abort the SKILL.
-  if node "$S2_FETCHER" search "QUERY" --max 10 \
-      --fields-of-study "Computer Science,Engineering" \
-      --publication-types "JournalArticle,Conference"; then
-    echo "D2 contribution: semantic_scholar (helper invocation exit 0)" >&2
-  else
-    echo "WARN: semantic-scholar-fetch.js invocation failed; D2 aggregate continues with remaining sources." >&2
-  fi
-fi
+[ -f "$S2_FETCHER" ] || {
+  echo "ERROR: semantic-scholar-fetch.js is required for the requested source." >&2
+  exit 1
+}
+node "$S2_FETCHER" search "QUERY" --max 10 \
+  --fields-of-study "Computer Science,Engineering" \
+  --publication-types "JournalArticle,Conference" || {
+    echo "ERROR: semantic-scholar-fetch.js failed." >&2
+    exit 1
+  }
 ```
-
-If `$S2_FETCHER` is empty (canonical chain exhausted), skip silently — D2 multi-source aggregate continues with the remaining resolved sources.
 
 **Why use Semantic Scholar?** Many IEEE/ACM journal papers are NOT on arXiv. S2 fills the gap for published venue-only papers with citation counts and venue metadata.
 
@@ -250,32 +232,24 @@ If `$S2_FETCHER` is empty (canonical chain exhausted), skip silently — D2 mult
 When the user explicitly requests `— sources: deepxiv` (or includes `deepxiv` in a combined source list), use the DeepXiv adapter for progressive retrieval:
 
 ```bash
-# Resolve deepxiv-fetch.js: installed project → dev ARIS repo → skip.
+# Resolve deepxiv-fetch.js: installed project → dev ARIS repo.
 _pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
 cd "${_pr:-$(pwd)}" || exit 1
 DEEPXIV_FETCHER=".aris/dist/tools/deepxiv-fetch.js"
 [ -f "$DEEPXIV_FETCHER" ] || DEEPXIV_FETCHER="dist/tools/deepxiv-fetch.js"
-[ -f "$DEEPXIV_FETCHER" ] || DEEPXIV_FETCHER=""
-
-if [ -n "$DEEPXIV_FETCHER" ] && command -v deepxiv >/dev/null 2>&1; then
-  # Wrap each adapter call so set -e doesn't abort the SKILL.
-  if node "$DEEPXIV_FETCHER" search "QUERY" --max 10; then
-    echo "D2 contribution: deepxiv (helper invocation exit 0)" >&2
-
-    # Then deepen only for the most relevant papers (sub-calls don't change D2 aggregate count):
-    node "$DEEPXIV_FETCHER" paper-brief ARXIV_ID \
-      || echo "WARN: deepxiv-fetch.js paper-brief failed; skipping deepen step." >&2
-    node "$DEEPXIV_FETCHER" paper-head ARXIV_ID \
-      || echo "WARN: deepxiv-fetch.js paper-head failed; skipping deepen step." >&2
-    node "$DEEPXIV_FETCHER" paper-section ARXIV_ID "Experiments" \
-      || echo "WARN: deepxiv-fetch.js paper-section failed; skipping deepen step." >&2
-  else
-    echo "WARN: deepxiv-fetch.js search invocation failed; D2 aggregate continues with remaining sources." >&2
-  fi
-fi
+[ -f "$DEEPXIV_FETCHER" ] || {
+  echo "ERROR: deepxiv-fetch.js is required for the requested source." >&2
+  exit 1
+}
+command -v deepxiv >/dev/null 2>&1 || {
+  echo "ERROR: deepxiv CLI is required for the requested source." >&2
+  exit 1
+}
+node "$DEEPXIV_FETCHER" search "QUERY" --max 10 || exit 1
+node "$DEEPXIV_FETCHER" paper-brief ARXIV_ID || exit 1
+node "$DEEPXIV_FETCHER" paper-head ARXIV_ID || exit 1
+node "$DEEPXIV_FETCHER" paper-section ARXIV_ID "Experiments" || exit 1
 ```
-
-If `$DEEPXIV_FETCHER` is empty or the `deepxiv` CLI is unavailable, skip this source gracefully and continue with the remaining requested sources (Policy D2 graceful degradation).
 
 **Why use DeepXiv?** It is useful when a broad search should be followed by staged reading rather than immediate full-paper loading. This reduces unnecessary context while still surfacing structure, TLDRs, and the most relevant sections.
 
@@ -290,33 +264,18 @@ If `$DEEPXIV_FETCHER` is empty or the `deepxiv` CLI is unavailable, skip this so
 When the user explicitly requests `— sources: exa` (or includes `exa` in a combined source list), use the Exa tool for broad AI-powered web search with content extraction:
 
 ```bash
-# Resolve exa-search.js: installed project → dev ARIS repo → skip.
+# Resolve exa-search.js: installed project → dev ARIS repo.
 _pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
 cd "${_pr:-$(pwd)}" || exit 1
 EXA_FETCHER=".aris/dist/tools/exa-search.js"
 [ -f "$EXA_FETCHER" ] || EXA_FETCHER="dist/tools/exa-search.js"
-[ -f "$EXA_FETCHER" ] || EXA_FETCHER=""
-
-if [ -n "$EXA_FETCHER" ]; then
-  # Search for research papers with highlights.
-  # Wrap with if/then/else so set -e doesn't abort the SKILL.
-  exa_contributed=false
-  if node "$EXA_FETCHER" search "QUERY" --max 10 --category "research paper" --content highlights; then
-    exa_contributed=true
-  else
-    echo "WARN: exa-search.js research-paper invocation failed; D2 aggregate continues." >&2
-  fi
-  # Search for broader web content (blogs, docs, news)
-  if node "$EXA_FETCHER" search "QUERY" --max 10 --content highlights; then
-    exa_contributed=true
-  else
-    echo "WARN: exa-search.js broad-web invocation failed; D2 aggregate continues." >&2
-  fi
-  [ "$exa_contributed" = "true" ] && echo "D2 contribution: exa (at least one invocation exit 0)" >&2
-fi
+[ -f "$EXA_FETCHER" ] || {
+  echo "ERROR: exa-search.js is required for the requested source." >&2
+  exit 1
+}
+node "$EXA_FETCHER" search "QUERY" --max 10 --category "research paper" --content highlights || exit 1
+node "$EXA_FETCHER" search "QUERY" --max 10 --content highlights || exit 1
 ```
-
-If `$EXA_FETCHER` is empty or the `exa-py` SDK is unavailable, skip this source gracefully and continue with the remaining requested sources (Policy D2 graceful degradation).
 
 **Why use Exa?** Exa provides AI-powered search across the broader web (blogs, documentation, news, company pages) with built-in content extraction. It fills a gap between academic databases (arXiv, S2) and generic WebSearch by returning richer content with each result.
 
@@ -330,7 +289,7 @@ If `$EXA_FETCHER` is empty or the `exa-py` SDK is unavailable, skip this source 
 
 When the user explicitly requests `— sources: gemini` (or includes `gemini` in a combined source list), use Gemini for AI-powered broad literature discovery.
 
-**Priority 1 — Gemini MCP** (preferred): Call `mcp__gemini-cli__ask-gemini` with the search prompt:
+Call `mcp__gemini-cli__ask-gemini` with the search prompt:
 
 ```
 mcp__gemini-cli__ask-gemini({
@@ -357,9 +316,7 @@ Find at least 15 papers.',
 })
 ```
 
-**Priority 2 — Gemini CLI fallback** (if MCP unavailable): Use `gemini -p "...same prompt..." 2>/dev/null` via Bash (timeout: 120s).
-
-If both MCP and CLI are unavailable, skip this source gracefully and continue with the remaining requested sources.
+If the Gemini MCP call is unavailable or fails, stop the requested source.
 
 **Why use Gemini?** Gemini provides AI-driven discovery that goes beyond keyword matching — it decomposes topics, explores naming variants, and surfaces papers that traditional API-based searches (arXiv, S2) may miss. It fills a different retrieval niche from structured database queries.
 
@@ -376,34 +333,20 @@ If both MCP and CLI are unavailable, skip this source gracefully and continue wi
 When the user explicitly requests `— sources: openalex` (or includes `openalex` in a combined source list), use OpenAlex API for comprehensive academic metadata:
 
 ```bash
-# Resolve openalex-fetch.js: installed project → dev ARIS repo → skip.
+# Resolve openalex-fetch.js: installed project → dev ARIS repo.
 _pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
 cd "${_pr:-$(pwd)}" || exit 1
 OPENALEX_FETCHER=".aris/dist/tools/openalex-fetch.js"
 [ -f "$OPENALEX_FETCHER" ] || OPENALEX_FETCHER="dist/tools/openalex-fetch.js"
-[ -f "$OPENALEX_FETCHER" ] || OPENALEX_FETCHER=""
-
-# Preflight: skip OpenAlex silently if the helper is unresolved OR the
-# `requests` Python package is missing. Both checks must pass before
-# the script is invoked, so users without `requests` installed never see
-# a stack trace from a default `/research-lit` run.
-if [ -z "$OPENALEX_FETCHER" ] || ! command -v node >/dev/null 2>&1; then
-  echo "OpenAlex source not available (openalex-fetch.js unresolved or node unavailable); skipping." >&2
-else
-  # Search for papers with comprehensive metadata.
-  # Wrap with if/then/else so set -e doesn't abort the SKILL.
-  if node "$OPENALEX_FETCHER" search "QUERY" --max 10 \
-      --year "2022-" \
-      --type article \
-      --sort relevance; then
-    echo "D2 contribution: openalex (helper invocation exit 0)" >&2
-  else
-    echo "WARN: openalex-fetch.js invocation failed; D2 aggregate continues with remaining sources." >&2
-  fi
-fi
+[ -f "$OPENALEX_FETCHER" ] || {
+  echo "ERROR: openalex-fetch.js is required for the requested source." >&2
+  exit 1
+}
+node "$OPENALEX_FETCHER" search "QUERY" --max 10 \
+  --year "2022-" \
+  --type article \
+  --sort relevance || exit 1
 ```
-
-If `openalex-fetch.js` is not found or node is unavailable, skip this source gracefully and continue with the remaining requested sources.
 
 **Why use OpenAlex?** Fully open citation graph (no API key required), institutional affiliations, funding data (NSF, NIH), comprehensive topic/keyword metadata, and coverage across all disciplines (not just CS).
 
@@ -418,52 +361,25 @@ If `openalex-fetch.js` is not found or node is unavailable, skip this source gra
 - If OpenAlex and arXiv overlap, prefer arXiv's PDF link and metadata, but keep OpenAlex's citation/institution data
 - OpenAlex's unique value: institutional affiliations, funding sources, comprehensive topic classification, and cross-discipline coverage
 
-**D2 aggregate finalization** (per integration-contract §2 Policy D2):
-
-The orchestrator (you, the LLM) maintains an in-context list of
-contributing sources by reading the `D2 contribution: <name>` log
-lines emitted by each source's bash block above, plus:
-
-- `zotero` if Step 0a returned non-empty Zotero hits.
-- `obsidian` if Step 0b returned non-empty Obsidian hits.
-- `local` if Step 0c found at least one relevant local PDF.
-- `web` if WebSearch (Priority 4) was requested (either no `— sources:`
-  filter, or the list contains `web` or `all`) AND was actually invoked.
-  Note: `— sources: all` covers the default-on tier (zotero, obsidian,
-  local, web) — it does **NOT** include the opt-in fetchers
-  (semantic-scholar, deepxiv, exa, gemini, openalex). To enable those,
-  add them explicitly (e.g. `— sources: all, semantic-scholar, openalex`),
-  matching the existing convention at L42-43 / L51-63 of this SKILL.
-- `gemini` if Gemini MCP / CLI returned at least one paper.
-
-If the resulting contributing-source list has zero entries, surface:
-
-> **ERROR**: D2 aggregate empty — every requested source either was
-> unresolved, not invoked, failed, or (for MCP / local PDF / Gemini
-> sources) returned no usable result. (Note: WebSearch contributes
-> when requested and invoked, even if the result set is empty.) The
-> multi-source aggregate cannot proceed. Suggest the user retry with
-> a wider `— sources:` list (e.g. `web, local`) or check helper
-> resolution and SDK installation.
-
-Then stop before Step 1.5. Otherwise log the contributing-source
-list to the user (e.g. "Sources contributed: arxiv, semantic_scholar,
-web") and proceed.
+After each requested source completes, record its source name in the output
+manifest. If any requested source fails, stop before Step 1.5. Do not produce
+a partial success and do not suggest a wider source list from inside this run.
 
 **Optional PDF download** (only when `ARXIV_DOWNLOAD = true`):
 
 After all sources are searched and papers are ranked by relevance:
 
 ```bash
-# Resolve arxiv-fetch.js for PDF download: installed project → dev ARIS repo → skip.
+# Resolve arxiv-fetch.js for PDF download: installed project → dev ARIS repo.
 _pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
 cd "${_pr:-$(pwd)}" || exit 1
 ARXIV_FETCHER=".aris/dist/tools/arxiv-fetch.js"
 [ -f "$ARXIV_FETCHER" ] || ARXIV_FETCHER="dist/tools/arxiv-fetch.js"
-[ -f "$ARXIV_FETCHER" ] || ARXIV_FETCHER=""
-
-# Download top N most relevant arXiv papers; skip silently if helper unresolved.
-[ -n "$ARXIV_FETCHER" ] && node "$ARXIV_FETCHER" download ARXIV_ID --dir papers/
+[ -f "$ARXIV_FETCHER" ] || {
+  echo "ERROR: arxiv-fetch.js is required when ARXIV_DOWNLOAD=true." >&2
+  exit 1
+}
+node "$ARXIV_FETCHER" download ARXIV_ID --dir papers/ || exit 1
 ```
 
 - Only download papers ranked in the top ARXIV_MAX_DOWNLOAD by relevance
@@ -476,20 +392,19 @@ ARXIV_FETCHER=".aris/dist/tools/arxiv-fetch.js"
 Before analysis, run pre-search verification on **all** candidate papers
 collected from Steps 0a-1 to filter out LLM-fabricated arXiv IDs / DOIs /
 titles. Helper: `verify-papers.js` (canonical name; resolved per
-[`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2,
-Policy D1 — primary helper with degraded-output fallback). If the
-helper is unresolved on this machine, the SKILL emits a fallback
-`verified_papers.json` tagging every candidate `[UNVERIFIED]` so
-downstream analysis proceeds with audit-visible degraded output
-rather than silently dropping candidates.
+[`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2).
+The helper and a successful verification result are required before analysis.
 
 ```bash
-# 1. Resolve verify-papers.js: installed project → dev ARIS repo → skip.
+# 1. Resolve verify-papers.js: installed project → dev ARIS repo.
 _pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
 cd "${_pr:-$(pwd)}" || exit 1
 VERIFY_PAPERS=".aris/dist/tools/verify-papers.js"
 [ -f "$VERIFY_PAPERS" ] || VERIFY_PAPERS="dist/tools/verify-papers.js"
-[ -f "$VERIFY_PAPERS" ] || VERIFY_PAPERS=""
+[ -f "$VERIFY_PAPERS" ] || {
+  echo "ERROR: verify-papers.js is required before literature analysis." >&2
+  exit 1
+}
 
 # 2. Emit candidates as JSON. Verification scratch lives under .aris/
 #    (NOT under research-wiki/ — Step 6's wiki ingest predicate is
@@ -503,43 +418,13 @@ cat > .aris/verify-papers/candidate_papers.json <<'JSON'
 ]
 JSON
 
-# 3. Run 3-layer verification (arXiv batch → CrossRef → Semantic Scholar fuzzy).
-#    Policy D1: when the helper is unresolved OR its invocation fails, emit
-#    a degraded verified set tagging everything [UNVERIFIED] so the user
-#    can audit search quality. If node itself is missing, we BLOCK
-#    rather than hand-roll JSON in shell.
-verify_ok=false
-if [ -n "$VERIFY_PAPERS" ]; then
-  if node "$VERIFY_PAPERS" \
-        --input  .aris/verify-papers/candidate_papers.json \
-        --output .aris/verify-papers/verified_papers.json; then
-    verify_ok=true
-  else
-    echo "WARN: verify-papers.js invocation failed (resolved at $VERIFY_PAPERS); falling back to [UNVERIFIED] tagging." >&2
-  fi
-else
-  echo "WARN: verify-papers.js not resolved at .aris/dist/tools/ or dist/tools/." >&2
-  echo "      Fix: run /aris-update to refresh the project runtime." >&2
-fi
-if [ "$verify_ok" = "false" ]; then
-  if ! command -v node >/dev/null 2>&1; then
-    echo "ERROR: node unavailable; cannot emit fallback verified_papers.json." >&2
-    echo "       Status: BLOCKED. Install node or restore the helper to proceed." >&2
+# 3. Run verification. A non-zero exit blocks analysis.
+node "$VERIFY_PAPERS" \
+  --input .aris/verify-papers/candidate_papers.json \
+  --output .aris/verify-papers/verified_papers.json || {
+    echo "ERROR: verify-papers.js failed; literature analysis is blocked." >&2
     exit 1
-  fi
-  echo "      Emitting unverified candidate set with [UNVERIFIED] tags." >&2
-  node <<'JS'
-const fs = require('fs');
-const cands = JSON.parse(fs.readFileSync('.aris/verify-papers/candidate_papers.json', 'utf8'));
-const out = {
-  verdict: 'WARN',
-  reason_code: 'verify_papers_unavailable',
-  summary: 'verify-papers.js helper unresolved or invocation failed; all candidates tagged [UNVERIFIED] for audit visibility.',
-  papers: cands.map(p => ({ ...p, status: 'unverified', method: 'none' })),
-};
-fs.writeFileSync('.aris/verify-papers/verified_papers.json', JSON.stringify(out, null, 2));
-JS
-fi
+  }
 
 # 4. Read verdict + per-paper status from .aris/verify-papers/verified_papers.json;
 #    surface warnings to the user.
@@ -549,17 +434,12 @@ fi
 [`shared-references/citation-discipline.md`](../shared-references/citation-discipline.md)
 § Pre-Search Verification Protocol for the full contract):
 
-- Tag every paper in the analyzed list with its status: `✅ verified (via
-arxiv|crossref|s2)` or `⚠️ UNVERIFIED (reason)` or `… verify_pending`.
-- **Never silently drop unverified papers** — keep them in the output with the
-  `[UNVERIFIED]` marker so the user can audit the search quality.
+- Every paper in the analyzed list must be `verified`. A paper with any other
+  status blocks the analysis phase.
 - Never fabricate a DOI or arXiv ID from memory. If a field is unknown, leave
-  it `null` in `candidate_papers.json` — the helper will fall through to title
-  search.
-- If the helper returns `WARN` with `high_hallucination_rate`, surface the
-  warning verbatim and recommend re-running with narrower queries.
-- For papers tagged `verify_pending`, do not promote them to `verified` —
-  show the pending state to the user and retry on the next session.
+  it `null` in `candidate_papers.json`; the helper reports the missing identity.
+- If the helper returns a warning or a pending item, stop and show the
+  verification report. The next run is explicit; this run does not continue.
 
 Optional: set `ARIS_VERIFY_EMAIL=you@institution.edu` in your shell to lift
 CrossRef rate limits to the polite pool.
@@ -595,24 +475,17 @@ problem, method, results, relevance, source, verification_status}]}`.
 > admission verdicts, and here admission is the deterministic Step-1.5 gate, so
 > the invariant is satisfied without a model jury.
 
-For **every** paper in `.aris/verify-papers/verified_papers.json`
-(verified, unverified, `verify_pending`, and `error` alike — see
-Retention rule above), extract:
+For every `verified` paper in `.aris/verify-papers/verified_papers.json`, extract:
 
 - **Problem**: What gap does it address?
 - **Method**: Core technical contribution (1-2 sentences)
 - **Results**: Key numbers/claims
 - **Relevance**: How does it relate to our work?
 - **Source**: Where we found it (Zotero/Obsidian/local/web) — helps user know what they already have vs what's new
-- **Verification status** (one of):
-  - `✅ verified (via arxiv|crossref|s2)`
-  - `⚠️ UNVERIFIED (verification unavailable: helper unresolved or invocation failed)`
-  - `⚠️ UNVERIFIED (searched: not found in any source)`
-  - `… VERIFY_PENDING (transient API failure — retry next session)`
-  - `❌ ERROR (malformed input: no arxiv, no DOI, no title)`
+- **Verification status**: `✅ verified (via arxiv|crossref|s2)`.
 
-  Show the status in the analyzed table — never silently drop a
-  paper because its status is anything other than `verified`.
+Any other status is a failed verification phase and is shown in the failure
+receipt instead of entering synthesis.
 
 ### Step 3: Synthesize
 
@@ -662,7 +535,7 @@ in `dist/tools/research-wiki.js`, not in this prose.
 When `research-wiki/` exists, resolve `$WIKI_SCRIPT` per the canonical
 chain documented in
 [`shared-references/wiki-helper-resolution.md`](../shared-references/wiki-helper-resolution.md)
-(Variant B — warn-and-skip):
+The helper is required for this step:
 
 ```bash
 _pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
@@ -670,17 +543,15 @@ cd "${_pr:-$(pwd)}" || exit 1
 WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
 [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
 [ -f "$WIKI_SCRIPT" ] || {
-  echo "WARN: research-wiki.js not found; literature synthesis will be reported but wiki ingest will be skipped. Fix: run /aris-update to refresh the project runtime." >&2
-  WIKI_SCRIPT=""
+  echo "ERROR: research-wiki.js not found; Wiki ingest is required for this project." >&2
+  exit 1
 }
 ```
 
 ```
 📋 Research Wiki ingest (runs once, at end of research-lit):
    [ ] 1. Predicate: `research-wiki/` exists? If no, skip this step.
-   [ ] 2. If $WIKI_SCRIPT empty (helper unreachable), skip the rest of this step
-          (the warning above already explains why).
-   [ ] 3. For each of the top 8–12 relevant papers (arxiv IDs collected above):
+   [ ] 2. For each of the top 8–12 relevant papers (arxiv IDs collected above):
           node "$WIKI_SCRIPT" ingest_paper research-wiki/ \
               --arxiv-id <id> [--thesis "<one-line>"] [--tags <t1>,<t2>]
    [ ] 4. For each explicit relationship to an existing wiki entity,
@@ -690,17 +561,16 @@ WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
               --type <extends|contradicts|addresses|inspired_by|...> \
               --evidence "<one-sentence quote or reasoning>"
    [ ] 5. Confirm papers/<slug>.md files were created (helper prints
-          "Paper ingested: ..."); if any failed with a network error,
-          retry or fall back to the --title/--authors/--year manual form.
+          "Paper ingested: ..."); if any ingest fails, stop and write a
+          failed receipt.
 ```
 
 `ingest_paper` handles slug generation, arXiv metadata fetch, dedup
 (skips an existing paper by arXiv id), page rendering, `index.md`
 rebuild, `query_pack.md` rebuild, and log append in a single call —
-**do not manually write `papers/<slug>.md`**. If the helper is
-unavailable (e.g., offline on a non-ARIS machine, or `$WIKI_SCRIPT`
-empty), log the gap and let `/research-wiki sync --arxiv-ids …`
-backfill later.
+**do not manually write `papers/<slug>.md`**. If the helper fails, stop the
+literature phase. `/research-wiki sync --arxiv-ids …` is an explicit operator
+command, not an automatic repair path.
 
 For non-arXiv sources (Semantic Scholar only, IEEE/ACM journals without
 arXiv mirrors, blog posts), pass manual metadata instead:
@@ -717,5 +587,6 @@ node "$WIKI_SCRIPT" ingest_paper research-wiki/ \
 - Distinguish between peer-reviewed and preprints
 - Be honest about limitations of each paper
 - Note if a paper directly competes with or supports our approach
-- **Never fail because a MCP server is not configured** — always fall back gracefully to the next data source
+- If a requested MCP source is not configured, fail with the source name. Start
+  a new run with a different explicit `— sources:` value when needed.
 - Zotero/Obsidian tools may have different names depending on how the user configured the MCP server (e.g., `mcp__zotero__search` or `mcp__zotero-mcp__search_items`). Try the most common patterns and adapt.

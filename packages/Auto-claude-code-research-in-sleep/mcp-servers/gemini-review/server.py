@@ -4,7 +4,7 @@
 This server mirrors the narrow review-only interface used by the existing
 review bridges, but defaults to the direct Gemini API so Codex can reuse the
 original ARIS review-heavy skill structure with minimal changes. Gemini CLI is
-kept only as an optional fallback. It is intentionally self-contained so it can
+kept only as an explicitly selected backend. It is intentionally self-contained so it can
 be copied into `~/.codex/mcp-servers/gemini-review/` without depending on this
 repository.
 """
@@ -52,7 +52,6 @@ AGY_APP_DATA_DIR = Path(
         str(Path.home() / ".gemini" / "antigravity-cli"),
     )
 ).expanduser()
-AGY_ARTIFACT_MAX_CHARS = int(os.environ.get("GEMINI_REVIEW_AGY_ARTIFACT_MAX_CHARS", "200000"))
 WORKSPACE_ROOT = Path(os.environ.get("GEMINI_REVIEW_WORKSPACE_ROOT", os.getcwd())).expanduser()
 STATE_DIR = Path(
     os.environ.get(
@@ -309,17 +308,11 @@ def resolved_fd_path(fd: int) -> Path | None:
 
 
 def read_text_confined(path: Path, root: Path) -> str | None:
-    result = read_text_confined_with_stat(path, root)
-    return result[0] if result is not None else None
-
-
-def read_text_confined_with_stat(path: Path, root: Path) -> tuple[str, os.stat_result] | None:
     fd = open_confined_read_fd(path, root)
     if fd is None:
         return None
     with os.fdopen(fd, "r", encoding="utf-8", errors="replace") as fh:
-        file_stat = os.fstat(fh.fileno())
-        return fh.read(), file_stat
+        return fh.read()
 
 
 def read_bytes_confined(path: Path, root: Path) -> bytes | None:
@@ -510,10 +503,8 @@ def find_agy_bin() -> str | None:
 
 def resolve_backend(preferred_backend: str | None) -> str:
     backend = preferred_backend or DEFAULT_BACKEND
-    if backend not in {"auto", "api", "cli", "agy"}:
+    if backend not in {"api", "cli", "agy"}:
         raise ValueError(f"unsupported Gemini backend: {backend}")
-    if backend == "auto":
-        return "api" if get_api_key() else "cli"
     return backend
 
 
@@ -565,11 +556,6 @@ def agy_output_is_error(text: str) -> bool:
     return stripped == "Error: timed out waiting for response" or stripped.startswith("Error: timed out waiting for response")
 
 
-def extract_agy_conversation_id_from_log(log_path: Path) -> str | None:
-    conversation_ids = extract_agy_conversation_ids_from_log(log_path)
-    return conversation_ids[-1] if conversation_ids else None
-
-
 def extract_agy_conversation_ids_from_log(log_path: Path) -> list[str]:
     try:
         text = log_path.read_text(encoding="utf-8", errors="replace")
@@ -609,42 +595,6 @@ def agy_transcript_paths(conversation_id: str) -> list[Path]:
         return []
     logs_dir = conversation_root / ".system_generated" / "logs"
     return [logs_dir / "transcript_full.jsonl", logs_dir / "transcript.jsonl"]
-
-
-def agy_artifact_text(
-    path: Path,
-    *,
-    conversation_root: Path,
-    artifact_min_mtime: float | None = None,
-) -> str | None:
-    if path.suffix.lower() not in {".md", ".markdown", ".txt", ".json", ".yaml", ".yml"}:
-        return None
-    result = read_text_confined_with_stat(path, conversation_root)
-    if result is None:
-        return None
-    text, file_stat = result
-    if artifact_min_mtime is not None and file_stat.st_mtime < artifact_min_mtime - 1.0:
-        return None
-    text = text.strip()
-    if not text:
-        return None
-    if len(text) > AGY_ARTIFACT_MAX_CHARS:
-        return text[:AGY_ARTIFACT_MAX_CHARS] + "\n\n[truncated by gemini-review agy artifact fallback]"
-    return text
-
-
-def extract_file_uri_paths(text: str) -> list[Path]:
-    paths: list[Path] = []
-    for match in re.finditer(r"file://[^\s)>\]]+", text):
-        parsed = urllib.parse.urlparse(match.group(0))
-        if parsed.scheme != "file" or not parsed.path:
-            continue
-        paths.append(Path(urllib.parse.unquote(parsed.path)))
-    return paths
-
-
-def strip_file_uri_refs(text: str) -> str:
-    return re.sub(r"file://[^\s)>\]]+", "", text).strip(" \t\r\n.,:;()[]<>")
 
 
 def collect_model_candidates(value: Any, candidates: list[str], *, under_untrusted_text: bool = False) -> None:
@@ -787,79 +737,6 @@ def extract_agy_model_from_state(
                 collect_model_candidates(step, candidates)
 
     return select_model_candidate(candidates)
-
-
-def extract_agy_response_from_transcript(
-    conversation_id: str,
-    *,
-    invocation_nonce: str | None = None,
-    artifact_min_mtime: float | None = None,
-) -> str | None:
-    if not invocation_nonce:
-        return None
-    conversation_root = agy_conversation_root(conversation_id)
-    if conversation_root is None:
-        return None
-    for transcript_path in agy_transcript_paths(conversation_id):
-        transcript_text = read_text_confined(transcript_path, conversation_root)
-        if transcript_text is None:
-            continue
-        scoped_lines = transcript_lines_at_or_after_nonce(transcript_text, invocation_nonce)
-        if scoped_lines is None:
-            continue
-        final_response: str | None = None
-        artifact_paths: list[Path] = []
-        for line in scoped_lines:
-            try:
-                step = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if step.get("source") != "MODEL":
-                continue
-            step_type = step.get("type")
-            content = step.get("content")
-            if step_type == "PLANNER_RESPONSE" and isinstance(content, str) and content.strip():
-                final_response = content.strip()
-                artifact_paths = extract_file_uri_paths(content)
-
-        if final_response:
-            if strip_file_uri_refs(final_response):
-                return final_response
-            for path in reversed(artifact_paths):
-                artifact = agy_artifact_text(
-                    path,
-                    conversation_root=conversation_root,
-                    artifact_min_mtime=artifact_min_mtime,
-                )
-                if artifact:
-                    return artifact
-            return None
-    return None
-
-
-def extract_agy_response_from_state(
-    log_path: Path,
-    *,
-    invocation_nonce: str | None = None,
-    artifact_min_mtime: float | None = None,
-) -> tuple[str | None, str | None, str | None]:
-    if not invocation_nonce:
-        return None, "invocation_nonce is required for Antigravity transcript recovery", None
-    conversation_id, conversation_error = select_agy_conversation_id_from_state(
-        log_path,
-        invocation_nonce=invocation_nonce,
-    )
-    if conversation_error or conversation_id is None:
-        return None, conversation_error or "could not locate Antigravity conversation id", None
-    response = extract_agy_response_from_transcript(
-        conversation_id,
-        invocation_nonce=invocation_nonce,
-        artifact_min_mtime=artifact_min_mtime,
-    )
-    if response:
-        debug_log(f"AGY_TRANSCRIPT_RECOVERED conversation={conversation_id}")
-        return response, None, conversation_id
-    return None, f"Antigravity transcript has no final response yet: {conversation_id}", None
 
 
 def extract_api_response_text(payload: dict[str, Any]) -> str:
@@ -1186,7 +1063,6 @@ def run_agy_cli_review(
 
         debug_log(f"RUN agy-cli timeout={DEFAULT_AGY_PRINT_TIMEOUT} log={agy_log_path}")
         try:
-            invocation_started_at = time.time()
             result, process_error, duration_ms = run_process_tree(
                 cmd,
                 timeout_sec=DEFAULT_TIMEOUT_SEC + 15,
@@ -1199,44 +1075,22 @@ def run_agy_cli_review(
             return None, "Antigravity review failed without process details"
 
         response_text = result.stdout.strip()
-        recovered_conversation_id: str | None = None
         if result.returncode != 0:
             message = result.stderr.strip() or response_text or "unknown error"
             return None, f"Antigravity review failed: {message}"
         if response_text and agy_output_is_error(response_text):
-            recovered_text, recovered_error, recovered_conversation_id = extract_agy_response_from_state(
-                agy_log_path,
-                invocation_nonce=invocation_nonce,
-                artifact_min_mtime=invocation_started_at,
-            )
-            if recovered_text:
-                response_text = recovered_text
-            elif response_text:
-                suffix = f"; {recovered_error}" if recovered_error else ""
-                return None, f"Antigravity CLI did not print a final response: {response_text}{suffix}"
+            return None, f"Antigravity CLI did not print a final response: {response_text}"
         if not response_text:
             stderr = result.stderr.strip()
-            recovered_text, recovered_error, recovered_conversation_id = extract_agy_response_from_state(
-                agy_log_path,
-                invocation_nonce=invocation_nonce,
-                artifact_min_mtime=invocation_started_at,
-            )
-            if recovered_text:
-                response_text = recovered_text
-            else:
-                message = "Antigravity CLI returned empty output" if not stderr else f"Antigravity CLI returned empty output. stderr: {stderr}"
-                if recovered_error:
-                    message = f"{message}; {recovered_error}"
-                return None, message
+            message = "Antigravity CLI returned empty output" if not stderr else f"Antigravity CLI returned empty output. stderr: {stderr}"
+            return None, message
 
-        conversation_id = recovered_conversation_id
-        if not conversation_id:
-            conversation_id, conversation_error = select_agy_conversation_id_from_state(
-                agy_log_path,
-                invocation_nonce=invocation_nonce,
-            )
-            if conversation_error or not conversation_id:
-                return None, conversation_error or "could not bind Antigravity transcript to this invocation"
+        conversation_id, conversation_error = select_agy_conversation_id_from_state(
+            agy_log_path,
+            invocation_nonce=invocation_nonce,
+        )
+        if conversation_error or not conversation_id:
+            return None, conversation_error or "could not bind Antigravity transcript to this invocation"
         agy_model, agy_model_error = extract_agy_model_from_state(
             agy_log_path,
             conversation_id=conversation_id,
@@ -1370,12 +1224,9 @@ def run_gemini_review(
     session_id: str | None = None,
     model: str | None = None,
     system: str | None = None,
-    tools: str | None = None,
     backend: str | None = None,
     image_paths: Any = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    del tools
-
     load_private_env_file()
 
     normalized_image_paths, image_error = normalize_image_paths(image_paths)
@@ -1442,7 +1293,6 @@ def start_async_review(
     session_id: str | None = None,
     model: str | None = None,
     system: str | None = None,
-    tools: str | None = None,
     backend: str | None = None,
     image_paths: Any = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
@@ -1475,7 +1325,6 @@ def start_async_review(
             "threadId": session_id,
             "model": model,
             "system": system,
-            "tools": tools,
             "backend": backend,
             "imagePaths": normalized_image_paths,
         },
@@ -1560,7 +1409,6 @@ def run_async_job(job_id: str) -> int:
             session_id=request.get("threadId"),
             model=request.get("model"),
             system=request.get("system"),
-            tools=request.get("tools"),
             backend=request.get("backend"),
             image_paths=request.get("imagePaths"),
         )
@@ -1652,8 +1500,7 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
             "prompt": {"type": "string", "description": "Reviewer prompt"},
             "system": {"type": "string", "description": "Optional system prompt"},
             "model": {"type": "string", "description": "Optional Gemini model override"},
-            "backend": {"type": "string", "description": "Optional Gemini backend override: auto, api, cli, or agy"},
-            "tools": {"type": "string", "description": "Accepted for compatibility but ignored by Gemini review"},
+            "backend": {"type": "string", "description": "Optional Gemini backend override: api, cli, or agy"},
             "imagePaths": {
                 "type": "array",
                 "items": {"type": "string"},
@@ -1742,7 +1589,6 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
                 str(args.get("prompt", "")),
                 model=args.get("model"),
                 system=args.get("system"),
-                tools=args.get("tools"),
                 backend=args.get("backend"),
                 image_paths=args.get("imagePaths") or args.get("image_paths"),
             )
@@ -1757,7 +1603,6 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
                 session_id=str(thread_id),
                 model=args.get("model"),
                 system=args.get("system"),
-                tools=args.get("tools"),
                 backend=args.get("backend"),
                 image_paths=args.get("imagePaths") or args.get("image_paths"),
             )
@@ -1768,7 +1613,6 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
                 str(args.get("prompt", "")),
                 model=args.get("model"),
                 system=args.get("system"),
-                tools=args.get("tools"),
                 backend=args.get("backend"),
                 image_paths=args.get("imagePaths") or args.get("image_paths"),
             )
@@ -1783,7 +1627,6 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
                 session_id=str(thread_id),
                 model=args.get("model"),
                 system=args.get("system"),
-                tools=args.get("tools"),
                 backend=args.get("backend"),
                 image_paths=args.get("imagePaths") or args.get("image_paths"),
             )

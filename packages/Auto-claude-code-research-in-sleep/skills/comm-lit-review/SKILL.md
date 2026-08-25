@@ -21,7 +21,7 @@ Use this skill for communications-domain literature review when the topic is abo
 - transport protocols and congestion control in communication networks
 - cross-layer optimization for communication systems
 
-If the center of gravity is generic ML architecture research, pure control theory without communications literature, or software/API documentation rather than papers, fall back to a general literature skill.
+If the center of gravity is generic ML architecture research, pure control theory without communications literature, or software/API documentation rather than papers, stop and ask the caller to invoke the general literature skill explicitly.
 
 ## Constants
 
@@ -70,11 +70,8 @@ This is a knowledge-base-first skill. Search in this order unless the user overr
 6. `ACM Digital Library`
 7. broader web
 
-Graceful degradation rules:
-
-- If a source is unavailable, do not fail.
-- Skip it silently.
-- Continue to the next source.
+Source failures are explicit errors. If a requested source is unavailable, stop
+and report it; do not silently remove that source from the review.
 
 ## External Search Policy
 

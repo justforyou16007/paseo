@@ -1,11 +1,13 @@
 # Claude Review MCP
 
-Bridge Codex-first ARIS workflows to the local Claude Code CLI.
+Optional external-review MCP bridge for ARIS.
 
 ## What it does
 
-- Keeps **Codex** as the executor
-- Uses **Claude Code CLI** as the external reviewer
+- Uses **Claude Code CLI** as the explicitly selected external reviewer
+- Use this bridge only when the caller explicitly selects Claude as the
+  reviewer backend
+- A Paseo reviewer failure is returned to the caller; it is not routed here
 - Exposes synchronous MCP tools:
   - `review`
   - `review_reply`
@@ -17,22 +19,22 @@ Bridge Codex-first ARIS workflows to the local Claude Code CLI.
 The synchronous tools return a JSON string containing `threadId` and `response`.
 The asynchronous start tools return a JSON string containing `jobId` and `status`, and `review_status` later returns the final `threadId` and `response`.
 
-## Install into Codex
+## Configure as an explicit MCP backend
 
 ```bash
-mkdir -p ~/.codex/mcp-servers/claude-review
-cp mcp-servers/claude-review/server.py ~/.codex/mcp-servers/claude-review/server.py
-codex mcp add claude-review -- python3 ~/.codex/mcp-servers/claude-review/server.py
+mkdir -p ~/.claude/mcp-servers/claude-review
+cp mcp-servers/claude-review/server.py ~/.claude/mcp-servers/claude-review/server.py
+claude mcp add claude-review -s user -- python3 ~/.claude/mcp-servers/claude-review/server.py
 ```
 
 If your Claude Code login depends on a shell function such as `claude-aws`, use the wrapper instead:
 
 ```bash
-mkdir -p ~/.codex/mcp-servers/claude-review
-cp mcp-servers/claude-review/server.py ~/.codex/mcp-servers/claude-review/server.py
-cp mcp-servers/claude-review/run_with_claude_aws.sh ~/.codex/mcp-servers/claude-review/run_with_claude_aws.sh
-chmod +x ~/.codex/mcp-servers/claude-review/run_with_claude_aws.sh
-codex mcp add claude-review -- ~/.codex/mcp-servers/claude-review/run_with_claude_aws.sh
+mkdir -p ~/.claude/mcp-servers/claude-review
+cp mcp-servers/claude-review/server.py ~/.claude/mcp-servers/claude-review/server.py
+cp mcp-servers/claude-review/run_with_claude_aws.sh ~/.claude/mcp-servers/claude-review/run_with_claude_aws.sh
+chmod +x ~/.claude/mcp-servers/claude-review/run_with_claude_aws.sh
+claude mcp add claude-review -s user -- ~/.claude/mcp-servers/claude-review/run_with_claude_aws.sh
 ```
 
 ## Environment Variables

@@ -4,7 +4,7 @@
 
 ## Overview
 
-The Manual Review MCP server is a human-in-the-loop alternative to the default Codex MCP reviewer. Instead of requiring a GPT Plus/Pro subscription for automated cross-model review, it lets you manually mediate the review using a **different** model family. If the executor is Claude Code, do NOT use Claude products as the reviewer. Recommended: ChatGPT, DeepSeek, Kimi, Gemini, Qwen, or any non-Claude model.
+The Manual Review MCP server is an explicitly selected human-in-the-loop route beside the default Paseo codex reviewer. It lets you mediate the review using a **different** model family. If the executor is Claude, do NOT use Claude products as the reviewer. Recommended: ChatGPT, DeepSeek, Kimi, Gemini, Qwen, or any non-Claude model.
 
 The trade-off: you lose full automation (you need to copy/paste), but gain complete flexibility in model choice and zero API cost.
 
@@ -93,8 +93,3 @@ The following skills have manual-review wired (Claude Code only):
 | `/idea-creator`     | Idea evaluation       |
 
 > `/research-lit` currently has no manual-review call block; use `— reviewer: oracle-pro` where supported, or run a separate review skill manually.
-
-## Future Work
-
-- **Image generation**: Manual alternative to `codex-image2` for paper illustrations (upload/paste images back)
-- **Image review loop**: Iterative illustration improvement through the same UI

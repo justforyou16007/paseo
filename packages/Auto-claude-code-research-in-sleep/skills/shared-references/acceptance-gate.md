@@ -180,11 +180,8 @@ writes.
 | `/paper-writing` Phase 6 (submission)        | `verify_paper_audits.sh` exit 0                                   | A (gate) **wrapping** B (the audits) | external verifier reads cross-model JSON                              | ✅ A-gate over B-verdicts |
 
 > 📌 The `/auto-review-loop` row reflects the skill's stop logic: `score >= 6`
-> AND verdict contains "ready"/"almost", evaluated each round. (Its `Constants`
-> block previously stated this with `OR` and a stale verdict vocabulary — an
-> internal inconsistency now reconciled to the `AND` form the Phase-E stop
-> check actually uses, in `auto-review-loop` and its `-llm`/`-minimax`
-> siblings.) The acquittal is **codex's** score+verdict, so the Type-B
+> AND verdict contains "ready"/"almost", evaluated each round. The acquittal
+> is **codex's** score+verdict, so the Type-B
 > classification is unchanged.
 
 Two patterns to notice:
@@ -250,10 +247,9 @@ jury.**
 
 Fan-out and this contract compose cleanly: fan-out (same family) does
 the broad _driving_; the loop always funnels into the identical
-cross-model _acquittal_ at the Type-B gate. Breadth degrades gracefully
-across runtimes (fewer shards = less coverage, not an invalid verdict); the
-acquittal does not degrade — it is always the cross-family verdict, or
-the loop is unsafe.
+cross-model _acquittal_ at the Type-B gate. Every required shard must run to
+completion. A missing shard blocks the verdict; the acquittal does not degrade
+— it is always the cross-family verdict, or the loop is unsafe.
 
 ## Required components (for a loop to claim same-family-safe)
 

@@ -123,20 +123,19 @@ class Session:
 # ---------------------------------------------------------------------------
 # Read-only helpers.
 # ---------------------------------------------------------------------------
-def _as_int(value, default: int = 0) -> int:
-    """Coerce a possibly-malformed registry value to int -- never raises.
-
-    Concurrent partial writes can leave a field like updatedAt=="12.5" or
-    pid=="abc" mid-flush. int() would raise ValueError on those; we swallow it
-    so ONE half-written field can never blank the whole scan.
-    """
-    try:
-        return int(value)
-    except Exception:
-        try:
-            return int(float(value))
-        except Exception:
+def _as_int(value, default: Optional[int] = None) -> int:
+    """Read an integer registry value or fail the scan with its real error."""
+    if value is None:
+        if default is not None:
             return default
+        raise ValueError("integer value is missing")
+    if isinstance(value, bool):
+        raise ValueError("boolean is not an integer value")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip():
+        return int(value)
+    raise ValueError(f"invalid integer value: {value!r}")
 
 
 def _cwd_to_project_slug(cwd: str) -> str:
@@ -145,22 +144,13 @@ def _cwd_to_project_slug(cwd: str) -> str:
 
 
 def _load_session_file(path: Path) -> Optional[dict]:
-    """Read one <pid>.json. Returns None on any failure -- never raises.
-
-    ~/.claude/sessions is mode 0700; we run as the user so reads succeed, but
-    we still wrap every open() for robustness against truncated/partial writes.
-    """
-    try:
-        with path.open(encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
-        return None
-    # Only require a dict. We deliberately do NOT require "pid": a half-written
-    # file can have status=="waiting" before pid is flushed, and dropping it
-    # here would be a costly miss of the one thing we exist to surface. pid is
-    # recovered from the <pid>.json filename in scan() when absent.
+    """Read one session file; malformed or unreadable input stops the scan."""
+    with path.open(encoding="utf-8") as f:
+        data = json.load(f)
+    # The filename supplies pid when the registry omits it; all other malformed
+    # fields are reported by scan() instead of being hidden.
     if not isinstance(data, dict):
-        return None
+        raise ValueError(f"session file is not a JSON object: {path}")
     return data
 
 
@@ -174,42 +164,35 @@ def _transcript_path(session_id: str, cwd: str) -> Optional[Path]:
         return None
     slug = _cwd_to_project_slug(cwd)
     p = PROJECTS_DIR / slug / f"{session_id}.jsonl"
-    try:
-        if p.exists():
-            return p
-    except Exception:
-        return None
+    if p.exists():
+        return p
     return None
 
 
 def _last_assistant_info(path: Optional[Path]) -> Optional[Info]:
     """Read-only tail of the transcript -> stop_reason / last_tool / bg flag.
 
-    Returns None if the transcript is missing, empty, or unparseable. Reads at
+    Returns None if the transcript is missing or empty. Reads at
     most the last TRANSCRIPT_TAIL_BYTES so even a 35k-line transcript is cheap.
-    Every json.loads is wrapped: the final line may be a half-written record.
+    A malformed record is an input error and stops the scan.
     """
     if path is None:
         return None
-    try:
-        if not path.exists():
-            return None
-        size = path.stat().st_size
-        seeked = size > TRANSCRIPT_TAIL_BYTES
-        with path.open("rb") as fh:
-            if seeked:
-                fh.seek(size - TRANSCRIPT_TAIL_BYTES)
-            tail = fh.read().decode("utf-8", "replace")
-    except Exception:
+    if not path.exists():
         return None
+    size = path.stat().st_size
+    seeked = size > TRANSCRIPT_TAIL_BYTES
+    with path.open("rb") as fh:
+        if seeked:
+            fh.seek(size - TRANSCRIPT_TAIL_BYTES)
+        tail = fh.read().decode("utf-8")
 
     lines = [ln for ln in tail.splitlines() if ln.strip()]
     if not lines:
         return None
     # Only when we actually seeked into the middle of the file is the leading
-    # line possibly a half record. On a complete (un-seeked) read every line is
-    # whole -- dropping the first there would discard real data and could
-    # misreport a short transcript as empty.
+    # line possibly a partial record. On a complete read every line is whole;
+    # dropping the first there would discard real data.
     if seeked and len(lines) > 1:
         lines = lines[1:]
 
@@ -220,12 +203,9 @@ def _last_assistant_info(path: Optional[Path]) -> Optional[Info]:
     has_pending_bg = False
     last_end_turn_idx = -1
     for i, raw in enumerate(window):
-        try:
-            d = json.loads(raw)
-        except Exception:
-            continue
+        d = json.loads(raw)
         if not isinstance(d, dict):
-            continue
+            raise ValueError(f"transcript record is not a JSON object: {path}")
         t = d.get("type", "")
         if t == "assistant" and (d.get("message") or {}).get("stop_reason") == "end_turn":
             last_end_turn_idx = i
@@ -236,10 +216,7 @@ def _last_assistant_info(path: Optional[Path]) -> Optional[Info]:
     # Find the last assistant message for stop_reason / last tool name.
     last_asst = None
     for raw in reversed(window):
-        try:
-            d = json.loads(raw)
-        except Exception:
-            continue
+        d = json.loads(raw)
         if isinstance(d, dict) and d.get("type") == "assistant":
             last_asst = d
             break
@@ -323,67 +300,55 @@ def _status_for(data: dict, transcript: Optional[Path], now: float) -> Tuple[str
 def scan() -> List[Session]:
     """Read ~/.claude/sessions/*.json, classify each, sort.
 
-    Returns [] on ANY failure (also the natural value when there are zero
-    sessions) -- the two are indistinguishable and both safe. Never raises.
+    Returns [] only when the sessions directory does not exist or contains no
+    files. Malformed or unreadable input raises so the caller cannot mistake a
+    failed scan for an empty machine.
     Stale registry files are kept as STALE_HIDDEN entries so the widget can
     show a "+N stale (hidden)" count, but they sort to the bottom.
     """
-    try:
-        if not SESSIONS_DIR.exists():
-            return []
-        now = time.time()
-        out: List[Session] = []
-
-        for f in sorted(glob.glob(str(SESSIONS_DIR / "*.json"))):
-            base = os.path.basename(f)
-            # Legacy session-<ts>.json files carry no pid/status -- skip them.
-            if base.startswith("session-"):
-                continue
-            data = _load_session_file(Path(f))
-            if not data:
-                continue
-
-            # Per-file guard: one malformed/half-written registry file (e.g. a
-            # truncated value that slips past _load_session_file but trips a
-            # later coercion) must be SKIPPED, not allowed to blank the whole
-            # fleet -- otherwise a real needs_approval could vanish.
-            try:
-                # str(): cwd/sessionId are external; a non-string from a half
-                # write would make slug derivation raise and skip the ENTIRE
-                # session -- including one that is genuinely waiting.
-                session_id = str(data.get("sessionId") or "")
-                cwd = str(data.get("cwd") or "")
-                transcript = _transcript_path(session_id, cwd)
-                triage, reason = _status_for(data, transcript, now)
-
-                updated_at = _as_int(data.get("updatedAt", 0))
-                idle_seconds = max(0, int(now - updated_at / 1000)) if updated_at else 0
-
-                # Recover pid from the "<pid>.json" filename when the field is
-                # absent/half-written (see _load_session_file).
-                fname_pid = _as_int(base[:-5]) if base.endswith(".json") else 0
-
-                out.append(
-                    Session(
-                        pid=_as_int(data.get("pid"), fname_pid),
-                        name=str(data.get("name") or os.path.basename(cwd) or "?"),
-                        cwd=cwd,
-                        status=data.get("status", "unknown"),
-                        triage=triage,
-                        reason=reason,
-                        idle_seconds=idle_seconds,
-                        updated_at=updated_at,
-                    )
-                )
-            except Exception:
-                # Skip just this file; keep scanning siblings.
-                continue
-
-        out.sort(key=lambda x: (SORT_PRIORITY.get(x.triage, 5), -x.updated_at, x.pid))
-        return out
-    except Exception:
-        # A read-only scan must never raise; degrade to empty.
+    if not SESSIONS_DIR.exists():
         return []
+    now = time.time()
+    out: List[Session] = []
+
+    for f in sorted(glob.glob(str(SESSIONS_DIR / "*.json"))):
+        base = os.path.basename(f)
+        if base.startswith("session-"):
+            raise ValueError(f"legacy session registry is unsupported: {f}")
+        data = _load_session_file(Path(f))
+        if data is None:
+            raise ValueError(f"session file is empty: {f}")
+
+        session_id = data.get("sessionId") or ""
+        cwd = data.get("cwd") or ""
+        if not isinstance(session_id, str) or not isinstance(cwd, str):
+            raise ValueError(f"sessionId and cwd must be strings: {f}")
+        transcript = _transcript_path(session_id, cwd)
+        triage, reason = _status_for(data, transcript, now)
+
+        updated_at = _as_int(data.get("updatedAt", 0))
+        idle_seconds = max(0, int(now - updated_at / 1000)) if updated_at else 0
+
+        fname_pid = _as_int(base[:-5]) if base.endswith(".json") else None
+        name = data.get("name") or os.path.basename(cwd) or "?"
+        if not isinstance(name, str):
+            raise ValueError(f"session name must be a string: {f}")
+
+        out.append(
+            Session(
+                pid=_as_int(data.get("pid"), fname_pid),
+                name=name,
+                cwd=cwd,
+                status=data.get("status", "unknown"),
+                triage=triage,
+                reason=reason,
+                idle_seconds=idle_seconds,
+                updated_at=updated_at,
+            )
+        )
+
+    out.sort(key=lambda x: (SORT_PRIORITY.get(x.triage, 5), -x.updated_at, x.pid))
+    return out
 
 
 def summary(sessions: Optional[List[Session]] = None) -> dict:

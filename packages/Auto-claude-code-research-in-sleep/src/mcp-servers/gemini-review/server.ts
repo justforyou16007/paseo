@@ -26,10 +26,6 @@ const AGY_APP_DATA_DIR = resolvePath(
   process.env.GEMINI_REVIEW_AGY_APP_DATA_DIR ||
     path.join(os.homedir(), ".gemini", "antigravity-cli"),
 );
-const AGY_ARTIFACT_MAX_CHARS = parseInt(
-  process.env.GEMINI_REVIEW_AGY_ARTIFACT_MAX_CHARS || "200000",
-  10,
-);
 const WORKSPACE_ROOT = resolvePath(process.env.GEMINI_REVIEW_WORKSPACE_ROOT || process.cwd());
 const STATE_DIR = resolvePath(
   process.env.GEMINI_REVIEW_STATE_DIR || path.join(os.homedir(), ".codex", "state", SERVER_NAME),
@@ -230,21 +226,13 @@ function openConfinedReadFd(filePath: string, root: string): number | null {
 }
 
 function readTextConfined(filePath: string, root: string): string | null {
-  const result = readTextConfinedWithStat(filePath, root);
-  return result !== null ? result.text : null;
-}
-
-function readTextConfinedWithStat(
-  filePath: string,
-  root: string,
-): { text: string; stat: fs.Stats } | null {
   const fd = openConfinedReadFd(filePath, root);
   if (fd === null) return null;
   try {
     const fileStat = fs.fstatSync(fd);
     const buf = Buffer.alloc(fileStat.size);
     fs.readSync(fd, buf, 0, buf.length, 0);
-    return { text: buf.toString("utf-8"), stat: fileStat };
+    return buf.toString("utf-8");
   } finally {
     fs.closeSync(fd);
   }
@@ -541,11 +529,8 @@ function getApiKey(): string | null {
 
 function resolveBackend(preferredBackend: string | null | undefined): string {
   const backend = preferredBackend || DEFAULT_BACKEND;
-  if (!["auto", "api", "cli", "agy"].includes(backend)) {
+  if (!["api", "cli", "agy"].includes(backend)) {
     throw new Error(`unsupported Gemini backend: ${backend}`);
-  }
-  if (backend === "auto") {
-    return getApiKey() ? "api" : "cli";
   }
   return backend;
 }
@@ -661,54 +646,6 @@ function agyTranscriptPaths(conversationId: string): string[] {
   if (convRoot === null) return [];
   const logsDir = path.join(convRoot, ".system_generated", "logs");
   return [path.join(logsDir, "transcript_full.jsonl"), path.join(logsDir, "transcript.jsonl")];
-}
-
-function agyArtifactText(
-  filePath: string,
-  conversationRoot: string,
-  artifactMinMtime: number | null,
-): string | null {
-  const ext = path.extname(filePath).toLowerCase();
-  if (![".md", ".markdown", ".txt", ".json", ".yaml", ".yml"].includes(ext)) {
-    return null;
-  }
-  const result = readTextConfinedWithStat(filePath, conversationRoot);
-  if (result === null) return null;
-  const { text: rawText, stat: fileStat } = result;
-  if (artifactMinMtime !== null && fileStat.mtimeMs / 1000 < artifactMinMtime - 1.0) {
-    return null;
-  }
-  const text = rawText.trim();
-  if (!text) return null;
-  if (text.length > AGY_ARTIFACT_MAX_CHARS) {
-    return (
-      text.slice(0, AGY_ARTIFACT_MAX_CHARS) +
-      "\n\n[truncated by gemini-review agy artifact fallback]"
-    );
-  }
-  return text;
-}
-
-function extractFileUriPaths(text: string): string[] {
-  const paths: string[] = [];
-  const re = /file:\/\/[^\s)>\]]+/g;
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(text)) !== null) {
-    try {
-      const parsed = new URL(match[0]);
-      if (parsed.protocol !== "file:" || !parsed.pathname) continue;
-      paths.push(decodeURIComponent(parsed.pathname));
-    } catch {
-      continue;
-    }
-  }
-  return paths;
-}
-
-function stripFileUriRefs(text: string): string {
-  return text
-    .replace(/file:\/\/[^\s)>\]]+/g, "")
-    .replace(/^[\s.,:;()\[\]<>]+|[\s.,:;()\[\]<>]+$/g, "");
 }
 
 function collectModelCandidates(
@@ -900,93 +837,6 @@ function extractAgyModelFromState(
     }
   }
   return selectModelCandidate(candidates);
-}
-
-function extractAgyResponseFromTranscript(
-  conversationId: string,
-  invocationNonce: string | null,
-  artifactMinMtime: number | null,
-): string | null {
-  if (!invocationNonce) return null;
-  const convRoot = agyConversationRoot(conversationId);
-  if (convRoot === null) return null;
-  for (const transcriptPath of agyTranscriptPaths(conversationId)) {
-    const transcriptText = readTextConfined(transcriptPath, convRoot);
-    if (transcriptText === null) continue;
-    const scopedLines = transcriptLinesAtOrAfterNonce(transcriptText, invocationNonce);
-    if (scopedLines === null) continue;
-    let finalResponse: string | null = null;
-    let artifactPaths: string[] = [];
-    for (const line of scopedLines) {
-      let step: Record<string, unknown>;
-      try {
-        step = JSON.parse(line);
-      } catch {
-        continue;
-      }
-      if (step.source !== "MODEL") continue;
-      const stepType = step.type;
-      const content = step.content;
-      if (stepType === "PLANNER_RESPONSE" && typeof content === "string" && content.trim()) {
-        finalResponse = content.trim();
-        artifactPaths = extractFileUriPaths(content);
-      }
-    }
-    if (finalResponse) {
-      if (stripFileUriRefs(finalResponse)) {
-        return finalResponse;
-      }
-      for (let i = artifactPaths.length - 1; i >= 0; i--) {
-        const artifact = agyArtifactText(artifactPaths[i], convRoot, artifactMinMtime);
-        if (artifact) return artifact;
-      }
-      return null;
-    }
-  }
-  return null;
-}
-
-function extractAgyResponseFromState(
-  logPath: string,
-  invocationNonce: string | null,
-  artifactMinMtime: number | null,
-): {
-  response: string | null;
-  error: string | null;
-  conversationId: string | null;
-} {
-  if (!invocationNonce) {
-    return {
-      response: null,
-      error: "invocation_nonce is required for Antigravity transcript recovery",
-      conversationId: null,
-    };
-  }
-  const { value: conversationId, error: conversationError } = selectAgyConversationIdFromState(
-    logPath,
-    invocationNonce,
-  );
-  if (conversationError || conversationId === null) {
-    return {
-      response: null,
-      error: conversationError || "could not locate Antigravity conversation id",
-      conversationId: null,
-    };
-  }
-  const response = extractAgyResponseFromTranscript(
-    conversationId,
-    invocationNonce,
-    artifactMinMtime,
-  );
-  if (response) {
-    debugLog(`AGY_TRANSCRIPT_RECOVERED conversation=${conversationId}`);
-    return { response, error: null, conversationId };
-  }
-  return {
-    response: null,
-    error: `Antigravity transcript has no final response yet: ${conversationId}`,
-    conversationId: null,
-  };
 }
 
 // --- API response parsing ---
@@ -1360,7 +1210,6 @@ function runAgyCliReview(
       error: string | null;
       durationMs: number;
     };
-    const invocationStartedAt = Date.now() / 1000;
     try {
       processResult = runProcessTree(cmd, DEFAULT_TIMEOUT_SEC + 15);
     } catch (exc) {
@@ -1383,7 +1232,6 @@ function runAgyCliReview(
     }
 
     let responseText = processResult.result.stdout.trim();
-    let recoveredConversationId: string | null = null;
 
     if (processResult.result.exitCode !== 0) {
       const message = processResult.result.stderr.trim() || responseText || "unknown error";
@@ -1394,57 +1242,29 @@ function runAgyCliReview(
     }
 
     if (responseText && agyOutputIsError(responseText)) {
-      const recovered = extractAgyResponseFromState(
-        agyLogPath,
-        invocationNonce,
-        invocationStartedAt,
-      );
-      if (recovered.response) {
-        responseText = recovered.response;
-        recoveredConversationId = recovered.conversationId;
-      } else if (responseText) {
-        const suffix = recovered.error ? `; ${recovered.error}` : "";
-        return {
-          result: null,
-          error: `Antigravity CLI did not print a final response: ${responseText}${suffix}`,
-        };
-      }
+      return {
+        result: null,
+        error: `Antigravity CLI did not print a final response: ${responseText}`,
+      };
     }
 
     if (!responseText) {
       const stderr = processResult.result.stderr.trim();
-      const recovered = extractAgyResponseFromState(
-        agyLogPath,
-        invocationNonce,
-        invocationStartedAt,
-      );
-      if (recovered.response) {
-        responseText = recovered.response;
-        recoveredConversationId = recovered.conversationId;
-      } else {
-        let message = !stderr
-          ? "Antigravity CLI returned empty output"
-          : `Antigravity CLI returned empty output. stderr: ${stderr}`;
-        if (recovered.error) {
-          message = `${message}; ${recovered.error}`;
-        }
-        return { result: null, error: message };
-      }
+      const message = !stderr
+        ? "Antigravity CLI returned empty output"
+        : `Antigravity CLI returned empty output. stderr: ${stderr}`;
+      return { result: null, error: message };
     }
 
-    let conversationId = recoveredConversationId;
+    const { value: conversationId, error: convError } = selectAgyConversationIdFromState(
+      agyLogPath,
+      invocationNonce,
+    );
     if (!conversationId) {
-      const { value: convId, error: convError } = selectAgyConversationIdFromState(
-        agyLogPath,
-        invocationNonce,
-      );
-      if (convError || !convId) {
-        return {
-          result: null,
-          error: convError || "could not bind Antigravity transcript to this invocation",
-        };
-      }
-      conversationId = convId;
+      return {
+        result: null,
+        error: convError || "could not bind Antigravity transcript to this invocation",
+      };
     }
 
     const { value: agyModel, error: agyModelError } = extractAgyModelFromState(
@@ -1668,13 +1488,10 @@ async function runGeminiReview(
     sessionId?: string | null;
     model?: string | null;
     system?: string | null;
-    tools?: string | null;
     backend?: string | null;
     imagePaths?: unknown;
   } = {},
 ): Promise<BackendResult> {
-  void opts.tools;
-
   loadPrivateEnvFile();
 
   const { paths: normalizedImagePaths, error: imageError } = normalizeImagePaths(opts.imagePaths);
@@ -1753,7 +1570,6 @@ function startAsyncReview(
     sessionId?: string | null;
     model?: string | null;
     system?: string | null;
-    tools?: string | null;
     backend?: string | null;
     imagePaths?: unknown;
   } = {},
@@ -1792,7 +1608,6 @@ function startAsyncReview(
       threadId: opts.sessionId || null,
       model: opts.model || null,
       system: opts.system || null,
-      tools: opts.tools ?? null,
       backend: opts.backend || null,
       imagePaths: normalizedImagePaths,
     },
@@ -1900,7 +1715,6 @@ async function runAsyncJob(jobId: string): Promise<number> {
       sessionId: request.threadId as string | null,
       model: request.model as string | null,
       system: request.system as string | null,
-      tools: request.tools as string | null,
       backend: request.backend as string | null,
       imagePaths: request.imagePaths,
     });
@@ -1949,11 +1763,7 @@ if (process.argv[2] === "--run-job" && process.argv[3]) {
     },
     backend: {
       type: "string",
-      description: "Optional Gemini backend override: auto, api, cli, or agy",
-    },
-    tools: {
-      type: "string",
-      description: "Accepted for compatibility but ignored by Gemini review",
+      description: "Optional Gemini backend override: api, cli, or agy",
     },
     imagePaths: {
       type: "array",
@@ -2056,7 +1866,6 @@ if (process.argv[2] === "--run-job" && process.argv[3]) {
       const { result: payload, error } = await runGeminiReview(String(args.prompt || ""), {
         model: args.model as string | null,
         system: args.system as string | null,
-        tools: args.tools as string | null,
         backend: args.backend as string | null,
         imagePaths: args.imagePaths || args.image_paths,
       });
@@ -2072,7 +1881,6 @@ if (process.argv[2] === "--run-job" && process.argv[3]) {
         sessionId: String(threadId),
         model: args.model as string | null,
         system: args.system as string | null,
-        tools: args.tools as string | null,
         backend: args.backend as string | null,
         imagePaths: args.imagePaths || args.image_paths,
       });
@@ -2083,7 +1891,6 @@ if (process.argv[2] === "--run-job" && process.argv[3]) {
       const { result: payload, error } = startAsyncReview(String(args.prompt || ""), {
         model: args.model as string | null,
         system: args.system as string | null,
-        tools: args.tools as string | null,
         backend: args.backend as string | null,
         imagePaths: args.imagePaths || args.image_paths,
       });
@@ -2099,7 +1906,6 @@ if (process.argv[2] === "--run-job" && process.argv[3]) {
         sessionId: String(threadId),
         model: args.model as string | null,
         system: args.system as string | null,
-        tools: args.tools as string | null,
         backend: args.backend as string | null,
         imagePaths: args.imagePaths || args.image_paths,
       });

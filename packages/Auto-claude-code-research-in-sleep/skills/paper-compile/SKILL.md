@@ -1,6 +1,6 @@
 ---
 name: paper-compile
-description: 'Compile LaTeX paper to PDF, fix errors, and verify output. Use when user says "编译论文", "compile paper", "build PDF", "生成PDF", or wants to compile LaTeX into a submission-ready PDF.'
+description: 'Compile LaTeX paper to PDF and verify output. Use when user says "编译论文", "compile paper", "build PDF", "生成PDF", or wants to compile LaTeX into a submission-ready PDF.'
 argument-hint: [paper-directory]
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob
 ---
@@ -13,7 +13,6 @@ Compile the LaTeX paper and fix any issues: **$ARGUMENTS**
 
 - **COMPILER = `latexmk`** — LaTeX build tool. Handles multi-pass compilation automatically.
 - **ENGINE = `pdflatex`** — LaTeX engine. Options: `pdflatex` (default), `xelatex` (for CJK/custom fonts), `lualatex`.
-- **MAX_COMPILE_ATTEMPTS = 3** — Maximum attempts to fix errors and recompile.
 - **PAPER_DIR = `paper/`** — Directory containing LaTeX source files.
 - **MAX_PAGES** — Page limit. ML conferences: main body to Conclusion end (excluding references & appendix). ICLR=9, NeurIPS=9, ICML=8. **IEEE venues: references ARE included in page count.** IEEE journal ≈ 12-14 pages, IEEE conference ≈ 5-8 pages (all inclusive).
 
@@ -57,85 +56,15 @@ latexmk -C
 latexmk -pdf -interaction=nonstopmode -halt-on-error main.tex 2>&1 | tee compile.log
 ```
 
-### Step 3: Error Diagnosis and Auto-Fix
+### Step 3: Compilation failure
 
-If compilation fails, read `compile.log` and fix common errors:
+If the single compilation command exits non-zero, keep `compile.log`, report the
+first actionable error, and stop. Do not edit the source, install a package,
+invoke another reviewer, change the engine, or compile again in this
+invocation. After the source or environment is fixed, start a new
+`/paper-compile` invocation.
 
-**Missing packages:**
-
-```
-! LaTeX Error: File `somepackage.sty' not found.
-```
-
-→ Install via `tlmgr install somepackage` or remove the `\usepackage` if unused.
-
-**Undefined references:**
-
-```
-LaTeX Warning: Reference `fig:xyz' on page 3 undefined
-```
-
-→ Check `\label{fig:xyz}` exists in the correct figure environment.
-
-**Missing figures:**
-
-```
-! LaTeX Error: File `figures/fig1.pdf' not found.
-```
-
-→ Check if the file exists with a different extension (.png vs .pdf). Update the `\includegraphics` path.
-
-**Citation undefined:**
-
-```
-LaTeX Warning: Citation `smith2024' undefined
-```
-
-→ Add the missing entry to `references.bib` or fix the citation key.
-
-**`[VERIFY]` markers in text:**
-→ Search for `[VERIFY]` markers left by `/paper-write`. These indicate unverified citations or facts. Search for the correct information or flag to the user.
-
-**Overfull hbox:**
-
-```
-Overfull \hbox (12.5pt too wide) in paragraph at lines 42--45
-```
-
-→ Minor: usually ignorable. If severe (>20pt), rephrase the text or adjust figure width.
-
-**BibTeX errors:**
-
-```
-I was expecting a `,' or a `}'---line 15 of references.bib
-```
-
-→ Fix BibTeX syntax (missing comma, unmatched braces, special characters in title).
-
-**`\crefname` undefined for custom theorem types:**
-→ Ensure `\crefname{assumption}{Assumption}{Assumptions}` and similar are in the preamble after `\newtheorem{assumption}`.
-
-### Step 4: Iterative Fix Loop
-
-```
-for attempt in 1..MAX_COMPILE_ATTEMPTS:
-    compile()
-    if success:
-        break
-    parse_errors()
-    auto_fix()
-```
-
-For each error:
-
-1. Read the error message from `compile.log`
-2. Locate the source file and line number
-3. Apply the fix
-4. Recompile
-
-**Stuck after 2 attempts?** If Codex plugin is installed, invoke `/codex:rescue` — Codex can independently read the LaTeX source and `compile.log` to spot issues Claude missed (e.g., conflicting packages, encoding problems, subtle macro errors). If not installed, continue with Claude's own diagnosis.
-
-### Step 5: Post-Compilation Checks
+### Step 4: Post-Compilation Checks
 
 After successful compilation, verify the output:
 
@@ -176,7 +105,7 @@ grep -c "LaTeX Warning.*undefined" compile.log
 grep -c "Citation.*undefined" compile.log
 ```
 
-### Step 6: Page Count Verification
+### Step 5: Page Count Verification
 
 **CRITICAL**: Verify paper fits within MAX_PAGES.
 
@@ -212,7 +141,7 @@ If over limit:
 - Suggest specific cuts (move proofs to appendix, compress tables, tighten writing)
 - Report: "Main body is X pages (limit: MAX_PAGES). Suggestion: move [specific content] to appendix."
 
-### Step 6.5: Stale File Detection
+### Step 5.5: Stale File Detection
 
 Check for orphaned section files not referenced by `main.tex`:
 
@@ -226,9 +155,9 @@ for f in paper/sections/*.tex; do
 done
 ```
 
-This prevents confusion from leftover files when section structure changes (e.g., old `5_conclusion.tex` left behind after restructuring to 7 sections).
+This prevents confusion from leftover section files when the section structure changes.
 
-### Step 7: Submission Readiness
+### Step 6: Submission Readiness
 
 For conference submission, additional checks:
 
@@ -242,7 +171,7 @@ For conference submission, additional checks:
 - [ ] **File size**: reasonable (< 50MB for most venues, < 10MB preferred)
 - [ ] **No `[VERIFY]` markers**: search the PDF text for leftover markers
 
-### Step 8: Output Summary
+### Step 7: Output Summary
 
 ```markdown
 ## Compilation Report
@@ -251,7 +180,7 @@ For conference submission, additional checks:
 - **PDF**: paper/main.pdf
 - **Pages**: X (main body to Conclusion) + Y (references) + Z (appendix)
 - **Within page limit**: YES/NO (MAX_PAGES = N)
-- **Errors fixed**: [list of auto-fixed issues]
+- **Compilation errors**: none (a failed compile stops the invocation)
 - **Warnings remaining**: [list of non-critical warnings]
 - **Undefined references**: 0
 - **Undefined citations**: 0
@@ -265,10 +194,10 @@ For conference submission, additional checks:
 
 ## Key Rules
 
-- **Never delete the user's source files** — only modify to fix errors
+- **Never modify or delete the user's source files during compilation**
 - **Keep compile.log** — useful for debugging
 - **Don't suppress warnings** — report them, let the user decide
-- **If LaTeX is not installed**, provide clear installation instructions rather than failing silently
+- **If LaTeX is not installed**, report the missing dependency and stop
 - **Font embedding is critical** — some venues reject PDFs with non-embedded fonts
 - **Page count rules differ by venue** — ML conferences: main body to Conclusion (refs excluded). **IEEE venues: total pages including references.**
 

@@ -17,7 +17,8 @@ This skill provides Feishu/Lark integration for ARIS. It is designed as an **int
 
 ## Configuration
 
-The skill reads `~/.claude/feishu.json`. If this file does not exist, **all Feishu functionality is disabled** — skills behave exactly as before.
+The skill reads `~/.claude/feishu.json`. If this file does not exist, **all
+Feishu functionality is disabled** and no notification is sent.
 
 ### Config Format
 
@@ -107,14 +108,17 @@ Interactive mode uses [feishu-claude-code](https://github.com/joewongjc/feishu-c
 
    Returns: `{"reply": "approve"}` or `{"reply": "reject"}` or `{"reply": "user typed message"}` or `{"timeout": true}`
 
-3. **On timeout**: Fall back to `AUTO_PROCEED` behavior (proceed with default option).
+3. **On timeout**: continue with the configured `AUTO_PROCEED` behavior
+   (proceed with the default option).
 
 4. **Return the user's reply** to the calling skill so it can act on it.
 
 ### Step 4: Verify Delivery
 
 - **Push mode**: Check curl exit code. If non-zero, log warning but do NOT block the workflow.
-- **Interactive mode**: If bridge is unreachable, fall back to push mode (if webhook configured) or skip silently.
+- **Interactive mode**: If the bridge is unreachable, log the notification
+  failure and continue the workflow. Do not switch to another notification
+  mode.
 
 ## Helper Function (for other skills)
 

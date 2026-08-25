@@ -24,7 +24,7 @@ Unlike posters (single page, visual-first), slides tell a **temporal story**: ea
 - **SPEAKER_NOTES = true** — Generate `\note{}` blocks in beamer and corresponding PPTX notes. Set `false` for clean slides without notes.
 - **PAPER_DIR = `paper/`** — Directory containing the compiled paper.
 - **OUTPUT_DIR = `slides/`** — Output directory for all slide files.
-- **REVIEWER_MODEL = `gpt-5.5`** — Model used via Codex MCP for slide review.
+- **REVIEWER_MODEL = `gpt-5.5`** — Model used by the Paseo codex reviewer for slide review.
 - **AUTO_PROCEED = false** — At each checkpoint, **always wait for explicit user confirmation**.
 - **COMPILER = `latexmk`** — LaTeX build tool.
 - **ENGINE = `pdflatex`** — LaTeX engine. Use `xelatex` for CJK text.
@@ -33,7 +33,7 @@ Unlike posters (single page, visual-first), slides tell a **temporal story**: ea
 
 ## Optional: Style reference (`— style-ref: <source>`, opt-in)
 
-Lets the user steer the talk's **structural** rhythm (story beats, theorem density, figure density inherited from the source paper) toward a reference paper. **Default OFF — when the user does not pass `— style-ref`, do nothing differently from before.**
+Lets the user steer the talk's **structural** rhythm (story beats, theorem density, figure density inherited from the source paper) toward a reference paper. **Default OFF — the normal slide path does not read a style reference.**
 
 Only when `— style-ref: <source>` appears in `$ARGUMENTS`, run the helper FIRST:
 
@@ -55,7 +55,7 @@ STYLE_STATUS=0
 CACHE=$(node "$STYLE_HELPER" --source "<source>") || STYLE_STATUS=$?
 case "$STYLE_STATUS" in
   0) ;;                                       # use $CACHE/style_profile.md as structural guidance
-  2) echo "warning: style-ref skipped (missing optional dep)" >&2 ;;
+  2) echo "error: --style-ref requires the optional dependency; aborting slides" >&2 ; exit 1 ;;
   3) echo "error: --style-ref source failed; aborting slides" >&2 ; exit 1 ;;
   *) echo "error: helper failed unexpectedly; aborting slides" >&2 ; exit 1 ;;
 esac
@@ -344,11 +344,9 @@ ln -sf ../paper/figures/*.png slides/figures/ 2>/dev/null
 cd slides && latexmk -$ENGINE -interaction=nonstopmode main.tex
 ```
 
-**Error handling loop** (max 3 attempts):
-
-1. Parse error log
-2. Fix: missing package, undefined command, file not found, overfull boxes
-3. Recompile
+If compilation exits non-zero, keep the error log, report the first actionable
+error, and stop. Do not change the engine or recompile in this invocation.
+Fix the source or environment, then start a new `/paper-slides` invocation.
 
 **Verification**:
 
@@ -361,7 +359,7 @@ If page count differs significantly from outline (>2 slides off), investigate.
 
 **State**: Write `SLIDES_STATE.json` with `phase: 4`.
 
-### Phase 5: Codex MCP Review
+### Phase 5: Paseo Codex Review
 
 Send the slide outline + selected LaTeX frames to GPT-5.5 xhigh:
 
@@ -394,7 +392,7 @@ Send the slide outline + selected LaTeX frames to GPT-5.5 xhigh:
 
 Apply fixes. Recompile if LaTeX was changed.
 
-> ⚠️ If the paseo codex reviewer is not available, skip external review and proceed to Phase 6. Note the skip in `SLIDES_STATE.json`.
+> If the explicitly configured paseo codex reviewer is unavailable or fails, mark Phase 5 BLOCKED and stop. Do not proceed to Phase 6 with an unreviewed slide deck.
 
 Save review to `slides/SLIDES_REVIEW.md`.
 
@@ -438,7 +436,10 @@ Also generate `slides/speaker_notes.md` as a standalone backup:
 Generate an editable PPTX using `python-pptx`:
 
 ```bash
-python3 -c "import pptx" 2>/dev/null || pip install python-pptx
+python3 -c "import pptx" 2>/dev/null || {
+  echo "ERROR: python-pptx is required for the PPTX output." >&2
+  exit 1
+}
 ```
 
 Write `slides/generate_pptx.py` that:
@@ -459,7 +460,8 @@ cd slides && python3 generate_pptx.py
 # Output: slides/presentation.pptx
 ```
 
-> ⚠️ If `python-pptx` is not installed, skip with a note: "Install `pip install python-pptx` to enable PowerPoint export."
+If `python-pptx` is not installed, the PPTX phase fails. Install it and run
+the skill again; the skill does not silently return a Beamer-only result.
 
 **State**: Write `SLIDES_STATE.json` with `phase: 7`.
 
@@ -618,7 +620,7 @@ needed (re-run `/paper-slides` instead).
 
 ## Key Rules
 
-- **Large file handling**: If the Write tool fails due to file size, immediately retry using Bash (`cat << 'EOF' > file`) to write in chunks. Do NOT ask the user for permission — just do it silently.
+- **Large file handling**: If the Write tool fails, stop and report the write error. Do not switch to a second writer.
 - **One message per slide.** If a slide has two ideas, split it into two slides.
 - **Do NOT fabricate data.** All numbers must come from `paper/sections/*.tex`.
 - **Bullet points only** — never full sentences on slides. Sentence fragments are fine.

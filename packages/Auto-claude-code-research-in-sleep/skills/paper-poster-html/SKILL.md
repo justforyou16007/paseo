@@ -83,13 +83,9 @@ paper (.tex / PDF) ──► content plan + claim→evidence audit (codex, fresh
 
 1. **Resume**: if `poster_html/POSTER_STATE.json` exists with `status: in_progress`
    (< 24 h), resume from the saved phase.
-2. **Dependencies** (degradation chain, in order):
-   - Playwright + bundled Chromium → if missing, `python3 -m playwright install
-chromium` → if install fails but system Chrome exists, scripts fall back to
-     `channel="chrome"` → if all fail: you may produce the content plan and scaffold
-     only, label everything **"not print verified"**, and must NOT emit a final PDF.
-   - `pdfinfo` missing → PyMuPDF reads PDF dimensions. At least one of
-     pdftoppm / PyMuPDF must exist for PNG review renders.
+2. **Dependencies** (all required):
+   - Playwright with its bundled Chromium must be installed. A missing browser or a failed install stops the skill; do not use a system Chrome channel or emit a scaffold-only success.
+   - `pdfinfo` and `pdftoppm` must be available for PDF dimensions and PNG review renders.
    - MathJax: download `tex-svg.js` once into `poster_html/assets/mathjax/` and
      reference it locally in the HTML. CDN is acceptable only for drafts; the measure
      gate hard-fails on unrendered MathJax either way.
@@ -265,7 +261,7 @@ unresolved waivers, codex verdict. Update `POSTER_STATE.json` → `done`.
 
 ## State persistence
 
-`poster_html/POSTER_STATE.json`: `{phase, venue, canvas{w,h,orientation,source_url,
+`poster_html/POSTER_STATE.json`: `{phase, venue, canvas{width_cm,height_cm,orientation,source_url,
 retrieved}, template, token_pack, design_decisions{...}, figures_selected[],
 visual_rounds, codex_threads{audit, final}, status, timestamp}` — written after every
 phase; enables compact-recovery resume.

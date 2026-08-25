@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""ARIS-Monitor: headless terminal ticker (fallback UI).
+"""ARIS-Monitor: explicit headless terminal monitor.
 
-If Tkinter is unavailable (a minimal custom Python lacking the Tk module),
-this prints the SAME 3-bucket triage to stdout on the SAME ~2s loop, driven by
-the IDENTICAL read-only scanner.py -- zero new dependencies, zero detection
-changes.
+This prints the same 3-bucket triage to stdout on the same ~2s loop, driven by
+the identical read-only scanner.py. It is selected explicitly with
+``run.sh --ticker``.
+
+A scan error is shown by the process and stops the ticker; an error is never
+rendered as an empty machine.
 
 STRICTLY READ-ONLY: it only reads files via scanner.scan(). It NEVER writes,
 kills, signals, spawns, polls processes, runs subprocess, or touches the
@@ -68,10 +70,7 @@ def _render_once() -> None:
 def main() -> None:
     try:
         while True:
-            try:
-                _render_once()
-            except Exception:
-                pass  # a bad scan must never kill the ticker
+            _render_once()
             time.sleep(REFRESH_S)
     except KeyboardInterrupt:
         print()

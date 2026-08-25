@@ -1,6 +1,6 @@
 ---
 name: result-to-claim
-description: Use when experiments complete to judge what claims the results support, what they don't, and what evidence is still missing. Codex MCP evaluates results against intended claims and routes to next action (pivot, supplement, or confirm). Use after experiments finish — before writing the paper or running ablations.
+description: Use when experiments complete to judge what claims the results support, what they don't, and what evidence is still missing. The Paseo codex reviewer evaluates results against intended claims and records the required next action for an explicit user decision. Use after experiments finish — before writing the paper or running ablations.
 argument-hint: [experiment-description-or-wandb-run]
 allowed-tools: Bash(*), Read, Grep, Glob, Write, Edit, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent
 
@@ -60,51 +60,44 @@ the jury runs (see [`shared-references/evidence-precheck.md`](../shared-referenc
 file/glob relative to the project root; `value` is the cited number or string).
 
 **2. Run the pre-check — this is a real step, not a suggestion.** Execute the block
-below (resolver per integration-contract §2, **Policy B**: warn-and-skip if the helper
-is unresolved — never block the audit):
+below. The helper is required; an unresolved or failed helper blocks claim
+generation.
 
 ```bash
-# Policy B = warn-and-skip: nothing here may abort the audit. cd is non-fatal, the
-# helper run is explicitly non-blocking, no pipefail-fragile pipe.
+# The helper is load-bearing. Its absence or failure blocks this phase.
 _pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
-cd "${_pr:-$(pwd)}" 2>/dev/null || true
+cd "${_pr:-$(pwd)}" || exit 1
 EVIDENCE_CHECK=".aris/dist/tools/evidence-check.js"
 [ -f "$EVIDENCE_CHECK" ] || EVIDENCE_CHECK="dist/tools/evidence-check.js"
-[ -f "$EVIDENCE_CHECK" ] || EVIDENCE_CHECK=""
+[ -f "$EVIDENCE_CHECK" ] || {
+  echo "ERROR: evidence-check.js is required for claim generation." >&2
+  exit 1
+}
 
 mkdir -p .aris
-if [ -n "$EVIDENCE_CHECK" ]; then
-    # NB: evidence_check exits 1 when it FINDS hallucinated evidence (value_not_found /
-    # path_missing) — that is the useful signal, NOT a failure. So judge success by
-    # whether valid JSON was produced, never by exit code. `|| true` keeps set -e calm.
-    node "$EVIDENCE_CHECK" . --batch .aris/claims.json > .aris/evidence_precheck.json 2>.aris/evidence_precheck.err || true
-    if [ -s .aris/evidence_precheck.json ] && python3 -c "import json,sys;json.load(open('.aris/evidence_precheck.json'))" 2>/dev/null; then
-        cat .aris/evidence_precheck.json
-    else
-        echo "WARN: evidence_check produced no valid output (see .aris/evidence_precheck.err);" >&2
-        echo "      pre-check skipped (Policy B); the Codex jury still runs." >&2
-    fi
-else
-    echo "WARN: evidence-check.js not resolved at .aris/dist/tools/ or dist/tools/." >&2
-    echo "      Pre-check skipped (Policy B); the Codex jury still runs." >&2
-    echo "      Fix: run /aris-update to refresh the project runtime." >&2
-fi
+node "$EVIDENCE_CHECK" . --batch .aris/claims.json > .aris/evidence_precheck.json 2>.aris/evidence_precheck.err || {
+  echo "ERROR: evidence-check.js failed; claim generation is blocked." >&2
+  exit 1
+}
+python3 -c "import json;json.load(open('.aris/evidence_precheck.json'))" || {
+  echo "ERROR: evidence-check.js produced invalid JSON." >&2
+  exit 1
+}
+cat .aris/evidence_precheck.json
 ```
 
 The output is `{"results": [{id, value, source, status, ...}], "summary": {status: n}}`
-with `status ∈ {verified, value_not_found, path_missing, unparseable}`.
+with `status ∈ {verified, value_not_found, path_missing, source_unreadable, unparseable}`.
 
-**3. Act on the statuses.** Any claim returned `value_not_found` or `path_missing` is
-**hallucinated evidence** — mark it `claim_supported: no` with
-`integrity_status: evidence_not_found` immediately; do NOT spend a Codex call defending a
-number that isn't in the data. `unparseable` claims (no usable value/source) just go to
-the jury normally.
+**3. Act on the statuses.** Any claim returned `value_not_found`, `path_missing`,
+`source_unreadable`, or `unparseable` blocks claim generation. Record the
+failed pre-check and fix `.aris/claims.json`; do not spend a Codex call
+defending a number that cannot be tied to readable evidence.
 
 **4. Carry the per-claim status into Step 2.** Feed a small
-`evidence pre-check: <id> → verified | value_not_found | path_missing | unparseable`
+`evidence pre-check: <id> → verified | value_not_found | path_missing | source_unreadable | unparseable`
 table (from `.aris/evidence_precheck.json`) into the Step-2 Codex prompt so the jury knows
-which claims have real evidence to read. If the pre-check was skipped (helper unresolved),
-say so in that slot rather than omitting it.
+which claims have real evidence to read.
 
 `verified` here means only that the cited evidence **exists** — whether it
 **supports** the claim is still the Codex jury's call in Step 2 (a deterministic
@@ -112,7 +105,7 @@ gate DRIVES, it does not ACQUIT).
 
 ### Step 2: Codex Judgment
 
-Spawn a paseo codex reviewer sub-agent (fresh) per `shared-references/paseo-reviewer-dispatch.md` to evaluate the results objectively. Round 1 is fresh; any follow-up (re-judge after supplementary experiments) continues the same paseo codex reviewer sub-agent (`send_agent_prompt`) per `paseo-reviewer-dispatch.md` (same agent-id; the persisted `threadId` field name is unchanged but now holds that codex agent-id).
+Spawn a paseo codex reviewer sub-agent (fresh) per `shared-references/paseo-reviewer-dispatch.md` to evaluate the results objectively. A new invocation after user-requested experiments starts a fresh review; this skill does not automatically launch a supplementary round.
 
 ```
   config: {"model_reasoning_effort": "xhigh"}
@@ -171,7 +164,8 @@ Extract structured fields from Codex response:
 
 ### Step 3.5: Check Experiment Integrity (if audit exists)
 
-**Skip this step if `EXPERIMENT_AUDIT.json` does not exist.**
+The experiment audit is required when the project enables experiment-integrity
+checking. A missing requested audit blocks claim generation.
 
 ```
 if EXPERIMENT_AUDIT.json exists:
@@ -179,16 +173,12 @@ if EXPERIMENT_AUDIT.json exists:
     attach to verdict output:
         integrity_status: pass | warn | fail
 
-    if integrity_status == "fail":
-        append to verdict: "[INTEGRITY CONCERN] — audit found issues, see EXPERIMENT_AUDIT.md"
-        downgrade confidence to "low" regardless of Codex judgment
-
-    if integrity_status == "warn":
-        append to verdict: "[INTEGRITY: WARN] — audit flagged potential issues"
+    if integrity_status in {"warn", "fail"}:
+        append to the failed receipt: "experiment audit did not PASS; see EXPERIMENT_AUDIT.md"
+        stop claim generation. Do not lower confidence and continue with a
+        claim that depends on an unresolved integrity result.
 else:
-    integrity_status = "unavailable"
-    verdict is labeled "provisional — no integrity audit run"
-    (this does NOT block anything — pipeline continues normally)
+    fail the claim phase with a missing-audit receipt
 ```
 
 See `shared-references/experiment-integrity.md` for the full integrity protocol.
@@ -201,16 +191,16 @@ See `shared-references/experiment-integrity.md` for the full integrity protocol.
    - What was tested, what failed, hypotheses for why
    - Constraints for future attempts (what NOT to try again)
 2. Update CLAUDE.md Pipeline Status
-3. Decide whether to pivot to next idea from IDEA_CANDIDATES.md or try an alternative approach
+3. Record that the claim is unsupported and stop this stage. A pivot or new approach requires an explicit new invocation; do not select one automatically.
 
 #### `partial` — Claim partially supported
 
 1. Update the working claim to reflect what IS supported
 2. Record the gap in findings.md — Step 5 also files it as an open `problem`
    entity so the next iteration's idea discovery reads it as a search seed
-3. Design and run supplementary experiments to fill evidence gaps
-4. Re-run result-to-claim after supplementary experiments complete
-5. **Multiple rounds of `partial` on the same claim** → record analysis in findings.md, consider whether to narrow the claim scope or switch ideas
+3. Record the required supplementary experiments as a proposal and stop this stage
+4. Run a new `/result-to-claim` invocation only after the user explicitly requests those experiments
+5. **Multiple rounds of `partial` on the same claim** → record analysis in findings.md; the user decides whether to narrow the claim scope or switch ideas
 
 #### `yes` — Claim supported
 
@@ -225,9 +215,9 @@ See `shared-references/experiment-integrity.md` for the full integrity protocol.
 If `research-wiki/` exists, resolve `$WIKI_SCRIPT` per the canonical
 chain documented in
 [`shared-references/wiki-helper-resolution.md`](../shared-references/wiki-helper-resolution.md)
-(Variant B — warn-and-skip for caller skills). The verdict / idea-outcome
-page edits below run on raw markdown and don't need the helper, but edges,
-problem entities, query-pack rebuild, and the log line do. **This skill never
+(The helper is required when `research-wiki/` exists.) The verdict / idea-outcome
+page edits below run on raw markdown, but edges, problem entities, query-pack
+rebuild, and the log line must still succeed. **This skill never
 edits a claim's `status` field and never creates a claim node** — claims are
 born (and their proof `status` set) by `/proof-checker`; here we only attach
 experiment edges. It IS a birth point for `problem` entities: an unresolved
@@ -240,45 +230,45 @@ cd "${_pr:-$(pwd)}" || exit 1
 WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
 [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
 [ -f "$WIKI_SCRIPT" ] || {
-  echo "WARN: research-wiki.js not found; verdict will be reported but wiki edges/query-pack/log will be skipped. Fix: run /aris-update to refresh the project runtime." >&2
-  WIKI_SCRIPT=""
+  echo "ERROR: research-wiki.js is required for claim integration." >&2
+  exit 1
 }
 ```
 
 ```
 if research-wiki/ exists:
+    # Placeholder values → the caller must pin these; when dispatched from
+    # /auto-review-loop's termination step they arrive in the dispatch prompt:
+    #   <active_idea> = the idea's canonical node id EXACTLY as carried by
+    #     dashboard.best_idea.id / manifest.context.chosen_idea_id (already idea:<slug>).
+    #     Pass it through verbatim → add_experiment adds the idea: prefix only when
+    #     missing, so pre-pending one here produces idea:idea:<slug> and a dangling edge.
+    #   <exp_id> = the stable slug of the experiment being judged. From
+    #     /auto-review-loop it is iter-<iteration> (one experiment node per loop
+    #     iteration); standalone runs use the experiment's own slug from the tracker.
+    #
     # 1. Create/refresh the experiment node FIRST (verdict OWNER → --update-on-exist so
     #    a re-judge overwrites the stale verdict). The supports/invalidates edges in #2
-    #    point FROM exp:<id>, and add_edge does NOT verify node existence — so GATE those
-    #    edges on the experiment node having been born (EXP_NODE_OK), else they'd dangle
-    #    (the exact bug this closes). On failure: warn, skip the wiki edges, still report.
-    EXP_NODE_OK=0
-    if [ -n "$WIKI_SCRIPT" ]; then
-      if node "$WIKI_SCRIPT" add_experiment research-wiki/ \
-           --slug "<exp_id>" --idea "idea:<active_idea>" \
-           --verdict "<yes|partial|no>" --confidence "<high|medium|low>" \
-           --date "<date>" --hardware "<hw>" --duration "<dur>" \
-           --metrics "<key metrics>" --reasoning "<one-line why this verdict>" \
-           --provenance "<EXPERIMENT_AUDIT.md / run dir>" --update-on-exist; then
-        EXP_NODE_OK=1   # page written + idea--tested_by-->exp edge + index/query_pack rebuilt
-      else
-        echo "WARN: add_experiment failed for <exp_id>; skipping wiki edges (verdict still reported)." >&2
-      fi
-    fi
+    #    point FROM exp:<id>, so this operation must succeed before edges are written.
+    node "$WIKI_SCRIPT" add_experiment research-wiki/ \
+      --slug "<exp_id>" --idea "<active_idea>" \
+      --verdict "<yes|partial|no>" --confidence "<high|medium|low>" \
+      --date "<date>" --hardware "<hw>" --duration "<dur>" \
+      --metrics "<key metrics>" --reasoning "<one-line why this verdict>" \
+      --provenance "<EXPERIMENT_AUDIT.md / run dir>" --update-on-exist || exit 1
 
-    # 2. Record empirical support as EDGES ONLY — and ONLY when the exp node was born
-    #    ([ "$EXP_NODE_OK" = 1 ]), so no edge dangles off a missing node. Never edit the
+    # 2. Record empirical support as EDGES ONLY. Never edit the
     #    claim page's `status`: that is the PROOF axis (verified / refuted / unproven /
     #    sound-modulo-imports / drafted / retracted), owned by /proof-checker (the claim
     #    birth point) — "supported"/"invalidated" are NOT valid claim statuses. The claim
     #    target should ALREADY be born by /proof-checker; add_edge does not verify it.
-    for each claim resolved by this verdict (only if [ "$EXP_NODE_OK" = 1 ]):
+    for each claim resolved by this verdict:
         if verdict == "yes":
-            node "$WIKI_SCRIPT" add_edge research-wiki/ --from "exp:<id>" --to "claim:<cid>" --type supports --evidence "<metric>"
+            node "$WIKI_SCRIPT" add_edge research-wiki/ --from "exp:<id>" --to "claim:<cid>" --type supports --evidence "<metric>" || exit 1
         elif verdict == "partial":
-            node "$WIKI_SCRIPT" add_edge research-wiki/ --from "exp:<id>" --to "claim:<cid>" --type supports --evidence "partial: <metric>"
+            node "$WIKI_SCRIPT" add_edge research-wiki/ --from "exp:<id>" --to "claim:<cid>" --type supports --evidence "partial: <metric>" || exit 1
         else:
-            node "$WIKI_SCRIPT" add_edge research-wiki/ --from "exp:<id>" --to "claim:<cid>" --type invalidates --evidence "<why>"
+            node "$WIKI_SCRIPT" add_edge research-wiki/ --from "exp:<id>" --to "claim:<cid>" --type invalidates --evidence "<why>" || exit 1
 
     # 3. Update idea outcome (raw markdown, helper-free)
     Update research-wiki/ideas/<idea_id>.md:
@@ -291,8 +281,7 @@ if research-wiki/ exists:
     #    Phase 0 read of query_pack's "Open Problems" section picks them up next round.
     #    Every problem is born here or at /research-setup (root) or /kill-argument
     #    (attack-derived) — never freehand markdown.
-    if [ -n "$WIKI_SCRIPT" ]; then
-      if verdict == "partial" or verdict == "no":
+    if verdict == "partial" or verdict == "no":
           # one call per distinct unresolved cause named in the Codex reasoning /
           # missing_evidence / next_experiments_needed fields (do NOT emit one per metric)
           node "$WIKI_SCRIPT" add_problem research-wiki/ \
@@ -304,20 +293,28 @@ if research-wiki/ exists:
             --evidence "<evidence paths + the concrete values that show the failure>" \
             --what-would-solve "<the measurable result that would close or refute this>" \
             --caveats "<confounders; what NOT to conclude from this run>" \
-            || echo "WARN: add_problem failed for <slug> (continuing)" >&2
+            || exit 1
       elif verdict == "yes":
-          # close only the problems this experiment's evidence actually settles;
-          # --update-on-exist is required to move an existing page's status
-          for each problem id in idea page's `target_problems`:
+          # Close ONLY the problems whose what-would-solve condition THIS experiment's
+          # evidence actually meets (per the Codex judgment's what_results_support),
+          # NEVER every target problem by default.
+          # problem:root is NEVER closed here: it is the run-level metric gap, and a
+          # supported claim is not a met target (iteration 1 reproducing the baseline
+          # is a yes verdict with the metric still below target). Root is closed once
+          # per run by the summary worker, after the metric gate reports metric_met.
+          for each problem id in idea page's `target_problems` where the Codex
+          judgment names its closing condition as met, EXCLUDING problem:root:
               node "$WIKI_SCRIPT" add_problem research-wiki/ \
-                --slug "<slug>" --title "<unchanged title>" --status solved \
+                --slug "<slug>" --status solved \
                 --evidence "<closing evidence path + value>" --update-on-exist \
-                || echo "WARN: could not close problem:<slug> (continuing)" >&2
-    fi
+                || exit 1
+                # title/statement/origin/what-would-solve/caveats/severity/parent are
+                # NOT passed on close: add_problem's update path preserves them from
+                # the existing page, so closing never rewrites history.
 
-    # 5. Rebuild + log (only if $WIKI_SCRIPT resolved)
-    [ -n "$WIKI_SCRIPT" ] && node "$WIKI_SCRIPT" rebuild_query_pack research-wiki/
-    [ -n "$WIKI_SCRIPT" ] && node "$WIKI_SCRIPT" log research-wiki/ "result-to-claim: exp:<id> verdict=<verdict> for idea:<idea_id>"
+    # 5. Rebuild + log
+    node "$WIKI_SCRIPT" rebuild_query_pack research-wiki/ || exit 1
+    node "$WIKI_SCRIPT" log research-wiki/ "result-to-claim: exp:<id> verdict=<verdict> for idea:<idea_id>" || exit 1
 
     # 6. Re-ideation suggestion
     Count failed/partial ideas since last /idea-creator run.
@@ -330,9 +327,14 @@ if research-wiki/ exists:
 - Do not inflate claims beyond what the data supports. If Codex says "partial", do not round up to "yes".
 - A single positive result on one dataset does not support a general claim. Be honest about scope.
 - If `confidence` is low, treat the judgment as inconclusive and add experiments rather than committing to a claim.
-- If Codex MCP is unavailable (call fails), CC makes its own judgment and marks it `[pending Codex review]` — do not block the pipeline.
+- If the selected Codex reviewer is unavailable or its call fails, write a
+  failed receipt. CC must not replace the independent judgment.
 - Always record the verdict and reasoning in findings.md, regardless of outcome.
 
 ## Review Tracing
 
-After each paseo codex reviewer sub-agent call (fresh `create_agent`, continuation `send_agent_prompt`), save the trace following `shared-references/review-tracing.md` (Policy C — forensic; never silently skip). Use `save_trace.sh` (resolved per the chain in `shared-references/integration-contract.md` §2) or write files directly to `.aris/traces/<skill>/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).
+After each paseo codex reviewer sub-agent call (fresh `create_agent`,
+continuation `send_agent_prompt`), save the trace with the required
+`save_trace.sh` helper from `shared-references/review-tracing.md`. If the
+helper is missing or fails, fail the claim phase; do not write a second trace
+format inline.

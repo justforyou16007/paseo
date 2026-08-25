@@ -48,85 +48,15 @@ Copy-Item -Path "C:\path\to\Auto-claude-code-research-in-sleep\skills\*" -Destin
 
 After installation, simply describe your needs in natural language within the corresponding scope to trigger the relevant skill.
 
-### 2.2 Configure Codex reviewer MCP (recommended)
+### 2.2 Connect Paseo MCP (required for workflow skills)
 
-ARIS relies on an executor model + external reviewer model. Configure reviewer MCP first, then run workflows.
+ARIS workflow skills use Paseo parent-child agents for delegated phases and
+cross-model review. Connect the current Paseo MCP integration in Trae and
+verify `mcp__paseo__list_agents`, `mcp__paseo__create_agent`, and
+`mcp__paseo__send_agent_prompt`.
 
-1. Install and authenticate Codex CLI
-
-```powershell
-npm install -g @openai/codex
-codex login
-```
-
-2. Configure MCP in Trae  
-   Go to `Settings → MCP → Manual Add`, then add:
-
-- Name: `codex`
-- Command: `codex`
-- Args: `mcp-server`
-
-If your Trae version supports workspace MCP config files, use:
-
-```json
-{
-  "mcpServers": {
-    "codex": {
-      "command": "codex",
-      "args": ["mcp-server"]
-    }
-  }
-}
-```
-
-3. Restart Trae and verify
-
-- `codex` shows online in MCP panel.
-- Running review-enabled skills shows review/score/feedback outputs.
-
-### 2.3 Alternative reviewer MCP (without OpenAI API)
-
-You can use `llm-chat` with OpenAI-compatible providers such as DeepSeek/GLM/MiniMax/Kimi.
-
-1. Create virtual environment and install dependencies
-
-```powershell
-cd D:\path\to\Auto-claude-code-research-in-sleep
-python -m venv .venv
-.\.venv\Scripts\pip install -r mcp-servers\llm-chat\requirements.txt
-```
-
-2. Configure MCP (absolute paths required)
-
-```json
-{
-  "mcpServers": {
-    "llm-chat": {
-      "command": "/path/to/Auto-claude-code-research-in-sleep/.venv/Scripts/python.exe",
-      "args": ["/path/to/Auto-claude-code-research-in-sleep/mcp-servers/llm-chat/server.py"],
-      "env": {
-        "LLM_BASE_URL": "https://api.deepseek.com/v1",
-        "LLM_API_KEY": "your_key",
-        "LLM_MODEL": "deepseek-chat"
-      }
-    }
-  }
-}
-```
-
-3. Must-check items
-
-- `command` points to venv Python.
-- `args` points to `server.py` with an absolute path.
-- `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` are all set.
-- Restart Trae and verify MCP online status.
-
-4. If MCP is red/offline
-
-- Check path typos.
-- Check dependencies are installed in that venv.
-- Check `llm-chat-mcp-debug.log` in system temp directory.
-- If DeepSeek auth fails, verify API key and base URL first.
+If Paseo MCP is unavailable, the workflow is blocked. Do not replace it with a
+provider-native sub-agent, a direct model call, or in-process skill execution.
 
 ## 3. How to Invoke Skills in Trae
 
@@ -226,10 +156,8 @@ Use run-experiment skill to deploy to GPU.
 Use auto-review-loop skill.
 Run auto review loop for "your paper topic".
 Read project narrative docs, memory files, and experiment results.
-Use MCP tool mcp__codex__codex for external review.
+Use the configured Paseo reviewer child for external review.
 ```
-
-> **Note:** If using `llm-chat` MCP, replace `mcp__codex__codex` with `mcp__llm-chat__chat`. Or use the adapted skill: `auto-review-loop-llm`.
 
 ### Workflow 3: Paper Writing
 
@@ -266,11 +194,11 @@ Each stage reads output files from the previous stage, so context can be passed 
 
 ## 5. MCP Tool Calls Mapping
 
-| ARIS MCP tool             | Purpose                                 | Required MCP server |
-| ------------------------- | --------------------------------------- | ------------------- |
-| `mcp__codex__codex`       | Send review prompt to GPT-5.5           | codex               |
-| `mcp__codex__codex-reply` | Continue review thread                  | codex               |
-| `mcp__llm-chat__chat`     | Send prompt to OpenAI-compatible models | llm-chat            |
+| ARIS MCP tool                   | Purpose                           | Required MCP server |
+| ------------------------------- | --------------------------------- | ------------------- |
+| `mcp__paseo__create_agent`      | Start a workflow or reviewer child | Paseo              |
+| `mcp__paseo__send_agent_prompt` | Continue the same child            | Paseo              |
+| `mcp__paseo__list_agents`       | Check child state and availability | Paseo              |
 
 ## 6. State Files and Recovery
 
@@ -338,5 +266,5 @@ Use run-experiment skill. Deploy: python train.py --lr 1e-4 --epochs 100
 - [ ] Import ARIS skills' SKILL.md files
 - [ ] Configure MCP server in `Settings → MCP`
 - [ ] Use natural language to describe needs and trigger skills
-- [ ] Verify MCP tools are available (codex or llm-chat)
+- [ ] Verify the Paseo MCP lifecycle tools are available
 - [ ] Quick test: `Use research-review skill to review my project`

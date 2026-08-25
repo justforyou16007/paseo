@@ -12,12 +12,12 @@ Save full prompt/response pairs for every cross-model reviewer call, enabling:
 
 After **every** cross-model reviewer call that serves a reviewer/critique function — the reviewer is a **paseo codex sub-agent** (`create_agent` fresh / `send_agent_prompt` continuation, per [`paseo-reviewer-dispatch.md`](paseo-reviewer-dispatch.md)). This includes review scoring, experiment auditing, claim verification, idea critique, and patch gating.
 
-Do NOT trace: purely informational LLM calls (e.g., `codex exec` for code generation that is not a review).
+Do NOT trace purely informational model calls that do not produce a review or
+quality verdict.
 
-> **Paseo note.** On the paseo substrate,
-> `--thread-id` holds the **paseo codex agent-id** (returned by `create_agent`
-> or read from `REVIEW_STATE.json`'s `threadId` field, which now holds an
-> agent-id). The trace's `request.json` `tool` field is `paseo:create_agent`
+> **Paseo note.** `--thread-id` holds the **paseo codex agent-id** returned by
+> `create_agent` or stored in `REVIEW_STATE.json`'s `threadId` field. The
+> trace's `request.json` `tool` field is `paseo:create_agent`
 > (fresh) or `paseo:send_agent_prompt` (continuation). `save_trace.sh` treats
 > `--thread-id` as an opaque string, so the helper needs no change.
 
@@ -39,9 +39,10 @@ Do NOT trace: purely informational LLM calls (e.g., `codex exec` for code genera
 
 ## How to Trace
 
-After each reviewer MCP call, save the trace using `save_trace.sh`,
-resolved through the canonical helper chain (see
-`integration-contract.md` §2 — failure policy C, "forensic helper").
+After each reviewer MCP call, save the trace using `save_trace.sh`, resolved
+through the canonical helper chain in `integration-contract.md` §2. The
+helper is required whenever tracing is enabled. If it is missing or fails,
+stop the review gate; do not create a second writer or silently continue.
 The full invocation:
 
 ```bash
@@ -50,43 +51,24 @@ _pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" !
 cd "${_pr:-$(pwd)}" || exit 1
 TRACE_HELPER=".aris/tools/save_trace.sh"
 [ -f "$TRACE_HELPER" ] || TRACE_HELPER="tools/save_trace.sh"
-[ -f "$TRACE_HELPER" ] || TRACE_HELPER=""
-
-if [ -n "$TRACE_HELPER" ]; then
-  if ! bash "$TRACE_HELPER" \
-    --skill "<skill-name>" \
-    --purpose "<purpose>" \
-    --model "<model>" \
-    --thread-id "<threadId from response>" \
-    --prompt "<full prompt as sent>" \
-    --response "<full response content>"; then
-    echo "ERROR: resolved save_trace.sh failed; trace was not saved." >&2
+[ -f "$TRACE_HELPER" ] || {
+  echo "ERROR: save_trace.sh is required for reviewer tracing" >&2
+  exit 1
+}
+bash "$TRACE_HELPER" \
+  --skill "<skill-name>" \
+  --purpose "<purpose>" \
+  --model "<model>" \
+  --thread-id "<threadId from response>" \
+  --prompt "<full prompt as sent>" \
+  --response "<full response content>" || {
+    echo "ERROR: save_trace.sh failed; trace was not saved." >&2
     exit 1
-  fi
-else
-  # Required fallback: the resolver exhausted both layers and
-  # save_trace.sh is unreachable, but trace artifacts are still
-  # required (unless `--- trace: off` was explicitly set on this
-  # SKILL invocation). Write the four files below directly per the
-  # schemas in "File Schemas", into:
-  #   .aris/traces/<skill-name>/<YYYY-MM-DD>_run<NN>/
-  #     run.meta.json
-  #     <NNN>-<purpose>.request.json
-  #     <NNN>-<purpose>.response.md
-  #     <NNN>-<purpose>.meta.json
-  # Do NOT silently skip — trace_path is load-bearing for any
-  # mandatory audit emitting `trace_path` in its artifact (see
-  # assurance-contract.md §"Required Audit Artifact Schema").
-  echo "WARN: save_trace.sh not resolved; writing trace files directly per review-tracing.md schema." >&2
-fi
+  }
 ```
 
-The helper, when present, handles directory creation, run numbering,
-and file writing. The fallback branch above documents what to do
-when the helper is unreachable — the trace is forensic evidence, so
-"helper missing" never means "skip the trace." A non-zero exit from a
-resolved helper is not an unresolved-helper condition and must not switch
-to Policy C inline fallback; report the helper failure and stop that gate.
+The helper handles directory creation, run numbering, and file writing. A
+missing helper or non-zero exit is a trace failure and stops the gate.
 
 ## File Schemas
 

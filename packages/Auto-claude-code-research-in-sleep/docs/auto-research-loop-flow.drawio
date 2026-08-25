@@ -131,7 +131,7 @@
         <mxCell id="p0-env-fail" value="&lt;b&gt;失败&lt;/b&gt;&lt;br&gt;环境管理器完成但 bundle 仍无效；停止初始化。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;spacing=8;" vertex="1" parent="p0-1">
           <mxGeometry x="1780" y="1190" width="570" height="90" as="geometry" />
         </mxCell>
-        <mxCell id="p0-plan" value="&lt;b&gt;校验 baseline 已锚定&lt;/b&gt;&lt;br&gt;读取 CLAUDE.md ## Metric Target 的 baseline 值（由 /research-setup Phase 7.6 复现并写入）。&lt;br&gt;为空则报错退出：先运行 /research-setup 完成 baseline 复现。循环内不再复现 baseline。" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;spacing=8;" vertex="1" parent="p0-1">
+        <mxCell id="p0-plan" value="&lt;b&gt;校验 baseline 锚点存在&lt;/b&gt;&lt;br&gt;读取 CLAUDE.md ## Metric Target 的 baseline 值（/research-setup 从 prior work 抄写进 brief 的期望锚点，尚未实测）。&lt;br&gt;为空则报错退出：先运行 /research-setup。iteration 1 复现 baseline 后由 Baseline Anchoring 步骤把它刷成实测值。" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;spacing=8;" vertex="1" parent="p0-1">
           <mxGeometry x="650" y="1000" width="1080" height="125" as="geometry" />
         </mxCell>
         <mxCell id="p0-plan-d" value="Metric Target baseline 值非空？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;" vertex="1" parent="p0-1">
@@ -143,7 +143,7 @@
         <mxCell id="p0-freshresume" value="&lt;b&gt;fresh / resume 分支&lt;/b&gt;&lt;br&gt;fresh：生成 run_id，创建 workers/，初始化 dashboard 和 run-state。&lt;br&gt;resume：读取 .aris/runs/&lt;run_id&gt;.json + dashboard.json；按 outer phase 与 current_phase 决定重跑、继续或跳过。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p0-1">
           <mxGeometry x="650" y="1360" width="1080" height="145" as="geometry" />
         </mxCell>
-        <mxCell id="p0-dashboard" value="&lt;b&gt;fresh 的初始化写入&lt;/b&gt;&lt;br&gt;.aris/runs/&lt;run_id&gt;/dashboard.json：run_id、project、status=running、iteration=1、max_iterations、current_phase=init（loop 启动后置为 idea-discovery）；config.auto_write/render_html/patience；metric.name/target/direction/tolerance/baseline（setup 从 prior work 抄的期望锚点，iteration 1 后由 loop 刷成实测值）/current=null/history=[]；best_idea=null；gaps.open/closed/total；last_review.verdict/score/reviewer_id；stop_reason=null；system_errors.total/last；applied_receipts=[]。&lt;br&gt;.aris/runs/&lt;run_id&gt;.json：phases=[init,loop,summary,paper-writing]，每项 status/artifact/verdict_id/reviewer/updated。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;spacing=8;" vertex="1" parent="p0-1">
+        <mxCell id="p0-dashboard" value="&lt;b&gt;fresh 的初始化写入&lt;/b&gt;&lt;br&gt;.aris/runs/&lt;run_id&gt;/dashboard.json：run_id、project、status=running、iteration=1、max_iterations、current_phase=init（loop 启动后置为 idea-discovery）；config.auto_write/render_html/patience；metric.name/target/direction/tolerance/baseline（setup 从 prior work 抄的期望锚点，iteration 1 后由 loop 刷成实测值）/current=null/history=[]；best_idea=null；problems.open/closed/total；last_review.verdict/score/reviewer_id；stop_reason=null；system_errors.total/last；applied_receipts=[]。&lt;br&gt;.aris/runs/&lt;run_id&gt;.json：phases=[init,loop,summary,paper-writing]，每项 status/artifact/verdict_id/reviewer/updated。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;spacing=8;" vertex="1" parent="p0-1">
           <mxGeometry x="650" y="1550" width="1080" height="170" as="geometry" />
         </mxCell>
         <mxCell id="p0-done" value="&lt;b&gt;初始化完成&lt;/b&gt;&lt;br&gt;run-state：init done → accept，verdict_id/reviewer=deterministic:preconditions；loop=running。&lt;br&gt;dashboard.current_phase=idea-discovery；进入 Stage 1。" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;spacing=8;" vertex="1" parent="p0-1">
@@ -294,7 +294,7 @@
         <mxCell id="p1-review-d" value="CODE_REVIEW=true？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;" vertex="1" parent="p1-1">
           <mxGeometry x="930" y="960" width="660" height="130" as="geometry" />
         </mxCell>
-        <mxCell id="p1-review" value="&lt;b&gt;子 skill/agent：Codex code review&lt;/b&gt;&lt;br&gt;读取计划、FINAL_PROPOSAL、实现脚本；检查方法对应关系、超参、loss/data split/eval、真实 ground-truth、OOM/数值稳定/seed。&lt;br&gt;判断：CRITICAL=0 才继续；有 critical → 修复后最多重审 2 轮；create_agent 失败才允许跳过。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;spacing=8;" vertex="1" parent="p1-1">
+        <mxCell id="p1-review" value="&lt;b&gt;子 skill/agent：Codex code review&lt;/b&gt;&lt;br&gt;读取计划、FINAL_PROPOSAL、实现脚本；检查方法对应关系、超参、loss/data split/eval、真实 ground-truth、OOM/数值稳定/seed。&lt;br&gt;判断：CRITICAL=0 才继续；有 critical → 修复后最多重审 2 轮；create_agent 失败 → BLOCKED，不得跳过审查。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;spacing=8;" vertex="1" parent="p1-1">
           <mxGeometry x="1960" y="935" width="590" height="180" as="geometry" />
         </mxCell>
         <mxCell id="p1-sanity" value="&lt;b&gt;3. SANITY_FIRST：调用 /run-experiment&lt;/b&gt;&lt;br&gt;先运行最小 sanity 实验；不能在 bridge 进程内 inline 跑。&lt;br&gt;若 generated skill scripts/ 不存在，先调用 /experiment-env-manager mode=setup；等待 receipt。&lt;br&gt;验证：训练无错误、指标保存、GPU 内存、输出格式。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;spacing=8;" vertex="1" parent="p1-1">
@@ -303,7 +303,7 @@
         <mxCell id="p1-sanity-d" value="sanity 成功？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;" vertex="1" parent="p1-1">
           <mxGeometry x="930" y="1335" width="660" height="130" as="geometry" />
         </mxCell>
-        <mxCell id="p1-debug" value="&lt;b&gt;失败调试&lt;/b&gt;&lt;br&gt;最多 3 次：按 stderr/traceback 分类 OOM、ImportError、路径、CUDA、NaN；修复后重跑；第 2 次起可调用 /codex:rescue；3 次仍失败 → 写 .aris/env-config/&lt;project&gt;/error-reports/&lt;timestamp&gt;.json 并调用 /experiment-env-manager mode=error-report。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;spacing=8;" vertex="1" parent="p1-1">
+        <mxCell id="p1-debug" value="&lt;b&gt;失败调试&lt;/b&gt;&lt;br&gt;最多 3 次：按 stderr/traceback 分类 OOM、ImportError、路径、CUDA、NaN；修复后重跑；3 次仍失败 → 写 .aris/env-config/&lt;project&gt;/error-reports/&lt;timestamp&gt;.json 并调用 /experiment-env-manager mode=error-report。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;spacing=8;" vertex="1" parent="p1-1">
           <mxGeometry x="40" y="1300" width="540" height="190" as="geometry" />
         </mxCell>
         <mxCell id="p1-route" value="&lt;b&gt;4. 按 job 数量路由部署&lt;/b&gt;&lt;br&gt;每个 milestone 依据 plan 的 jobs、multi-seed、phase dependency 判断。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p1-1">
@@ -342,7 +342,7 @@
         <mxCell id="p1-merge" value="&lt;b&gt;主 orchestrator 合并&lt;/b&gt;&lt;br&gt;dashboard-merge.js apply：校验 receipt/input-manifest/iteration/current_phase/允许 patch；原子更新 dashboard.json；更新 metric.history（同 iteration 的 final analyze 会替换 bridge 的初值，不新增重复行）；追加 applied_receipts；若 has_errors 则累加 system_errors。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p1-1">
           <mxGeometry x="650" y="2910" width="1220" height="145" as="geometry" />
         </mxCell>
-        <mxCell id="p1-wiki" value="&lt;b&gt;主 orchestrator 的 canonical wiki 写入&lt;/b&gt;&lt;br&gt;逐条读取 receipt.experiments；调用 research-wiki.js add_experiment research-wiki/。写入实验实体字段：slug、title、idea、verdict、confidence、metrics、reasoning、provenance、tags。主 orchestrator 不读 worker 的 raw MD。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;spacing=8;" vertex="1" parent="p1-1">
+        <mxCell id="p1-wiki" value="&lt;b&gt;主 orchestrator 不写 wiki&lt;/b&gt;&lt;br&gt;receipt.experiments 只做结构校验，merge 不落 wiki。实验节点由 Stage 3 终止时派发的 /result-to-claim Step 5 用 add_experiment 写入（slug、title、idea、verdict、confidence、metrics、reasoning、provenance、tags + tested_by/supports/invalidates 边）。主 orchestrator 不读 worker 的 raw MD。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;spacing=8;" vertex="1" parent="p1-1">
           <mxGeometry x="650" y="3080" width="1220" height="125" as="geometry" />
         </mxCell>
         <mxCell id="p1-end" value="&lt;b&gt;进入 Stage 3&lt;/b&gt;&lt;br&gt;current_phase=auto-review-loop" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" vertex="1" parent="p1-1">
@@ -369,7 +369,7 @@
         <mxCell id="p1-e7" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p1-1" source="p1-review-d" target="p1-review">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="p1-e8" value="否 / spawn 失败" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p1-1" source="p1-review-d" target="p1-sanity">
+        <mxCell id="p1-e8" value="否（未启用审查）" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p1-1" source="p1-review-d" target="p1-sanity">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="p1-e9" value="无 CRITICAL 或修复后通过" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p1-1" source="p1-review" target="p1-sanity">
@@ -491,10 +491,10 @@
         <mxCell id="p2-final-analyze" value="&lt;b&gt;强制子 skill：最终 /analyze-results&lt;/b&gt;&lt;br&gt;写 internal/final-analyze/input-manifest.json：final-inputs、outer experiment_plan/experiment_skill、prior metric history、error_report?、output_dir=final-analysis。等待 receipt；要求 run/iteration 匹配、metric.current 有限；把 metric.current/delta/statistical_significance 原值复制到 auto-review receipt；失败即 worker failed。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;spacing=8;" vertex="1" parent="p2-1">
           <mxGeometry x="650" y="2160" width="1220" height="155" as="geometry" />
         </mxCell>
-        <mxCell id="p2-claim" value="&lt;b&gt;可选子 skill：/result-to-claim&lt;/b&gt;&lt;br&gt;读取 AUTO_REVIEW.md 中的结果，把实验数字转成 CLAIMS_FROM_RESULTS.md；可写 .aris/claims.json 与 evidence_precheck.json；不可用时静默跳过。作用：给后续 /paper-plan 提供已验证 claim。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="p2-1">
+        <mxCell id="p2-claim" value="&lt;b&gt;强制子 skill：/result-to-claim&lt;/b&gt;&lt;br&gt;读取 AUTO_REVIEW.md 中的结果，把实验数字转成 CLAIMS_FROM_RESULTS.md；写 .aris/claims.json 与 evidence_precheck.json。worker 模式下失败或不可用 → 本轮 receipt failed，绝不静默跳过：它是本迭代实验/边/idea outcome/problem/query pack 的唯一写入者。dispatch prompt 传 final-analysis 路径、chosen_idea_id（原样传，勿再加 idea: 前缀）、exp_id=iter-&lt;iteration&gt;。直调模式仍可跳过。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="p2-1">
           <mxGeometry x="1960" y="2140" width="590" height="145" as="geometry" />
         </mxCell>
-        <mxCell id="p2-html" value="&lt;b&gt;可选子 skill：/render-html&lt;/b&gt;&lt;br&gt;RENDER_HTML=true 时调用 /render-html AUTO_REVIEW.md --no-review --state REVIEW_STATE.json；输出 outputs/AUTO_REVIEW.html；HTML 失败只记录，不阻断 worker。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="p2-1">
+        <mxCell id="p2-html" value="&lt;b&gt;可选子 skill：/render-html&lt;/b&gt;&lt;br&gt;RENDER_HTML=true 时调用 /render-html AUTO_REVIEW.md --no-review --state REVIEW_STATE.json；输出 outputs/AUTO_REVIEW.html；HTML 失败 → worker failed。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="p2-1">
           <mxGeometry x="1960" y="2320" width="590" height="135" as="geometry" />
         </mxCell>
         <mxCell id="p2-out" value="&lt;b&gt;Stage 3 receipt.dashboard_patch&lt;/b&gt;&lt;br&gt;last_review.verdict、last_review.score、last_review.reviewer_id；metric.current、metric.delta、statistical_significance。&lt;br&gt;合并后：同 iteration 的 metric.history 条目由最终分析替换 bridge 初值；质量 verdict 保留在 last_review，不能作为 Gate 的 stop_reason。" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;spacing=8;" vertex="1" parent="p2-1">
@@ -560,7 +560,7 @@
         <mxCell id="p2-e19" value="分析成功" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p2-1" source="p2-final-analyze" target="p2-claim">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="p2-e20" value="可用时" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p2-1" source="p2-claim" target="p2-html">
+        <mxCell id="p2-e20" value="RENDER_HTML=true" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p2-1" source="p2-claim" target="p2-html">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="p2-e21" value="RENDER_HTML=true" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p2-1" source="p2-term" target="p2-html">
@@ -569,7 +569,7 @@
         <mxCell id="p2-e22" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p2-1" source="p2-html" target="p2-out">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="p2-e23" value="不可用也继续" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p2-1" source="p2-claim" target="p2-out">
+        <mxCell id="p2-e23" value="claim 完成" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p2-1" source="p2-claim" target="p2-out">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="p2-e24" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p2-1" source="p2-out" target="p2-end">
@@ -696,7 +696,7 @@
         <mxCell id="p5-html-d" value="config.render_html=true？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;" vertex="1" parent="p5-1">
           <mxGeometry x="930" y="665" width="660" height="130" as="geometry" />
         </mxCell>
-        <mxCell id="p5-html" value="&lt;b&gt;可选子 skill：/render-html&lt;/b&gt;&lt;br&gt;输入：NARRATIVE_REPORT.md；选择 academic 模板，临时 HTML 仅结构转换；写 NARRATIVE_REPORT.html / receipt.html_rendered=true。失败记录但不阻断 summary。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;spacing=8;" vertex="1" parent="p5-1">
+        <mxCell id="p5-html" value="&lt;b&gt;可选子 skill：/render-html&lt;/b&gt;&lt;br&gt;输入：NARRATIVE_REPORT.md；选择 academic 模板，临时 HTML 仅结构转换；写 NARRATIVE_REPORT.html / receipt.html_rendered=true。失败 → worker failed。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;spacing=8;" vertex="1" parent="p5-1">
           <mxGeometry x="1960" y="635" width="590" height="150" as="geometry" />
         </mxCell>
         <mxCell id="p5-accept" value="&lt;b&gt;run-state 写入&lt;/b&gt;&lt;br&gt;loop 用 deterministic:&lt;stop_reason&gt; accept，不能用 reviewer id；summary done → accept，verdict=deterministic:summary；artifact 指向 NARRATIVE_REPORT.md。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="p5-1">
@@ -720,7 +720,7 @@
         <mxCell id="p5-e5" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p5-1" source="p5-html-d" target="p5-html">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="p5-e6" value="否 / 失败也继续" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p5-1" source="p5-html-d" target="p5-accept">
+        <mxCell id="p5-e6" value="否（未启用 HTML）" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;fontSize=12;" edge="1" parent="p5-1" source="p5-html-d" target="p5-accept">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="p5-e7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="p5-1" source="p5-html" target="p5-accept">
@@ -915,7 +915,7 @@
         <mxCell id="d10-claim" value="&lt;b&gt;/result-to-claim（auto-review-loop 终止步骤 6 派发，非可选）&lt;/b&gt;&lt;br&gt;输入：W&amp;amp;B、EXPERIMENT_LOG.md、EXPERIMENT_TRACKER.md、logs、research_contract；先写 .aris/claims.json {id,value,source}，运行 evidence pre-check 生成 .aris/evidence_precheck.json。&lt;br&gt;Codex 判断：claim_supported=yes|partial|no、what_results_support/don&amp;#39;t_support、missing_evidence、suggested_claim_revision、next_experiments_needed、confidence。&lt;br&gt;写 CLAIMS_FROM_RESULTS.md；Step 5 是循环从实验结果进入 wiki 的唯一通路：add_experiment 建实验节点、连 supports/invalidates 与 tested_by 边、改 idea outcome、rebuild_query_pack。&lt;br&gt;partial/no 判定同时 add_problem --parent problem:root 立子问题（origin/evidence 填失败叙事与证据路径），yes 判定 --status solved --update-on-exist 关掉对应问题。下一轮 /idea-creator 就从 query_pack 的 Open Problems 读到它们。&lt;br&gt;不创建 claim 节点、不改 claim.status——那是 /proof-checker 的证明轴。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="d10-1">
           <mxGeometry x="1920" y="110" width="820" height="355" as="geometry" />
         </mxCell>
-        <mxCell id="d10-render" value="&lt;b&gt;/render-html&lt;/b&gt;&lt;br&gt;输入：选定的 MD/JSON（IDEA_REPORT、AUTO_REVIEW、NARRATIVE_REPORT、research-wiki 等），可带 --state/--json sidecar。&lt;br&gt;动作：识别 artifact、选 academic/dashboard 模板、调用纯 stdlib helper；Markdown 是源，HTML 只是阅读视图。&lt;br&gt;输出：同目录 .html，内含 source SHA256；worker receipt.dashboard_patch.html_rendered=true。academic 默认需要 fresh Codex 做 fidelity/structure/safety review；auto-loop/summary 明确传 --no-review；失败不阻断上游。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="d10-1">
+        <mxCell id="d10-render" value="&lt;b&gt;/render-html&lt;/b&gt;&lt;br&gt;输入：选定的 MD/JSON（IDEA_REPORT、AUTO_REVIEW、NARRATIVE_REPORT、research-wiki 等），可带 --state/--json sidecar。&lt;br&gt;动作：识别 artifact、选 academic/dashboard 模板、调用纯 stdlib helper；Markdown 是源，HTML 只是阅读视图。&lt;br&gt;输出：同目录 .html，内含 source SHA256；worker receipt.dashboard_patch.html_rendered=true。academic 默认需要 fresh Codex 做 fidelity/structure/safety review；auto-loop/summary 明确传 --no-review；失败 → worker failed。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="d10-1">
           <mxGeometry x="40" y="560" width="820" height="300" as="geometry" />
         </mxCell>
         <mxCell id="d10-paper" value="&lt;b&gt;/paper-writing&lt;/b&gt;&lt;br&gt;输入：NARRATIVE_REPORT.md、research-wiki、final result/analysis、dashboard；支持直接 PAPER_PLAN.md 或研究方向+结果。&lt;br&gt;固定链：paper-plan → paper-figure → paper-write → paper-compile → auto-paper-improvement-loop；可选 figurespec/gemini/mermaid/codex-image2 生成架构图。&lt;br&gt;最终 assurance=submission 时必须有 PROOF_AUDIT.json、PAPER_CLAIM_AUDIT.json、CITATION_AUDIT.json（必要时 KILL_ARGUMENT.json），再由 verify_paper_audits.sh 判 exit code。&lt;br&gt;输出 paper/：PDF、TeX、figures、审计报告、audit-verifier-report.json；receipt.patch.paper_status/audit_passed。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="d10-1">
@@ -950,7 +950,7 @@
         <mxCell id="d11-title" value="可落盘文件、写入者和字段边界" style="text;html=1;fontSize=20;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="d11-1">
           <mxGeometry x="700" y="20" width="1400" height="50" as="geometry" />
         </mxCell>
-        <mxCell id="d11-dashboard" value="&lt;b&gt;.aris/runs/&lt;run_id&gt;/dashboard.json - 主循环唯一状态源&lt;/b&gt;&lt;br&gt;初始化写：run_id、project、status、iteration、max_iterations、current_phase、config{auto_write,render_html,patience}、metric{name,target,direction,tolerance,baseline,current,history}、best_idea、gaps{open,closed,total}（字段名保留，语义已是 problem 实体统计）、last_review{verdict,score,reviewer_id}、stop_reason、timestamps、system_errors、applied_receipts。&lt;br&gt;worker 只通过 dashboard_patch 写：bridge->metric.*/experiment_ids；review->last_review.* + final metric；idea->best_idea/idea_ids/plan_path；summary->summary_path；paper->paper_status/audit_passed；render->html_rendered。&lt;br&gt;metric.history：首次写 iter/value/source/timestamp；同 iteration 再写时替换，不重复追加。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;spacing=8;" vertex="1" parent="d11-1">
+        <mxCell id="d11-dashboard" value="&lt;b&gt;.aris/runs/&lt;run_id&gt;/dashboard.json - 主循环唯一状态源&lt;/b&gt;&lt;br&gt;初始化写：run_id、project、status、iteration、max_iterations、current_phase、config{auto_write,render_html,patience}、metric{name,target,direction,tolerance,baseline,current,history}、best_idea、problems{open,closed,total}（problem 实体统计，由 /kill-argument 写入）、last_review{verdict,score,reviewer_id}、stop_reason、timestamps、system_errors、applied_receipts。&lt;br&gt;worker 只通过 dashboard_patch 写：bridge->metric.*/experiment_ids；review->last_review.* + final metric；idea->best_idea/idea_ids/plan_path；summary->summary_path；paper->paper_status/audit_passed；render->html_rendered。&lt;br&gt;metric.history：首次写 iter/value/source/timestamp；同 iteration 再写时替换，不重复追加。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;spacing=8;" vertex="1" parent="d11-1">
           <mxGeometry x="40" y="105" width="1320" height="280" as="geometry" />
         </mxCell>
         <mxCell id="d11-state" value="&lt;b&gt;.aris/runs/&lt;run_id&gt;.json — 外层生命周期&lt;/b&gt;&lt;br&gt;run-state 只存 init、loop、summary、paper-writing 四个不重复阶段；每个 phase 字段：phase、status(pending/running/done/failed/accepted/skipped)、artifact、verdict_id、reviewer、updated。&lt;br&gt;accepted 必须带 verdict_id + reviewer；loop 的 accept 只能是 deterministic:&lt;stop_reason&gt;；paper-writing 的 accept 是 deterministic:verify_paper_audits.sh。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="d11-1">
@@ -971,7 +971,7 @@
         <mxCell id="d11-merge" value="&lt;b&gt;dashboard-merge.js 的保护逻辑&lt;/b&gt;&lt;br&gt;校验 run_id、worker、iteration、manifest 所有权、current_phase、primary_output 在 output_dir 内、patch 字段白名单和值类型；重复 receipt 按 applied_receipts 跳过；成功后 dotted path 写入 + metric.history 更新 + system_errors 累加，整份 dashboard 原子替换。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;spacing=8;" vertex="1" parent="d11-1">
           <mxGeometry x="650" y="1130" width="1220" height="145" as="geometry" />
         </mxCell>
-        <mxCell id="d11-flow" value="&lt;b&gt;字段流转&lt;/b&gt;&lt;br&gt;实验 JSON/CSV/log → analyze-results receipt.metric.current → dashboard.metric.current/history → metric-gate.stop_reason → run-state loop provenance → summary/paper gate。&lt;br&gt;review score/verdict 只走 dashboard.last_review，不进入 stop_reason；idea 只走 best_idea、idea_ids、plan_path，problem 统计只走 gaps.*，主循环不解析任何 Markdown。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;spacing=8;" vertex="1" parent="d11-1">
+        <mxCell id="d11-flow" value="&lt;b&gt;字段流转&lt;/b&gt;&lt;br&gt;实验 JSON/CSV/log → analyze-results receipt.metric.current → dashboard.metric.current/history → metric-gate.stop_reason → run-state loop provenance → summary/paper gate。&lt;br&gt;review score/verdict 只走 dashboard.last_review，不进入 stop_reason；idea 只走 best_idea、idea_ids、plan_path，problem 统计只走 problems.*，主循环不解析任何 Markdown。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;spacing=8;" vertex="1" parent="d11-1">
           <mxGeometry x="650" y="1360" width="1220" height="140" as="geometry" />
         </mxCell>
         <mxCell id="d11-source" value="源码依据：skills/auto-research-loop/SKILL.md；shared-references/worker-manifest.md；src/tools/dashboard-merge.ts；src/tools/run-state.ts；src/tools/metric-gate.ts。" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#666666;" vertex="1" parent="d11-1">

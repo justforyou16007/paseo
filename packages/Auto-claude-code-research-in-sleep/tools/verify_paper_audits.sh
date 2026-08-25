@@ -325,7 +325,7 @@ echo "" >&2
 # ─── Exit ─────────────────────────────────────────────────────────────────────
 if [[ "$ASSURANCE" == "submission" && "$ANY_BLOCKING" -eq 1 ]]; then
     echo "FAIL: submission-level enforcement triggered." >&2
-    echo "      Fix the issues above (or downgrade to --assurance draft) before finalizing." >&2
+    echo "      Fix the issues above before finalizing at submission assurance." >&2
     exit 1
 fi
 if [[ "$ASSURANCE" == "draft" && "$ANY_PROBLEM" -eq 1 ]]; then

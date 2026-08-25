@@ -75,7 +75,7 @@
       {
         "run": 1,
         "verdict": "PASS",
-        "notes": "render_html.py produced 77,833-byte HTML (94,453 on disk) with 53 TOC entries; no errors. Renderer does not currently invoke an automated codex review gate, so this is a structural pass (markdown parse + safe HTML generation)."
+        "notes": "render-html.js produced 77,833-byte HTML (94,453 on disk) with 53 TOC entries; no errors. This stored review predates the integrated render-stage Codex gate, so it records a structural pass (markdown parse + safe HTML generation)."
       },
       {
         "run": 2,

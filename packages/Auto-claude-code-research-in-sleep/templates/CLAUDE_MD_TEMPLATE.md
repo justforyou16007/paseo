@@ -160,9 +160,9 @@ scripts:
 
 ## ARIS Paseo
 
-> Optional. Controls the paseo parent-child agent execution substrate. If
-> omitted, the pipeline falls back to in-process `Skill` dispatch only (no
-> cross-model codex reviewer). Paste the full block from
+> Controls the paseo parent-child agent execution substrate. Paseo MCP is
+> required; an unavailable substrate blocks the current phase. Paste the full
+> block from
 > [`templates/CLAUDE_MD_PASEO_SECTION.md`](../templates/CLAUDE_MD_PASEO_SECTION.md)
 > and edit the values; see that file for per-variable detail.
 
@@ -174,7 +174,6 @@ reviewer_provider: codex/gpt-5.5
 reviewer_mode: full-access
 reviewer_thinking: xhigh
 notify_on_finish: true
-fanout_subagents: true
 subagent_workspace: current
 heartbeat_cron: off
 ```

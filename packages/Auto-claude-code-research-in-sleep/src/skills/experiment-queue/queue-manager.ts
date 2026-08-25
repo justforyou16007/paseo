@@ -9,7 +9,6 @@ import { GpuSampleHistory } from "../../tools/gpu-sample-history.js";
 import type { GpuSample } from "../../tools/gpu-sample-history.js";
 import { EnvBackend } from "../../tools/experiment-env/env-backend.js";
 
-const DEFAULT_GPU_FREE_THRESHOLD_MIB = 500;
 const POLL_INTERVAL_SEC = 60;
 
 interface FreeCheck {
@@ -65,22 +64,13 @@ interface ManifestPhase {
 interface Manifest {
   project?: string;
   cwd?: string;
-  /**
-   * Optional path to the generated experiment skill's
-   * scripts/ops/launch-job.sh. When set, job commands are rendered through
-   * `launch-job.sh --print-command` (the project's frozen run template)
-   * instead of being re-assembled here; the queue still owns screen
-   * wrapping, GPU/slot allocation, and scheduling.
-   */
-  launch_op?: string;
+  /** Path to the generated experiment skill's scripts/ops/launch-job.sh. */
+  launch_op: string;
   conda?: string;
   conda_hook?: string;
-  gpus?: number[];
   max_parallel?: number;
-  gpu_free_threshold_mib?: number;
   oom_retry?: OomRetryConfig;
-  retry?: OomRetryConfig;
-  resources?: ResourceConfig;
+  resources: ResourceConfig;
   phases?: ManifestPhase[];
   _path?: string;
 }
@@ -125,24 +115,29 @@ interface AdaptiveOpts {
 /**
  * Write a per-job handle in the generated experiment skill's handle format
  * (<project-skill>/handles/<job-id>.json) so ops/job-status.sh covers queue
- * jobs too. Best-effort: the queue must not stall if the bundle is absent.
+ * jobs too. The generated skill is required because it owns the frozen launch
+ * command and its monitoring contract.
  */
 function writeHandle(job: JobState, cwd: string): void {
-  try {
-    const handleDir = path.join(cwd, ".claude", "skills", `run-${job.id.replace(/EQ_/, "").split("_")[0]}-experiment`, "handles");
-    if (!fs.existsSync(handleDir)) return;
-    const handle = {
-      exp_name: job.id,
-      pid_or_session: job.screen_name,
-      gpu: job.gpu,
-      launched_at: job.started ?? now(),
-    };
-    const tmp = path.join(handleDir, `${job.id}.json.tmp`);
-    fs.writeFileSync(tmp, JSON.stringify(handle, null, 2));
-    fs.renameSync(tmp, path.join(handleDir, `${job.id}.json`));
-  } catch {
-    // bundle not present on this host — handles are best-effort
+  const handleDir = path.join(
+    cwd,
+    ".claude",
+    "skills",
+    `run-${job.id.replace(/EQ_/, "").split("_")[0]}-experiment`,
+    "handles",
+  );
+  if (!fs.existsSync(handleDir)) {
+    throw new Error(`generated experiment skill handle directory not found: ${handleDir}`);
   }
+  const handle = {
+    exp_name: job.id,
+    pid_or_session: job.screen_name,
+    gpu: job.gpu,
+    launched_at: job.started ?? now(),
+  };
+  const tmp = path.join(handleDir, `${job.id}.json.tmp`);
+  fs.writeFileSync(tmp, JSON.stringify(handle, null, 2));
+  fs.renameSync(tmp, path.join(handleDir, `${job.id}.json`));
 }
 
 function now(): string {
@@ -194,19 +189,10 @@ function resolveCondaHook(manifestHook?: string): string {
 }
 
 function resolveResources(m: Manifest): ResourceConfig {
-  if (m.resources) return m.resources;
-  return {
-    type: "gpu",
-    ids: m.gpus ?? [0, 1, 2, 3, 4, 5, 6, 7],
-    bind_env: "CUDA_VISIBLE_DEVICES",
-    free_check: {
-      cmd: "nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits",
-      threshold: m.gpu_free_threshold_mib ?? DEFAULT_GPU_FREE_THRESHOLD_MIB,
-      compare: "lt",
-      index_by: "physical",
-    },
-    exhaustion_patterns: ["CUDA out of memory", "torch.OutOfMemoryError"],
-  };
+  if (!m.resources) {
+    throw new Error("experiment-queue manifest requires an explicit resources block");
+  }
+  return m.resources;
 }
 
 function resourceUsage(rc: ResourceConfig): Map<number | string, number> {
@@ -265,10 +251,14 @@ function detectExhaustionInLog(logPath: string | null, re: RegExp): boolean {
   if (!logPath || !fs.existsSync(logPath)) return false;
   try {
     const escaped = logPath.replace(/'/g, "'\\''");
-    const { stdout } = shellRun(`tail -c 10000 '${escaped}'`);
+    const result = shellRun(`tail -c 10000 '${escaped}'`);
+    if (result.exitCode !== 0) {
+      throw new Error(`cannot read experiment log ${logPath}`);
+    }
+    const { stdout } = result;
     return re.test(stdout);
-  } catch {
-    return false;
+  } catch (error) {
+    throw new Error(`failed to inspect experiment log ${logPath}: ${String(error)}`);
   }
 }
 
@@ -308,12 +298,13 @@ function outputExists(pathPattern: string | null | undefined, cwd: string): bool
   if (!pathPattern) return false;
   const full = path.isAbsolute(pathPattern) ? pathPattern : path.join(cwd, pathPattern);
   const escaped = full.replace(/'/g, "'\\''");
-  const { stdout } = shellRun(`ls '${escaped}' 2>/dev/null | wc -l`);
-  try {
-    return parseInt(stdout.trim(), 10) > 0;
-  } catch {
-    return false;
+  const result = shellRun(`ls '${escaped}' 2>/dev/null | wc -l`);
+  if (result.exitCode !== 0) {
+    throw new Error(`cannot inspect expected output ${full}`);
   }
+  const count = Number.parseInt(result.stdout.trim(), 10);
+  if (!Number.isFinite(count)) throw new Error(`invalid output count for ${full}`);
+  return count > 0;
 }
 
 function loadState(stateFile: string, manifest: Manifest): QueueState {
@@ -393,29 +384,27 @@ function renderCmdViaLaunchOp(
   slots: (number | string)[],
   batchSize: number | null | undefined,
   primarySlot: number | string,
-): string | null {
+): string {
   // Render through the project's frozen run template. The op prints the
   // resolved command to stdout and exits 0 without launching
-  // (--print-command). Any op failure falls back to local rendering —
-  // the queue must not stall because the bundle is missing on this host.
-  try {
-    const args = [job.cmd, "--print-command"];
-    const slotArgs = [
-      "--slot",
-      String(primarySlot),
-      "--slot-list",
-      slots.map(String).join(","),
-    ];
-    if (batchSize != null) slotArgs.push("--batch-size", String(batchSize));
-    const { status, stdout } = spawnSync("sh", [launchOp, ...args, ...slotArgs], {
-      encoding: "utf-8",
-      timeout: 30_000,
-    });
-    if (status === 0 && stdout.trim()) return stdout.trim();
-    return null;
-  } catch {
-    return null;
+  // (--print-command). A failure is a launch failure; the queue must not
+  // reconstruct a competing command locally.
+  const args = [job.cmd, "--print-command"];
+  const slotArgs = ["--slot", String(primarySlot), "--slot-list", slots.map(String).join(",")];
+  if (batchSize != null) slotArgs.push("--batch-size", String(batchSize));
+  const result = spawnSync("sh", [launchOp, ...args, ...slotArgs], {
+    encoding: "utf-8",
+    timeout: 30_000,
+  });
+  if (result.error) throw new Error(`launch op failed: ${String(result.error)}`);
+  if (result.status !== 0) {
+    throw new Error(
+      `launch op exited ${String(result.status)}: ${String(result.stderr || result.stdout || "")}`,
+    );
   }
+  const rendered = String(result.stdout || "").trim();
+  if (!rendered) throw new Error("launch op returned an empty command");
+  return rendered;
 }
 
 function launchJob(
@@ -426,8 +415,8 @@ function launchJob(
   logDir: string,
   condaHook: string,
   rc: ResourceConfig,
+  launchOp: string,
   batchSize?: number | null,
-  launchOp?: string,
 ): { screenName: string; pid: number | null } {
   const primarySlot = slots[0] ?? 0;
   const slotList = slots.map(String).join(",");
@@ -439,13 +428,7 @@ function launchJob(
 
   const logFile = path.join(logDir, `${job.id}.log`);
   const batchVal = batchSize ?? job.current_batch_size;
-  let cmdWithSlot = job.cmd
-    .replace(/\$\{GPU\}/g, String(primarySlot))
-    .replace(/\$\{SLOT\}/g, String(primarySlot));
-  if (launchOp) {
-    const rendered = renderCmdViaLaunchOp(launchOp, job, slots, batchSize, primarySlot);
-    if (rendered) cmdWithSlot = rendered;
-  }
+  const cmdWithSlot = renderCmdViaLaunchOp(launchOp, job, slots, batchSize, primarySlot);
   const cmdFinal = cmdWithSlot
     .replace(/\$\{GPU_LIST\}/g, slotList)
     .replace(/\$\{SLOT_LIST\}/g, slotList)
@@ -571,7 +554,7 @@ function step(
   const condaHook = resolveCondaHook(manifest.conda_hook);
   const rc = resolveResources(manifest);
   const maxParallel = manifest.max_parallel ?? rc.ids.length;
-  const retryConfig = manifest.retry ?? manifest.oom_retry;
+  const retryConfig = manifest.oom_retry;
   const exhaustionDelay = retryConfig?.delay ?? 120;
   const maxExhaustionAttempts = retryConfig?.max_attempts ?? 3;
   const exhaustionRe = buildExhaustionRegex(rc);
@@ -662,8 +645,8 @@ function step(
       logDir,
       condaHook,
       rc,
-      batchSize,
       manifest.launch_op,
+      batchSize,
     );
     job.status = "running";
     job.slot = slots[0];
@@ -676,7 +659,16 @@ function step(
     job.attempts += 1;
     job.started = now();
     job.error = null;
-    writeHandle(job, cwd);
+    try {
+      writeHandle(job, cwd);
+    } catch (e) {
+      killScreen(screenName);
+      job.status = "stuck";
+      job.completed = now();
+      job.error = e instanceof Error ? e.message : String(e);
+      saveState(state, stateFile);
+      throw e;
+    }
     launched++;
   }
 
@@ -717,6 +709,11 @@ function main(): void {
         poll: string;
       }) => {
         const manifest: Manifest = JSON.parse(fs.readFileSync(opts.manifest, "utf-8"));
+        if (typeof manifest.launch_op !== "string" || manifest.launch_op.trim() === "") {
+          throw new Error(
+            "manifest.launch_op is required; queue cannot render a local fallback command",
+          );
+        }
         manifest._path = opts.manifest;
 
         const logDir = opts.logDir ?? manifest.cwd ?? ".";
@@ -740,32 +737,25 @@ function main(): void {
         let adaptive: AdaptiveOpts | undefined;
         if (hasAdaptive) {
           const envCfgPath = path.join(manifest.cwd ?? ".", ".aris", "experiment-env.json");
-          let backend: EnvBackend | null = null;
-          try {
-            if (fs.existsSync(envCfgPath)) {
-              const envCfg = JSON.parse(fs.readFileSync(envCfgPath, "utf-8")) as Record<
-                string,
-                unknown
-              >;
-              const envType = envCfg.env_type as string;
-              const envConfig = (envCfg[envType] ?? {}) as Record<string, unknown>;
-              if (envType) backend = EnvBackend.create(envType, envConfig);
-            }
-          } catch {
-            // proceed without GPU sampling if env config unavailable
+          if (!fs.existsSync(envCfgPath)) {
+            throw new Error(`adaptive queue requires environment config: ${envCfgPath}`);
           }
+          const envCfg = JSON.parse(fs.readFileSync(envCfgPath, "utf-8")) as Record<
+            string,
+            unknown
+          >;
+          const envType = envCfg.env_type as string;
+          if (!envType)
+            throw new Error(`adaptive queue environment config has no env_type: ${envCfgPath}`);
+          const envConfig = (envCfg[envType] ?? {}) as Record<string, unknown>;
+          const backend = EnvBackend.create(envType, envConfig);
           adaptive = { gpuHistory: new GpuSampleHistory(), backend, manifestJobMap };
         }
 
         console.log(`[${now()}] Queue manager started with ${state.jobs.length} jobs`);
 
         while (!allDone(state)) {
-          try {
-            step(manifest, state, opts.state, logDir, adaptive);
-          } catch (e: unknown) {
-            const msg = e instanceof Error ? e.message : String(e);
-            console.log(`[${now()}] Step error: ${msg}`);
-          }
+          step(manifest, state, opts.state, logDir, adaptive);
           await sleep(pollInterval);
         }
 

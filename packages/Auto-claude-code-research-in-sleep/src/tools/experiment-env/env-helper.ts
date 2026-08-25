@@ -21,21 +21,17 @@ function loadConfig(envConfig: string): Record<string, unknown> {
 
 function checkStale(cfg: Record<string, unknown>, envConfig: string): void {
   const source = cfg.source_path as string | undefined;
-  if (!source || !fs.existsSync(source)) return;
-  try {
-    const st = fs.statSync(source);
-    const content = fs.readFileSync(source);
-    const mtime = Math.floor(st.mtimeMs / 1000);
-    const digest = crypto.createHash("sha256").update(content).digest("hex");
-    const stale = cfg.source_mtime !== mtime || cfg.source_hash !== digest;
-    if (stale) {
-      process.stderr.write(
-        `WARN: ${source} changed since last parse (mtime/hash mismatch); ` +
-          `re-run \`env_helper parse\` to refresh ${envConfig}\n`,
-      );
-    }
-  } catch {
-    // ignore read errors
+  if (!source) return;
+  const st = fs.statSync(source);
+  const content = fs.readFileSync(source);
+  const mtime = Math.floor(st.mtimeMs / 1000);
+  const digest = crypto.createHash("sha256").update(content).digest("hex");
+  const stale = cfg.source_mtime !== mtime || cfg.source_hash !== digest;
+  if (stale) {
+    process.stderr.write(
+      `WARN: ${source} changed since last parse (mtime/hash mismatch); ` +
+        `re-run \`env_helper parse\` to refresh ${envConfig}\n`,
+    );
   }
 }
 

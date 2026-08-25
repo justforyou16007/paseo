@@ -48,7 +48,7 @@ project/
     └── graph/
 ```
 
-### Existing ARIS Files (unchanged)
+### ARIS File Inventory
 
 | File                                | Created by          | Purpose                                                                  |
 | ----------------------------------- | ------------------- | ------------------------------------------------------------------------ |

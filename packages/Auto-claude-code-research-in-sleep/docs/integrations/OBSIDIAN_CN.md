@@ -30,9 +30,8 @@ cp -r obsidian-skills/.claude /path/to/your/vault/
 - 📝 读取你的加工后总结和洞察（比原始论文更有价值）
 - 🔗 沿 wikilinks 发现相关笔记
 
-## 不用 Obsidian？
-
-没配置时 `/research-lit` 自动跳过，照常工作。无报错无警告。
+如果显式选择 `obsidian`，但没有配置对应 MCP，`/research-lit` 会因配置错误停止。
+想使用其他文献来源时，请显式指定 source 列表。
 
 ## Zotero + Obsidian 组合工作流
 

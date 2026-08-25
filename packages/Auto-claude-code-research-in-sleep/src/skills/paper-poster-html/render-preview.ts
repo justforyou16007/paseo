@@ -13,6 +13,7 @@ import { parseCanvasArg, resolveCanvas } from "./posterly/canvas.js";
 import {
   openPrintEmulatedPageAsync as openPrintEmulatedPage,
   settlePage,
+  hardFailOnSettleProblems,
 } from "./posterly/render.js";
 import { asciiSafe } from "./posterly/textutil.js";
 
@@ -28,7 +29,7 @@ program
   .option("--thumb-scale <n>", "thumbnail scale factor", "0.35")
   .option(
     "--mathjax-timeout-ms <n>",
-    "timeout for MathJax typesetting; render is the SOFT path",
+    "timeout for MathJax typesetting; timeout is a render failure",
     "15000",
   )
   .option("--canvas <spec>", "override canvas (e.g. '60x36in' / 'A0 portrait')")
@@ -77,42 +78,21 @@ program
 
     const { browser, page } = await openPrintEmulatedPage(pw, viewport);
 
-    try {
-      await page.goto(`file://${htmlPath}`, { timeout: mathjaxTimeoutMs });
-    } catch {
-      process.stderr.write(
-        `[render_preview] WARN: page.goto did not reach load within ${mathjaxTimeoutMs} ms; ` +
-          `continuing with whatever loaded.\n`,
-      );
-    }
-
-    try {
-      await page.waitForLoadState("networkidle", { timeout: mathjaxTimeoutMs });
-    } catch {
-      process.stderr.write(
-        `[render_preview] WARN: network never went idle within ${mathjaxTimeoutMs} ms.\n`,
-      );
-    }
+    await page.goto(`file://${htmlPath}`, {
+      waitUntil: "networkidle",
+      timeout: mathjaxTimeoutMs,
+    });
 
     const settle = await settlePage(page, {
       mathjaxTimeoutMs,
       settleMs: 1500,
     });
 
-    if (settle.mathjaxStatus === "timeout") {
-      process.stderr.write(
-        `[render_preview] WARN: MathJax typeset timed out after ${mathjaxTimeoutMs} ms.\n`,
-      );
-    } else if (settle.mathjaxStatus === "error") {
-      process.stderr.write(
-        `[render_preview] WARN: MathJax error: ${asciiSafe(settle.mathjaxError || "")}\n`,
-      );
-    }
-    if (settle.mathjaxIntended && settle.texWithoutMathjax) {
-      process.stderr.write(
-        "[render_preview] WARN: page intended to load MathJax but no " +
-          "<mjx-container> rendered. PDF will show raw $...$ text.\n",
-      );
+    const settleFailure = hardFailOnSettleProblems(settle, mathjaxTimeoutMs);
+    if (settleFailure !== null) {
+      await browser.close();
+      process.stderr.write(`[render_preview] ERROR: ${settleFailure}\n`);
+      process.exit(1);
     }
 
     await page.pdf({

@@ -8,7 +8,7 @@ names are unchanged, so `COMPONENTS.md` (the component contract catalog) applies
 Each template is **self-contained and neutral**: no lab branding, no paper content — only
 `TODO` placeholders. The authoring loop is: copy one to your working dir as `poster.html` →
 apply a token pack → fill `TODO`s with paper content + real figures → run the gates
-(`run_gates.py`) and balance until they pass.
+(`run-gates.js`) and balance until they pass.
 
 Every layout-critical element carries `data-measure-role` so the measurement gate can locate
 columns / hero / footer regions across templates. **Do not remove these attributes** — the
@@ -47,7 +47,7 @@ expect — do not "fix" them on a fresh scaffold:
 - **`asset_check` fails until you embed ≥2 real paper figures.** A scaffold has none.
 
 So the loop is: copy → apply token pack → fill content + drop in real figures → run
-`run_gates.py` and balance until `measure`/`polish`/`asset` go green. See DESIGN_FINAL §8 for
+`run-gates.js` and balance until `measure`/`polish`/`asset` go green. See DESIGN_FINAL §8 for
 the full phase structure and the worked ICLR 2026 acceptance case (§13).
 
 ## Applying a token pack (`tokens/*.json` → `:root`)
@@ -77,8 +77,8 @@ JSON-to-CSS field mapping:
 `--bg-emphasis: var(--accent-light)` and `--border-strong: var(--accent)` are _derived_ tokens —
 leave them as `var(--…)` references; they follow the accent automatically.
 
-When you pass a pack to the gates (`run_gates.py --tokens tokens/<venue>.json`,
-`style_check.py --tokens …`), the `hue_centers` in the JSON are the source of truth for the
+When you pass a pack to the gates (`run-gates.js --tokens tokens/<venue>.json`,
+`style-check.js --tokens …`), the `hue_centers` in the JSON are the source of truth for the
 hue-cluster check (style rule 4): the two allowed non-neutral hue families are
 `hue_centers.accent ± 22°` and `hue_centers.gold ± 22°`. If you copied the JSON values into
 `:root` correctly, the rendered hues will land inside those windows. (If you omit `--tokens`,

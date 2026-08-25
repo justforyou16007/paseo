@@ -74,77 +74,17 @@ cp -r ~/aris_repo/skills/* ~/.copilot/skills/
 cd ~/aris_repo && git pull && cp -r ~/aris_repo/skills/* ~/.copilot/skills/
 ```
 
-### 2.4 Configure Codex MCP reviewer
+### 2.4 Connect Paseo MCP (required for workflow skills)
 
-ARIS uses a cross-model reviewer (GPT-5.5/5.5 via Codex MCP). Configure it in Copilot CLI:
+ARIS workflow skills use Paseo parent-child agents for delegated phases and
+cross-model review. Connect the current Paseo MCP integration in Copilot CLI
+and verify `mcp__paseo__list_agents`, `mcp__paseo__create_agent`, and
+`mcp__paseo__send_agent_prompt`.
 
-1. Install and authenticate Codex:
+If Paseo MCP is unavailable, the workflow is blocked. Do not replace it with a
+provider-native sub-agent, a direct model call, or in-process skill execution.
 
-   ```bash
-   npm install -g @openai/codex
-   codex login
-   ```
-
-2. Add MCP server — edit `~/.copilot/mcp-config.json`:
-
-   ```json
-   {
-     "mcpServers": {
-       "codex": {
-         "command": "codex",
-         "args": ["mcp-server"]
-       }
-     }
-   }
-   ```
-
-   Or project-level `.mcp.json`:
-
-   ```json
-   {
-     "mcpServers": {
-       "codex": {
-         "command": "codex",
-         "args": ["mcp-server"]
-       }
-     }
-   }
-   ```
-
-3. Restart Copilot CLI. Verify with `/mcp` or check that `mcp__codex__codex` appears in available tools.
-
-### 2.5 Alternative reviewer MCP (no OpenAI API)
-
-Use the [`llm-chat`](../mcp-servers/llm-chat/) MCP server with any OpenAI-compatible API (DeepSeek, GLM, MiniMax, Kimi, etc.):
-
-1. Install dependencies:
-
-   ```bash
-   cd ~/aris_repo
-   python3 -m venv .venv
-   .venv/bin/pip install -r mcp-servers/llm-chat/requirements.txt
-   ```
-
-2. Add to `~/.copilot/mcp-config.json` (absolute paths required):
-   ```json
-   {
-     "mcpServers": {
-       "llm-chat": {
-         "command": "/path/to/aris_repo/.venv/bin/python3",
-         "args": ["/path/to/aris_repo/mcp-servers/llm-chat/server.py"],
-         "env": {
-           "LLM_BASE_URL": "https://api.deepseek.com/v1",
-           "LLM_API_KEY": "your_key",
-           "LLM_MODEL": "deepseek-chat"
-         }
-       }
-     }
-   }
-   ```
-
-See [LLM_API_MIX_MATCH_GUIDE.md](LLM_API_MIX_MATCH_GUIDE.md) for tested provider configurations.
-
-### 2.6 Project instructions (AGENTS.md)
+### 2.5 Project instructions (AGENTS.md)
 
 Copilot CLI reads `AGENTS.md` for project-specific instructions. The installer adds a managed block automatically. Add your own sections:
 
@@ -215,17 +155,15 @@ Same syntax as Claude Code:
 
 ## 5. MCP Tool Calls
 
-ARIS skills reference MCP tools by name. These work in Copilot CLI once configured:
+ARIS skills use the Paseo MCP lifecycle once configured:
 
-| ARIS MCP tool             | What it does                               | Required MCP server |
-| ------------------------- | ------------------------------------------ | ------------------- |
-| `mcp__codex__codex`       | Send prompt to GPT-5.5/5.5                 | Codex               |
-| `mcp__codex__codex-reply` | Continue conversation thread               | Codex               |
-| `mcp__llm-chat__chat`     | Send prompt to any OpenAI-compatible model | llm-chat            |
+| ARIS MCP tool                   | What it does                       | Required MCP server |
+| ------------------------------- | ---------------------------------- | ------------------- |
+| `mcp__paseo__create_agent`      | Start a child workflow or reviewer | Paseo               |
+| `mcp__paseo__send_agent_prompt` | Continue the same child            | Paseo               |
+| `mcp__paseo__list_agents`       | Check child state and availability | Paseo               |
 | `mcp__zotero__*`          | Search Zotero library                      | zotero              |
 | `mcp__obsidian-vault__*`  | Search Obsidian vault                      | obsidian-vault      |
-
-> **Note:** If using `llm-chat` instead of Codex, use the adapted skill variant: `/auto-review-loop-llm`.
 
 ## 6. State Files & Recovery
 
@@ -315,33 +253,18 @@ The built-in `web_fetch` tool complements ARIS's `/research-lit` for fetching pa
 | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Skills reference `CLAUDE.md`    | Copilot reads `AGENTS.md` instead. The installer creates this. Skills that read `CLAUDE.md` internally will still work if you keep both files, or create a symlink: `ln -s AGENTS.md CLAUDE.md` |
 | `allowed-tools` in SKILL.md     | Copilot respects these but requires user-level permission flags (`--allow-tool`) to actually execute                                                                                            |
-| Different executor model family | ARIS's cross-model review still works: Copilot (GPT) executes, Codex MCP (GPT) reviews. For true cross-family review, use `llm-chat` MCP with Claude/Gemini as reviewer                         |
+| Different executor model family | Configure an explicitly different-family reviewer such as the `claude-review` or `gemini-review` MCP server                         |
 | No auto-compact recovery        | Copilot CLI handles long sessions natively. Use state files for manual recovery if needed                                                                                                       |
 | Context window varies by model  | GPT-5 mini has smaller context. For long pipelines, use GPT-5 or break into stages                                                                                                              |
 
 ### Cross-Model Review Consideration
 
-When Copilot CLI uses GPT-5 as executor **and** Codex MCP also routes to GPT-5.5 as reviewer, you lose the cross-family diversity that ARIS recommends. For maximum review quality, consider:
+When Copilot CLI uses a GPT-family executor, choose a non-GPT reviewer backend
+explicitly if cross-family diversity is required. For example:
 
-1. Use `llm-chat` MCP with **Claude** as reviewer (true cross-family):
+1. Use the dedicated [`claude-review`](../mcp-servers/claude-review/) MCP server as reviewer:
 
-   ```json
-   {
-     "mcpServers": {
-       "llm-chat": {
-         "command": "/path/to/.venv/bin/python3",
-         "args": ["/path/to/mcp-servers/llm-chat/server.py"],
-         "env": {
-           "LLM_BASE_URL": "https://api.anthropic.com/v1",
-           "LLM_API_KEY": "your_anthropic_key",
-           "LLM_MODEL": "claude-sonnet-4-6"
-         }
-       }
-     }
-   }
-   ```
-
-2. Or use the dedicated [`claude-review`](../mcp-servers/claude-review/) MCP server.
+   Configure its required `claude-aws` command and use it as the reviewer backend.
 
 ## 11. Quick Reference
 
@@ -367,7 +290,7 @@ copilot --allow-tool='write' --allow-tool='shell'
 ## 12. Migration Checklist: Claude Code → Copilot CLI
 
 - [ ] Install skills: `mkdir -p .github/skills && cp -r <aris_repo>/skills/* .github/skills/`
-- [ ] Configure MCP: add Codex or llm-chat to `~/.copilot/mcp-config.json`
+- [ ] Connect the Paseo MCP lifecycle tools
 - [ ] Copy `CLAUDE.md` content to `AGENTS.md` (or keep both + symlink)
 - [ ] Set permission flags: `--allow-tool='write' --allow-tool='shell'`
 - [ ] Verify: type `/` to see ARIS skills listed

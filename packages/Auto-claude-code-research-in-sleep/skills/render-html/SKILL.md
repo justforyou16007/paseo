@@ -32,16 +32,20 @@ allowed-tools: Bash(*), Read, Write
 ## Core invariants
 
 - **MD / JSON is canonical, HTML is generated view.** Edit the source, then re-render. Do not hand-edit the HTML.
-- **Cross-model review at the artifact boundary** (ARIS invariant). Academic-template HTML — used for the artifacts humans actually read (IDEA*REPORT, AUTO_REVIEW, KILL_ARGUMENT, PAPER_PLAN) — is reviewed by a fresh cross-family Codex thread before being claimed as a finished view. Dashboard-template HTML (cockpit / debug views) skips review by default but accepts `--review` to force it. See § \_HTML Review Gate* below.
+- **Cross-model review at the artifact boundary** (ARIS invariant). Academic-template HTML — used for the artifacts humans actually read (IDEA*REPORT, AUTO_REVIEW, KILL_ARGUMENT, PAPER_PLAN) — is reviewed by a fresh cross-family Paseo codex child before being claimed as a finished view. Dashboard-template HTML (cockpit / debug views) skips review by default but accepts `--review` to force it. See § \_HTML Review Gate* below.
 - **Drift detection.** Every rendered HTML embeds the source path, SHA256, and generation timestamp in `<meta>` tags AND in the visible page header. If the HTML and source diverge, the meta tells you which version of the source produced it.
 - **Single-file output.** No build system, no separate CSS, no `node_modules`. Just one `.html`.
-- **CDN-friendly default, `--offline` fallback.** MathJax 3 and highlight.js load from `cdn.jsdelivr.net` by default. Pass `--offline` to skip both — math will appear as raw `$x$`, code blocks won't get syntax highlighting, but everything stays readable.
-- **Pure stdlib helper.** `render-html.js` uses only `re`, `html`, `hashlib`, `json`, `datetime`, `pathlib`, `argparse`, `sys`. No pip install required.
+- **CDN-backed default with an explicit offline mode.** MathJax 3 and highlight.js load from `cdn.jsdelivr.net` by default. Use `--offline` only when plain math and unhighlighted code are an intentional output choice; the skill never switches to it after a load failure.
+- **Single compiled helper.** `render-html.js` uses only Node's built-in modules. No Python
+  shim or alternate implementation is consulted.
 - **Defense-in-depth XSS sanitization.** The helper strips `<script>`/`<style>`/`<iframe>`/`<object>`/`<embed>`/`<form>`/`<input>`/`<button>`/`<link>`/`<meta>`/`<base>` tags, all `on*` event-handler attributes (`onclick`, `onload`, …), and rewrites `javascript:`/`vbscript:`/`data:` href/src/action schemes to `#blocked-unsafe-url:`. ARIS workflow artifacts should not contain these in the first place, but the sanitizer is the safety net in case an LLM hallucinates one. Markdown text content is HTML-escaped separately and never reaches the sanitizer.
 
 ## Tool Location
 
-Arch C self-contained: the canonical implementation lives at `skills/render-html/scripts/render-html.js` (this SKILL's own `scripts/` subdirectory), together with its templates at `skills/render-html/scripts/templates/{academic,dashboard}.html`. The helper is new — no legacy `tools/` shim exists.
+The canonical implementation is `src/skills/render-html/render-html.ts`, compiled to
+`dist/skills/render-html/render-html.js`; the templates remain at
+`skills/render-html/scripts/templates/{academic,dashboard}.html`. The compiled helper is the
+only implementation.
 
 Resolve `$RENDER_HTML` with the hybrid chain (Layer 0 prefers the self-contained location for the owning SKILL; Layers 1-2 are the shared-runtime chain documented in [`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2, **Policy A — skill-local gate**):
 
@@ -120,6 +124,7 @@ exact resolution and prompt.
 When invoked with `— manifest: <path>`, this skill runs as a worker under an
 orchestrator (`/research-pipeline` or `/auto-research-loop`). The manifest
 provides all inputs; the skill writes its receipt to the manifest's directory.
+The required input-manifest file is the complete input authority for this worker.
 
 **Startup check:**
 ```
@@ -156,18 +161,16 @@ fi
 On failure, write receipt with `"status": "failed"` and structured `error` object
 per `worker-manifest.md`. Append system errors to `$WORKER_DIR/progress_error.md`.
 
-**Direct-call mode:** When invoked WITHOUT `— manifest:`, the skill operates
-normally using its own argument parsing. No receipt is written.
+The skill requires `— manifest:` and always writes a receipt. There is no second
+direct-call path with different output semantics.
 
-**Output path mapping:** In worker mode, every hardcoded output path in this
-skill's body (listed below) maps to `$OUTPUT_DIR/<filename>`. The orchestrator's
-subsequent input-manifests reference prior workers' outputs using their full
-`$WORKERS_DIR/<iter>-<phase>/outputs/<file>` path. In direct-call mode, the
-paths below are project-root-relative as written.
+**Output path mapping:** Every output path in this skill maps to
+`$OUTPUT_DIR/<filename>`. The orchestrator's input manifests reference these
+paths directly.
 
-| Direct-call path | Worker-mode path |
-|---|---|
-| `<input>.html` (alongside source) | `$OUTPUT_DIR/<input>.html` |
+| Worker output |
+|---|
+| `$OUTPUT_DIR/<input>.html` |
 
 ## Workflow
 
@@ -178,7 +181,7 @@ From `$ARGUMENTS`, determine what to render. Common patterns:
 - "render IDEA_REPORT" → `idea-stage/IDEA_REPORT.md`, academic template
 - "make AUTO_REVIEW readable" → `review-stage/AUTO_REVIEW.md` + `--state review-stage/REVIEW_STATE.json`
 - "show the kill argument as HTML" → `paper/KILL_ARGUMENT.md` + `--json paper/KILL_ARGUMENT.json`
-- "research-wiki dashboard" → look for `research-wiki/SUMMARY.md` or generate from raw entity counts (Phase 2 work; for Phase 1 just render `SUMMARY.md` if present, else fall back to listing top-level wiki structure)
+- "research-wiki dashboard" → require `research-wiki/SUMMARY.md` (or `research-wiki/index.md`) and stop if neither exists. Do not synthesize a dashboard from raw counts.
 
 ### Step 2: Pick template
 
@@ -191,7 +194,7 @@ Use the resolver above to get `$RENDER_HTML`, then invoke. The script writes the
 
 ### Step 4: HTML Review Gate (cross-model)
 
-**Decide whether to run review.** Per ARIS invariant "executor must not judge its own output", the academic-template HTML is reviewed by a fresh cross-family Codex thread before being claimed as a delivered view. Resolution:
+**Decide whether to run review.** Per ARIS invariant "executor must not judge its own output", the academic-template HTML is reviewed by a fresh cross-family Paseo codex child before being claimed as a delivered view. Resolution:
 
 ```
 should_review = explicit --review present
@@ -272,7 +275,7 @@ Return STRICT JSON first, then a short prose note:
 Verdict rules:
 - PASS: no material fidelity/safety issue.
 - WARN: readable output with minor unsupported-Markdown or cosmetic
-  degradation only.
+  differences only.
 - FAIL: missing/altered meaningful content, broken tables/math/code/
   callouts that change interpretation, unsafe executable HTML, source
   hash mismatch, or placeholder leakage.
@@ -287,13 +290,15 @@ Verdict rules:
 
 **If `verdict == FAIL`**: the HTML is **NOT** a delivered review-passed view. Tell the user the blocking issues, point them at the source (fix MD or template, not the HTML), and re-render. Do not silently overwrite or mark as complete.
 
-**If `verdict == WARN`**: deliver the HTML but surface the warning list. User decides whether to fix or accept.
+**If `verdict == WARN`**: mark the render `BLOCKED` and do not deliver it as a completed reviewed artifact.
 
-**If Paseo codex sub-agent is not available** (e.g., user runs `/render-html` on a setup where Paseo MCP isn't wired): emit `verdict: REVIEW_UNAVAILABLE` to the sidecar, do not fabricate `PASS`, and tell the user the HTML was generated but **not** independently reviewed. The user can manually invoke `/research-review` on the source MD or re-run with Paseo MCP available.
+**If Paseo codex sub-agent is not available** (e.g., user runs `/render-html` on a setup where Paseo MCP isn't wired): emit `verdict: BLOCKED` to the sidecar and stop. Do not deliver an HTML file as if it passed review. The user must rerun with Paseo MCP available or explicitly pass `--no-review` for a non-reviewed structural conversion.
 
 ### Step 5: (Optional) Verify in browser
 
-`open <out.html>` on macOS, `xdg-open` on Linux, `start` on Windows. Math + code highlighting need internet (CDN); offline mode degrades gracefully to readable text.
+`open <out.html>` on macOS, `xdg-open` on Linux, `start` on Windows. Math + code highlighting
+need internet (CDN). `--offline` is an explicit reduced-output mode; it is never selected after
+a load failure.
 
 ## What the helper supports
 
@@ -343,9 +348,10 @@ Verdict rules:
 | `/paper-writing`     | (no auto-HTML)                       | n/a           | The final reader artifact is PDF                                                                                               |
 | `/research-wiki`     | `research-wiki/index.html` dashboard | future        | Phase 2.1 — dashboard template work, not in this round                                                                         |
 
-`--no-review` for interim reports is intentional: the source MD has already been reviewed by the producing skill's own cross-model gate, and the HTML render only converts structure — it doesn't add new claims. Full review at every checkpoint would multiply Codex calls per pipeline by 4-6×.
+`--no-review` for interim reports is intentional: the source MD has already been reviewed by the producing skill's own cross-model gate, and the HTML render only converts structure — it doesn't add new claims. Full review at every checkpoint would multiply Paseo reviewer calls per pipeline by 4-6×.
 
-To disable HTML output for a specific skill: set `RENDER_HTML = false` in the skill's constants block or pass `— render html: false`. To globally disable: skip with environment variable `ARIS_RENDER_HTML=0` (planned, not yet implemented; flag per skill in the meantime).
+To disable HTML output for a specific skill, set `RENDER_HTML = false` in the
+skill's constants block or pass `— render html: false`.
 
 ## Customizing the templates
 
@@ -366,8 +372,9 @@ For deck / poster / Xiaohongshu card / tweet card / data report style outputs, p
 
 - **Do not auto-render every Markdown file.** Only artifacts on the whitelist above. File proliferation is the main anti-pattern.
 - **Do not hand-edit the generated HTML.** Edit the source, then re-render. The embedded SHA256 in the HTML meta tells you if the source has changed since render.
-- **academic-template HTML is a reviewed artifact by default**, not raw output. Cross-model Codex review (fresh thread) gates the academic deliverables — the same way `/proof-checker`, `/paper-claim-audit`, `/citation-audit`, `/kill-argument` gate their respective products. `--no-review` is appropriate for **interim auto-emits** (e.g., `idea-stage/IDEA_REPORT.html`, per-round `review-stage/AUTO_REVIEW.html`) where the source MD has already passed an upstream cross-model gate — the HTML render is then a structural conversion, not a new claim audit. For **shipped / reviewer-facing / audit-class** outputs, keep the full gate.
+- **academic-template HTML is a reviewed artifact by default**, not raw output. A fresh Paseo codex review gates the academic deliverables — the same way `/proof-checker`, `/paper-claim-audit`, `/citation-audit`, `/kill-argument` gate their respective products. `--no-review` is appropriate for **interim auto-emits** (e.g., `idea-stage/IDEA_REPORT.html`, per-round `review-stage/AUTO_REVIEW.html`) where the source MD has already passed an upstream cross-model gate — the HTML render is then a structural conversion, not a new claim audit. For **shipped / reviewer-facing / audit-class** outputs, keep the full gate.
 - **The reviewer audits rendering, not research.** Claim truthfulness is owned upstream by `/paper-claim-audit`, `/result-to-claim`, `/research-review`. The HTML reviewer asks: "did the renderer faithfully + safely convert this source?" — nothing more.
-- **CDN dependency is opt-out, not opt-in.** Most users have internet; `--offline` is for air-gapped runs / archival.
+- **CDN dependency is opt-out, not opt-in.** Most users have internet; `--offline` is for
+  air-gapped runs / archival and must be selected before the run.
 - **The default style is academic-newspaper, not marketing-flashy.** Match the existing ARIS tonal voice. If you want decks/posters/social cards, point users to html-anything.
 - **Pure stdlib only.** Adding a `pip install` dependency to `render-html.js` requires an explicit decision — the helper currently has none. MCP calls live in the skill orchestrator, never in the helper script.

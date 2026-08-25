@@ -2,7 +2,7 @@
 
 > **For AI agents reading this repo cold.** If you are a human, see [README.md](README.md) or [docs/ARIS_INTRO.html](https://wanshuiyin.github.io/Auto-claude-code-research-in-sleep/ARIS_INTRO.html).
 
-ARIS is a research harness: composable Markdown skills that orchestrate the ML research lifecycle through cross-model adversarial collaboration. Executor (Claude / Codex / Cursor / Antigravity / Copilot CLI) writes code & papers; reviewer (GPT-5.5 via a paseo codex sub-agent — or Codex MCP as the documented fallback — or Claude / Gemini via `claude-review` / `gemini-review` MCP) critiques in fresh threads.
+ARIS is a research harness: composable Markdown skills that orchestrate the ML research lifecycle through cross-model adversarial collaboration. The Paseo Claude executor writes code and papers; the reviewer is a GPT-5.5 Paseo codex sub-agent by default, or an explicitly selected Oracle / Manual / Antigravity route, and critiques in fresh threads.
 
 > **Paseo substrate.** W1–W6 + their sub-skills run as **paseo parent-child agents**
 > (executor = claude), and each cross-model reviewer runs as a **paseo codex
@@ -27,7 +27,7 @@ ARIS is a research harness: composable Markdown skills that orchestrate the ML r
 | ------------------------------------------------------- | ------------------------------------- | --------------------------------------------------------------- |
 | Claude Code / Cursor / Trae / Antigravity / Copilot CLI | `skills/<name>/SKILL.md`              | Mainline skills; native `SKILL.md` invocation                   |
 
-**Full catalog**: [`docs/SKILLS_CATALOG.md`](docs/SKILLS_CATALOG.md) — **87 skills**, grouped by role.
+**Full catalog**: [`docs/SKILLS_CATALOG.md`](docs/SKILLS_CATALOG.md) — **84 skills**, grouped by role.
 
 Invocation syntax is identical across hosts:
 
@@ -106,7 +106,7 @@ ARIS gates submission via a 5-layer cross-model audit chain. Each layer is invok
 | Layer | Skill                | Asks                                                                                    | Verdict file                           |
 | :---: | -------------------- | --------------------------------------------------------------------------------------- | -------------------------------------- |
 |   1   | `/experiment-audit`  | "Is the eval code honest? (no fake GT, no self-normalized scores, no phantom results)"  | `EXPERIMENT_AUDIT.{md,json}`           |
-|   2   | `/result-to-claim`   | "Does the claim scientifically follow from the result?"                                 | (writes claim status to Research Wiki) |
+|   2   | `/result-to-claim`   | "Does the claim scientifically follow from the result?"                                 | writes experiment nodes + edges to Research Wiki (claim status stays with `/proof-checker`) |
 |   3   | `/paper-claim-audit` | "Does the paper _report_ the numbers truthfully?" (zero-context reviewer)               | `PAPER_CLAIM_AUDIT.{md,json}`          |
 |   4   | `/citation-audit`    | "Every `\cite{}` valid? Existence + metadata + context-appropriateness?"                | `CITATION_AUDIT.{md,json}`             |
 |   5   | `/kill-argument`     | "Strongest 200-word rejection memo + independent adjudicator scoring each attack point" | `KILL_ARGUMENT.{md,json}`              |
@@ -160,29 +160,28 @@ Skills communicate through plain-text files in known locations:
 
 ## Helper Resolution (writing new skills)
 
-When a SKILL.md invokes a canonical helper (e.g., `verify_papers.py`, `research_wiki.py`, `save_trace.sh`, `arxiv_fetch.py`, `verify_paper_audits.sh`), **do NOT hardcode** `python3 tools/foo.py`. Resolve via the strict-safe chain documented in [`shared-references/integration-contract.md`](skills/shared-references/integration-contract.md) §2:
+Use one compiled helper for each active integration. Resolve it through the
+shared `.aris/dist/` → `dist/` lookup in
+[`shared-references/integration-contract.md`](skills/shared-references/integration-contract.md)
+§2. A missing helper or a non-zero exit blocks the current phase. Do not add a
+second directory, source, model, transport, or inline implementation.
 
-```
-Layer 0:  ${CLAUDE_SKILL_DIR}/scripts/<helper>     # owner SKILL self-contained (CC 1.0+)
-Layer 1:  .aris/tools/<helper>                     # project-local symlink
-Layer 2:  tools/<helper>                           # repo-local
-Layer 3:  $ARIS_REPO/tools/<helper>                # global fallback
-```
-
-Pick a failure policy from `integration-contract.md` §2 per-helper table: A (gate) / B (side-effect) / C (forensic) / D1 (cascade) / D2 (multi-source aggregate) / E (diagnostic). Each has POSIX-sh + `set -e` + `set -u` safe example blocks.
-
-Advisory CI lint at `.github/workflows/lint-skills-helpers.yml` flags hardcoded `python3 tools/foo.py` patterns in PR-modified SKILL.md (warning only, never fails CI). Single-owner helpers (used by exactly one SKILL) live at `skills/<owner>/scripts/<helper>` per Arch C; precedents: `figure-spec`, `paper-illustration-image2`, `experiment-queue`, `render-html`. **Multi-owner helpers** (used by several SKILLs) live at `tools/<helper>` directly — Layer 2 is the canonical location, so Layers 1-3 all resolve to the real code and **no `os.execv` shim is needed**; precedent: `experiment_env/env_helper.py` (drives local/remote/vast/modal environments for the generated experiment skill's ops, `/vast-gpu`, `/serverless-modal`, `/experiment-queue` — see `tools/experiment_env/README.md`).
+The current shared helpers are compiled from `src/` and include the Wiki,
+paper verification, evidence, threat scanning, trace, fetch, and rendering
+tools. Environment backends are the explicit external-environment exception:
+they may inspect the configured local, remote, Docker, Vast, or Modal target
+and report which target is available.
 
 ## Cross-Model Protocol
 
-- **Executor** (Claude / Codex / Cursor / Antigravity / Copilot): writes code, runs experiments, drafts papers
-- **Reviewer** (GPT-5.5 via Codex MCP, default; or Claude / Gemini via `*-review` MCP overlays): critiques, scores, demands revisions
+- **Executor** (Paseo Claude child): writes code, runs experiments, drafts papers
+- **Reviewer** (Paseo codex child by default; or an explicitly selected Oracle / Gemini / Manual route): critiques, scores, demands revisions
 - **Rule**: executor and reviewer **must** be different model families. Same-family review is a non-feature.
 - **Reviewer independence**: pass file paths only, never summaries or interpretations
-- **Thread freshness**: every fresh-context review spawns a **new paseo codex reviewer sub-agent** (`create_agent`) — never continues a prior agent for a fresh review, since narrative accumulation inflates scores. The **continuation** case (`send_agent_prompt` to the same agent — the `codex-reply` analog) is reserved for multi-round reviewer-memory loops (`/auto-review-loop` round 2+) where the reviewer checks resolution against its OWN prior critique. See [`paseo-reviewer-dispatch.md`](skills/shared-references/paseo-reviewer-dispatch.md).
+- **Thread freshness**: every fresh-context review spawns a **new paseo codex reviewer sub-agent** (`create_agent`) — never continues a prior agent for a fresh review, since narrative accumulation inflates scores. Continuation (`send_agent_prompt` to the same agent) is reserved for multi-round reviewer-memory loops such as `/auto-review-loop` round 2+. See [`paseo-reviewer-dispatch.md`](skills/shared-references/paseo-reviewer-dispatch.md).
 - **Experiment integrity**: executor must NOT judge its own eval code — reviewer audits directly per [`shared-references/experiment-integrity.md`](skills/shared-references/experiment-integrity.md)
 
-Default reviewer model is `gpt-5.5` (runtime since 2026-04-24; docs aligned 2026-05-14). Legacy `gpt-5.4` available as `--- reviewer-model: gpt-5.4`. Oracle Pro tier (`gpt-5.5-pro`) via `--- reviewer: oracle-pro` is a separate routing path.
+Default reviewer model is `gpt-5.5`. Oracle Pro (`gpt-5.5-pro`), Manual, and Antigravity are explicit reviewer routes; an unavailable route blocks the review.
 
 ## Shared References
 
@@ -220,7 +219,7 @@ If `research-wiki/` exists in the project:
 
 - `/research-lit` auto-ingests discovered papers
 - `/idea-creator` reads wiki before ideation, writes ideas (both successful and failed) back after
-- `/result-to-claim` updates claim status (supported / invalidated / pending)
+- `/result-to-claim` writes experiment nodes, `supports`/`invalidates` edges, idea outcomes, and failure-derived problems; claim `status` (the proof axis) is owned by `/proof-checker`
 - 3+ failed ideas → triggers re-ideation suggestion (failed ideas become anti-repetition memory)
 
-Initialize with `/research-wiki init`. Spec: [`skills/research-wiki/SKILL.md`](skills/research-wiki/SKILL.md). Helper canonical path: `tools/research_wiki.py` (resolved via Layer 1-3 chain above).
+Initialize with `/research-wiki init`. Spec: [`skills/research-wiki/SKILL.md`](skills/research-wiki/SKILL.md). The canonical helper is the compiled `research-wiki.js` under `.aris/dist/` or `dist/`; a missing helper blocks the write.

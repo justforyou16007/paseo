@@ -10,6 +10,7 @@ import path from "path";
 import crypto from "crypto";
 import { createCli, runCli } from "../../lib/cli.js";
 import { readCanvasFromHtml, viewportFor } from "./posterly/canvas.js";
+import { openPrintEmulatedPageAsync, settlePage } from "./posterly/render.js";
 import { asciiSafe } from "./posterly/textutil.js";
 
 const _REQUIRED_FIG_FIELDS: readonly string[] = [
@@ -318,59 +319,37 @@ async function measureRendered(
   viewport: [number, number],
   assetIds: string[],
   mathjaxTimeoutMs: number,
-): Promise<Record<string, BoxInfo> | null> {
+): Promise<Record<string, BoxInfo>> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let pw: any;
   try {
     pw = await import("playwright" as string);
   } catch {
-    process.stderr.write(
-      "[asset_check] NOTICE: playwright not available; cannot measure rendered " +
-        "figure areas. Falling back to natural_px + CSS-width ESTIMATE.\n",
+    throw new Error(
+      "playwright is not available; rendered figure-area checks cannot run. " +
+        "Install playwright and its bundled Chromium, or explicitly pass --no-render.",
     );
-    return null;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let _render: any;
-  try {
-    _render = await import("./posterly/render.js");
-  } catch {
-    return null;
-  }
-
-  const [w, h] = viewport;
+  const { browser: p, page: activePage } = await openPrintEmulatedPageAsync(pw, viewport);
   const result: Record<string, BoxInfo> = {};
-  const p = await pw.chromium.launch();
-  const ctx = await p.newContext();
-  const page = await ctx.newPage();
-
-  const { browser: _br, page: emPage } = await _render
-    .openPrintEmulatedPage({ chromium: { launch: () => Promise.resolve(p) } }, [w, h])
-    .catch(() => ({ browser: p, page }));
-
-  const activePage = emPage || page;
   const fileUrl = `file://${htmlPath}`;
-  try {
-    await activePage.goto(fileUrl, { timeout: mathjaxTimeoutMs });
-  } catch {
-    process.stderr.write(
-      `[asset_check] WARN: page.goto did not reach load within ${mathjaxTimeoutMs} ms.\n`,
-    );
+  await activePage.goto(fileUrl, { waitUntil: "networkidle", timeout: mathjaxTimeoutMs });
+  const settle = await settlePage(activePage, {
+    mathjaxTimeoutMs,
+    settleMs: 300,
+  });
+  if (settle.mathjaxStatus === "error") {
+    throw new Error(`MathJax typeset failed: ${asciiSafe(settle.mathjaxError || "unknown error")}`);
+  }
+  if (settle.mathjaxStatus === "timeout") {
+    throw new Error(`MathJax typeset did not finish within ${mathjaxTimeoutMs} ms`);
+  }
+  if (settle.mathjaxIntended && settle.texWithoutMathjax) {
+    throw new Error("MathJax was requested but no rendered math was found");
   }
 
-  try {
-    if (_render.settlePage) {
-      await _render.settlePage(activePage, {
-        mathjaxTimeoutMs,
-        settleMs: 300,
-      });
-    }
-  } catch {
-    // settle is best-effort
-  }
-
-  const boxes = await activePage.evaluate(
+  const boxes = (await activePage.evaluate(
     `(ids) => {
       const out = {};
       const poster =
@@ -394,13 +373,12 @@ async function measureRendered(
       return out;
     }`,
     assetIds,
-  );
+  )) as Record<string, BoxInfo>;
 
   await p.close();
 
   for (const [k, v] of Object.entries(boxes)) {
-    const vObj = v as { w: number; h: number; area: number };
-    result[k] = { w: vObj.w, h: vObj.h, area: vObj.area };
+    result[k] = { w: v.w, h: v.h, area: v.area };
   }
   return result;
 }

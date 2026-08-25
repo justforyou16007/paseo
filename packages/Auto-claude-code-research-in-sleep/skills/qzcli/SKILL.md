@@ -24,11 +24,8 @@ cd qzcli_tool && pip install -e .
 To use qzcli as an MCP tool directly from Claude Code or Codex:
 
 ```bash
-# Claude Code
+# Claude Code (the ARIS host)
 claude mcp add qzcli -- qzcli-mcp
-
-# Codex
-codex mcp add qzcli -- qzcli-mcp
 ```
 
 ---
@@ -234,8 +231,9 @@ qzcli batch batch_config.json --delay 3
 # Preview all jobs
 qzcli batch batch_config.json --dry-run
 
-# Continue on error
-qzcli batch batch_config.json --continue-on-error
+# Batch execution stops on the first failed job. Fix that job and submit the
+# failed entry again explicitly.
+qzcli batch batch_config.json
 ```
 
 **Config format** (`batch_config.json`):

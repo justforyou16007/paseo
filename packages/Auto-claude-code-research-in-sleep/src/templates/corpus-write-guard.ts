@@ -44,7 +44,10 @@ function main(): Promise<number> {
       try {
         data = JSON.parse(raw);
       } catch {
-        resolve(0);
+        process.stderr.write(
+          "ERROR: corpus_write_guard received invalid hook JSON; refusing the command.\n",
+        );
+        resolve(2);
         return;
       }
 

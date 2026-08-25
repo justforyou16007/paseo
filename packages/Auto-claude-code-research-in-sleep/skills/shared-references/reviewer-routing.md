@@ -16,24 +16,18 @@ leaf verdict skill running inside one) as a paseo sub-agent:
 
 - **Provider:** `codex/gpt-5.5` (cross-provider from the Claude executor —
   the cross-model invariant, `reviewer-independence.md`).
-- **Mode:** `full-access` (default — autonomous repo read, network on, the
-  `codex exec` analog) per `paseo-reviewer-dispatch.md`. `read-only` cannot
+- **Mode:** `full-access` (default — autonomous repo read and network on) per
+  `paseo-reviewer-dispatch.md`. `read-only` cannot
   write the verdict file; `auto-review` is Codex's _internal_ guardian, not
   our reviewer — do not confuse the names.
 - **Thinking:** `settings.thinkingOptionId: "xhigh"` (verify the exact id for
   `gpt-5.5` via `mcp__paseo__list_models` / `inspect_provider`).
 - **Continuity:** `create_agent` = fresh review (REVIEWER_BIAS_GUARD); `send_agent_prompt`
-  to the same agent = continuation (reviewer memory, the `codex-reply` analog).
+  to the same agent = continuation when the calling skill explicitly requires reviewer memory.
 - **Cross-provider gotcha (load-bearing):** the spawn MUST pass explicit
   `settings.modeId` — cross-provider mode inheritance throws. This is the
   single most common reviewer-spawn bug. Full shape + the fresh-vs-continuation
   rule live in [`paseo-reviewer-dispatch.md`](paseo-reviewer-dispatch.md).
-
-The `codex exec` CLI (nightmare mode under `REVIEWER_DIFFICULTY=nightmare`)
-maps to a paseo codex agent in `full-access` mode — autonomous repo read, same
-semantics, now a real inspectable/archivable agent instead of a stateless
-one-shot. The `nightmare` mode's "GPT reads repo directly" property is
-preserved exactly; only the substrate changes.
 
 Paseo MCP is required. With `— reviewer: codex` (or unset), the skill spawns a Paseo codex sub-agent per `paseo-reviewer-dispatch.md`. If Paseo is unavailable, the run BLOCKS.
 The verdict, trace, and acceptance gate are identical on either path; only
@@ -41,7 +35,7 @@ the dispatch substrate changes.
 
 ## Optional: GPT-5.5 Pro via Oracle
 
-When the user explicitly passes `— reviewer: oracle-pro`, route the review through Oracle MCP instead of Codex MCP.
+When the user explicitly passes `— reviewer: oracle-pro`, route the review through Oracle MCP instead of the Paseo codex reviewer.
 
 ### Routing Logic (add to any reviewer-invoking skill)
 
@@ -63,8 +57,8 @@ If `— reviewer: oracle-pro`:
         Note: Oracle may use API mode (fast, needs OPENAI_API_KEY)
               or browser mode (slow ~1-2 min, needs Chrome + ChatGPT login)
     → If NOT available:
-        Print: "⚠️ Oracle MCP not installed. Falling back to Codex xhigh."
-        Spawn a paseo codex sub-agent per paseo-reviewer-dispatch.md.
+        Print: "⚠️ Oracle MCP not installed."
+        STOP with a BLOCKED reviewer result. Do not change the selected backend.
 ```
 
 ### Invariants
@@ -118,9 +112,10 @@ export OPENAI_API_KEY="your-key"
 # Just log in to ChatGPT in Chrome
 ```
 
-### NOT installed = ZERO impact
+### Not installed = blocked
 
-If Oracle is not installed, `— reviewer: oracle-pro` gracefully falls back to Codex. No error, no breakage, just a warning.
+If Oracle is not installed, `— reviewer: oracle-pro` returns a `BLOCKED`
+reviewer result. The selected backend is not replaced by Codex.
 
 ### Upstream development & known issues
 
@@ -128,7 +123,7 @@ Oracle MCP is maintained at [`steipete/oracle`](https://github.com/steipete/orac
 
 ## Optional: Gemini via Antigravity CLI (`— reviewer: agy`)
 
-When the user explicitly passes `— reviewer: agy`, route the review through the **gemini-review MCP** with the Antigravity (`agy`) backend — a native cross-model reviewer for Antigravity users who don't run Codex MCP / Oracle. Added in [#267](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/pull/267).
+When the user explicitly passes `— reviewer: agy`, route the review through the **gemini-review MCP** with the Antigravity (`agy`) backend — an explicit Gemini-family reviewer route. Added in [#267](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/pull/267).
 
 ### Routing Logic (add to any reviewer-invoking skill)
 
@@ -144,15 +139,15 @@ If `— reviewer: agy`:
         For long paper/project reviews (avoid the ~120s MCP tool timeout):
           mcp__gemini_review__review_start + mcp__gemini_review__review_status (async).
     → If NOT available:
-        Print: "⚠️ gemini-review (agy) MCP not configured. Falling back to Codex xhigh."
-        Spawn a paseo codex sub-agent per paseo-reviewer-dispatch.md.
+        Print: "⚠️ gemini-review (agy) MCP not configured."
+        STOP with a BLOCKED reviewer result. Do not change the selected backend.
 ```
 
 ### Invariants
 
 - `— reviewer: agy` ONLY takes effect when explicitly passed.
 - **Cross-model family holds by construction.** The `agy` backend is fail-closed on ARIS's invariant: it recovers the _actual_ Gemini-family model id from the current invocation's Antigravity transcript, **refuses** to return a verdict if the routed model is non-Gemini (no `"agy-cli"` placeholder), and binds the recovered transcript to _this_ call via a **user-event nonce** (a model echo can't spoof the binding). So when the executor is Claude, `— reviewer: agy` (Gemini) satisfies the cross-model gate.
-- Reviewer independence still applies — pass prompt context only (the `tools` arg is accepted for compatibility but ignored).
+- Reviewer independence still applies — pass prompt context only and do not infer extra capabilities from the transport.
 - `effort` and `difficulty` are orthogonal — they don't change the reviewer backend.
 
 ### Install
@@ -160,12 +155,13 @@ If `— reviewer: agy`:
 ```bash
 # Install + authenticate the Antigravity CLI (`agy`), then add the MCP with the agy backend:
 claude mcp add gemini-review --env GEMINI_REVIEW_BACKEND=agy -- python3 <path>/mcp-servers/gemini-review/server.py
-# (codex mcp add gemini-review ... for Codex CLI). Without the env var the server defaults to the direct Gemini API.
+# Without the env var the server defaults to the direct Gemini API.
 ```
 
-### NOT installed = ZERO impact
+### Not installed = blocked
 
-If the gemini-review (agy) MCP isn't configured, `— reviewer: agy` gracefully falls back to Codex xhigh. No error, no breakage, just a warning.
+If the gemini-review (agy) MCP isn't configured, `— reviewer: agy` returns a
+`BLOCKED` reviewer result. The selected backend is not replaced by Codex.
 
 ## Optional: Manual Review (any model, zero API cost)
 
@@ -243,30 +239,14 @@ Manual review supports medium/hard MCP-style review. Codex-exec nightmare mode i
 
 ### NOT installed = explicit error (not silent fallback)
 
-If manual-review MCP is not installed, `— reviewer: manual` prints install instructions and stops. It does NOT fall back to Codex — the target user likely has no Codex subscription, so a silent fallback would fail anyway.
+If manual-review MCP is not installed, `— reviewer: manual` prints install instructions and stops. It does NOT fall back to the Paseo codex reviewer.
 
-### `codex exec` CLI is NOT an equivalent Codex backend
+### Reviewer availability
 
-The mainline reviewer contract is a **paseo codex sub-agent** (per
-[`paseo-reviewer-dispatch.md`](paseo-reviewer-dispatch.md)). Paseo MCP is
-required; the run BLOCKS if unavailable. Both the paseo agent path and
-alternate MCP backends rely on **thread continuity** (e.g. `/idea-creator`
-Phase 4 runs its devil's-advocate triage as a same-thread continuation —
-`send_agent_prompt` to the same agent), structured returns, and saved
-`threadId`/agent-id traces.
-`codex exec --ephemeral` is a stateless one-shot — fine for a single
-self-contained review, but NOT a drop-in replacement: hand-rewriting every
-call to `codex exec` silently loses reply continuity and tends to mangle
-SKILL.md instructions (observed in the wild as "the executor skips phases and
-improvises" — issue #284). The `nightmare` difficulty's "GPT reads repo
-directly" property is satisfied by a paseo codex agent in `full-access` mode,
-NOT by a bare `codex exec` one-shot.
-
-If Codex MCP is broken in your setup, prefer in order:
-
-1. Use the paseo codex agent path (default) — `mcp__paseo__create_agent` with `provider:"codex/gpt-5.5"`, `modeId:"full-access"`, `thinkingOptionId:"xhigh"`.
-2. Fix the MCP registration: `claude mcp add codex -s user -- codex mcp-server`, then `/mcp` in-session to (re)connect.
-3. One-shot `codex exec` only for skills whose review is a single call with no follow-up reply.
+The mainline reviewer contract is a Paseo codex sub-agent. Paseo MCP is
+required; the run blocks if it is unavailable. An explicitly selected Oracle,
+Antigravity, or manual backend is also required to complete its own call and
+never changes to another backend after failure.
 
 ### Future work
 

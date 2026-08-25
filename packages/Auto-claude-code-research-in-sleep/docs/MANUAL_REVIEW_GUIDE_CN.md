@@ -4,7 +4,7 @@
 
 ## 概述
 
-手动评审 MCP 服务器是默认 Codex MCP 评审器的人工中转替代方案。无需 GPT Plus/Pro 订阅即可实现跨模型评审——你可以使用**不同**模型家族。如果执行器是 Claude Code，请勿使用 Claude 产品作为评审者。推荐：ChatGPT、DeepSeek、Kimi、Gemini、Qwen 等非 Claude 模型。
+手动评审 MCP 服务器是默认 Paseo codex 审阅器之外的显式人工审阅路线。你可以使用**不同**模型家族完成审阅。如果执行器是 Claude，请勿使用 Claude 产品作为评审者。推荐：ChatGPT、DeepSeek、Kimi、Gemini、Qwen 等非 Claude 模型。
 
 代价：失去完全自动化（需要手动复制粘贴），换来模型选择的完全自由和零 API 成本。
 
@@ -93,8 +93,3 @@ claude mcp add manual-review -s user -- python3 /path/to/Auto-claude-code-resear
 | `/idea-creator`     | 想法评估     |
 
 > `/research-lit` 当前没有 manual-review 调用块；如需文献分析深度评审，请使用已支持的 `oracle-pro` 路由或单独运行评审 skill。
-
-## 后续计划
-
-- **图片生成**：`codex-image2` 的手动替代方案（上传/粘贴图片）
-- **图片评审循环**：通过同一 UI 进行论文插图的迭代改进

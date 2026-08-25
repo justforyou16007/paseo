@@ -30,9 +30,9 @@ cp -r obsidian-skills/.claude /path/to/your/vault/
 - 📝 Read your processed summaries and insights (more valuable than raw papers)
 - 🔗 Follow wikilinks to discover related notes
 
-## Fallback: no Obsidian
-
-Without Obsidian configured, `/research-lit` automatically skips it and works as before. No errors, no warnings.
+If `obsidian` is explicitly selected but its MCP server is not configured, `/research-lit` stops
+with a configuration error. Use an explicit source list that does not include Obsidian when you
+want another literature source.
 
 ## Combined Zotero + Obsidian workflow
 

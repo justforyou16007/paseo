@@ -101,12 +101,11 @@ The host `Skill` / `Task` / `Agent` tools are **forbidden** in ARIS workflows.
 The only operation that creates an ARIS child agent is
 `mcp__paseo__create_agent`; the only operation that starts another turn on
 that child is `mcp__paseo__send_agent_prompt`. Never use a provider-native
-sub-agent feature and never degrade to an in-process fallback.
+sub-agent feature or an in-process dispatch path.
 
 **Strict mode**: if `mcp__paseo__list_agents` is unavailable at
 orchestrator startup, the run is **blocked** (`run-state.js` writes
-`status=BLOCKED` for the current phase) — it does **not** fall back to
-in-process `Skill` tool. The run stops and the user is asked to start
+`status=BLOCKED` for the current phase). The run stops and the user is asked to start
 the Paseo daemon.
 
 The only MCP exception is `mcp__manual_review__*`, used for the
@@ -190,14 +189,9 @@ verdict authority.
 
 ## Why this contract exists
 
-ARIS today chains sub-skills inside one Claude session via synchronous
-`Skill`-tool calls. That works, but it (a) holds the whole workflow in one
-context window, (b) gives the orchestrator no survival across a session
-crash, and (c) fuses the executor and the reviewer onto one substrate.
-Paseo parent-child agents replace the synchronous `Skill` call with a
-durable, observable agent boundary: the child runs in its own context, the
-parent is notified on completion, and either layer can crash and resume
-without losing the other.
+Paseo parent-child agents give each workflow child its own context and a
+durable, observable boundary. The parent receives a completion notification,
+reads the child's receipt, and can resume independently after interruption.
 
 The risk this contract guards against is the same one
 `integration-contract.md` and `fan-out-pattern.md` already name: **prose
@@ -296,10 +290,9 @@ observable side effect (`integration-contract.md` §3 — "the model said it
 ran" is not a receipt). The orchestrator uses the receipt's `primary_output`
 for `run-state.js set done` and its own gate result for `accept`.
 
-## The two continuity modes (the core of the migration)
+## The two continuity modes
 
-A parent agent continues a child in exactly two ways, mirroring today's two
-codex call types:
+A parent agent continues a child in exactly two ways:
 
 | Action                                          | Used by                                                                                                                               |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
@@ -616,8 +609,8 @@ else:
 
 - [`paseo-reviewer-dispatch.md`](paseo-reviewer-dispatch.md) — the
   cross-model codex reviewer spawn shape, fresh-vs-continuation rule, and
-  the `save_trace.sh` `--thread-id <codex-agent-id>` contract. The jury
-  half of this migration.
+  the `save_trace.sh` `--thread-id <codex-agent-id>` contract. This is the
+  cross-model review half of the runtime.
 - [`fan-out-pattern.md`](fan-out-pattern.md) — fan-out is firepower; the
   jury is the bench. Paseo fan-out uses sequential create-and-wait pairs;
   the verdict stays single and cross-model.

@@ -62,11 +62,6 @@ The server writes the prompt to a per-thread directory with a **cross-model warn
 
 If you accidentally close the browser tab, open `.aris/pending_review/pending_review.json` and reopen the exact `url` value. It includes a one-session token — copy it in full (e.g., `http://127.0.0.1:17900?token=abc123`). Do not type the bare `http://127.0.0.1:17900` as it will return 403.
 
-## Future Work
-
-- Image generation support (manual alternative to `codex-image2`)
-- Image review loop for paper illustrations
-
 ---
 
 <a id="中文"></a>
@@ -126,8 +121,3 @@ export MANUAL_REVIEW_MODE=file
 ## 恢复
 
 如果不小心关闭了浏览器标签，打开 `.aris/pending_review/pending_review.json`，复制完整的 `url` 值（包含一次性 token，如 `http://127.0.0.1:17900?token=abc123`）重新打开。不要手动输入裸地址 `http://127.0.0.1:17900`，会返回 403。
-
-## 后续计划
-
-- 图片生成支持（`codex-image2` 的手动替代方案）
-- 论文插图的图片评审循环

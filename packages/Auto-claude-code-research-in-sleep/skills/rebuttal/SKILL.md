@@ -44,8 +44,8 @@ Workflow 4:   rebuttal (post-submission external reviews)
 
 - **VENUE = `ICML`** — Default venue. Override if needed.
 - **RESPONSE_MODE = `TEXT_ONLY`** — v1 default.
-- **REVIEWER_MODEL = `gpt-5.5`** — Default model for the Codex backend. Used for internal stress-testing. Manual backend uses whatever model the user chooses.
-- **REVIEWER_BACKEND = `codex`** — Default: Codex MCP (xhigh). Override with `— reviewer: oracle-pro` for Oracle MCP, or `— reviewer: manual` for Manual Review MCP. If manual-review MCP is unavailable, stop and print the install command; do not fall back to Codex. See `shared-references/reviewer-routing.md`.
+- **REVIEWER_MODEL = `gpt-5.5`** — Default model for the Paseo codex reviewer. Used for internal stress-testing. Manual backend uses whatever model the user chooses.
+- **REVIEWER_BACKEND = `codex`** — Default: Paseo codex reviewer (xhigh). Override with `— reviewer: oracle-pro` for Oracle MCP, or `— reviewer: manual` for Manual Review MCP. If the selected backend is unavailable, stop and print its install/configuration requirement; do not fall back to another backend. See `shared-references/reviewer-routing.md`.
 - **MAX_INTERNAL_DRAFT_ROUNDS = 2** — draft → lint → revise.
 - **VENUE_MODE = `single_document`** — `single_document` for one shared author response, or `per_reviewer_thread` when each reviewer thread renders independently. Confirm the venue/interface before drafting if unclear. Affects Phase 4/7 output shape.
 - **STRESS_TEST_ROUNDS_BASE = 1** — One external reviewer critique round on the full response set. Add focused rounds for `reviewer_priority: pivotal` responses, terminating when the reviewer returns no new substantive issues. Hard cap at 5.
@@ -53,7 +53,7 @@ Workflow 4:   rebuttal (post-submission external reviews)
 - **AUTO_EXPERIMENT = false** — When `true`, automatically invoke `/experiment-bridge` to run supplementary experiments when the strategy plan identifies reviewer concerns that require new empirical evidence. When `false` (default), pause and present the evidence gap to the user for manual handling.
 - **QUICK_MODE = false** — When `true`, only run Phase 0-3 (parse reviews, atomize concerns, build strategy). Outputs `ISSUE_BOARD.md` + `STRATEGY_PLAN.md` and stops — no drafting, no stress test. Useful for quickly understanding what reviewers want before deciding how to respond.
 - **REBUTTAL_DIR = `rebuttal/`**
-- **RENDER_HTML = true** — When `true` (default), auto-render `rebuttal/REBUTTAL_DRAFT_rich.md` (the detailed reviewer-facing draft) to HTML after Phase 6 / Phase 8 finalization. Uses **full Codex review gate** (final pre-submission deliverable — reviewer-facing content, render fidelity matters). The plain-text `PASTE_READY.txt` is NOT rendered (it's character-counted plain text by design). Set `false` to skip, or pass `— render html: false`.
+- **RENDER_HTML = true** — When `true` (default), auto-render `rebuttal/REBUTTAL_DRAFT_rich.md` (the detailed reviewer-facing draft) to HTML after Phase 6 / Phase 8 finalization. Uses **full Paseo codex review gate** (final pre-submission deliverable — reviewer-facing content, render fidelity matters). The plain-text `PASTE_READY.txt` is NOT rendered (it's character-counted plain text by design). Set `false` to skip, or pass `— render html: false`.
 
 > Override: `/rebuttal "paper/" — venue: NeurIPS, character limit: 5000`
 
@@ -63,8 +63,8 @@ When calling the reviewer for stress-testing, branch on REVIEWER_BACKEND:
 
 **If REVIEWER_BACKEND = `codex`** (default):
 Fresh stress test (base round): spawn a paseo codex reviewer sub-agent (fresh) per `shared-references/paseo-reviewer-dispatch.md`; persist its agent-id to `threadId`.
-Follow-up probes / continuation (focused rounds, Phase 8 follow-ups): continue the SAME paseo codex reviewer sub-agent via `send_agent_prompt` per `paseo-reviewer-dispatch.md` (the codex-reply analog — the reviewer checks resolution against its OWN prior critique).
-`threadId` now holds the paseo codex agent-id (field name unchanged, semantics identical — it is the continuation handle).
+Follow-up probes / continuation (focused rounds, Phase 8 follow-ups): continue the SAME paseo codex reviewer sub-agent via `send_agent_prompt` per `paseo-reviewer-dispatch.md` so the reviewer checks resolution against its OWN prior critique.
+Store the paseo codex agent-id in `threadId` and use it as the continuation handle.
 **Strict mode**: Paseo MCP is required. If unavailable, the run BLOCKS (per `paseo-subagent-dispatch.md`).
 
 **If REVIEWER_BACKEND = `manual`:**
@@ -297,7 +297,7 @@ Use the selected backend. The base round spawns a fresh paseo codex reviewer sub
 
 _For manual:_ use `mcp__manual_review__review` with the same prompt and `config: {"model_reasoning_effort": "xhigh"}`.
 
-**Iterations.** Run the base round on the full draft. Then run focused follow-up rounds (continuation — continue the same paseo codex reviewer sub-agent via `send_agent_prompt` per `paseo-reviewer-dispatch.md`, the codex-reply analog) on each `reviewer_priority: pivotal` response, terminating when the reviewer returns no new substantive issues. Hard cap at 5 rounds total. Save each round to `rebuttal/MCP_STRESS_TEST_round<N>.md`; the highest round number represents the final state. If any hard safety blocker remains → revise before finalizing.
+**Iterations.** Run the base round on the full draft. Then run focused follow-up rounds (continuation — continue the same paseo codex reviewer sub-agent via `send_agent_prompt` per `paseo-reviewer-dispatch.md`) on each `reviewer_priority: pivotal` response, terminating when the reviewer returns no new substantive issues. Hard cap at 5 rounds total. Save each round to `rebuttal/MCP_STRESS_TEST_round<N>.md`; the highest round number represents the final state. If any hard safety blocker remains → revise before finalizing.
 
 ### Phase 7: Finalize
 
@@ -356,13 +356,15 @@ Uses **full Codex review gate** (reviewer-facing pre-submission deliverable — 
 
 Do NOT render `rebuttal/PASTE_READY.txt` — it's exact-character-count plain text by design, not a structural artifact.
 
-**Non-blocking**: if `/render-html` fails (helper missing, Codex MCP unavailable, file write error), log the failure and treat the rebuttal phase as complete — the `PASTE_READY.txt` and `REBUTTAL_DRAFT_rich.md` are the canonical outputs.
+If `/render-html` fails (helper missing, Paseo MCP unavailable, file write error),
+fail the rebuttal worker. Set `RENDER_HTML = false` explicitly to omit the HTML
+artifact.
 
 Skip if `RENDER_HTML = false`.
 
 ## Key Rules
 
-- **Large file handling**: If Write fails, retry with Bash heredoc silently.
+- **Large file handling**: If Write fails, stop and report the write error. Do not switch to a second writer.
 - **Never fabricate.** No invented evidence, numbers, derivations, citations, or links.
 - **Never overpromise.** Only promise what user explicitly approved.
 - **Full coverage.** Every reviewer concern tracked and accounted for.
@@ -375,8 +377,8 @@ Skip if `RENDER_HTML = false`.
 - **Don't waste space on unwinnable arguments.** Answer once, move on.
 - **Respect the limit.** Character budget is a hard constraint.
 - **Resume cleanly.** Continue from REBUTTAL_STATE.md on rerun.
-- **Anti-hallucination citations.** Any reference added must go through DBLP → CrossRef → [VERIFY].
+- **Anti-hallucination citations.** Any reference added must resolve through DBLP. An unresolved citation blocks the draft.
 
 ## Review Tracing
 
-After each reviewer call (`mcp__paseo__create_agent` fresh / `mcp__paseo__send_agent_prompt` continuation; `mcp__manual_review__review` / `mcp__manual_review__review_reply`; Paseo codex sub-agent (per `paseo-reviewer-dispatch.md`) as fallback), save the trace following `shared-references/review-tracing.md` (Policy C — forensic; never silently skip). Use `save_trace.sh` (resolved per the chain in `shared-references/integration-contract.md` §2) or write files directly to `.aris/traces/<skill>/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).
+After each reviewer call (`mcp__paseo__create_agent` fresh / `mcp__paseo__send_agent_prompt` continuation; `mcp__manual_review__review` / `mcp__manual_review__review_reply`), save the trace with `save_trace.sh` resolved through `shared-references/integration-contract.md` §2. If the helper is missing or fails, stop the gate. Respect the `--- trace:` parameter (default: `full`).

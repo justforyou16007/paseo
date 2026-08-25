@@ -30,13 +30,13 @@ privileged human-invoked skill — nothing to forge.
 
 ## The non-negotiable rules (jury-at-landing, reject-default)
 
-For each staged patch the user asks to land, in order — any failure ⇒ skip & report,
-never silently apply:
+For each staged patch the user asks to land, in order — any failure ⇒ stop this
+invocation and report, never silently apply or continue with a later patch:
 
 1. **The human named THIS patch.** Apply only patches the user listed (`/meta-apply 1,3`
    or `all`); default to applying nothing.
 2. **Fresh cross-model jury PASS, obtained now.** Spawn a fresh paseo codex reviewer sub-agent per `paseo-reviewer-dispatch.md` (
-   NOT codex-reply; `model: gpt-5.5`, `reasoning: xhigh`, `sandbox: read-only`,
+   not a continuation; `model: gpt-5.5`, `reasoning: xhigh`, `sandbox: read-only`,
    paths-only per [`reviewer-independence.md`](../shared-references/reviewer-independence.md))
    on the staged `.diff` + its target. Ask: _does this change improve the harness without
    regressions; PASS or KILL + one-line reason._ **KILL ⇒ refuse.** The human cannot

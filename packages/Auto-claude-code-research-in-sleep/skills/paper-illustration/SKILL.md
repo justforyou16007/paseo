@@ -74,7 +74,7 @@ Generate publication-quality illustrations using a **multi-stage workflow** with
 
 ## Optional: Style reference (`— style-ref: <source>`, opt-in)
 
-Lets the user steer **structural** figure conventions (caption length, panel-count distribution, figure-to-table ratio in the parent paper) toward a reference paper. **Default OFF — when the user does not pass `— style-ref`, do nothing differently from before.**
+Lets the user steer **structural** figure conventions (caption length, panel-count distribution, figure-to-table ratio in the parent paper) toward a reference paper. **Default OFF — the normal illustration path does not read a style reference.**
 
 Only when `— style-ref: <source>` appears in `$ARGUMENTS`, run the helper FIRST, before generating prompts:
 
@@ -96,7 +96,7 @@ STYLE_STATUS=0
 CACHE=$(node "$STYLE_HELPER" --source "<source>") || STYLE_STATUS=$?
 case "$STYLE_STATUS" in
   0) ;;                                       # use $CACHE/style_profile.md as structural guidance
-  2) echo "warning: style-ref skipped (missing optional dep)" >&2 ;;
+  2) echo "error: --style-ref requires the optional dependency; aborting illustration" >&2 ; exit 1 ;;
   3) echo "error: --style-ref source failed; aborting illustration" >&2 ; exit 1 ;;
   *) echo "error: helper failed unexpectedly; aborting illustration" >&2 ; exit 1 ;;
 esac

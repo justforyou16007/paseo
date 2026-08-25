@@ -68,80 +68,17 @@ cp -r skills/* /path/to/your/project/.agents/skills/
 
 > **重要：** Antigravity 从 `~/.gemini/antigravity/skills/`（全局）和 `<workspace>/.agents/skills/`（项目级）发现技能。Agent 启动时看到技能名称和描述，相关时加载完整 SKILL.md 内容。
 
-### 3.2 配置 Codex 审阅 MCP（用于审阅技能）
+### 3.2 连接 Paseo MCP（工作流技能必需）
 
-ARIS 使用外部 LLM（GPT-5.5 via Codex）作为审阅者。在 Antigravity 中启用：
+ARIS 工作流技能通过 Paseo 父子 agent 执行所有委派阶段，包括跨模型审阅。
+在 Antigravity 中连接当前 Paseo MCP，并确认以下生命周期工具可用：
+`mcp__paseo__list_agents`、`mcp__paseo__create_agent`、
+`mcp__paseo__send_agent_prompt`。
 
-1. 安装并认证 Codex CLI：
+Paseo MCP 不可用时，工作流必须阻断。不要改用宿主自己的子 agent、直接模型
+调用或进程内执行技能。
 
-   ```bash
-   npm install -g @openai/codex
-   codex login   # 用 ChatGPT 或 API key 认证
-   ```
-
-2. 在 Antigravity 中添加 MCP——编辑 `~/.gemini/settings.json`：
-
-   ```json
-   {
-     "mcpServers": {
-       "codex": {
-         "command": "codex",
-         "args": ["mcp-server"]
-       }
-     }
-   }
-   ```
-
-   或在项目根目录创建 `.gemini/settings.json`（项目级配置）：
-
-   ```json
-   {
-     "mcpServers": {
-       "codex": {
-         "command": "codex",
-         "args": ["mcp-server"]
-       }
-     }
-   }
-   ```
-
-3. 重启 Antigravity，验证 MCP 连接——agent 应报告 `mcp__codex__codex` 和 `mcp__codex__codex-reply` 工具可用。
-
-### 3.3 替代审阅 MCP（无 OpenAI API）
-
-没有 OpenAI API key？使用 [`llm-chat`](../mcp-servers/llm-chat/) MCP 服务器对接 DeepSeek/GLM/MiniMax/Kimi 等兼容接口：
-
-1. 创建虚拟环境并安装依赖：
-
-   ```bash
-   cd /path/to/Auto-claude-code-research-in-sleep
-   python3 -m venv .venv
-   .venv/bin/pip install -r mcp-servers/llm-chat/requirements.txt
-   ```
-
-2. 添加 MCP——编辑`~/.gemini/antigravity/mcp_config.json`（旧版：`~/.gemini/settings.json`），路径必须为**绝对路径**：
-
-   ```json
-   {
-     "mcpServers": {
-       "llm-chat": {
-         "command": "/path/to/Auto-claude-code-research-in-sleep/.venv/bin/python3",
-         "args": ["/path/to/Auto-claude-code-research-in-sleep/mcp-servers/llm-chat/server.py"],
-         "env": {
-           "LLM_BASE_URL": "https://api.deepseek.com/v1",
-           "LLM_API_KEY": "your_key",
-           "LLM_MODEL": "deepseek-chat"
-         }
-       }
-     }
-   }
-   ```
-
-3. 重启 Antigravity，确认 `llm-chat` MCP 在可用工具中。
-
-详见 [LLM_API_MIX_MATCH_GUIDE.md](LLM_API_MIX_MATCH_GUIDE.md) 获取已测试的提供商配置。
-
-### 3.4 项目说明（GEMINI.md）
+### 3.3 项目说明（GEMINI.md）
 
 Antigravity 使用 `GEMINI.md`（等价于 Claude Code 的 `CLAUDE.md`）存放项目级说明。在项目根目录创建：
 
@@ -242,10 +179,8 @@ Antigravity 通过 `SKILL.md` 中的 YAML `description` 字段自动发现 ARIS 
 读取并执行 skills/auto-review-loop/SKILL.md。
 对 "your paper topic" 运行自动评审循环。
 读取项目叙事文档、记忆文件和实验结果。
-使用 MCP 工具 mcp__codex__codex 进行外部审阅。
+使用已配置的 Paseo 审阅子 agent 进行外部审阅。
 ```
-
-> **注意：** 如果使用 `llm-chat` MCP，把 `mcp__codex__codex` 替换为 `mcp__llm-chat__chat`。或使用适配版技能：`skills/auto-review-loop-llm/SKILL.md`。
 
 ### Workflow 3：Paper Writing（论文写作）
 
@@ -282,11 +217,11 @@ Antigravity 通过 `SKILL.md` 中的 YAML `description` 字段自动发现 ARIS 
 
 ## 6. MCP 工具对照
 
-| ARIS MCP 工具             | 作用                         | 需要的 MCP Server |
-| ------------------------- | ---------------------------- | ----------------- |
-| `mcp__codex__codex`       | 发审阅请求到 GPT-5.5         | codex             |
-| `mcp__codex__codex-reply` | 续接审阅线程                 | codex             |
-| `mcp__llm-chat__chat`     | 发请求到兼容 OpenAI API 模型 | llm-chat          |
+| ARIS MCP 工具                    | 作用                         | 需要的 MCP Server |
+| -------------------------------- | ---------------------------- | ----------------- |
+| `mcp__paseo__create_agent`       | 创建工作流或审阅子 agent      | Paseo             |
+| `mcp__paseo__send_agent_prompt`  | 续接同一个子 agent            | Paseo             |
+| `mcp__paseo__list_agents`        | 检查子 agent 的状态和可用性    | Paseo             |
 | `mcp__zotero__*`          | 搜索 Zotero 文献库           | zotero            |
 | `mcp__obsidian-vault__*`  | 搜索 Obsidian 笔记库         | obsidian-vault    |
 
@@ -382,5 +317,5 @@ Antigravity 的知识系统跨对话保留上下文：
 - [ ] 将 `CLAUDE.md` 内容复制到 `GEMINI.md`（或保留两者）
 - [ ] 选择模型：Claude Opus 4.6 (Thinking) 或 Gemini 3.1 Pro (high)
 - [ ] 用自然语言或显式技能引用替代 `/斜杠命令`
-- [ ] 验证 MCP 工具可用（codex 或 llm-chat）
+- [ ] 验证 Paseo MCP 生命周期工具可用
 - [ ] 快速测试：`读取 skills/research-review/SKILL.md 并评审我的项目`

@@ -173,11 +173,9 @@ if [ -n "$STATUS" ]; then
   OUTPUT="[session-restore] Research project detected. Current state:\n$STATUS"
 fi
 
-# 2. Check for research_contract.md (new path first, legacy fallback)
+# 2. Check for the canonical research contract
 if [ -f "$PROJECT_DIR/idea-stage/docs/research_contract.md" ]; then
   OUTPUT="$OUTPUT\n\n[session-restore] idea-stage/docs/research_contract.md exists — read it to restore full idea context."
-elif [ -f "$PROJECT_DIR/docs/research_contract.md" ]; then
-  OUTPUT="$OUTPUT\n\n[session-restore] docs/research_contract.md exists (legacy path) — read it to restore full idea context."
 fi
 
 # 3. Check for active training
@@ -185,12 +183,10 @@ if grep -q "training_status:.*running" "$PROJECT_DIR/CLAUDE.md" 2>/dev/null; the
   OUTPUT="$OUTPUT\n\n[session-restore] Active training detected — check remote status and rebuild monitoring."
 fi
 
-# 4. Check for REVIEW_STATE.json (auto-review-loop recovery, new path first, legacy fallback)
+# 4. Check for REVIEW_STATE.json in the canonical recovery directory
 REVIEW_STATE=""
 if [ -f "$PROJECT_DIR/review-stage/REVIEW_STATE.json" ]; then
   REVIEW_STATE="$PROJECT_DIR/review-stage/REVIEW_STATE.json"
-elif [ -f "$PROJECT_DIR/REVIEW_STATE.json" ]; then
-  REVIEW_STATE="$PROJECT_DIR/REVIEW_STATE.json"
 fi
 if [ -n "$REVIEW_STATE" ]; then
   RS_STATUS=$(python3 -c "import json; d=json.load(open('$REVIEW_STATE')); print(d.get('status',''))" 2>/dev/null)

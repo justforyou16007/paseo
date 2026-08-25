@@ -5,8 +5,7 @@
 > Rule 1 (One Agent = One Skill) and Rule 4 (Paseo MCP Only, Strict).
 > The single fan-out primitive is `mcp__paseo__create_agent` × N, executed
 > as N sequential dispatch cycles (create, end turn, resume on that child's
-> finish notification, read its receipt). The
-> legacy 3-tier host-`Agent`-tool ladder is **removed**.
+> finish notification, read its receipt). Host `Agent`-tool fan-out is forbidden.
 
 When a skill needs **breadth** — many candidate ideas, many sources, many
 attack angles, many proof obligations, many draft sections — it may fan
@@ -70,10 +69,8 @@ Do not issue concurrent `create_agent` calls. A completion notification is
 delivered to the owner between its turns; leaving several turns outstanding
 makes completion ownership ambiguous and can strand a finished shard. This sequential turn protocol applies to Claude and Codex.
 
-The legacy 3-tier ladder (ultracode / `Agent` tool / sequential) is
-**removed**. Per Global Rule 4, the host `Agent` tool is forbidden in
-ARIS workflows; per Global Rule 1, all fan-out shards are
-Paseo-spawned sub-agents.
+Per Global Rule 4, the host `Agent` tool is forbidden in ARIS workflows; all
+fan-out shards are Paseo-spawned sub-agents.
 
 ```
             ┌─────────────────────────────────────────┐
@@ -259,10 +256,9 @@ strongest reviewer objection per idea.
 
 ### `/research-lit` — per-source fan-out, deterministic gate as "jury"
 
-`/research-lit` fans out retrieval across sources (arXiv, Semantic
-Scholar, OpenAlex, Exa, DeepXiv, Zotero, web) under integration-contract
-**Policy D2** (multi-source aggregate: invoke every resolved source,
-warn-and-continue on per-source failure, proceed if ≥1 contributed).
+`/research-lit` may fan out retrieval across explicitly requested sources
+(arXiv, Semantic Scholar, OpenAlex, Exa, DeepXiv, Zotero, web). Every
+requested source must complete; a source failure blocks the literature stage.
 Here the "jury" is **not** an LLM at all — it is the **deterministic**
 `verify-papers.js` gate (Policy D1: 3-layer arXiv / CrossRef / S2
 cross-check), which decides KEEP / `[UNVERIFIED]` by mechanical
@@ -293,7 +289,7 @@ Two invariants keep a fan-out from manufacturing or laundering errors:
 ## Cross-references
 
 - **`reviewer-routing.md`** — jury backend selection. The cross-model
-  jury step routes through Codex MCP (`gpt-5.5`, `xhigh`) by default, or
+  jury step routes through the Paseo codex reviewer (`gpt-5.5`, `xhigh`) by default, or
   Oracle MCP (`gpt-5.5-pro`) under `— reviewer: oracle-pro`. Fan-out
   tier never changes the jury backend.
 - **`reviewer-independence.md`** — the jury call receives **file paths
@@ -350,11 +346,9 @@ the capability gate for **Paseo N-subagent fan-out** (per Global Rule
 i.e. whose prose instructs the parent to spawn N Paseo sub-agents via
 `create_agent`. It is **not** boilerplate to be copied across skills.
 
-The host `Agent` tool is **forbidden** in ARIS workflows per Global
-Rule 4. A skill that previously granted `Agent` for the legacy Tier-2
-form MUST be migrated to the Paseo primitive. As of this rewrite the
-three fan-out skills (`idea-creator`, `research-lit`, `proof-checker`)
-all already have `mcp__paseo__create_agent` in their `allowed-tools`.
+The host `Agent` tool is **forbidden** in ARIS workflows per Global Rule 4.
+The fan-out skills (`idea-creator`, `research-lit`, `proof-checker`) use
+`mcp__paseo__create_agent` in their `allowed-tools`.
 
 **Re-granting rule.** A skill that adds genuine fan-out introduces
 `mcp__paseo__create_agent` to its `allowed-tools` **in the same change
@@ -363,9 +357,9 @@ that adds the fan-out prose**, and that prose must cite
 grant is self-justifying. Grant tracks usage; never the reverse.
 **Also: any mainline skill that grants `Agent` is rejected.** The
 forbidden list is enforced at the schema level — see
-`tools/check_skills_inventory.py`.
+`dist/tools/check-skills-inventory.js` (source: `src/tools/check-skills-inventory.ts`).
 
-**Enforcement.** `tools/check_skills_inventory.py` fails the drift
+**Enforcement.** `check-skills-inventory.js` fails the drift
 check if any mainline skill grants `Agent` (forbidden per Rule 4), or
 grants `mcp__paseo__create_agent` without citing
 `paseo-subagent-dispatch.md` in its body. This keeps vestigial grants

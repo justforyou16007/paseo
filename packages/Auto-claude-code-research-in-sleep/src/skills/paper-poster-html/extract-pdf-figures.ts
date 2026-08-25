@@ -2,8 +2,8 @@
 /**
  * extract_pdf_figures — pull real figures out of a paper PDF.
  *
- * Three subcommands: contact-sheet, auto, crop.
- * Uses CLI tools (mutool/pdftoppm) instead of PyMuPDF, and sharp instead
+ * Two subcommands: contact-sheet and crop.
+ * Uses the required pdftoppm/pdfinfo tools and sharp instead
  * of PIL for image manipulation.
  */
 import fs from "fs";
@@ -26,38 +26,19 @@ function sha256File(filePath: string): string {
 
 function pdfPageCount(pdfPath: string): number {
   try {
-    const output = execSync(`mutool info "${pdfPath}"`, {
+    const output = execSync(`pdfinfo "${pdfPath}"`, {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
     });
     const m = /Pages:\s*(\d+)/i.exec(output);
     return m ? parseInt(m[1], 10) : 0;
   } catch {
-    try {
-      const output = execSync(`pdfinfo "${pdfPath}"`, {
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-      const m = /Pages:\s*(\d+)/i.exec(output);
-      return m ? parseInt(m[1], 10) : 0;
-    } catch {
-      process.stderr.write("ERROR: neither mutool nor pdfinfo available for page count.\n");
-      return 0;
-    }
+    process.stderr.write("ERROR: pdfinfo is unavailable or cannot read the PDF.\n");
+    return 0;
   }
 }
 
 function pdfPageSize(pdfPath: string, pageNum: number): [number, number] | null {
-  try {
-    const output = execSync(`mutool info -M "${pdfPath}" ${pageNum}`, {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    const m = /MediaBox:\s*\[\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*\]/i.exec(output);
-    if (m) return [parseFloat(m[3]) - parseFloat(m[1]), parseFloat(m[4]) - parseFloat(m[2])];
-  } catch {
-    // fall through
-  }
   try {
     const output = execSync(`pdfinfo -f ${pageNum} -l ${pageNum} "${pdfPath}"`, {
       encoding: "utf-8",
@@ -66,7 +47,7 @@ function pdfPageSize(pdfPath: string, pageNum: number): [number, number] | null 
     const m = /Page\s+\d+\s+size:\s*([\d.]+)\s*x\s*([\d.]+)/i.exec(output);
     if (m) return [parseFloat(m[1]), parseFloat(m[2])];
   } catch {
-    // fall through
+    return null;
   }
   return null;
 }
@@ -109,18 +90,8 @@ function renderPage(
     }
     return fs.existsSync(outPath);
   } catch {
-    try {
-      const bboxArgs = bbox
-        ? `-x ${bbox[0]} -y ${bbox[1]} -w ${bbox[2] - bbox[0]} -h ${bbox[3] - bbox[1]}`
-        : "";
-      execSync(`mutool draw -o "${outPath}" -r ${dpi} ${bboxArgs} "${pdfPath}" ${pageNum}`, {
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-      return fs.existsSync(outPath);
-    } catch {
-      process.stderr.write("ERROR: neither pdftoppm nor mutool available for rendering.\n");
-      return false;
-    }
+    process.stderr.write("ERROR: pdftoppm failed to render the PDF page.\n");
+    return false;
   }
 }
 
@@ -149,58 +120,47 @@ async function cmdContactSheet(args: { pdf: string; out: string; dpi: number }):
     const outPath = path.join(outDir, `contact_sheet_p${String(pno).padStart(2, "0")}.png`);
     const ok = renderPage(pdfPath, pno, CONTACT_DPI, outPath);
     if (!ok) {
-      process.stderr.write(`WARN: failed to render page ${pno}\n`);
-      continue;
+      process.stderr.write(`ERROR: failed to render page ${pno}\n`);
+      return 2;
     }
 
     const pageSize = pdfPageSize(pdfPath, pno);
-    const wPt = pageSize ? pageSize[0] : 0;
-    const hPt = pageSize ? pageSize[1] : 0;
-
-    // Overlay grid using sharp
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let sharp: any;
-    try {
-      sharp = await import("sharp" as string);
-    } catch {
-      // No sharp available, skip grid overlay
-      written.push(outPath);
-      console.log(
-        `[contact-sheet] page ${pno}: ${Math.round(wPt)}x${Math.round(hPt)}pt -> ${asciiSafe(outPath)}`,
-      );
-      continue;
+    if (pageSize === null) {
+      process.stderr.write(`ERROR: cannot read dimensions for page ${pno}.\n`);
+      return 2;
     }
+    const wPt = pageSize[0];
+    const hPt = pageSize[1];
 
-    try {
-      const meta = await sharp.default(outPath).metadata();
-      const imgW = meta.width || 0;
-      const imgH = meta.height || 0;
-      const scale = CONTACT_DPI / PT_PER_INCH;
+    // Overlay grid using the required image dependency.
+    const sharp = await import("sharp");
 
-      let svgOverlay = `<svg width="${imgW}" height="${imgH}" xmlns="http://www.w3.org/2000/svg">`;
-      const gridColor = "rgba(170,200,230,0.7)";
-      const labelColor = "rgb(40,90,150)";
+    const meta = await sharp.default(outPath).metadata();
+    const imgW = meta.width || 0;
+    const imgH = meta.height || 0;
+    const scale = CONTACT_DPI / PT_PER_INCH;
 
-      for (let x = 0; x <= wPt + 0.1; x += GRID_STEP_PT) {
-        const px = Math.round(x * scale);
-        svgOverlay += `<line x1="${px}" y1="0" x2="${px}" y2="${imgH}" stroke="${gridColor}" stroke-width="1"/>`;
-        svgOverlay += `<text x="${px + 2}" y="12" fill="${labelColor}" font-size="10">${Math.round(x)}</text>`;
-      }
-      for (let y = 0; y <= hPt + 0.1; y += GRID_STEP_PT) {
-        const py = Math.round(y * scale);
-        svgOverlay += `<line x1="0" y1="${py}" x2="${imgW}" y2="${py}" stroke="${gridColor}" stroke-width="1"/>`;
-        svgOverlay += `<text x="2" y="${py + 12}" fill="${labelColor}" font-size="10">${Math.round(y)}</text>`;
-      }
-      svgOverlay += "</svg>";
+    let svgOverlay = `<svg width="${imgW}" height="${imgH}" xmlns="http://www.w3.org/2000/svg">`;
+    const gridColor = "rgba(170,200,230,0.7)";
+    const labelColor = "rgb(40,90,150)";
 
-      await sharp
-        .default(outPath)
-        .composite([{ input: Buffer.from(svgOverlay), top: 0, left: 0 }])
-        .toFile(outPath + ".tmp.png");
-      fs.renameSync(outPath + ".tmp.png", outPath);
-    } catch {
-      // Grid overlay failed, continue with raw render
+    for (let x = 0; x <= wPt + 0.1; x += GRID_STEP_PT) {
+      const px = Math.round(x * scale);
+      svgOverlay += `<line x1="${px}" y1="0" x2="${px}" y2="${imgH}" stroke="${gridColor}" stroke-width="1"/>`;
+      svgOverlay += `<text x="${px + 2}" y="12" fill="${labelColor}" font-size="10">${Math.round(x)}</text>`;
     }
+    for (let y = 0; y <= hPt + 0.1; y += GRID_STEP_PT) {
+      const py = Math.round(y * scale);
+      svgOverlay += `<line x1="0" y1="${py}" x2="${imgW}" y2="${py}" stroke="${gridColor}" stroke-width="1"/>`;
+      svgOverlay += `<text x="2" y="${py + 12}" fill="${labelColor}" font-size="10">${Math.round(y)}</text>`;
+    }
+    svgOverlay += "</svg>";
+
+    await sharp
+      .default(outPath)
+      .composite([{ input: Buffer.from(svgOverlay), top: 0, left: 0 }])
+      .toFile(outPath + ".tmp.png");
+    fs.renameSync(outPath + ".tmp.png", outPath);
 
     written.push(outPath);
     console.log(
@@ -215,29 +175,6 @@ async function cmdContactSheet(args: { pdf: string; out: string; dpi: number }):
   console.log(
     `[contact-sheet] wrote ${written.length} sheet(s) to ${asciiSafe(outDir)} at ${CONTACT_DPI} dpi.`,
   );
-  return 0;
-}
-
-// ---------------------------------------------------------------------------
-// auto subcommand.
-// ---------------------------------------------------------------------------
-
-function cmdAuto(args: { pdf: string; out: string; minArea: number; minGap: number }): number {
-  const pdfPath = path.resolve(args.pdf);
-  if (!fs.existsSync(pdfPath)) {
-    process.stderr.write(`ERROR: PDF not found: ${asciiSafe(pdfPath)}\n`);
-    return 2;
-  }
-
-  process.stderr.write(
-    "[auto] NOTE: The 'auto' subcommand relies on PyMuPDF's page inspection APIs " +
-      "(get_drawings, get_images, get_text) which have no direct CLI equivalent. " +
-      "Use the Python extract_pdf_figures.py auto for full candidate detection, " +
-      "or use contact-sheet to visually identify figures and crop them by hand.\n",
-  );
-
-  console.log(`# candidate figure regions for ${asciiSafe(path.basename(pdfPath))}`);
-  console.log("(auto-detection requires PyMuPDF; use contact-sheet + manual crop instead)");
   return 0;
 }
 
@@ -353,13 +290,9 @@ async function cmdCrop(args: {
   }
 
   let naturalPx: [number, number] = [0, 0];
-  try {
-    const sharp = await import("sharp");
-    const meta = await sharp.default(pngPath).metadata();
-    naturalPx = [meta.width || 0, meta.height || 0];
-  } catch {
-    // If sharp is unavailable, use zero dimensions
-  }
+  const sharp = await import("sharp");
+  const meta = await sharp.default(pngPath).metadata();
+  naturalPx = [meta.width || 0, meta.height || 0];
 
   const cropSha = sha256File(pngPath);
   const pdfSha = sha256File(pdfPath);
@@ -403,8 +336,7 @@ async function cmdCrop(args: {
 
 const program = createCli(
   "extract_pdf_figures",
-  "Extract real paper figures from a PDF (contact-sheet / auto / crop). " +
-    "bbox units = PDF points.",
+  "Extract real paper figures from a PDF (contact-sheet / crop). " + "bbox units = PDF points.",
 );
 
 program.argument("<pdf>", "source paper PDF");
@@ -428,23 +360,6 @@ program
       pdf,
       out: parent.out,
       dpi: parseInt(parent.dpi || "350", 10),
-    });
-    process.exit(code);
-  });
-
-program
-  .command("auto")
-  .description("detect + print candidate figure regions (writes nothing)")
-  .option("--min-area <n>", "ignore candidates below this area in pt^2", "10000")
-  .option("--min-gap <n>", "min vertical void between text blocks (pt)", "60")
-  .action((opts: Record<string, string>) => {
-    const parent = program.opts() as { out: string };
-    const pdf = program.args[0];
-    const code = cmdAuto({
-      pdf,
-      out: parent.out,
-      minArea: parseFloat(opts.minArea || "10000"),
-      minGap: parseFloat(opts.minGap || "60"),
     });
     process.exit(code);
   });

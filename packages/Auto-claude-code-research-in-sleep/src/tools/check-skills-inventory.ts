@@ -345,6 +345,17 @@ function checkInventory(): string[] {
     failures,
   );
   require_(
+    /--target-problems\b/.test(icreator),
+    "idea-creator/SKILL.md must pass `--target-problems` to upsert_idea — the retired `--target-gaps` alias is silently ignored by commander, so the addresses edges would never be written",
+    failures,
+  );
+  require_(
+    /VALID_EDGE_TYPES[\s\S]{0,600}?"child_of"/.test(rwiki) &&
+      /VALID_EDGE_TYPES[\s\S]{0,600}?"addresses"/.test(rwiki),
+    "src/tools/research-wiki.ts VALID_EDGE_TYPES must contain `child_of` (problem tree) and `addresses` (idea → problem); an unknown edge type is rejected at write time",
+    failures,
+  );
+  require_(
     !/\.command\("add_gap"\)/.test(rwiki) && !fs.existsSync(path.join(SKILLS_ROOT, "gap-planner")),
     "the free-text gap map is retired: no add_gap writer and no gap-planner skill (problems are entities, audited by whoever writes them)",
     failures,
@@ -353,10 +364,19 @@ function checkInventory(): string[] {
   // The loop is thin: one iteration = research-pipeline Stage 1-3 + the metric
   // gate. Every wiki write happens inside a pipeline skill, so a second writer
   // in the orchestrator would race the real birth point.
+  // Only the ```bash blocks are orchestrator shell. The dispatch prompts the
+  // loop hands to workers are worker instructions that happen to live in this
+  // file — the summary worker's prompt names add_problem on purpose, and
+  // matching against the whole file cannot tell the two apart.
   const arl = read(path.join(SKILLS_ROOT, "auto-research-loop", "SKILL.md"));
+  const orchestratorShell = [...arl.matchAll(/```bash\n([\s\S]*?)```/g)]
+    .map((m) => m[1])
+    .join("\n");
   require_(
-    !/"\$WIKI_SCRIPT"\s+(add_experiment|upsert_idea|add_claim|add_problem)\b/.test(arl),
-    "auto-research-loop/SKILL.md must not write the research wiki — the pipeline skills it dispatches own every birth point",
+    !/"\$WIKI_SCRIPT"\s+(add_experiment|upsert_idea|add_claim|add_problem)\b/.test(
+      orchestratorShell,
+    ),
+    "auto-research-loop/SKILL.md must not write the research wiki in orchestrator shell — the workers it dispatches own every birth point",
     failures,
   );
   require_(

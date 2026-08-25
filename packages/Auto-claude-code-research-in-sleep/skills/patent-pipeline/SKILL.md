@@ -39,7 +39,7 @@ Patents are about **protecting inventions** (legal scope), not publishing result
 
 - **JURISDICTION = `CN`** — Target patent jurisdiction. Options: `CN` (CNIPA), `US` (USPTO), `EP` (EPO), `ALL` (generate all three). Override via argument (e.g., `/patent-pipeline "invention — US"`).
 - **PATENT_TYPE = `invention`** — `invention` (发明专利, 20 year protection) or `utility_model` (实用新型, CN only, 10 year protection, apparatus claims only). Override via argument.
-- **REVIEWER_MODEL = `gpt-5.5`** — Model used via Codex MCP for examiner-style review.
+- **REVIEWER_MODEL = `gpt-5.5`** — Model used by the Paseo codex reviewer for examiner-style review.
 - **MAX_REVIEW_ROUNDS = 2** — Maximum review-revision cycles.
 - **AUTO_PROCEED = false** — At each checkpoint, **always wait for explicit user confirmation**. Patent applications require inventor judgment at every stage. Set `true` only if user explicitly requests autonomous mode.
 - **LANGUAGE = `auto`** — Output language. Auto-detected from jurisdiction: CN->Chinese, US->English, EP->English. Override explicitly if needed.
@@ -329,10 +329,10 @@ This compiles the application into the target jurisdiction format(s).
 - Utility model (实用新型) applies ONLY to CN jurisdiction and ONLY covers apparatus/device claims.
 - AUTO_PROCEED defaults to false -- patent applications require human review at every phase. Sub-skills inherit this flag: when AUTO_PROCEED=false, sub-skills present results and wait at their own internal checkpoints too.
 - The patent pipeline produces drafts for attorney review, not final filing documents.
-- Large file handling: if a Write operation fails, retry with Bash `cat <<'EOF'` heredoc.
+- Large file handling: if a Write operation fails, stop and report the write error. Do not switch to a second writer.
 - Never include experimental results or empirical evaluations in the specification.
 - Consistent terminology is mandatory -- same word for the same concept throughout.
-- If the paseo codex reviewer is not available, skip external cross-model review and note it in the output. The pipeline must not fail due to missing reviewer access.
+- The paseo codex reviewer is required. If it is not available, fail the pipeline and do not mark the draft complete.
 
 ## Composing with Other Workflows
 

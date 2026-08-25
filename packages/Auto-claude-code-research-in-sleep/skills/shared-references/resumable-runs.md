@@ -1,13 +1,11 @@
 # Resumable Runs
 
 A long ARIS workflow (`/research-pipeline`, `/paper-writing`, `/idea-discovery`)
-can fail mid-run — a rate limit, a crash, an overnight timeout. Today there is no
-record of _which phase finished_, so a resume restarts from scratch (this is the
-live complaint in issue #272: "the survey run failed — can it continue from the
-last task?"). `src/tools/run-state.ts` fixes that: a run is an **ordered list of
-phases with status**, persisted at `<root>/.aris/runs/<run_id>.json`.
+stores its ordered phases and statuses at
+`<root>/.aris/runs/<run_id>.json`. An explicit resume uses this state to locate
+the first phase that still needs execution or acceptance.
 
-## The one idea that makes this ARIS, not just "reopen the session"
+## Resume uses phase state, not session text
 
 Resumption is not "reopen the id" — it is **resolve FORWARD to where progress
 that can be TRUSTED actually landed.** And "trusted" is where ARIS's invariant
@@ -127,16 +125,13 @@ has one extra decision per phase — **is the phase's agent still alive?**
   - **Dead / archived** → `create_agent` fresh. The W-agent's startup reads
     `REVIEW_STATE.json` / `PAPER_IMPROVEMENT_STATE.json` and resumes from saved
     round+1, recreating the codex reviewer by its persisted agent-id
-    (`threadId` field — now holds a paseo codex agent-id) if still alive
-    (continuation preserved), else a fresh codex agent (reviewer memory may be
-    lost — same risk as today's codex-server-restart; trace files survive).
+    (`threadId` field) if still alive
+    (continuation preserved), else a fresh codex agent. Reviewer memory may be
+    lost when a fresh agent is required; trace files remain available.
 
-The `verdict_id` durable handle recorded at `accept` is now the paseo codex
-agent-id (for codex-accepted phases) or the verifier-report path/sha (for
-deterministic phases) — both already fit the "durable handle string" contract,
-so `run-state.ts` is unchanged. Resume resolves the agent-id the same way it
-resolved the codex thread id: it is an opaque string on disk; live-ness is the
-only new question, answered by `list_agents`.
+The `verdict_id` recorded at `accept` is either the paseo codex agent id or the
+verifier-report path and hash for deterministic phases. Resume treats the
+stored value as an opaque handle and checks live agents with `list_agents`.
 
 ## Cross-references
 

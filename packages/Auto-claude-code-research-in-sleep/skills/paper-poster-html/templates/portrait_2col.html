@@ -26,9 +26,9 @@
     2. Edit the DESIGN TOKENS in `:root` (or swap a tokens/*.json palette) —
        the token block is the ONLY place color/font-size literals may live.
     3. Replace TODO content placeholders (search for "TODO").
-    4. Run `python3 scripts/poster_check.py measure poster.html` to align columns.
-    5. Run `python3 scripts/render_preview.py poster.html` to produce the PDF.
-  STYLE CONTRACT (ARIS source gate, scripts/style_check.py):
+    4. Run `node "$SKILL_SCRIPTS/poster-check.js" measure poster.html` to align columns.
+    5. Run `node "$SKILL_SCRIPTS/render-preview.js" poster.html` to produce the PDF.
+  STYLE CONTRACT (ARIS source gate, style-check.js):
     - NO inline `style=` attributes anywhere in the markup. Use the utility
       classes (.fs-N, .mt-N, .mb-N, .w-NN, .text-secondary, .nowrap,
       .text-center) defined in the UTILITIES block below.
@@ -173,7 +173,7 @@
       }
 
       /* Poster container — exact print dimensions; data-measure-role="poster" so
-     poster_check.py can verify the canvas size.
+     poster-check.js can verify the canvas size.
      Width  : 610u ≈ 24in.
      Height : 914u ≈ 36in.
      RETARGET: width/height must track @page size (see CANVAS block). */
@@ -396,7 +396,7 @@
      BODY: 2 columns (portrait posters live and die on column balance)
 
      CRITICAL: Last-card bottoms of both columns must align —
-     run poster_check.py measure poster.html — spread < 5 px required
+     run poster-check.js measure poster.html — spread < 5 px required
      (< 3 px ideal). Gap to footer in 30–50 px.
      ========================================================= */
       .body-grid {

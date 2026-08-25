@@ -50,85 +50,15 @@ Copy-Item -Path ".\Auto-claude-code-research-in-sleep\skills\*" -Destination $pr
 
 安装完成后，在对应范围内直接用自然语言描述需求即可触发相应技能。
 
-### 2.2 设置 Codex 审阅 MCP（推荐）
+### 2.2 连接 Paseo MCP（工作流技能必需）
 
-ARIS 的关键机制是"执行模型 + 外部审阅模型"。先配好审阅 MCP，再跑流程。
+ARIS 工作流技能通过 Paseo 父子 agent 执行委派阶段和跨模型审阅。在 Trae
+中连接当前 Paseo MCP，并确认以下工具可用：
+`mcp__paseo__list_agents`、`mcp__paseo__create_agent`、
+`mcp__paseo__send_agent_prompt`。
 
-1. 安装并登录 Codex CLI
-
-```powershell
-npm install -g @openai/codex
-codex login
-```
-
-2. 在 Trae 中配置 MCP  
-   进入 `Settings → MCP → 手动添加`，新增：
-
-- Name: `codex`
-- Command: `codex`
-- Args: `mcp-server`
-
-如你的 Trae 版本支持工作区 MCP 文件，可用：
-
-```json
-{
-  "mcpServers": {
-    "codex": {
-      "command": "codex",
-      "args": ["mcp-server"]
-    }
-  }
-}
-```
-
-3. 重启 Trae 并验证
-
-- MCP 面板中 `codex` 为在线状态；
-- 跑含审阅步骤的技能时出现 review/score/feedback 输出。
-
-### 2.3 替代审阅 MCP（无 OpenAI API）
-
-可用 `llm-chat` 对接 DeepSeek/GLM/MiniMax/Kimi 等兼容接口。
-
-1. 建虚拟环境并安装依赖
-
-```powershell
-cd D:\path\to\Auto-claude-code-research-in-sleep
-python -m venv .venv
-.\.venv\Scripts\pip install -r mcp-servers\llm-chat\requirements.txt
-```
-
-2. 配置 MCP（路径必须绝对路径）
-
-```json
-{
-  "mcpServers": {
-    "llm-chat": {
-      "command": "/path/to/Auto-claude-code-research-in-sleep/.venv/Scripts/python.exe",
-      "args": ["/path/to/Auto-claude-code-research-in-sleep/mcp-servers/llm-chat/server.py"],
-      "env": {
-        "LLM_BASE_URL": "https://api.deepseek.com/v1",
-        "LLM_API_KEY": "your_key",
-        "LLM_MODEL": "deepseek-chat"
-      }
-    }
-  }
-}
-```
-
-3. 必查项
-
-- `command` 必须指向 venv Python；
-- `args` 必须是 `server.py` 绝对路径；
-- `LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL` 必须齐全；
-- 改完后重启 Trae，再看 MCP 在线状态。
-
-4. 若红点/离线
-
-- 检查路径拼写；
-- 检查 venv 里依赖是否安装；
-- 查看 `llm-chat-mcp-debug.log`（系统临时目录）；
-- 如 DeepSeek 返回认证失败，优先检查 key 与 base URL。
+Paseo MCP 不可用时，工作流必须阻断。不要改用宿主自己的子 agent、直接模型
+调用或进程内执行技能。
 
 ## 3. 在 Trae 里如何调用 Skills
 
@@ -228,10 +158,8 @@ Trae 通过 `SKILL.md` 中的 YAML `description` 字段自动发现 ARIS 技能�
 使用 auto-review-loop 技能。
 对 "your paper topic" 运行自动评审循环。
 读取项目叙事文档、记忆文件和实验结果。
-使用 MCP 工具 mcp__codex__codex 进行外部审阅。
+使用已配置的 Paseo 审阅子 agent 进行外部审阅。
 ```
-
-> **注意：** 如果使用 `llm-chat` MCP，把 `mcp__codex__codex` 替换为 `mcp__llm-chat__chat`。或使用适配版技能：`auto-review-loop-llm`。
 
 ### Workflow 3: Paper Writing（论文写作）
 
@@ -268,11 +196,11 @@ Trae 通过 `SKILL.md` 中的 YAML `description` 字段自动发现 ARIS 技能�
 
 ## 5. MCP Tool Calls 对照
 
-| ARIS MCP 工具             | 作用                         | 需要的 MCP Server |
-| ------------------------- | ---------------------------- | ----------------- |
-| `mcp__codex__codex`       | 发审阅请求到 GPT-5.5         | codex             |
-| `mcp__codex__codex-reply` | 续接审阅线程                 | codex             |
-| `mcp__llm-chat__chat`     | 发请求到兼容 OpenAI API 模型 | llm-chat          |
+| ARIS MCP 工具                    | 作用                         | 需要的 MCP Server |
+| -------------------------------- | ---------------------------- | ----------------- |
+| `mcp__paseo__create_agent`       | 创建工作流或审阅子 agent      | Paseo             |
+| `mcp__paseo__send_agent_prompt`  | 续接同一个子 agent            | Paseo             |
+| `mcp__paseo__list_agents`        | 检查子 agent 的状态和可用性    | Paseo             |
 
 ## 6. 状态文件与恢复
 
@@ -340,5 +268,5 @@ Deploy: python train.py --lr 1e-4 --epochs 100
 - [ ] 导入 ARIS skills 的 SKILL.md 文件
 - [ ] 在 `Settings → MCP` 配置 MCP 服务器
 - [ ] 使用自然语言描述需求触发技能
-- [ ] 验证 MCP 工具可用（codex 或 llm-chat）
+- [ ] 验证 Paseo MCP 生命周期工具可用
 - [ ] 快速测试：`使用 research-review 技能评审我的项目`

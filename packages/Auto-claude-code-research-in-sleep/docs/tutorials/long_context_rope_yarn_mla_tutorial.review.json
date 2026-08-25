@@ -72,7 +72,7 @@
   },
   "render_review": {
     "verdict": "DEFERRED",
-    "note": "render_html.py emitted output without auto-invoking an integrated render-stage codex review (the embedded check described in SKILL.md is not present in the current script). Math/code review covered the rendering-adjacent items: heading consistency, callout-list collision, table-pipe escape, personal_info_leak — all passed by round 3."
+    "note": "render-html.js emitted this stored output before the integrated render-stage Codex review was enabled. Math/code review covered the rendering-adjacent items: heading consistency, callout-list collision, table-pipe escape, personal_info_leak — all passed by round 3."
   },
   "summary": "Three round math/code review (FAIL/FAIL/FAIL) on a 1209-line draft of Long Context cheat sheet. Each round fixed real issues: YaRN temperature direction, KV-cache numerics, MLA imports, streaming_decode cache semantics, table structure, ABF prose. Post-round-3 fixes patched the last two issues (§6.4 wording + streaming edge case) without re-review per hard 3-round budget. Remaining warnings are cosmetic (length +9 lines, citation venue normalization).",
   "rendered_at": "2026-05-19"

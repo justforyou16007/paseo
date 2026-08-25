@@ -17,7 +17,8 @@ Get mobile notifications when experiments finish, reviews score, or checkpoints 
 | **Push only**     | Webhook notifications at key events. Mobile push, no reply                 | Feishu bot webhook URL                                                        |
 | **Interactive**   | Full bidirectional. Approve/reject ideas, reply to checkpoints from Feishu | [feishu-claude-code](https://github.com/joewongjc/feishu-claude-code) running |
 
-Without `~/.claude/feishu.json`, all skills behave exactly as before — zero overhead, zero side effects.
+Without `~/.claude/feishu.json`, Feishu notifications are disabled and the core
+workflow runs without a notification step.
 
 ---
 
@@ -158,7 +159,7 @@ Go back to Feishu Open Platform → Events & Callbacks → the long connection s
 | Bot connects but never receives messages  | Missing `im:message.p2p_msg:readonly` permission | Add permission → create new version → publish   |
 | Bot replies but doesn't know your project | `DEFAULT_CWD` points to wrong directory          | Edit `.env` → restart bridge                    |
 | Bot replies but seems less capable        | Using `claude-sonnet-4-6`                        | Change to `claude-opus-4-6` in `.env` → restart |
-| Old session has stale context             | Session cached from before config change         | Send `/new` in chat to start fresh session      |
+| Session has stale context                  | The current session predates a config change    | Send `/new` in chat to start a fresh session   |
 | "未检测到应用连接信息" when saving events | Bridge not running yet                           | Start bridge first, then save event config      |
 
 ### Step 6: Update ARIS config

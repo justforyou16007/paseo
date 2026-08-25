@@ -6,7 +6,7 @@
 
 在项目的 `CLAUDE.md` 中添加服务器信息：
 
-> **规范字段名。** 下方示例用可读的显示名（`Conda 环境`、`代码目录`、`SSH`）。`experiment_env` helper(`tools/experiment_env/env_helper.py`)通过翻译指南校验这些——agent 把 `Conda 环境`→`conda_env`、`代码目录`→`code_dir`、`SSH`→`ssh_alias` 等,再由 `env_helper.py parse` 写入 `.aris/experiment-env.json`。完整规范字段见 `tools/experiment_env/README.md`,规范名示例见 `templates/CLAUDE_MD_TEMPLATE.md` 的 `## Experiment Environment`。
+> **规范字段名。** 下方示例用可读的显示名（`Conda 环境`、`代码目录`、`SSH`）。`/experiment-env-manager` 会读取并校验这些设置，在实验开始前写入配置。它可以检查显式配置的本机、远程、Docker、Vast 或 Modal 环境以识别可用目标；目标缺失时会报告 BLOCKED，不会假装实验已经成功。
 
 ```markdown
 ## 远程服务器
@@ -33,7 +33,7 @@ Claude Code 读到这些就知道怎么 SSH、激活环境、启动实验。GPT-
 - 代码目录：`/home/YOUR_USERNAME/YOUR_CODE_DIRECTORY/`
 ```
 
-**没有 GPU 服务器？** Review 和改写功能不受影响，只有需要跑实验的修复会被跳过（标记为"需人工跟进"）。或者按需租 GPU 跑实验，见下方 Vast.ai 集成。
+**没有已配置的 GPU 环境？** Review 和改写功能不受影响。实验阶段会报告 BLOCKED，直到环境管理器检测到可用目标或用户补充配置。也可以按需租 GPU 跑实验，见下方 Vast.ai 集成。
 
 ## ☁️ Vast.ai 按需 GPU
 

@@ -132,18 +132,18 @@ Override inline: `/paper-write — target venue: NeurIPS, illustration: mermaid`
 
 </details>
 
-### General (all skills using Codex MCP)
+### General (all skills using the Paseo codex reviewer)
 
-Tune the reviewer model used by every Codex MCP call (default `gpt-5.5`), or fork the SKILL.md to customize prompt templates and the per-skill tool allowlist.
+Tune the reviewer model used by every Paseo codex call (default `gpt-5.5`), or fork the SKILL.md to customize prompt templates and the per-skill tool allowlist.
 
 - **Prompt templates** — tailor the review persona and evaluation criteria
 - **`allowed-tools`** — restrict or expand what each skill can do
 
 <details>
-<summary><b>Show Codex MCP reviewer-model options</b></summary>
+<summary><b>Show Paseo codex reviewer-model options</b></summary>
 
 | Constant         | Default   | Description                                                                                                                                                                 |
 | ---------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `REVIEWER_MODEL` | `gpt-5.5` | OpenAI model used via Codex MCP. Also available: `gpt-5.3-codex`, `gpt-5.2-codex`, `o3`. See [supported models](https://developers.openai.com/codex/models/) for full list. |
+| `REVIEWER_MODEL` | `gpt-5.5` | OpenAI model used by the Paseo codex reviewer. Also available: `gpt-5.3-codex`, `gpt-5.2-codex`, `o3`. See [supported models](https://developers.openai.com/codex/models/) for full list. |
 
 </details>

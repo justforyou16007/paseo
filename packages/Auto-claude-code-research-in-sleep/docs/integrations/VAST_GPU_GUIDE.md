@@ -90,9 +90,9 @@ Typical ARIS workloads with Vast.ai:
 
 Set `max_budget` in `CLAUDE.md` to get a warning when ARIS's estimate exceeds your comfort zone — it doesn't hard-block, just confirms before renting.
 
-## Fallback: no server at all
-
-The review and rewriting skills (`/auto-review-loop`, `/research-review`, `/paper-writing`, `/paper-compile`) still work without GPU access. Only experiment-related fixes will be skipped (flagged for manual follow-up).
+If a run explicitly requires `gpu: vast` and no Vast instance can be resolved, the experiment
+stage is BLOCKED. It does not silently skip experiment-related fixes. Choose an available
+environment explicitly or run a workflow that does not contain an experiment stage.
 
 ## Related skills
 

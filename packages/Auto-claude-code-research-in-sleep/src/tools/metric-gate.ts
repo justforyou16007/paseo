@@ -171,7 +171,11 @@ function noProgressStreak(
   baseline: number | null,
 ): number {
   const hasBaseline = isFiniteNumber(baseline);
-  const entries = [...history]
+  // One entry per iteration: duplicate rows in damaged or hand-edited state
+  // must not count as extra no-progress rounds. Last occurrence wins.
+  const byIter = new Map<number, HistoryEntry>();
+  for (const e of history) byIter.set(e.iter, e);
+  const entries = [...byIter.values()]
     .sort((a, b) => a.iter - b.iter)
     .filter((e) => !hasBaseline || e.iter > 1);
   let best: number | null = hasBaseline ? baseline : null;

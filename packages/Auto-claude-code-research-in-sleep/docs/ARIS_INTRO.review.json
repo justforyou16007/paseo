@@ -1,25 +1,25 @@
 {
   "skill": "render-html",
   "source": "docs/ARIS_INTRO.md",
-  "source_sha256": "7757b71ab1b1bacc6a4df7c7dc1909d74acd17542bfe815ee6a25522a908d0eb",
+  "source_sha256": "f1f2857e53779f976eb46226e646de998d5c61b1eff405d2c68cd46b10cc150f",
   "output": "docs/ARIS_INTRO.html",
   "author": "Ruofeng Yang (杨若峰), Shanghai Jiao Tong University",
-  "reviewer": "codex gpt-5.5 xhigh, fresh thread per run (never codex-reply)",
-  "verdict": "PASS",
+  "reviewer": "paseo codex gpt-5.5 xhigh, fresh child per independent review",
+  "verdict": "BLOCKED",
   "checks": {
     "source_hash_match": "pass",
-    "information_fidelity": "pass",
-    "structure": "pass",
-    "math_code_tables": "pass",
-    "callouts": "pass",
-    "safety_escaping": "pass",
-    "placeholder_leak": "pass",
-    "link_targets_absolute": "pass",
-    "details_inner_markdown_rendered": "pass",
-    "no_absolute_local_path_leak": "pass",
-    "author_byline_rendered": "pass",
-    "per_workflow_schema_consistency": "pass",
-    "workflow_count_consistency": "pass"
+    "information_fidelity": "unknown",
+    "structure": "unknown",
+    "math_code_tables": "unknown",
+    "callouts": "unknown",
+    "safety_escaping": "unknown",
+    "placeholder_leak": "unknown",
+    "link_targets_absolute": "unknown",
+    "details_inner_markdown_rendered": "unknown",
+    "no_absolute_local_path_leak": "unknown",
+    "author_byline_rendered": "unknown",
+    "per_workflow_schema_consistency": "unknown",
+    "workflow_count_consistency": "unknown"
   },
   "blocking_issues": [],
   "warnings": [],
@@ -29,7 +29,7 @@
       "verdict": "WARN",
       "thread_id": "019e3bfe-69de-7de1-8d64-7c70e3d19013",
       "issue": "<details><summary>Key safety features</summary> inner markdown bullets emitted as literal text",
-      "fix": "Added _render_html_block() in render_html.py — <details> blocks recursively parse inner content as Markdown (GFM convention)"
+      "fix": "Added _render_html_block() in render-html.js — <details> blocks recursively parse inner content as Markdown (GFM convention)"
     },
     {
       "run": 2,
@@ -57,7 +57,7 @@
       "verdict": "WARN",
       "thread_id": "019e3c1c-0c52-7f02-8756-c92a0d251004",
       "issue": "W2's new 🔁 callout rendered as plain <blockquote> not styled callout (emoji not in callout-prefix map); residual 'Six workflows'/'六大工作流' wording in TL;DR and CN section",
-      "fix": "Added 🔁 (+ 🌱 / 📚 / 🧬) to _CALLOUT_PREFIX_MAP in render_html.py; updated TL;DR + CN section to 'Seven workflows (W1/W1.5/W2/W3/W4/W5/W6)' / '七条工作流'"
+      "fix": "Added 🔁 (+ 🌱 / 📚 / 🧬) to _CALLOUT_PREFIX_MAP in render-html.js; updated TL;DR + CN section to 'Seven workflows (W1/W1.5/W2/W3/W4/W5/W6)' / '七条工作流'"
     },
     {
       "run": 6,
@@ -74,6 +74,6 @@
       "fix": null
     }
   ],
-  "summary": "Seven-round review: WARN (details MD) → PASS → PASS (privacy+byline) → FAIL (W2 missing closing callout) → WARN (🔁 not styled, count drift) → WARN (one stale count phrase) → PASS. 13 checks pass on run 7. Each round generated a renderer or content fix; full audit trail above. Final source SHA256 612bea09bdbe.",
-  "rendered_at": "2026-05-19"
+  "summary": "The source and HTML were refreshed after the documentation update. Run a fresh render review before treating this sidecar as a passing audit.",
+  "rendered_at": "2026-08-24"
 }

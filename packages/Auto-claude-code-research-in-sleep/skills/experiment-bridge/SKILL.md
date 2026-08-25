@@ -41,8 +41,8 @@ This skill expects one or more of:
 1. **`refine-logs/EXPERIMENT_PLAN.md`** (best) — claim-driven experiment roadmap from `/experiment-plan`
 2. **`refine-logs/EXPERIMENT_TRACKER.md`** — run-by-run execution table
 3. **`refine-logs/FINAL_PROPOSAL.md`** — method description for implementation context
-4. **`idea-stage/IDEA_CANDIDATES.md`** — compact idea summary (preferred when `COMPACT: true`) _(fall back to `./IDEA_CANDIDATES.md` if not found)_
-5. **`idea-stage/IDEA_REPORT.md`** — full brainstorm output _(fall back to `./IDEA_REPORT.md` if not found)_
+4. **`idea-stage/IDEA_CANDIDATES.md`** — compact idea summary (required when `COMPACT: true`)
+5. **`idea-stage/IDEA_REPORT.md`** — full brainstorm output
 
 If none exist, ask the user what experiments to implement.
 
@@ -81,7 +81,8 @@ fi
 In worker mode, the internal analyze-results receipt is the source of
 `metric.current`, `metric.delta`, and `statistical_significance`. Propagate
 those values into this final receipt. Never patch `metric.baseline` - the
-baseline is anchored at setup time, not by this worker.
+baseline is anchored by `/auto-research-loop` after iteration 1, not by this
+worker.
 
 ```json
 {
@@ -124,21 +125,16 @@ ordered `experiments[].slug` list. The orchestrator uses the bounded
 On failure, write receipt with `"status": "failed"` and structured `error` object
 per `worker-manifest.md`. Append system errors to `$WORKER_DIR/progress_error.md`.
 
-**Direct-call mode:** When invoked WITHOUT `— manifest:`, the skill operates
-normally using its own argument parsing. No receipt is written.
+The skill requires `— manifest:` and always writes a receipt. There is no second
+direct-call path with different input or output semantics.
 
-**Output path mapping:** In worker mode, every hardcoded output path in this
-skill's body (listed below) maps to `$OUTPUT_DIR/<filename>`. The orchestrator's
-subsequent input-manifests reference prior workers' outputs using their full
-`$WORKERS_DIR/<iter>-<phase>/outputs/<file>` path. In direct-call mode, the
-paths below are project-root-relative as written.
+**Output path mapping:** Every output path in this skill maps to
+`$OUTPUT_DIR/<filename>`. The orchestrator's input manifests reference these
+paths directly.
 
-| Direct-call path | Worker-mode path |
-|---|---|
-| `refine-logs/EXPERIMENT_RESULTS.md` | `$OUTPUT_DIR/EXPERIMENT_RESULTS.md` |
-| `refine-logs/EXPERIMENT_TRACKER.md` | `$OUTPUT_DIR/EXPERIMENT_TRACKER.md` |
-| `EXPERIMENT_LOG.md` | `$OUTPUT_DIR/EXPERIMENT_LOG.md` |
-| structured analysis | `$OUTPUT_DIR/analysis/EXPERIMENT_RESULTS.md` |
+| Worker output |
+|---|
+| `$OUTPUT_DIR/EXPERIMENT_RESULTS.md`, `$OUTPUT_DIR/EXPERIMENT_TRACKER.md`, `$OUTPUT_DIR/EXPERIMENT_LOG.md`, `$OUTPUT_DIR/analysis/EXPERIMENT_RESULTS.md` |
 
 ## Workflow
 
@@ -246,7 +242,7 @@ running. Then:
 
 - **No CRITICAL issues** → proceed to Phase 3
 - **CRITICAL issues found** → fix them, then re-submit for review (max 2 rounds)
-- **`create_agent` itself fails** (provider/codex unavailable) → skip silently, proceed to Phase 3 (graceful degradation applies ONLY to spawn failure, not to an in-flight review)
+- **`create_agent` itself fails** (provider/codex unavailable) → fail the bridge receipt and stop before deployment. Code review is a required gate when `CODE_REVIEW=true`.
 
 ### Phase 3: Sanity Check (if SANITY_FIRST = true)
 
@@ -300,12 +296,9 @@ If sanity fails → **auto-debug before giving up** (max 3 attempts):
 
    > When `run-<project>-experiment` exists, read error patterns from:
    > `sh .claude/skills/run-<project>-experiment/scripts/ops/env-info.sh | jq -r '.error_patterns[]'`
-   > Otherwise fall back to these defaults.
+   > If the generated skill is missing, stop and request `/experiment-env-manager — mode: setup`.
 3. **Fix and re-run** — apply the fix, re-run sanity
-4. **Attempt 2+ still failing? → Call in Codex rescue** (if Codex plugin installed):
-   Before the next retry, dispatch a paseo claude sub-agent for `/codex:rescue` per `shared-references/paseo-subagent-dispatch.md` to get a second opinion on the root cause. The rescue sub-agent is a claude child that may itself spawn a codex reviewer; it independently reads the code and error logs — it may spot issues Claude missed (wrong tensor shapes, subtle import shadowing, config mismatches, etc.). Apply its suggested fix, then re-run.
-   - If `/codex:rescue` is not available (plugin not installed), continue with Claude's own diagnosis
-5. **Still failing after 3 attempts?** → follow the generated skill's
+4. **Still failing after 3 attempts?** → follow the generated skill's
    unified op-failure routing: the failing op (`launch-job.sh` / `job-status.sh`)
    already emitted its structured error JSON on stderr; write it to
    `.aris/env-config/$PROJECT/error-reports/<TS>.json` and dispatch
@@ -503,11 +496,10 @@ Propagate the analyzer's metric current/delta/significance and verdict into the
 experiment-bridge receipt. Do not apply the nested receipt to the dashboard;
 only the final experiment-bridge receipt crosses the worker boundary. A missing
 or failed analyzer is a failed experiment-bridge receipt, never a warning or a
-fallback to raw rows.
+substitution with raw rows.
 
-**Direct-call mode:** retain the existing direct analyze-results invocation and
-legacy direct-call receipt path. The manifest receipt rule above applies only
-when experiment-bridge itself is a worker.
+The manifest receipt rule applies to every invocation. The analyzer receives
+its inputs only from the current manifest.
 
 ### Phase 5.7: Auto Ablation Planning
 
@@ -518,7 +510,8 @@ After main experiments (M2) complete with positive results, dispatch a paseo cla
 - Append ablation blocks to `refine-logs/EXPERIMENT_PLAN.md` and `refine-logs/EXPERIMENT_TRACKER.md`
 - If main results are negative or inconclusive, skip ablation planning and note in the summary
 
-If `/ablation-planner` is not available, skip silently — the existing EXPERIMENT_PLAN.md ablation blocks (if any) remain unchanged.
+If `/ablation-planner` is requested but unavailable, fail the bridge receipt. Do
+not claim that the ablation phase was completed from unrelated plan content.
 
 ### Phase 6: Handoff
 

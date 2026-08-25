@@ -1,205 +1,65 @@
 ---
 name: exa-search
-description: AI-powered web search via Exa with content extraction. Use when user says "exa search", "web search with content", "find similar pages", or needs broad web results beyond academic databases (arXiv, Semantic Scholar).
+description: Search the broad web through Exa with content extraction. Use for blogs, documentation, news, companies, and research-paper web results beyond academic APIs.
 argument-hint: [search-query-or-url]
 allowed-tools: Bash(*), Read, Write
 ---
 
-# Exa AI-Powered Web Search
+# Exa Search
 
-Search query: $ARGUMENTS
+Query: `$ARGUMENTS`
 
-## Role & Positioning
+## Contract
 
-Exa is the **broad web search** source with built-in content extraction:
-
-| Skill               | Best for                                                                                  |
-| ------------------- | ----------------------------------------------------------------------------------------- |
-| `/arxiv`            | Direct preprint search and PDF download                                                   |
-| `/semantic-scholar` | Published venue papers (IEEE, ACM, Springer), citation counts                             |
-| `/deepxiv`          | Layered reading: search, brief, section map, section reads                                |
-| `/exa-search`       | Broad web search: blogs, docs, news, companies, research papers — with content extraction |
-
-Use Exa when you need results beyond academic databases, or when you want content (highlights, full text, summaries) extracted alongside search results.
-
-## Constants
-
-- **EXA_FETCHER** — canonical name `exa-search.js`, resolved per
-  [`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2
-  (Policy D1 — standalone `/exa-search` has no documented fallback,
-  so unresolved helper terminates with an explicit error).
-- **MAX_RESULTS = 10** — Default number of results to return.
-
-> Overrides (append to arguments):
->
-> - `/exa-search "RAG pipelines" — max: 5` — top 5 results
-> - `/exa-search "diffusion models" — category: research paper` — research papers only
-> - `/exa-search "startup funding" — category: news, start date: 2025-01-01` — recent news
-> - `/exa-search "transformer" — content: text, max chars: 8000` — full text mode
-> - `/exa-search "transformer" — content: summary` — LLM-generated summaries
-> - `/exa-search "transformer" — domains: arxiv.org,huggingface.co` — domain filter
-> - `/exa-search "https://arxiv.org/abs/2301.07041" — similar` — find similar pages
-
-## Setup
-
-Exa requires the `exa-py` SDK and an API key:
+This skill has one implementation: `exa-search.js`. It requires the Exa SDK
+and API key through that helper. It does not use WebSearch, another SDK, or an
+inline parser when Exa fails.
 
 ```bash
-pip install exa-py
-```
-
-Set your API key:
-
-```bash
-export EXA_API_KEY=your-key-here
-```
-
-Get a key from [exa.ai](https://exa.ai).
-
-## Workflow
-
-### Step 1: Parse Arguments
-
-Parse `$ARGUMENTS` for:
-
-- **query**: The search query (required) or a URL (for `find-similar` mode)
-- **similar**: If present, use `find-similar` mode instead of search
-- **max**: Override MAX_RESULTS
-- **category**: `research paper`, `news`, `company`, `personal site`, `financial report`, `people`
-- **content**: `highlights` (default), `text`, `summary`, `none`
-- **max chars**: Max characters for content extraction
-- **type**: Search type — `auto` (default), `neural`, `fast`, `instant`
-- **domains**: Comma-separated include domains
-- **exclude domains**: Comma-separated exclude domains
-- **include text**: Phrase that must appear in results
-- **exclude text**: Phrase to exclude from results
-- **start date**: ISO 8601 date — only results after this
-- **end date**: ISO 8601 date — only results before this
-- **location**: Two-letter ISO country code
-
-### Step 2: Locate Script
-
-Resolve `$EXA_FETCHER` via the canonical strict-safe chain (see
-[`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2).
-Policy D1 cascade: there is no native inline fallback for Exa
-(retrieval requires the `exa-py` SDK + API key, which lives in the
-fetcher), so unresolved helper means the SKILL cannot produce its
-primary output — fail with explicit remediation.
-
-```bash
-_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
-cd "${_pr:-$(pwd)}" || exit 1
 EXA_FETCHER=".aris/dist/tools/exa-search.js"
 [ -f "$EXA_FETCHER" ] || EXA_FETCHER="dist/tools/exa-search.js"
 [ -f "$EXA_FETCHER" ] || {
-  echo "ERROR: exa-search.js not resolved at .aris/dist/tools/ or dist/tools/." >&2
-  echo "       Fix: run /aris-update to refresh the project runtime." >&2
-  echo "       Also ensure 'exa-py' is installed: pip install exa-py" >&2
+  echo "ERROR: exa-search.js is required." >&2
   exit 1
 }
 ```
 
-### Step 3: Execute Search
+## Workflow
 
-**Standard search:**
+Parse the query or URL and explicit options:
 
-```bash
-node "$EXA_FETCHER" search "QUERY" --max 10 --content highlights
-```
+- `--similar` for `find-similar`;
+- `--max`, `--category`, `--content`, `--max-chars`;
+- `--domains`, `--exclude-domains`, `--start-date`, `--end-date`;
+- `--type`, `--include-text`, `--exclude-text`, `--location`.
 
-**With filters:**
-
-```bash
-node "$EXA_FETCHER" search "QUERY" --max 10 \
-  --category "research paper" \
-  --start-date 2025-01-01 \
-  --content text --max-chars 8000
-```
-
-**Find similar pages:**
+Run one helper operation:
 
 ```bash
-node "$EXA_FETCHER" find-similar "URL" --max 5 --content highlights
+node "$EXA_FETCHER" search "QUERY" --max MAX_RESULTS --content highlights || exit 1
+node "$EXA_FETCHER" find-similar "URL" --max MAX_RESULTS --content highlights || exit 1
+node "$EXA_FETCHER" get-contents "URL1" "URL2" --content text || exit 1
 ```
 
-**Get content for known URLs:**
+An API, SDK, or parsing error fails the skill. Do not rerun the query through
+another search source.
+
+## Research Wiki
+
+Only research-paper results are eligible for Wiki ingest. If
+`research-wiki/` exists, the Wiki helper is required. Each paper result must
+contain an arXiv ID, title, and authors; missing metadata fails the ingest
+phase rather than being reconstructed from a snippet.
 
 ```bash
-node "$EXA_FETCHER" get-contents "URL1" "URL2" --content text
+node "$WIKI_SCRIPT" ingest_paper research-wiki/ \
+  --arxiv-id "$ARXIV_ID" || exit 1
 ```
 
-### Step 4: Present Results
+For a non-arXiv paper, pass the explicit metadata returned by Exa. Do not
+replace it with manually guessed metadata.
 
-Format results as a structured table:
+## Output
 
-```
-| # | Title | Authors | Venue/Publisher | URL | Date | Key Content |
-|---|-------|---------|-----------------|-----|------|-------------|
-```
-
-For each result:
-
-- Show title and URL
-- Show published date if available
-- Show highlights, text excerpt, or summary depending on content mode
-- Flag particularly relevant results
-- **For `category: "research paper"` hits only** — also record authors
-  (from Exa's `author`/`authors` fields, or fallback: parse from the
-  result snippet) and venue/publisher (from `publisher`, `source`, or
-  the domain hosting the paper). These are needed by Step 6's wiki
-  hook; if either is unavailable for a given hit, skip wiki ingest
-  for that one hit and log a note.
-
-### Step 5: Offer Follow-up
-
-After presenting results, suggest:
-
-- **Deepen**: "I can fetch full text for any of these results"
-- **Find similar**: "I can find pages similar to any result"
-- **Narrow**: "I can re-search with domain/date/text filters"
-
-### Step 6: Update Research Wiki (if active, research-paper results only)
-
-**Required when `research-wiki/` exists AND the search returned
-results of `category: "research paper"`**; skip silently otherwise.
-General web results (blog posts, docs, news) are **not** ingested —
-the wiki is for papers only.
-
-When the predicates hold, resolve `$WIKI_SCRIPT` per the canonical
-chain at
-[`shared-references/wiki-helper-resolution.md`](../shared-references/wiki-helper-resolution.md)
-(Variant B — warn-and-skip). For each research paper hit, try to
-recover an arXiv ID from the URL (`arxiv.org/abs/<id>`); if present,
-use `--arxiv-id`. Otherwise fall back to manual metadata:
-
-```bash
-if [ -d research-wiki/ ] and query category was "research paper":
-    _pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
-cd "${_pr:-$(pwd)}" || exit 1
-    WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
-    [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
-    [ -f "$WIKI_SCRIPT" ] || {
-      echo "WARN: research-wiki.js not found; exa-search results delivered, wiki ingest skipped. Fix: run /aris-update to refresh the project runtime." >&2
-      WIKI_SCRIPT=""
-    }
-    [ -n "$WIKI_SCRIPT" ] && for each research-paper hit in results:
-        if URL matches arxiv.org/abs/<id>:
-            node "$WIKI_SCRIPT" ingest_paper research-wiki/ \
-                --arxiv-id "<id>"
-        else:
-            node "$WIKI_SCRIPT" ingest_paper research-wiki/ \
-                --title "<title>" --authors "<authors joined by , >" \
-                --year <year> --venue "<venue or publisher>"
-```
-
-The helper handles slug / dedup / page / index / log — **do not
-handwrite `papers/<slug>.md`**. See
-[`shared-references/integration-contract.md`](../shared-references/integration-contract.md).
-
-## Key Rules
-
-- Always check that `EXA_API_KEY` is set before searching
-- Default to `highlights` content mode for a good balance of speed and context
-- Use `category: "research paper"` when the user is clearly looking for academic content
-- Use `text` content mode when the user needs full page content
-- Combine with `/arxiv` or `/semantic-scholar` for comprehensive literature coverage
+Show title, URL, date, content mode, and extracted content. Record the exact
+Exa query and source URL for every item.

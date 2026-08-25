@@ -6,7 +6,7 @@ When GPT-5.5 says "run an ablation study" or "add a baseline comparison", Claude
 
 Three GPU modes are supported — pick one and add it to your project's `CLAUDE.md`:
 
-> **Canonical field names.** The examples below use readable display names (`Conda env:`, `Code directory:`, `SSH:`). The `experiment_env` helper (`tools/experiment_env/env_helper.py`) validates these via a translation guide — the agent maps `Conda env:`→`conda_env`, `Code directory:`→`code_dir`, `SSH:`→`ssh_alias`, etc., then `env_helper.py parse` writes `.aris/experiment-env.json`. See `tools/experiment_env/README.md` for the full canonical field reference and `templates/CLAUDE_MD_TEMPLATE.md` `## Experiment Environment` for canonical-name examples.
+> **Canonical field names.** The examples below use readable display names (`Conda env:`, `Code directory:`, `SSH:`). `/experiment-env-manager` reads these settings, validates the selected environment, and records the configuration before an experiment starts. It may inspect the explicitly configured local, remote, Docker, Vast, or Modal targets to detect an available external environment; it does not silently claim that a missing target succeeded.
 
 #### Option A: Remote SSH Server (`gpu: remote`)
 
@@ -61,4 +61,4 @@ Drop this in `CLAUDE.md`:
 - Typical cost expectations (~$0.30-2 for ablations on RTX 4090, ~$2-10 for A100/H100 baselines)
 - When `gpu: vast` is preferable to `gpu: remote` / `gpu: local`
 
-**No server at all?** The review and rewriting skills still work without GPU access. Only experiment-related fixes will be skipped (flagged for manual follow-up).
+**No configured server?** The review and rewriting skills still work without GPU access. An experiment phase is reported as BLOCKED until the environment manager finds or the user configures an available target.

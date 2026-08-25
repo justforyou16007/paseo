@@ -72,16 +72,12 @@ def focus(pid: int) -> dict:
                     "error": f"bundled focus-tty.sh missing at {script}"}
     except Exception:
         return {"ok": False, "code": None, "error": "focus-tty.sh not accessible"}
-    # Direct exec respects the script's own shebang; fall back to bash only if the
-    # +x bit was lost on an odd checkout. A blocking macOS Automation prompt is
-    # bounded by the timeout; nothing here can hang the caller indefinitely.
+    # Direct exec respects the script's own shebang. A blocking macOS
+    # Automation prompt is bounded by the timeout; nothing here can hang the
+    # caller indefinitely.
     try:
-        try:
-            proc = subprocess.run([str(script), tty],
-                                  capture_output=True, text=True, timeout=10)
-        except PermissionError:
-            proc = subprocess.run(["bash", str(script), tty],
-                                  capture_output=True, text=True, timeout=10)
+        proc = subprocess.run([str(script), tty],
+                              capture_output=True, text=True, timeout=10)
     except subprocess.TimeoutExpired:
         return {"ok": False, "code": None, "error": "focus timed out after 10s"}
     except Exception as e:  # noqa: BLE001 -- best-effort, never raise to the UI

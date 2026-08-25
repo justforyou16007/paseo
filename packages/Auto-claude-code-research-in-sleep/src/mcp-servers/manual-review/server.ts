@@ -17,7 +17,6 @@ const PENDING_DIR = process.env.MANUAL_REVIEW_PENDING_DIR || ".aris/pending_revi
 const DEBUG_LOG_RAW = (process.env.MANUAL_REVIEW_DEBUG_LOG || "").trim();
 const DEBUG_LOG = DEBUG_LOG_RAW || null;
 const DEFAULT_PORT = parseInt(process.env.MANUAL_REVIEW_PORT || "17900", 10);
-const MAX_PORT_ATTEMPTS = 10;
 const FILE_STABLE_INTERVAL_SEC = 3;
 const FILE_POLL_INTERVAL_SEC = 2;
 
@@ -65,7 +64,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function openBrowser(url: string): void {
+function openBrowser(url: string): Promise<void> {
   const platform = process.platform;
   let cmd: string;
   if (platform === "darwin") {
@@ -75,8 +74,14 @@ function openBrowser(url: string): void {
   } else {
     cmd = `xdg-open ${JSON.stringify(url)}`;
   }
-  execCb(cmd, () => {
-    // ignore errors
+  return new Promise((resolve, reject) => {
+    execCb(cmd, (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
   });
 }
 
@@ -229,38 +234,34 @@ async function waitForBrowserResponse(
     session.resolve = resolve;
   });
 
-  let server: http.Server | null = null;
-  let boundPort = DEFAULT_PORT;
-
-  for (let attempt = 0; attempt < MAX_PORT_ATTEMPTS; attempt++) {
-    const port = DEFAULT_PORT + attempt;
-    try {
-      server = await tryListen(port, session);
-      boundPort = port;
-      break;
-    } catch {
-      continue;
-    }
-  }
-
-  if (server === null) {
+  let server: http.Server;
+  try {
+    server = await tryListen(DEFAULT_PORT, session);
+  } catch (error) {
     _currentSession = null;
     return {
       response: null,
-      error: `Could not bind to any port in range ${DEFAULT_PORT}-${DEFAULT_PORT + MAX_PORT_ATTEMPTS - 1}`,
+      error: `Could not bind manual review server to port ${DEFAULT_PORT}: ${String(error)}`,
     };
   }
 
   _activeServer = server;
-  const url = `http://127.0.0.1:${boundPort}?token=${_authToken}`;
+  const url = `http://127.0.0.1:${DEFAULT_PORT}?token=${_authToken}`;
   writePendingState(url, threadId, null);
   debugLog(`HTTP server started on ${url}`);
 
   if (AUTO_OPEN) {
     try {
-      openBrowser(url);
-    } catch {
-      // ignore
+      await openBrowser(url);
+    } catch (error) {
+      server.close();
+      _activeServer = null;
+      _currentSession = null;
+      clearPendingState(threadId);
+      return {
+        response: null,
+        error: `Could not open the manual review browser for ${url}: ${String(error)}`,
+      };
     }
   }
 
@@ -495,9 +496,8 @@ async function waitForFileResponse(
       let content: string;
       try {
         content = fs.readFileSync(responsePath, "utf-8").trim();
-      } catch {
-        prevContent = null;
-        continue;
+      } catch (error) {
+        throw new Error(`cannot read manual review response ${responsePath}: ${String(error)}`);
       }
       if (!content) {
         prevContent = null;
@@ -516,9 +516,8 @@ async function waitForFileResponse(
       let content2: string;
       try {
         content2 = fs.readFileSync(responsePath, "utf-8").trim();
-      } catch {
-        prevContent = null;
-        continue;
+      } catch (error) {
+        throw new Error(`cannot re-read manual review response ${responsePath}: ${String(error)}`);
       }
       if (content2 === content && content2) {
         response = content2;

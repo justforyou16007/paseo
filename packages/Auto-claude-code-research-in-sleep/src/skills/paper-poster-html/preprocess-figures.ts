@@ -31,17 +31,14 @@ interface ManifestFigure {
   [key: string]: unknown;
 }
 
-function loadManifest(manifestPath: string): ManifestData | null {
+function loadManifest(manifestPath: string): ManifestData {
   if (!fs.existsSync(manifestPath)) {
-    process.stderr.write(`WARN: manifest not found, skipping sync: ${asciiSafe(manifestPath)}\n`);
-    return null;
+    throw new Error(`manifest not found: ${asciiSafe(manifestPath)}`);
   }
   try {
     return JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as ManifestData;
   } catch (e) {
-    process.stderr.write(`ERROR: manifest unreadable: ${asciiSafe(String(e))}\n`);
-    process.exit(1);
-    return null; // unreachable
+    throw new Error(`manifest unreadable: ${asciiSafe(String(e))}`);
   }
 }
 
@@ -139,9 +136,9 @@ async function autocropAndProcess(
         height = newMeta.height || 0;
         changed = true;
       }
-    } else {
-      process.stderr.write(
-        `[preprocess] WARN: ${asciiSafe(path.basename(imgPath))} is all near-white; skipping autocrop.\n`,
+    } else if (doAutocrop) {
+      throw new Error(
+        `${path.basename(imgPath)} is all near-white; autocrop cannot produce a figure`,
       );
     }
   }

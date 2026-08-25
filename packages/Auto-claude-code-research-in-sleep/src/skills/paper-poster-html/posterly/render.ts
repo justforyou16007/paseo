@@ -59,24 +59,14 @@ export async function settlePage(
   const mathjaxTimeoutMs = options.mathjaxTimeoutMs ?? 15000;
   const settleMs = options.settleMs ?? 500;
 
-  let mathjaxIntended = false;
-  try {
-    mathjaxIntended = !!(await page.evaluate(
-      `() => !!(document.querySelector('script[src*="mathjax" i]') ` +
-        `|| (window.MathJax && Object.keys(window.MathJax).length > 0))`,
-    ));
-  } catch {
-    mathjaxIntended = false;
-  }
+  const mathjaxIntended = !!(await page.evaluate(
+    `() => !!(document.querySelector('script[src*="mathjax" i]') ` +
+      `|| (window.MathJax && Object.keys(window.MathJax).length > 0))`,
+  ));
 
-  let hasMj = false;
-  try {
-    hasMj = !!(await page.evaluate(
-      `() => !!(window.MathJax && window.MathJax.startup ` + `&& window.MathJax.startup.promise)`,
-    ));
-  } catch {
-    hasMj = false;
-  }
+  const hasMj = !!(await page.evaluate(
+    `() => !!(window.MathJax && window.MathJax.startup ` + `&& window.MathJax.startup.promise)`,
+  ));
 
   let mjStatus: SettleResult["mathjaxStatus"] = "not-needed";
   let mjError: string | null = null;
@@ -100,37 +90,28 @@ export async function settlePage(
     }
   }
 
-  try {
-    await page.evaluate(
-      `() => document.fonts && document.fonts.ready ` + `? document.fonts.ready : null`,
-    );
-  } catch {
-    // best-effort
-  }
+  await page.evaluate(
+    `() => document.fonts && document.fonts.ready ` + `? document.fonts.ready : null`,
+  );
   await page.evaluate(
     `() => new Promise(r => ` + `requestAnimationFrame(() => requestAnimationFrame(r)))`,
   );
   await page.waitForTimeout(settleMs);
 
-  let texWithoutMathjax = false;
-  try {
-    const sanity = (await page.evaluate(
-      `() => {` +
-        `  const has_mjx = ` +
-        `    document.querySelectorAll('mjx-container').length > 0;` +
-        `  const txt = document.body && document.body.innerText || '';` +
-        `  const has_dollar  = /\\$[^$\\n]+\\$/.test(txt);` +
-        `  const has_ddollar = /\\$\\$[\\s\\S]+?\\$\\$/.test(txt);` +
-        `  const has_paren   = /\\\\\\([\\s\\S]+?\\\\\\)/.test(txt);` +
-        `  const has_brack   = /\\\\\\[[\\s\\S]+?\\\\\\]/.test(txt);` +
-        `  return {has_mjx, has_tex: has_dollar || has_ddollar ` +
-        `                          || has_paren  || has_brack};` +
-        `}`,
-    )) as { has_mjx: boolean; has_tex: boolean };
-    texWithoutMathjax = !!sanity.has_tex && !sanity.has_mjx;
-  } catch {
-    texWithoutMathjax = false;
-  }
+  const sanity = (await page.evaluate(
+    `() => {` +
+      `  const has_mjx = ` +
+      `    document.querySelectorAll('mjx-container').length > 0;` +
+      `  const txt = document.body && document.body.innerText || '';` +
+      `  const has_dollar  = /\\$[^$\\n]+\\$/.test(txt);` +
+      `  const has_ddollar = /\\$\\$[\\s\\S]+?\\$\\$/.test(txt);` +
+      `  const has_paren   = /\\\\\\([\\s\\S]+?\\\\\\)/.test(txt);` +
+      `  const has_brack   = /\\\\\\[[\\s\\S]+?\\\\\\]/.test(txt);` +
+      `  return {has_mjx, has_tex: has_dollar || has_ddollar ` +
+      `                          || has_paren  || has_brack};` +
+      `}`,
+  )) as { has_mjx: boolean; has_tex: boolean };
+  const texWithoutMathjax = !!sanity.has_tex && !sanity.has_mjx;
 
   return {
     mathjaxIntended,

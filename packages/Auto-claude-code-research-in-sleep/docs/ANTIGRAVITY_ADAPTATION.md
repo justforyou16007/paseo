@@ -68,80 +68,17 @@ cp -r skills/* /path/to/your/project/.agents/skills/
 
 > **Important:** Antigravity discovers skills from `~/.gemini/antigravity/skills/` (global) and `<workspace>/.agents/skills/` (project-scoped). The agent sees skill names and descriptions at startup, then loads full SKILL.md content when relevant.
 
-### 3.2 Set up Codex MCP in Antigravity (for review skills)
+### 3.2 Connect Paseo MCP (required for workflow skills)
 
-ARIS uses an external LLM (GPT-5.5 via Codex) as a critical reviewer. To enable this in Antigravity:
+ARIS workflow skills use Paseo parent-child agents for every delegated phase,
+including cross-model review. Connect the current Paseo MCP integration in
+Antigravity and verify that it exposes `mcp__paseo__list_agents`,
+`mcp__paseo__create_agent`, and `mcp__paseo__send_agent_prompt`.
 
-1. Install Codex CLI and authenticate:
+If Paseo MCP is unavailable, the workflow is blocked. Do not replace it with a
+provider-native sub-agent, a direct model call, or in-process skill execution.
 
-   ```bash
-   npm install -g @openai/codex
-   codex login   # authenticate with your ChatGPT or API key
-   ```
-
-2. Add MCP server in Antigravity — edit `~/.gemini/settings.json`:
-
-   ```json
-   {
-     "mcpServers": {
-       "codex": {
-         "command": "codex",
-         "args": ["mcp-server"]
-       }
-     }
-   }
-   ```
-
-   Or for project-local scope, create `.gemini/settings.json` in your project root:
-
-   ```json
-   {
-     "mcpServers": {
-       "codex": {
-         "command": "codex",
-         "args": ["mcp-server"]
-       }
-     }
-   }
-   ```
-
-3. Restart Antigravity. Verify the MCP server connects — the agent will report available tools that include `mcp__codex__codex` and `mcp__codex__codex-reply`.
-
-### 3.3 Alternative reviewer MCP (no OpenAI API)
-
-If you don't have an OpenAI API key, use the [`llm-chat`](../mcp-servers/llm-chat/) MCP server with any OpenAI-compatible API (DeepSeek, GLM, MiniMax, Kimi, etc.):
-
-1. Create a virtual environment and install the required dependency:
-
-   ```bash
-   cd /path/to/Auto-claude-code-research-in-sleep
-   python3 -m venv .venv
-   .venv/bin/pip install -r mcp-servers/llm-chat/requirements.txt
-   ```
-
-2. Add MCP server — edit `~/.gemini/settings.json`. Both paths must be **absolute**:
-
-   ```json
-   {
-     "mcpServers": {
-       "llm-chat": {
-         "command": "/path/to/Auto-claude-code-research-in-sleep/.venv/bin/python3",
-         "args": ["/path/to/Auto-claude-code-research-in-sleep/mcp-servers/llm-chat/server.py"],
-         "env": {
-           "LLM_BASE_URL": "https://api.deepseek.com/v1",
-           "LLM_API_KEY": "your_key",
-           "LLM_MODEL": "deepseek-chat"
-         }
-       }
-     }
-   }
-   ```
-
-3. Restart Antigravity. The `llm-chat` MCP should appear in available tools.
-
-See [LLM_API_MIX_MATCH_GUIDE.md](LLM_API_MIX_MATCH_GUIDE.md) for tested provider configurations.
-
-### 3.4 Project instructions (GEMINI.md)
+### 3.3 Project instructions (GEMINI.md)
 
 Antigravity uses `GEMINI.md` (equivalent to Claude Code's `CLAUDE.md`) for project-specific instructions. Create this file in your project root:
 
@@ -251,10 +188,8 @@ Deploy to GPU via skills/run-experiment/SKILL.md.
 Read and execute skills/auto-review-loop/SKILL.md.
 Run the auto review loop for "your paper topic".
 Read project narrative docs, memory files, experiment results.
-Use MCP tool mcp__codex__codex for external review.
+Use the configured Paseo reviewer child for external review.
 ```
-
-> **Important:** If using the `llm-chat` MCP instead of Codex, replace `mcp__codex__codex` with `mcp__llm-chat__chat`. Or use the adapted skill: `skills/auto-review-loop-llm/SKILL.md`.
 
 ### Workflow 3: Paper Writing
 
@@ -295,13 +230,13 @@ Each stage reads the previous stage's output files, so context carries forward a
 
 ## 6. MCP Tool Calls
 
-ARIS skills reference MCP tools by name. These work identically in Antigravity once configured:
+ARIS skills use the Paseo MCP lifecycle once configured:
 
-| ARIS MCP tool             | What it does                               | Required MCP server            |
-| ------------------------- | ------------------------------------------ | ------------------------------ |
-| `mcp__codex__codex`       | Send prompt to GPT-5.5                     | Codex                          |
-| `mcp__codex__codex-reply` | Continue conversation thread               | Codex                          |
-| `mcp__llm-chat__chat`     | Send prompt to any OpenAI-compatible model | llm-chat                       |
+| ARIS MCP tool                   | What it does                       | Required MCP server |
+| ------------------------------- | ---------------------------------- | ------------------- |
+| `mcp__paseo__create_agent`      | Start a child workflow or reviewer | Paseo               |
+| `mcp__paseo__send_agent_prompt` | Continue the same child            | Paseo               |
+| `mcp__paseo__list_agents`       | Check child state and availability | Paseo               |
 | `mcp__zotero__*`          | Search Zotero library                      | zotero (name may vary)         |
 | `mcp__obsidian-vault__*`  | Search Obsidian vault                      | obsidian-vault (name may vary) |
 
@@ -428,5 +363,5 @@ Deploy: python train.py --lr 1e-4 --epochs 100
 - [ ] Copy `CLAUDE.md` content to `GEMINI.md` (or keep both)
 - [ ] Select model: Claude Opus 4.6 (Thinking) or Gemini 3.1 Pro (high)
 - [ ] Use natural language or explicit skill references instead of `/slash-commands`
-- [ ] Verify MCP tools are available (codex or llm-chat)
+- [ ] Verify the Paseo MCP lifecycle tools are available
 - [ ] Run a quick test: `Read skills/research-review/SKILL.md and review my project`

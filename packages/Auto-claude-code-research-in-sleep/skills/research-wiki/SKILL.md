@@ -49,8 +49,8 @@ Before persisting an **idea / claim / experiment** note, screen it for
 operational noise that would harden into a self-cited falsehood (see
 [`shared-references/capture-antipatterns.md`](../shared-references/capture-antipatterns.md)).
 Resolve the helper via the canonical chain (integration-contract §2):
-`.aris/dist/tools/capture-filter.js` → `dist/tools/capture-filter.js` →
-(warn-and-skip if unresolved). Run
+`.aris/dist/tools/capture-filter.js` → `dist/tools/capture-filter.js`.
+If the helper is unresolved, fail the write. Run
 `node <capture_filter> -` on the note text; if it flags **env-failure /
 transient-error / negative-tool-claim**, do NOT store it as a durable node —
 rewrite it to the _fix / missing config / workaround_, or drop it. Never store
@@ -104,13 +104,11 @@ WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
 }
 ```
 
-`/research-wiki` itself is the wiki tool — if the helper is missing the
-skill **hard-fails**. Caller skills that update the wiki as a side
-effect (`/idea-creator`, `/result-to-claim`, `/research-lit`, `/arxiv`,
-`/alphaxiv`, `/deepxiv`, `/semantic-scholar`, `/exa-search`) use the
-same chain but **warn-and-skip** instead of hard-failing — their
-primary output (idea list, claim verdict, paper summary) must still be
-delivered to the user.
+`/research-wiki` itself is the wiki tool. Caller skills that update the wiki
+as a side effect (`/idea-creator`, `/result-to-claim`, `/research-lit`,
+`/arxiv`, `/alphaxiv`, `/deepxiv`, `/semantic-scholar`, `/exa-search`) use the
+same chain and fail when Wiki integration is active. A primary output is not
+complete when its required Wiki write failed.
 
 ### `/research-wiki init`
 
@@ -125,13 +123,6 @@ The helper creates
 `research-wiki/{papers,ideas,experiments,claims,problems,graph}/` plus
 `index.md`, `log.md`, **`query_pack.md`**, and `graph/edges.jsonl`, then
 appends `"Wiki initialized"` to `log.md`.
-
-(Earlier versions of this skill described a prose-only init that
-omitted `query_pack.md` — that drifted from the helper and made
-`/idea-creator`'s Phase 0 query-pack check fall through to a
-`rebuild_query_pack` invocation that, under the old hard-coded path,
-silently failed. Delegating init to the helper is the single source of
-truth for the wiki schema.)
 
 ### `/research-wiki ingest "<paper title>" — arxiv: <id>`
 
@@ -148,9 +139,8 @@ implementation of paper ingest in ARIS (per
 5. **Rebuild `index.md`** and `query_pack.md`
 6. **Append `log.md`**
 
-Edge extraction (step 5/8 in the old manual flow) is **not** in
-`ingest_paper`; do it as a follow-up with `add_edge` per relationship
-identified:
+`ingest_paper` does not infer relationships. Add each identified relationship
+explicitly with `add_edge`:
 
 ```bash
 # arXiv-known paper
@@ -310,7 +300,7 @@ Ideas: 7 (2 active, 3 failed, 1 partial, 1 succeeded)
 Experiments: 12
 Claims: 15 (8 verified, 4 unproven, 2 refuted, 1 sound-modulo-imports)
 Edges: 64
-Gaps: 8 (3 unresolved)
+Problems: 8 (3 open, 4 solved, 1 deferred)
 Last updated: 2026-04-07T10:12:00Z
 ```
 
@@ -322,14 +312,14 @@ All paper-reading skills follow the same **integration contract** (see
 - single predicate — `[ -d research-wiki/ ]`
 - single canonical helper — `node "$WIKI_SCRIPT" ingest_paper …` after resolving `$WIKI_SCRIPT` via the chain at the top of this SKILL
 - concrete artifact — `papers/<slug>.md` + `log.md` entry
-- backfill — `sync --arxiv-ids …`
-- diagnostic — `verify_wiki_coverage.sh` (Policy E; resolved per integration-contract §2)
+- backfill — `sync --arxiv-ids …` when the user explicitly requests it
 
 ### Hook 1: After `/research-lit` finds papers
 
 ```
 # At end of research-lit, after synthesis:
-if research-wiki/ exists AND $WIKI_SCRIPT resolved (chain at top of this SKILL):
+if research-wiki/ exists:
+    require $WIKI_SCRIPT to resolve (chain at top of this SKILL), otherwise fail
     for paper in top_relevant_papers (limit 8-12):
         node "$WIKI_SCRIPT" ingest_paper research-wiki/ \
             --arxiv-id <id> [--thesis "..."] [--tags "..."]
@@ -339,8 +329,6 @@ if research-wiki/ exists AND $WIKI_SCRIPT resolved (chain at top of this SKILL):
                 --type <extends|contradicts|addresses|...> \
                 --evidence "..."
     log "research-lit ingested N papers"
-elif research-wiki/ exists but $WIKI_SCRIPT did not resolve:
-    warn "wiki update skipped — research-wiki.js unreachable; run /aris-update"
 ```
 
 Each paper-reading skill ships its own Step "Update Research Wiki (if

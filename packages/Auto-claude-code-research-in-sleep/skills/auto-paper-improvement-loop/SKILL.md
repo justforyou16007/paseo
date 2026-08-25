@@ -11,8 +11,7 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent,
 
 > 🔒 **Do not wrap this skill in `/loop`, `/schedule`, or `CronCreate`.** It
 > already loops internally (review → fix → recompile) with its own round
-> structure and a deliberate fresh-reviewer bias guard each round (no
-> `codex-reply`). Re-asking it to "improve the paper" on a
+> structure and a deliberate fresh-reviewer bias guard each round. Re-asking it to "improve the paper" on a
 > wall-clock timer produces no new signal — quality changes when the _review_
 > changes, not when the clock ticks — and a timed re-run that also accepts its
 > own output to decide when to stop crosses into self-acquittal
@@ -31,17 +30,17 @@ Unlike `/auto-review-loop` (which iterates on **research** — running experimen
 ## Constants
 
 - **MAX_ROUNDS = 2** — Two rounds of review→fix→recompile. Empirically, Round 1 catches structural issues (4→6/10), Round 2 catches remaining presentation issues (6→7/10). Diminishing returns beyond 2 rounds for writing-only improvements.
-- **REVIEWER_MODEL = `gpt-5.5`** — Model used via Codex MCP for paper review.
-- **REVIEWER_BIAS_GUARD = true** — When `true`, every review round uses a fresh paseo codex sub-agent via `mcp__paseo__create_agent` with no prior review context. Never continue an existing reviewer agent via `mcp__paseo__send_agent_prompt` for review rounds. Set to `false` only for deliberate debugging of the legacy behavior. **Empirical evidence:** running the same paper with continued reviewer context + "since last round we did X" prompts inflated scores from real 3/10 → fake 8/10 across multiple rounds; switching to fresh agents recovered the true 3/10 assessment.
+- **REVIEWER_MODEL = `gpt-5.5`** — Model used by the Paseo codex reviewer for paper review.
+- **REVIEWER_BIAS_GUARD = true** — Every review round uses a fresh paseo codex sub-agent via `mcp__paseo__create_agent` with no prior review context. Continuation-based review is removed.
 - **REVIEW_LOG = `PAPER_IMPROVEMENT_LOG.md`** — Cumulative log of all rounds, stored in paper directory.
 - **HUMAN_CHECKPOINT = false** — When `true`, pause after each round's review and present score + weaknesses to the user. The user can approve fixes, provide custom modification instructions, skip specific fixes, or stop early. When `false` (default), runs fully autonomously.
-- **EDIT_WHITELIST = `null`** — Optional path to a YAML/JSON whitelist file constraining which paths and operations the fix-implementation step may touch. When `null` (default), all edits proceed unconstrained. When set via `— edit-whitelist <path>` (also accepts `— edit_whitelist <path>`), the loop loads the file at startup and consults it before each edit; rejected edits are logged to `PAPER_IMPROVEMENT_LOG.md` rather than silently dropped. See "Optional: Edit Whitelist" below.
+- **EDIT_WHITELIST = `null`** — Optional path to a YAML/JSON whitelist file constraining which paths and operations the fix-implementation step may touch. When set via `— edit-whitelist <path>` (also accepts `— edit_whitelist <path>`), the loop loads the file at startup and consults it before each edit; a rejected edit is logged to `PAPER_IMPROVEMENT_LOG.md` and stops the round. See "Optional: Edit Whitelist" below.
 
 > 💡 Override: `/auto-paper-improvement-loop "paper/" — human checkpoint: true`
 
 ## Optional: Style reference (`— style-ref: <source>`, opt-in)
 
-Lets the user steer **structural fixes only** during improvement (section reordering hints, paragraph length nudges, figure density adjustments) toward a reference paper. **Default OFF — when the user does not pass `— style-ref`, do nothing differently from before.**
+Lets the user steer **structural fixes only** during improvement (section reordering hints, paragraph length nudges, figure density adjustments) toward a reference paper. **Default OFF — the normal improvement path does not read a style reference.**
 
 Only when `— style-ref: <source>` appears in `$ARGUMENTS`, run the helper FIRST, before the loop starts:
 
@@ -63,7 +62,7 @@ STYLE_STATUS=0
 CACHE=$(node "$STYLE_HELPER" --source "<source>") || STYLE_STATUS=$?
 case "$STYLE_STATUS" in
   0) ;;                                       # use $CACHE/style_profile.md as structural guidance for the FIX phase only
-  2) echo "warning: style-ref skipped (missing optional dep)" >&2 ;;
+  2) echo "error: --style-ref requires the optional dependency; aborting loop" >&2 ; exit 1 ;;
   3) echo "error: --style-ref source failed; aborting loop" >&2 ; exit 1 ;;
   *) echo "error: helper failed unexpectedly; aborting loop" >&2 ; exit 1 ;;
 esac
@@ -79,7 +78,7 @@ Sources accepted: local TeX dir / file, local PDF, arXiv id, http(s) URL. Overle
 
 ## Optional: Edit Whitelist (`— edit-whitelist <path>`, opt-in)
 
-Lets the caller hard-constrain which files and operations the **fix-implementation** step (Step 3 / Step 6) is allowed to touch. **Default OFF — when the user does not pass `— edit-whitelist` (or the alias `— edit_whitelist`), the loop applies all reviewer-driven edits without restriction, exactly as before.**
+Lets the caller hard-constrain which files and operations the **fix-implementation** step (Step 3 / Step 6) is allowed to touch. **Default OFF — when the user does not pass `— edit-whitelist` (or the alias `— edit_whitelist`), the loop applies all reviewer-driven edits without restriction.**
 
 This is the parameter that upstream pipelines (e.g. `/resubmit-pipeline` Phase 2) use to enforce text-only resubmit microedits: no `.bib` mutations, no `.sty` / `.bst` mutations, no edits to prior-submission directories, no new `\cite{...}`, no new theorem environments, no new numerical claims.
 
@@ -109,7 +108,7 @@ requires_user_approval_for: # operations that don't auto-reject but pause for ex
   - rewrite_abstract # paraphrasing the entire abstract triggers a checkpoint
   - rewrite_intro_first_para
   - delete_section
-max_edits_per_round: 30 # hard cap on number of accepted edits per round (rejections are not counted; if cap is hit, remaining proposed edits are deferred to the next round with a warning)
+max_edits_per_round: 30 # hard cap on number of accepted edits per round; reaching it stops the round
 rationale: "Resubmit mode: text-only microedits, paper structure frozen by user constraint."
 ```
 
@@ -139,7 +138,7 @@ For each candidate edit's diff (the new lines being added — deletions are exem
 ### Behavior at loop start (before Round 1 fix-implementation)
 
 1. If `— edit-whitelist <path>` is present in `$ARGUMENTS`, set `EDIT_WHITELIST = <path>`.
-2. Load the file (`yaml.safe_load`; if it fails, fall back to `json.loads`). On load failure, abort the loop with a clear error — do NOT silently proceed unconstrained.
+2. Load the file according to its extension (`.json` with JSON parsing, YAML otherwise). On load failure, abort the loop with a clear error — do NOT silently proceed unconstrained.
 3. Echo `rationale` (if present) into `PAPER_IMPROVEMENT_LOG.md` under a new "Edit Whitelist" preamble section so the audit trail records why edits were constrained.
 
 ### Behavior during fix-implementation (Steps 3 and 6)
@@ -157,14 +156,15 @@ Before applying each proposed edit:
      pattern: <the offending forbidden_path glob, OR the offending forbidden_operation name + the matched substring>
      reviewer_concern: <the original Round-N weakness that motivated this edit>
    ```
-6. Continue with the remaining edits in the round. Do NOT abort the whole round on a single rejection.
+6. Stop the round after the first rejection. Do not apply later edits to a
+   round whose requested edit set is not fully authorized.
 
 ### End-of-round surfacing
 
-At the end of each round (after the recompile, before moving to the next round), if any edits were rejected during that round's fix step:
+At the end of a round, if an edit was rejected during that round's fix step:
 
 - Print a one-line summary to the round's checkpoint output: `Edit whitelist rejected N edits this round (M path, K operation). See PAPER_IMPROVEMENT_LOG.md "Rejected by edit_whitelist (Round N)".`
-- If `HUMAN_CHECKPOINT = true`, include the rejection list in the checkpoint shown to the user before they approve next-round fixes.
+- Stop before recompilation and require a new invocation after the user resolves the rejection.
 
 ### Example invocations
 
@@ -218,8 +218,6 @@ Rules:
 - The only acceptable evidence of improvement is the current `.tex` source and compiled PDF.
 - If a fix cannot be observed in the files, the reviewer should not be told it happened.
 - If recovery metadata is needed, store the returned threadId for crash recovery only; do not use it to preserve review context.
-
-Set `REVIEWER_BIAS_GUARD = false` only if you explicitly want the legacy, context-carrying behavior for debugging.
 
 ## Workflow
 
@@ -310,7 +308,7 @@ Parse the review and implement fixes by severity:
 2. MAJOR fixes (overclaims, missing content, notation issues)
 3. MINOR fixes (if time permits)
 
-**Edit-whitelist gate (if set):** If `EDIT_WHITELIST` is set, before applying each proposed edit, check the target path against `allowed_paths` / `forbidden_paths` and the new-lines diff against `forbidden_operations` per the "Optional: Edit Whitelist" section. Rejections are logged to `PAPER_IMPROVEMENT_LOG.md` under `## Rejected by edit_whitelist (Round 1)` with file, reason (`path` or `operation`), the offending pattern, and the original reviewer concern. The loop continues with remaining edits — a rejection never aborts the round. Surface a rejection summary at the end of the round.
+**Edit-whitelist gate (if set):** If `EDIT_WHITELIST` is set, before applying each proposed edit, check the target path against `allowed_paths` / `forbidden_paths` and the new-lines diff against `forbidden_operations` per the "Optional: Edit Whitelist" section. Rejections are logged to `PAPER_IMPROVEMENT_LOG.md` under `## Rejected by edit_whitelist (Round 1)` with file, reason (`path` or `operation`), the offending pattern, and the original reviewer concern. A rejection stops the round; the report must be reviewed before a new invocation.
 
 **Common fix patterns:**
 
@@ -331,7 +329,7 @@ Parse the review and implement fixes by severity:
 ### Step 4: Recompile Round 1
 
 ```bash
-cd paper && latexmk -C && latexmk -pdf -interaction=nonstopmode -halt-on-error main.tex
+cd paper && latexmk -C && latexmk -pdf -file-line-error -interaction=nonstopmode -halt-on-error main.tex
 cp main.pdf main_round1.pdf
 ```
 
@@ -421,8 +419,6 @@ If `REVIEWER_BIAS_GUARD = true` (default), use a **fresh** paseo codex sub-agent
     self-containedness, notation consistency, and visual presentation quality.
 ```
 
-If `REVIEWER_BIAS_GUARD = false` (legacy debugging only), continue the existing reviewer agent via `mcp__paseo__send_agent_prompt` with the saved agentId; this is **not** the recommended path.
-
 ### Step 5.5: Kill Argument Exercise (theory / scope-heavy papers only)
 
 Run this only if the paper is theory-heavy (≥5 `\begin{theorem}|\begin{lemma}|\begin{proposition}|\begin{corollary}` environments in the source) or has explicit scope/generality claims in title/abstract, and only on the final scheduled round (`current_round == MAX_ROUNDS`).
@@ -453,7 +449,7 @@ KILL_REASON=$(jq -r '.reason_code' "$PAPER_DIR/KILL_ARGUMENT.json")
 
 This phase feeds directly into Step 6. The merged findings must land before the final recompile.
 
-If `/kill-argument` returns `verdict: NOT_APPLICABLE` (paper isn't theory- or scope-heavy enough to need this check), skip Step 5.5 entirely and proceed to Step 6. If it returns `BLOCKED` or `ERROR`, log the reason in `PAPER_IMPROVEMENT_LOG.md` and proceed without merging — the loop should not stall on an adversarial check that cannot run.
+If `/kill-argument` returns `verdict: NOT_APPLICABLE` (paper isn't theory- or scope-heavy enough to need this check), skip Step 5.5 entirely and proceed to Step 6. If it returns `BLOCKED` or `ERROR`, log the reason in `PAPER_IMPROVEMENT_LOG.md` and stop the loop. Do not merge a paper improvement round without the requested adversarial check.
 
 **Empirical motivation:** in a real submission run, after several rounds of standard improvement (score 7-8/10), the kill-argument exercise surfaced framing weaknesses that no prior review caught (e.g., a setting being mostly conditional rather than truly general, or a baseline being irrelevant to real systems). Author rebuttal forced explicit scope qualifications in abstract and discussion.
 
@@ -470,23 +466,18 @@ Same process as Step 3. Typical Round 2 fixes:
 - Formalize informal arguments (e.g., truncation → formal proposition)
 - Strengthen limitations section
 
-**Edit-whitelist gate (if set):** Same as Step 3 — if `EDIT_WHITELIST` is set, run the path + forbidden-operation checks before applying each proposed edit. Rejections are logged to `PAPER_IMPROVEMENT_LOG.md` under `## Rejected by edit_whitelist (Round 2)` and the loop continues. Surface a rejection summary at the end of the round.
+**Edit-whitelist gate (if set):** Same as Step 3 — if `EDIT_WHITELIST` is set, run the path + forbidden-operation checks before applying each proposed edit. A rejection is logged to `PAPER_IMPROVEMENT_LOG.md` under `## Rejected by edit_whitelist (Round 2)` and stops the round.
 
 ### Step 7: Recompile Round 2
 
 ```bash
-cd paper && latexmk -C && latexmk -pdf -interaction=nonstopmode -halt-on-error main.tex
+cd paper && latexmk -C && latexmk -pdf -file-line-error -interaction=nonstopmode -halt-on-error main.tex
 cp main.pdf main_round2.pdf
 ```
 
 ### Step 8: Format Check
 
 After the final recompilation, run a **location-aware** format compliance check.
-
-```bash
-# If the log lacks file/line data, rerun the final compile once with -file-line-error.
-cd paper && latexmk -pdf -file-line-error -interaction=nonstopmode -halt-on-error main.tex
-```
 
 ```bash
 # 1. Page count vs venue limit
@@ -544,7 +535,9 @@ echo "$BIB_OVERFULL"
 - Classify by the source file reported in the `-file-line-error` log.
 - If a warning cannot be classified, treat it as main body and fix it.
 
-**Empirical motivation:** in a real submission run, dozens of overfull hbox warnings (the largest well over 100pt in an appendix proof) survived multiple improvement rounds because the previous blanket "overfull > 10pt blocks" rule was too lax and treated all locations equally.
+Location-aware thresholds prevent an appendix warning from being treated as a
+main-body failure and require a fix when the warning exceeds its applicable
+limit.
 
 ### Step 9: Document Results
 
@@ -628,7 +621,7 @@ paper/
 
 ## Key Rules
 
-- **Large file handling**: If the Write tool fails due to file size, immediately retry using Bash (`cat << 'EOF' > file`) to write in chunks. Do NOT ask the user for permission — just do it silently.
+- **Large file handling**: If the Write tool fails, stop and report the write error. Do not switch to a second writer.
 
 - **Preserve all PDF versions** — user needs to compare progression
 - **Save FULL raw review text** — do not summarize or truncate GPT-5.5 responses
@@ -637,7 +630,7 @@ paper/
 - **Do not fabricate experimental results** — synthetic validation must describe methodology, not invent numbers
 - **Respect the paper's claims** — soften overclaims rather than adding unsupported new claims
 - **Global consistency** — when renaming notation or softening claims, check ALL files (abstract, intro, method, experiments, theory sections, conclusion, tables, figure captions)
-- **Edit-whitelist rejections are LOGGED, not silently dropped** — when `EDIT_WHITELIST` is set and an edit is rejected for a path or forbidden-operation violation, the rejection MUST be appended to `PAPER_IMPROVEMENT_LOG.md` with file, reason, offending pattern, and the original reviewer concern. The loop reports a rejection summary at the end of every round (and in the checkpoint, if `HUMAN_CHECKPOINT = true`). Never silently swallow a whitelist rejection — the audit trail is the whole point of the parameter.
+- **Edit-whitelist rejections are LOGGED and stop the round** — when `EDIT_WHITELIST` is set and an edit is rejected for a path or forbidden-operation violation, append the rejection to `PAPER_IMPROVEMENT_LOG.md` with file, reason, offending pattern, and the original reviewer concern. Never continue with a partial edit set.
 
 ## Typical Score Progression
 
@@ -654,4 +647,4 @@ Based on end-to-end testing on a real theory-paper run:
 
 ## Review Tracing
 
-After each paseo codex sub-agent reviewer call (`mcp__paseo__create_agent` or `mcp__paseo__send_agent_prompt`), save the trace following `shared-references/review-tracing.md` (Policy C — forensic; never silently skip). Use `save_trace.sh` (resolved per the chain in `shared-references/integration-contract.md` §2) or write files directly to `.aris/traces/<skill>/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).
+After each paseo codex sub-agent reviewer call (`mcp__paseo__create_agent` or `mcp__paseo__send_agent_prompt`), save the trace with `save_trace.sh` resolved through `shared-references/integration-contract.md` §2. If the helper is missing or fails, stop the gate. Respect the `--- trace:` parameter (default: `full`).

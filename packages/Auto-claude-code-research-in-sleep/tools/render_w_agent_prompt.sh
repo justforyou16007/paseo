@@ -3,12 +3,12 @@
 #                             and/or the paseo substrate config for a run.
 #
 # Pure string templating. Does NOT touch tools/. Reads the user project's
-# CLAUDE.md `## ARIS Paseo` block (optional — defaults if absent) and either:
+# CLAUDE.md `## ARIS Paseo` block (defaults apply when fields are absent) and either:
 #   - emits the initialPrompt contract (default) defined in
 #     skills/shared-references/paseo-subagent-dispatch.md ("The initialPrompt
 #     contract") to stdout — the orchestrator passes it as `initialPrompt` to
 #     mcp__paseo__create_agent; OR
-#   - with --emit-config, writes a JSON config of ALL 12 paseo variables to
+#   - with --emit-config, writes a JSON config of the paseo variables to
 #     .aris/runs/<run_id>.paseo-config.json — the orchestrator reads this to
 #     fill create_agent's provider/settings/workspace/heartbeat params
 #     deterministically (script-guaranteed, not prose-driven — closes the
@@ -101,7 +101,6 @@ reviewer_provider="codex/gpt-5.5"
 reviewer_mode="full-access"
 reviewer_thinking="xhigh"
 notify_on_finish="true"
-fanout_subagents="true"
 heartbeat_cron="off"
 heartbeat_max_runs=""
 subagent_workspace="current"
@@ -138,7 +137,6 @@ if [ -f "$claude_md" ]; then
     v=$(read_var reviewer_mode);         [ -n "$v" ] && reviewer_mode="$v"
     v=$(read_var reviewer_thinking);     [ -n "$v" ] && reviewer_thinking="$v"
     v=$(read_var notify_on_finish);      [ -n "$v" ] && notify_on_finish="$v"
-    v=$(read_var fanout_subagents);      [ -n "$v" ] && fanout_subagents="$v"
     v=$(read_var heartbeat_cron);        [ -n "$v" ] && heartbeat_cron="$v"
     v=$(read_var heartbeat_max_runs);   [ -n "$v" ] && heartbeat_max_runs="$v"
     v=$(read_var subagent_workspace);    [ -n "$v" ] && subagent_workspace="$v"
@@ -174,7 +172,6 @@ if [ "$emit_config" -eq 1 ]; then
   "reviewer_mode": "$reviewer_mode",
   "reviewer_thinking": "$reviewer_thinking",
   "notify_on_finish": $notify_on_finish,
-  "fanout_subagents": $fanout_subagents,
   "subagent_workspace": "$subagent_workspace",
   "max_phase_idle": $max_phase_idle,
   "heartbeat_cron": "$heartbeat_cron",
@@ -231,7 +228,7 @@ Operating rules (non-negotiable):
   1. Resolve every helper via integration-contract.md §2 (.aris/dist/tools -> dist/tools). Never hardcode a path.
   2. Read input-manifest.json from the additional run context and write every artifact under its output_dir. Do NOT write elsewhere.
   3. When you need the cross-model reviewer, spawn/continue a paseo codex sub-agent per skills/shared-references/paseo-reviewer-dispatch.md. Fresh review = create_agent; continuation = send_agent_prompt to the same agent. Reviewer provider/mode/thinking are fixed by the run's paseo-config.json — do not override.
-  4. Dispatch every sub-skill only through Paseo MCP per skills/shared-references/paseo-subagent-dispatch.md. Never use host Skill/Task/Agent or provider-native spawn mechanisms. After every create_agent or send_agent_prompt, immediately wait_for_agent for that child turn (fanout_subagents=${fanout_subagents}; false means sequential Paseo dispatch, never in-process fallback).
+  4. Dispatch every sub-skill only through Paseo MCP per skills/shared-references/paseo-subagent-dispatch.md. Never use host Skill/Task/Agent or provider-native spawn mechanisms. After every create_agent or send_agent_prompt, immediately wait_for_agent for that child turn.
   5. Do NOT call run-state.js accept. You may 'set done --artifact <path>'; acceptance is the orchestrator's job (acceptance-gate.md).
   6. On completion, write the receipt per worker-manifest.md and stop. Do not call accept, do not start the next phase.
 

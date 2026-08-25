@@ -25,12 +25,11 @@ interface ResourceConfig {
 interface GridSpec {
   project?: string;
   cwd?: string;
+  launch_op: string;
   conda?: string;
-  gpus?: number[];
   max_parallel?: number;
   oom_retry?: { delay?: number; max_attempts?: number };
-  retry?: { delay?: number; max_attempts?: number };
-  resources?: ResourceConfig;
+  resources: ResourceConfig;
   phases?: PhaseSpec[];
 }
 
@@ -65,12 +64,11 @@ interface Phase {
 interface Manifest {
   project: string;
   cwd: string;
+  launch_op: string;
   conda: string;
-  gpus: number[];
   max_parallel: number;
   oom_retry: { delay: number; max_attempts: number };
-  retry: { delay: number; max_attempts: number };
-  resources?: ResourceConfig;
+  resources: ResourceConfig;
   phases: Phase[];
 }
 
@@ -131,23 +129,22 @@ function* expandGrid(
 }
 
 function build(config: GridSpec): Manifest {
-  const retryConfig = config.retry ?? config.oom_retry;
-  const retry = retryConfig
-    ? { delay: retryConfig.delay ?? 120, max_attempts: retryConfig.max_attempts ?? 3 }
+  if (typeof config.launch_op !== "string" || config.launch_op.trim() === "") {
+    throw new Error("grid spec requires launch_op for the generated experiment skill");
+  }
+  const retry = config.oom_retry
+    ? { delay: config.oom_retry.delay ?? 120, max_attempts: config.oom_retry.max_attempts ?? 3 }
     : { delay: 120, max_attempts: 3 };
   const out: Manifest = {
     project: config.project ?? "unknown",
     cwd: config.cwd ?? ".",
+    launch_op: config.launch_op,
     conda: config.conda ?? "base",
-    gpus: config.gpus ?? [0, 1, 2, 3, 4, 5, 6, 7],
     max_parallel: config.max_parallel ?? 8,
     oom_retry: retry,
-    retry,
+    resources: config.resources,
     phases: [],
   };
-  if (config.resources) {
-    out.resources = config.resources;
-  }
 
   for (const phase of config.phases ?? []) {
     const phaseOut: Phase = {

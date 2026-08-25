@@ -11,7 +11,7 @@ Generate a structured, section-by-section paper outline from: **$ARGUMENTS**
 
 ## Constants
 
-- **REVIEWER_MODEL = `gpt-5.5`** — Model used via Codex MCP for outline review. Must be an OpenAI model.
+- **REVIEWER_MODEL = `gpt-5.5`** — Model used by the Paseo codex reviewer for outline review. Must be an OpenAI model.
 - **TARGET_VENUE = `ICLR`** — Default venue. User can override (e.g., `/paper-plan "topic" — venue: NeurIPS`). Supported: `ICLR`, `NeurIPS`, `ICML`, `CVPR`, `ACL`, `AAAI`, `ACM`, `IEEE_JOURNAL` (IEEE Transactions / Letters), `IEEE_CONF` (IEEE conferences).
 - **MAX_PAGES** — Page limit. For ML conferences: main body to Conclusion end (excluding references, appendix). ICLR=9, NeurIPS=9, ICML=8, AAAI=7 technical-content pages plus references unless the current AAAI CFP says otherwise. **For IEEE venues: references ARE included in page count.** IEEE journal Transactions ≈ 12-14 pages total, Letters ≈ 4-5 pages total; IEEE conference ≈ 5-8 pages total (including references).
 
@@ -20,10 +20,10 @@ Generate a structured, section-by-section paper outline from: **$ARGUMENTS**
 The skill expects one or more of these in the project directory:
 
 1. **NARRATIVE_REPORT.md** or **STORY.md** — research narrative with claims and evidence
-2. **review-stage/AUTO_REVIEW.md** — auto-review loop conclusions _(fall back to `./AUTO_REVIEW.md` if not found)_
+2. **review-stage/AUTO_REVIEW.md** — auto-review loop conclusions; this stage-scoped path is required when review output is used
 3. **Experiment results** — JSON files in `figures/`, screen logs, tables
-4. **idea-stage/IDEA_REPORT.md** — from idea-discovery pipeline (if applicable) _(fall back to `./IDEA_REPORT.md` if not found)_
-5. **Compact files** (if available): `idea-stage/IDEA_CANDIDATES.md` _(fall back to `./IDEA_CANDIDATES.md` if not found)_, `findings.md`, `EXPERIMENT_LOG.md` — preferred over full files when present, saves context window
+4. **idea-stage/IDEA_REPORT.md** — from idea-discovery pipeline (if applicable)
+5. **Compact files** (if available): `idea-stage/IDEA_CANDIDATES.md`, `findings.md`, `EXPERIMENT_LOG.md` — preferred over full files when present, saves context window
 
 If none exist, ask the user to describe the paper's contribution in 3-5 sentences.
 
@@ -37,7 +37,7 @@ Keep the existing `insleep` workflow and outputs, but use the shared references 
 
 ## Optional: Style reference (`— style-ref: <source>`, opt-in)
 
-Lets the user steer the **structural** layout of the outline (section ordering, subsection density, theorem-environment density, figure budget, citation style) toward a reference paper. **Default OFF — when the user does not pass `— style-ref`, do nothing differently from before.**
+Lets the user steer the **structural** layout of the outline (section ordering, subsection density, theorem-environment density, figure budget, citation style) toward a reference paper. **Default OFF — the normal planning path does not read a style reference.**
 
 Only when `— style-ref: <source>` appears in `$ARGUMENTS`, run the helper FIRST, before drafting the outline:
 
@@ -59,7 +59,7 @@ STYLE_STATUS=0
 CACHE=$(node "$STYLE_HELPER" --source "<source>") || STYLE_STATUS=$?
 case "$STYLE_STATUS" in
   0) ;;                                       # use $CACHE/style_profile.md as structural guidance
-  2) echo "warning: style-ref skipped (missing optional dep)" >&2 ;;
+  2) echo "error: --style-ref requires the optional dependency; aborting outline" >&2 ; exit 1 ;;
   3) echo "error: --style-ref source failed; aborting outline" >&2 ; exit 1 ;;
   *) echo "error: helper failed unexpectedly; aborting outline" >&2 ; exit 1 ;;
 esac
@@ -119,7 +119,7 @@ Slot ID format: `GAP_<SECTION>_<FEATURE>`, all-caps, stable across regenerations
 - **Do not** infer, fill, or hallucinate evidence to "close" gaps. Missing is missing.
 - **Do not** propose specific experiment commands to fill gaps — that is `/experiment-bridge`'s job. Gap Report just surfaces deficits.
 - **Do not** include exemplar prose / claim text / author names / quantitative figures from the exemplar.
-- If `style_profile.md` extraction failed or the user has no project assets, skip Gap Report (no error; just do not emit the file).
+- If `style_profile.md` extraction failed, abort the requested style-reference run. If the user has no project assets, the gap report is not applicable and is omitted.
 - The gap report is **also subject to reviewer isolation** — never passed to reviewer / auditor sub-agents (same rule as `style_profile.md`).
 
 Original idea: @zhangpelf in [#217](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/issues/217).
@@ -377,7 +377,7 @@ Save the final outline to `PAPER_PLAN.md` in the project root:
 
 ## Key Rules
 
-- **Large file handling**: If the Write tool fails due to file size, immediately retry using Bash (`cat << 'EOF' > file`) to write in chunks. Do NOT ask the user for permission — just do it silently.
+- **Large file handling**: If the Write tool fails, stop and report the write error. Do not switch to a second writer.
 - **Do NOT generate author information** — leave author block as placeholder or anonymous
 - **Be honest about evidence gaps** — mark claims as "needs experiment" rather than overclaiming
 - **Page budget is hard** — if content exceeds MAX_PAGES, suggest what to move to appendix

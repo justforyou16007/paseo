@@ -12,9 +12,8 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, WebSearch, WebFetch, mcp_
 > **Thin paseo orchestrator.** Maintains flow state, the heartbeat, and creates
 > the next W-agent — does not do research work itself. Each W1–W3 workflow runs
 > as a paseo claude sub-agent (`paseo-subagent-dispatch.md`); each cross-model
-> reviewer runs as a paseo codex sub-agent (`paseo-reviewer-dispatch.md`). The
-> old single-session flow is recoverable via git history when paseo MCP is
-> unavailable. Full mapping: [`docs/PASEO_MIGRATION.md`](../../docs/PASEO_MIGRATION.md).
+> reviewer runs as a paseo codex sub-agent (`paseo-reviewer-dispatch.md`).
+> Current runtime contract: [`docs/PASEO_MIGRATION.md`](../../docs/PASEO_MIGRATION.md).
 
 > **Worker manifest protocol.** Per Rule 5 and
 > [`worker-manifest.md`](../shared-references/worker-manifest.md), each W-agent
@@ -42,7 +41,7 @@ End-to-end autonomous research workflow for: **$ARGUMENTS**
 | COMPACT | false | Generate compact summaries for short-context recovery. → W1, W1.5 |
 | AUTO_WRITE | false | Auto-dispatch W3 paper-writing after Stage 4. Requires VENUE |
 | VENUE | ICLR | Target venue (ICLR/NeurIPS/ICML/CVPR/ACL/AAAI/ACM/IEEE_CONF/IEEE_JOURNAL) |
-| RENDER_HTML | true | Auto-render NARRATIVE_REPORT.md to HTML at Stage 4 (non-blocking) |
+| RENDER_HTML | true | Auto-render NARRATIVE_REPORT.md to HTML at Stage 4 |
 | RESUMABLE | true | Record per-stage state for `— resume <run_id>` recovery |
 
 > Override via argument: `/research-pipeline "topic" — AUTO_PROCEED: false, difficulty: nightmare, auto_write: true, venue: NeurIPS`.
@@ -98,18 +97,24 @@ ROOT=$(pwd)
 # Resolve helpers (integration-contract.md §2 — project-local only)
 RUN_STATE=".aris/dist/tools/run-state.js"
 [ -f "$RUN_STATE" ] || RUN_STATE="dist/tools/run-state.js"
-[ -f "$RUN_STATE" ] || RUN_STATE=""
+[ -f "$RUN_STATE" ] || {
+  echo "ERROR: run-state.js is required by /research-pipeline. Run /aris-update or build the ARIS runtime." >&2
+  exit 1
+}
 # Render script is a shared substrate helper (integration-contract.md §2)
 RENDER=".aris/tools/render_w_agent_prompt.sh"
 [ -f "$RENDER" ] || RENDER="tools/render_w_agent_prompt.sh"
-[ -f "$RENDER" ] || RENDER=""
+[ -f "$RENDER" ] || {
+  echo "ERROR: render_w_agent_prompt.sh is required by /research-pipeline. Run /aris-update or build the ARIS runtime." >&2
+  exit 1
+}
 ```
 
 ### 1. Probe paseo MCP
 
 If unavailable, mark the current phase `BLOCKED`, report that Paseo MCP is
 required, and stop. The host harness `Skill` / `Task` / `Agent` mechanisms
-are not an ARIS dispatch substrate and there is no synchronous fallback.
+are not an ARIS dispatch substrate; the phase stops when Paseo MCP is unavailable.
 
 ### 2. Determine phases
 
@@ -230,7 +235,7 @@ else
   "metric": { "name": null, "target": null, "direction": "higher_better",
               "tolerance": 0.01, "current": null, "baseline": null, "history": [] },
   "best_idea": null,
-  "gaps": { "open": [], "closed": [], "total": 0 },
+  "problems": { "open": [], "closed": [], "total": 0 },
   "last_review": { "verdict": null, "score": null, "iteration": null },
   "stop_reason": null,
   "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
@@ -330,6 +335,7 @@ Dispatch → `skills/experiment-bridge/SKILL.md`. Queue routing is automatic:
 | Context | |
 |---|---|
 | `chosen_idea` | `dashboard.best_idea.title` (patched by W1's receipt) |
+| `chosen_idea_id` | `dashboard.best_idea.id` — passed so the `/result-to-claim` dispatch in W2's termination step can link the experiment to the idea page |
 | `reviewer_difficulty`, `human_checkpoint` | from constants |
 
 Dispatch → `skills/auto-review-loop/SKILL.md`. **W2 is one long-lived claude agent**
@@ -359,10 +365,29 @@ sections (Research Direction, Method Summary, Key Quantitative Results,
 Figure/Table Inventory, Limitations & Next Steps). The sub-agent writes all
 output to `$WORKERS_DIR/summary/outputs/`.
 
+The summary worker also publishes the run's final problem tally. After writing
+the report it rebuilds the query pack and reads the counts back from the wiki:
+
+```bash
+node "$WIKI_SCRIPT" rebuild_query_pack research-wiki/ || exit 1
+node "$WIKI_SCRIPT" stats research-wiki/ --json
+```
+
+`.problems.open`, `.problems.closed` and `.problems.total` from that output go
+into `dashboard_patch` verbatim. Resolve `$WIKI_SCRIPT` per
+[`shared-references/wiki-helper-resolution.md`](../shared-references/wiki-helper-resolution.md).
+One scan of the wiki is the only correct source: the problem writers
+(`/result-to-claim` inside Stage 3, `/kill-argument`) each know only the
+problems they filed, and these dashboard fields are whole-list replacements.
+
+This pipeline has no metric gate, so it never closes the root problem — the
+run-level target is only adjudicated by `/auto-research-loop`.
+
 **Output:** `NARRATIVE_REPORT.md` in `$WORKERS_DIR/summary/outputs/`.
 
 If `RENDER_HTML=true`: after summary receipt, dispatch `/render-html` to render
-`NARRATIVE_REPORT.md` to HTML (non-blocking — log and continue on failure).
+`NARRATIVE_REPORT.md` to HTML. A render failure fails the summary phase. Set
+`RENDER_HTML=false` before the run to omit the HTML artifact.
 
 **Gate:** NARRATIVE_REPORT.md written (deterministic). Accept with `--reviewer deterministic:summary`.
 
@@ -402,8 +427,8 @@ passes — never on the executor's own say-so.
 
 ## Resume
 
-Resolve `run-state.js` via canonical chain: `.aris/dist/tools/run-state.js` →
-`dist/tools/run-state.js` (warn-and-skip if unresolved).
+Resolve `run-state.js` via the canonical helper rule. It is required for a
+resumable pipeline; an unresolved or failed helper blocks the pipeline.
 
 - **At start:** `node "$RUN_STATE" resume "$ROOT" "$RUN_ID"` prints the first
   non-accepted phase; begin at that stage.
@@ -436,7 +461,9 @@ Resolve `run-state.js` via canonical chain: `.aris/dist/tools/run-state.js` →
 Only when `heartbeat_cron != off`. Doctrine:
 [`external-cadence.md`](../shared-references/external-cadence.md) → "Stall detection".
 
-Resolve `iteration-log.js` via canonical chain (warn-and-skip if unresolved).
+Resolve `iteration-log.js` via the canonical helper rule when
+`heartbeat_cron != off`. An unresolved or failed helper blocks the heartbeat
+phase; set `heartbeat_cron=off` explicitly to disable heartbeat logging.
 Each tick: `node "$ITER_LOG" note "$ROOT" "$RUN_ID" "$STAGE" "$N_NEW_FINDINGS"` →
 returns `{stale_count, pivot}`.
 
@@ -460,11 +487,11 @@ The heartbeat may say "keep going / change direction," never "good enough."
   up to results."
 - **Stage 3 max 4 rounds.** If no positive assessment at round 4, stop and report.
 - **Budget awareness.** Track total GPU-hours; flag approaching limits.
-- **Fail gracefully.** Report clearly and suggest alternatives rather than forcing forward.
+- **Fail explicitly.** Report the failed phase and stop; do not suggest or run
+  an alternate implementation from inside the pipeline.
 - **用完即 archive.** Archive each fresh-purpose W-agent after verdict is read + traced.
   Continuation reviewers (W2 r2+) stay alive until their loop terminates.
-- **Large file handling.** If Write tool fails due to size, retry via Bash
-  (`cat << 'EOF' > file`). Do not ask — just do it.
+- **Large file handling.** A write failure fails the current worker.
 
 ## Output Protocols
 
@@ -488,4 +515,4 @@ Sweet spot: run Stage 1 in the evening, launch Stages 2-3 before bed, wake up to
 - [`paseo-reviewer-dispatch.md`](../shared-references/paseo-reviewer-dispatch.md) — codex reviewer dispatch
 - [`external-cadence.md`](../shared-references/external-cadence.md) — the fence
 - [`resumable-runs.md`](../shared-references/resumable-runs.md) — done/accepted resume
-- [`docs/PASEO_MIGRATION.md`](../../docs/PASEO_MIGRATION.md) — full migration mapping
+- [`docs/PASEO_MIGRATION.md`](../../docs/PASEO_MIGRATION.md) — current Paseo runtime contract

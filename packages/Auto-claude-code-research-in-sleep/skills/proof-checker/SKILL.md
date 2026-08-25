@@ -13,7 +13,7 @@ allowed-tools: Bash(*), Read, Grep, Glob, Write, Edit, mcp__paseo__create_agent,
 
 > 🔒 **Do not wrap this skill in `/loop`, `/schedule`, or `CronCreate`.** It is
 > verdict-bearing — it judges proof validity across rounds, threading the
-> reviewer's memory from Phase 1 → Phase 3 via `codex-reply` so the reviewer can
+> reviewer's memory from Phase 1 → Phase 3 via `send_agent_prompt` so the reviewer can
 > check whether a fix actually closed the gap it flagged. An external timer
 > re-enters from the top each tick, starting a fresh thread and losing that
 > memory. Schedule the _external wait that precedes it_, not the verdict. See
@@ -27,7 +27,7 @@ Systematically verify a mathematical proof via cross-model adversarial review, f
 
 - MAX_REVIEW_ROUNDS = 3
 - REVIEWER_MODEL = `gpt-5.5` — Default model for the Codex backend, reasoning effort always `xhigh`. Manual backend uses whatever model the user chooses, **but it must be a non-Claude model** — the executor is Claude, so routing the proof review into any Claude product makes Claude judge Claude and voids the cross-model invariant (see `shared-references/reviewer-routing.md`).
-- **REVIEWER_BACKEND = `codex`** — Default: Codex MCP (xhigh). Override with `— reviewer: oracle-pro` for Oracle MCP, or `— reviewer: manual` for Manual Review MCP. If manual-review MCP is unavailable, stop and print the install command; do not fall back to Codex. See `shared-references/reviewer-routing.md`.
+- **REVIEWER_BACKEND = `codex`** — Default: Paseo codex reviewer (xhigh). Override with `— reviewer: oracle-pro` for Oracle MCP, or `— reviewer: manual` for Manual Review MCP. If the selected backend is unavailable, stop and print its install/configuration requirement; do not fall back to another backend. See `shared-references/reviewer-routing.md`.
 
 ## Reviewer Calling Convention
 
@@ -35,7 +35,7 @@ When calling the reviewer, branch on REVIEWER_BACKEND:
 
 **If REVIEWER_BACKEND = `codex`:**
 For new review threads (round 1 / fresh), spawn a paseo codex reviewer sub-agent (fresh) per `shared-references/paseo-reviewer-dispatch.md`.
-For follow-up rounds (round 2+, reviewer memory), continue the same paseo codex reviewer sub-agent (`send_agent_prompt`) per `paseo-reviewer-dispatch.md` (reuse the saved threadId — now a paseo codex agent-id; field name unchanged, semantics identical).
+For follow-up rounds (round 2+, reviewer memory), continue the same paseo codex reviewer sub-agent with `send_agent_prompt` per `paseo-reviewer-dispatch.md`, using the saved `threadId`.
 
 **If REVIEWER_BACKEND = `manual`:**
 Use `mcp__manual_review__review` for new review threads with:
@@ -54,7 +54,7 @@ Review tracing applies equally to both backends.
 - REPORT_TEX: `proof_audit_report.tex` (formal before/after PDF)
 - STATE_FILE: `PROOF_CHECK_STATE.json` (for recovery)
 - SKELETON_DOC: `PROOF_SKELETON.md` (micro-claim inventory)
-- **RENDER_HTML = true** — When `true` (default), auto-render `PROOF_AUDIT.md` to HTML at workflow end via `/render-html`. Uses **full Codex review gate** (audit-class artifact — math-heavy content; render-fidelity check protects against MathJax breakage and matches the skill's cross-model audit invariant). Set `false` to skip, or pass `— render html: false`.
+- **RENDER_HTML = true** — When `true` (default), auto-render `PROOF_AUDIT.md` to HTML at workflow end via `/render-html`. Uses **full Paseo codex review gate** (audit-class artifact — math-heavy content; render-fidelity check protects against MathJax breakage and matches the skill's cross-model audit invariant). Set `false` to skip, or pass `— render html: false`.
 
 ### Acceptance Gate (objective, replaces subjective scoring)
 
@@ -317,7 +317,7 @@ Use this exact prompt for both backends:
 
 #### Phase 1 addendum — `--deep-fix` opt-in
 
-If the user passed `--deep-fix` on invocation, append the following block to the reviewer prompt **after** the OUTPUT FORMAT block above (do **not** modify the original block; the new fields are additive). Default invocations skip this block entirely and emit the original output schema unchanged.
+If the user passed `--deep-fix` on invocation, append the following block to the reviewer prompt **after** the OUTPUT FORMAT block above (do **not** modify the original block; the new fields are additive). Without the flag, omit the deep-fix fields.
 
 ```
     ## DEEP-FIX OUTPUT (opt-in, only when --deep-fix is set)
@@ -367,12 +367,11 @@ If the user passed `--deep-fix` on invocation, append the following block to the
     prose ("strengthen the bound", "redo the Schur step") is not
     acceptable in deep-fix mode. If you cannot produce a precise plan
     for an issue, omit that issue's deep-fix block and signal the
-    deep-fix path is unavailable — do NOT emit a vague plan, and do
-    NOT add a deep-fix-only category (e.g. UNCLEAR_DEEP_FIX) into the
-    standard issue list, since that contaminates default-call output.
+    deep-fix path cannot produce a precise plan — fail the requested deep-fix
+    run. Do not emit a vague plan or downgrade to the standard review.
 ```
 
-**Save the threadId** (now a paseo codex agent-id when REVIEWER_BACKEND = `codex`; field name unchanged, semantics identical — `save_trace.sh --thread-id` passes this agent-id). Parse into structured issue list. Write to `PROOF_AUDIT.md`.
+**Save the `threadId`** when `REVIEWER_BACKEND = codex`; `save_trace.sh --thread-id` records the same agent id. Parse the response into a structured issue list and write `PROOF_AUDIT.md`.
 
 ### Phase 1.5: Counterexample Red Team
 
@@ -499,7 +498,7 @@ After fixes, re-run:
 
 ### Phase 3.6: Theorem Restatement Regression (opt-in)
 
-**Default**: skipped. Existing callers see no change.
+**Default**: skipped.
 
 **Opt-in**: pass `--restatement-check` on invocation. The skill then runs a cross-location consistency pass after Phase 3.5 (Global Closure) and before Phase 3.9 (Unrecoverable Protocol).
 
@@ -540,7 +539,9 @@ This phase catches a specific class of bugs that Phase 3.5's "Statement-conclusi
 
 #### Failure mode
 
-If `--restatement-check` is set but the cross-location scan cannot complete, emit `details.restatement_drift: []` plus `details.restatement_check_status: "unavailable"` with a one-line note explaining why. Verifier gates and downstream skills MUST treat `"unavailable"` identically to the field being absent: not blocking. Phases 1 / 1.5 / 2 / 3 / 3.5 / 3.9 / 4 / 5 still run normally. Cases that trigger this fallback include:
+If `--restatement-check` is set but the cross-location scan cannot complete,
+fail the proof-check run with the parser or label-resolution error. Do not emit
+an empty result that makes the requested scan appear complete. Cases include:
 
 - Unreadable `.tex` (parser / encoding error on a file that contains a theorem block).
 - Ambiguous label resolution (e.g., the same `\label{thm:foo}` appears more than once with no clear canonical pick).
@@ -596,7 +597,7 @@ If — and only if — a `research-wiki/` exists, persist each top-level
 theorem/headline as a **claim node** so the wiki's PROVE/JUDGE ledger records what
 was proven and with what honesty. This is the **birth point** for wiki claim nodes
 (`claims/<slug>.md`). It is a **detect-only record, never a verdict**: it never
-changes the audit's `verdict`/`reason_code`, never blocks, and is skipped entirely
+   changes the audit's `verdict`/`reason_code`, and is skipped entirely
 when `verdict == NOT_APPLICABLE` (no theorems) or no wiki is found.
 
 > The claim's `status` is the **PROOF axis only** (`verified` / `sound-modulo-imports`
@@ -607,18 +608,20 @@ when `verdict == NOT_APPLICABLE` (no theorems) or no wiki is found.
 
 Resolve the helper via the **canonical resolver** (integration-contract §2). Check
 `NOT_APPLICABLE` first (in cwd, where the audit ran), then run from the project root
-(the wiki sits at root; a paper audit may run from a `paper/` subdir). Every guard
-warn-and-skips — the audit is already complete and is never affected:
+(the wiki sits at root; a paper audit may run from a `paper/` subdir). The
+claim-ledger projection is optional when no theorem exists or no
+`research-wiki/` directory is present. When a wiki exists, a missing helper is
+an error:
 
 ```bash
 grep -q '"verdict"[[:space:]]*:[[:space:]]*"NOT_APPLICABLE"' PROOF_AUDIT.json 2>/dev/null \
   && { echo "verdict NOT_APPLICABLE (no theorems); skipping claim ledger" >&2; exit 0; }
 _pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
-cd "${_pr:-$(pwd)}" || exit 0
+cd "${_pr:-$(pwd)}" || exit 1
 [ -d research-wiki ] || { echo "no research-wiki/ at project root; skipping claim ledger (audit complete)" >&2; exit 0; }
 WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
 [ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
-[ -f "$WIKI_SCRIPT" ] || { echo "WARN: research-wiki.js not resolved; skipping claim ledger (audit unaffected)" >&2; exit 0; }
+[ -f "$WIKI_SCRIPT" ] || { echo "ERROR: research-wiki.js not resolved; claim ledger cannot be written" >&2; exit 1; }
 ```
 
 For each top-level theorem/headline in `PROOF_SKELETON.md` (the main theorem + the
@@ -643,7 +646,7 @@ node "$WIKI_SCRIPT" add_claim research-wiki/ \
   --scope "<what it does NOT say; any flagged imports>" \
   --evidence "<PROOF_AUDIT.json verdict + counterexample / obligation pointers>" \
   --update-on-exist \
-  || echo "WARN: add_claim failed for <slug> (audit unaffected; fix wiki/status and re-run)" >&2
+  || { echo "ERROR: add_claim failed for <slug>; proof recording is incomplete." >&2; exit 1; }
 ```
 
 `--update-on-exist` lets a re-audit refresh a claim's status (an `unproven` claim
@@ -652,38 +655,45 @@ becomes `verified` once the gap closes). `--provenance` is the honesty receipt (
 
 ## Deep-Fix Mode (opt-in)
 
-**Default**: disabled. The Phase 1 reviewer emits issues with `minimal_fix` (a 1-2 sentence pointer); existing callers see no change.
+**Default**: disabled. The Phase 1 reviewer emits issues with `minimal_fix` (a
+1-2 sentence pointer).
 
 **Opt-in**: pass `--deep-fix` on invocation. The Phase 1 reviewer prompt is **augmented** (not replaced) with the "DEEP-FIX OUTPUT" and "ALGEBRA / TYPE SANITY PASS" blocks above, so the reviewer also returns a `deep_fix_plan` per issue: corrected statement, changed equations, downstream label list, minimal LaTeX patch plan, and closure tests. Issues invoking Schur / Young / Cauchy-Schwarz / Hölder / quadratic forms / operator norms / power counting additionally carry an `algebra_sanity` block (dimension table + power count + zero-coupling check + constant-dependence diff).
 
 ### Why opt-in
 
-The default `minimal_fix` prose is intentionally short — it suits the common case where the executor wants high-level pointers and will derive the patch separately. Forcing `deep_fix_plan` on every run would (a) inflate every reviewer call by 2-5×, (b) trigger re-review thrash for issues the executor has already decided to weaken or defer, and (c) change the shape of `details.issues` for every existing caller. The flag preserves zero behavior change for default invocations while letting the executor request repair-grade output when the fix is going to be applied immediately.
+The default `minimal_fix` prose is short because the executor derives the patch
+from the reviewer's pointer. Use `deep_fix_plan` when the executor needs a
+repair-grade plan in the same run. It adds review cost and detail to the
+output.
 
 ### Effect when enabled
 
 - The Phase 1 reviewer prompt is augmented with the deep-fix and algebra-sanity blocks; nothing in the original mandatory checklist or output format is removed.
 - `PROOF_AUDIT.json` `details` gains a sibling field `deep_fix_plans` (parallel to `details.issues`); see "Submission Artifact Emission" below.
-- The top-level `verdict`, `reason_code`, and `summary` are **unchanged in shape and decision rule**: deep-fix output is advisory tooling for the executor, not a verdict-altering signal.
+- The top-level `verdict`, `reason_code`, and `summary` keep their normal
+  decision rule: deep-fix output is advisory tooling for the executor, not a
+  verdict-altering signal.
 - Verifier gates and downstream skills (`paper-writing` Phase 6, `verify_paper_audits.sh`) MUST treat absence of `deep_fix_plans` as the only valid default state and MUST NOT block on its presence or content.
 
 ### When opt-in is appropriate
 
 - The executor intends to apply the fix in the same session and wants to skip a follow-up "give me a concrete patch" thread.
-- A previous default-mode run identified a CRITICAL or MAJOR issue whose `minimal_fix` was too vague to act on (e.g., "redo the Schur step" without specifying the corrected operator-norm bound).
+- Use it when a CRITICAL or MAJOR issue needs a concrete corrected operator-norm
+  bound or another repair-grade plan.
 - Algebra-heavy proofs with Schur / quadratic-form / operator-norm steps where the reviewer's first pass has consistently produced under-specified fixes.
 
 ### Failure modes
 
-A deep-fix-only failure must never contaminate the default proof-check output. All of the following paths emit `details.deep_fix_status: "unavailable"` + `details.deep_fix_plans: []` (with a one-line note in `details.deep_fix_note`) and leave the standard issue list, top-level verdict, reason_code, and summary unchanged:
+A requested deep-fix failure blocks that deep-fix run. It must not be
+converted into a normal proof result. The following conditions are errors:
 
 - The reviewer refuses to produce a repair-grade plan because the fix would require choices the reviewer is unwilling to make.
-- The Phase 1 reviewer call returns truncated or malformed deep-fix output (parse failure on the augmented section).
-- The augmented Phase 1 call times out before producing the deep-fix block, but otherwise returned a valid normal proof review.
+- The Phase 1 reviewer call returns truncated or malformed deep-fix output (parse failure on the requested section).
+- The Phase 1 call times out before producing the deep-fix block.
 
-Verifier gates MUST treat `unavailable` identically to the field being absent: not blocking. Do **not** add a `UNCLEAR_DEEP_FIX` (or any deep-fix-only) entry into `details.issues`, since `details.issues` is the default schema's issue list and adding deep-fix-specific failures to it would change default behavior for callers without the flag.
-
-If the augmented Phase 1 call fails so badly that the normal proof review cannot be recovered (e.g., the reviewer thread itself errored), retry once with the unaugmented prompt; if that also fails, fall through to the existing reviewer-failure path that maps to the top-level `ERROR` verdict.
+Return an explicit `ERROR` verdict for these failures. Do not retry with an
+unaugmented prompt or continue on a different review path.
 
 ## Key Rules
 
@@ -720,9 +730,11 @@ If the augmented Phase 1 call fails so badly that the normal proof review cannot
 
 ### Opt-in flag discipline
 
-- **Deep-fix is opt-in only**: never auto-enable; never block on `deep_fix_plans` content; existing callers must observe identical reviewer output and identical JSON schema if they do not pass `--deep-fix`.
+- **Deep-fix is opt-in only**: never auto-enable and never block on
+  `deep_fix_plans` content.
 - **Reviewer prompt augmentation is additive**: the deep-fix block is appended to the Phase 1 prompt, not substituted for any part of it. The original mandatory checklist (A-H) and original per-issue OUTPUT FORMAT remain in place verbatim.
-- **Restatement check is opt-in only**: Phase 3.6 runs only when `--restatement-check` is set; existing callers must observe identical reviewer output and identical JSON schema if they do not pass the flag.
+- **Restatement check is opt-in only**: Phase 3.6 runs only when
+  `--restatement-check` is set.
 - **No Phase reordering**: enabling Phase 3.6 inserts it strictly between 3.5 and 3.9; it does not skip any other phase or change their semantics.
 - **No verdict crosstalk**: neither deep-fix output nor `restatement_drift` ever alters top-level `verdict` or `reason_code`. A paper with non-empty drift or with deep-fix plans may still pass; a paper with FAIL verdict stays FAIL whether or not either flag was set.
 
@@ -735,7 +747,7 @@ If the augmented Phase 1 call fails so badly that the normal proof review cannot
 | `PROOF_AUDIT.json`                            | Machine-readable submission verdict (see below)                                                                                                                                                                                                          | Always emitted                                    |
 | `proof_audit_report.tex/.pdf`                 | Formal before/after report                                                                                                                                                                                                                               | Phase 4                                           |
 | `PROOF_CHECK_STATE.json`                      | State for recovery                                                                                                                                                                                                                                       | Phase 5                                           |
-| `PROOF_AUDIT.html` (+ `.review.json` sidecar) | Single-file HTML view of `PROOF_AUDIT.md` auto-rendered via `/render-html "PROOF_AUDIT.md" --json "PROOF_AUDIT.json"`. **Non-blocking** — if `/render-html` fails the audit still counts as complete; `PROOF_AUDIT.{md,json}` are the canonical outputs. | Workflow end (when `RENDER_HTML = true`, default) |
+| `PROOF_AUDIT.html` (+ `.review.json` sidecar) | Single-file HTML view of `PROOF_AUDIT.md` auto-rendered via `/render-html "PROOF_AUDIT.md" --json "PROOF_AUDIT.json"`. When enabled, render failure blocks completion; `PROOF_AUDIT.{md,json}` are diagnostic outputs. | Workflow end (when `RENDER_HTML = true`, default) |
 
 When `--restatement-check` is set, `PROOF_AUDIT.json` additionally carries `details.restatement_drift` and `details.restatement_check_status`; both fields are omitted when the flag is unset. See "Submission Artifact Emission" below.
 
@@ -763,7 +775,7 @@ The artifact conforms to the schema in `shared-references/assurance-contract.md`
     "sections/4.theory.tex":    "sha256:..."
   },
   "trace_path":       ".aris/traces/proof-checker/<date>_run<NN>/",
-  "thread_id":        "<codex mcp thread id>",
+  "thread_id":        "<paseo codex agent id>",
   "reviewer_model":   "gpt-5.5",
   "reviewer_reasoning": "xhigh",
   "generated_at":     "<UTC ISO-8601>",
@@ -807,7 +819,7 @@ The artifact conforms to the schema in `shared-references/assurance-contract.md`
       }
     }
   ],
-  "deep_fix_status": "ok" | "unavailable"
+  "deep_fix_status": "ok" | "error"
 }
 ```
 
@@ -815,7 +827,8 @@ Field semantics:
 
 - Both `deep_fix_plans` and `deep_fix_status` are **omitted entirely** when the flag is not set. The default schema does not include either key.
 - When the flag is set and reviewer returns well-formed plans, `deep_fix_status` is `"ok"` and `deep_fix_plans` mirrors `details.issues` one-to-one (each plan referenced by `issue_id`); `algebra_sanity` is present only for issues invoking Schur / Young / Cauchy-Schwarz / Hölder / quadratic-form / operator-norm / power-counting steps.
-- When the flag is set but reviewer output is malformed or truncated, `deep_fix_status` is `"unavailable"` and `deep_fix_plans` is `[]`. Downstream consumers MUST treat `"unavailable"` identically to the field being absent: not blocking.
+- When the flag is set but reviewer output is malformed or truncated, return
+  `verdict: "ERROR"` and do not emit an apparently valid plan.
 - Downstream consumers MUST treat absence of either field as the only valid default state and MUST NOT raise on missing.
 - `deep_fix_plans` is advisory tooling for the executor; `verify_paper_audits.sh` and `paper-writing` Phase 6 do not block on its content or shape.
 
@@ -837,7 +850,7 @@ Field semantics:
       "note": "..."
     }
   ],
-  "restatement_check_status": "ok" | "unavailable"
+  "restatement_check_status": "ok" | "error"
 }
 ```
 
@@ -845,8 +858,8 @@ Field semantics:
 
 - Both `restatement_drift` and `restatement_check_status` are **omitted entirely** when the flag is not set. The default schema does not include either key.
 - When the flag is set and the cross-location scan completes, `restatement_check_status` is `"ok"` and `restatement_drift` lists detected pairs (possibly empty if none found).
-- When the scan fails (per "Failure mode" in Phase 3.6), `restatement_check_status` is `"unavailable"` and `restatement_drift` is `[]`.
-- Downstream consumers MUST treat absence or `"unavailable"` identically as the default state and MUST NOT raise on missing.
+- When the scan fails (per "Failure mode" in Phase 3.6), return
+  `verdict: "ERROR"` and do not emit an empty drift result.
 - `restatement_drift` does **not** alter `details.issues` and does **not** change the top-level `verdict` decision rule. The reviewer may at its discretion mirror a CRITICAL-severity drift into `details.issues` as a regular issue, but that is a per-issue judgment, not an automatic schema-driven rule.
 
 ### `audited_input_hashes` scope
@@ -882,9 +895,9 @@ Every **top-level** `/proof-checker` invocation starts a fresh reviewer thread. 
 
 Do not accept prior audit outputs (PAPER_CLAIM_AUDIT, CITATION_AUDIT, EXPERIMENT_LOG) as input across separate invocations — the cross-run freshness is what preserves reviewer independence per `shared-references/reviewer-independence.md`.
 
-This skill never blocks by itself; `paper-writing` Phase 6 plus the
-verifier decide whether the verdict blocks finalization based on the
-`assurance` level.
+This skill blocks the consuming phase on `WARN`, `FAIL`, `BLOCKED`, or `ERROR`.
+`NOT_APPLICABLE` is the only non-blocking result and is valid only when the detector
+confirms that no proof obligations are present.
 
 ## Example Invocations
 

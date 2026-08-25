@@ -68,16 +68,17 @@ COMPONENTS.md 预定义 variant 使用):
 .text-secondary .text-muted .nowrap .text-center
 ```
 
-## C. CLI 契约(scripts/)
+## C. CLI 契约(dist/skills/paper-poster-html/)
 
-全部 Python 3.10+,只用 stdlib + 已确认可用的 PyMuPDF(fitz)/PIL/playwright(lazy import,
-缺失时给可读错误+降级指引)。每个脚本 `--help` 完整。exit code:0=pass,1=hard fail,2=用法/环境错误。
+所有命令都来自编译后的 TypeScript helper。依赖缺失、页面加载失败、渲染失败和
+manifest 错误都返回错误；渲染只使用编译后的 TypeScript helper。`--no-render`
+是调用者明确选择的草稿模式，不能用于最终验收。exit code:0=pass,1=门失败,2=用法/环境错误。
 
-### style_check.py
+### style-check.js
 
 ```
-python3 style_check.py POSTER.html [--tokens TOKENS.json] [--json OUT.json]
-                       [--no-render]  # 跳过渲染门(规则4、12 标 SKIPPED)
+node style-check.js POSTER.html [--tokens TOKENS.json] [--json OUT.json]
+                     [--no-render]  # 调用者明确选择时跳过渲染门
 ```
 
 实现 DESIGN_FINAL §3 的 12 条规则 + §12.5 nit 1。源门(规则 1-3,5-11)纯静态解析
@@ -87,48 +88,48 @@ python3 style_check.py POSTER.html [--tokens TOKENS.json] [--json OUT.json]
 缺省从 :root 解析 --accent/--gold 算)。
 JSON 输出:`{"gate":"style","status":"PASS|FAIL|WARN","rules":[{"id":1,"severity":"hard","status":"PASS","detail":"..."}]}`
 
-### asset_check.py
+### asset-check.js
 
 ```
-python3 asset_check.py POSTER.html --manifest FIGURE_MANIFEST.json [--json OUT.json]
-                       [--min-paper-figs 2] [--min-fig-area 0.015] [--min-total-area 0.12]
-                       [--waive-total-area]   # 纯理论论文 waiver(DESIGN_FINAL §12.5 nit 2)
-                       [--no-render]          # 面积检查降级为 natural-size 估算
+node asset-check.js POSTER.html --manifest FIGURE_MANIFEST.json [--json OUT.json]
+                      [--min-paper-figs 2] [--min-fig-area 0.015] [--min-total-area 0.12]
+                      [--waive-total-area]   # 纯理论论文的显式 waiver
+                      [--no-render]          # 调用者明确选择时使用估算
 ```
 
 检查:≥N 张 data-source="paper" 且 manifest 里 from_paper=true;每张渲染面积 ≥ poster 1.5%;
 总面积 ≥ body 12%(可 waive);natural_px ≥ rendered px 1.5×(WARN 在 <2×);
 manifest 必填字段齐全(见 D);文件存在且 sha256 匹配。
 
-### run_gates.py
+### run-gates.js
 
 ```
-python3 run_gates.py POSTER.html [--report GATE_REPORT.json] [--fail-fast]
-                     [--strict-polish] [--tokens TOKENS.json] [--manifest FIGURE_MANIFEST.json]
-                     [--waive-total-area] [--no-render]
+node run-gates.js POSTER.html [--report GATE_REPORT.json] [--fail-fast]
+                   [--strict-polish] [--tokens TOKENS.json] [--manifest FIGURE_MANIFEST.json]
+                   [--waive-total-area] [--no-render]
 ```
 
 canonical order:preflight → style → asset → measure → polish。默认 accumulate。
-子门以 subprocess 调同目录脚本(sys.executable;poster_check.py 子命令用其 CLI)。
-GATE_REPORT.json 严格按 DESIGN_FINAL §7 schema(canvas 信息从 POSTER_STATE.json 读,
-读不到则从 @page 解析,source 标 "page-rule")。汇总 overall=PASS/FAIL + hard_failures + warnings。
+子门以 subprocess 调同一编译目录中的 JavaScript helper。
+GATE_REPORT.json 严格按 DESIGN_FINAL §7 schema，canvas 信息只从当前
+POSTER_STATE.json 读取；状态文件缺失或字段损坏时门禁直接报错。汇总
+overall=PASS/FAIL + hard_failures + warnings。
 
-### extract_pdf_figures.py
+### extract-pdf-figures.js
 
 ```
-python3 extract_pdf_figures.py PAPER.pdf --out DIR [--dpi 350]
-        contact-sheet                      # 整页缩略 contact sheet + 自动候选框
+node extract-pdf-figures.js PAPER.pdf --out DIR [--dpi 350]
+        contact-sheet                      # 整页缩略 contact sheet + PDF 坐标网格
         crop --page P --bbox x0,y0,x1,y1 --name ID [--caption-hint "..."]
-        auto                               # 自动检测大图块候选(图/表),输出候选列表
 ```
 
 bbox 单位 = PDF points(72dpi 坐标,fitz 默认)。crop 模式渲染该区域至 --dpi,写 PNG 到
 DIR,并 upsert FIGURE_MANIFEST.json(同目录上级)。contact-sheet 写 DIR/contact_sheet_pNN.png。
 
-### preprocess_figures.py
+### preprocess-figures.js
 
 ```
-python3 preprocess_figures.py IMG... [--autocrop] [--pad 6] [--min-px 1200 700] [--manifest M.json]
+node preprocess-figures.js IMG... [--autocrop] [--pad 6] [--min-px 1200 700] [--manifest M.json]
 ```
 
 PIL autocrop 白边(ImageChops.difference vs 白底,留 --pad px),报告 natural size,

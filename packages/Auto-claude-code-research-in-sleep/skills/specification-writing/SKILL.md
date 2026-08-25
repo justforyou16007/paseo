@@ -218,5 +218,5 @@ Summary file: `patent/specification/SPECIFICATION_INDEX.md` with:
 - Reference numerals must be consistent: same component, same numeral, everywhere.
 - Background section describes specific deficiencies, not general "need for improvement."
 - Multiple embodiments strengthen the specification but are not always required.
-- Large file handling: if a Write operation fails, retry with Bash `cat <<'EOF'` heredoc.
-- If the paseo codex reviewer is not available, skip cross-model review and note it in the output.
+- Large file handling: if a Write operation fails, stop and report the write error. Do not switch to a second writer.
+- If the explicitly configured Paseo codex reviewer is unavailable or fails, mark cross-model review BLOCKED and stop this stage. Do not publish the specification as reviewed.

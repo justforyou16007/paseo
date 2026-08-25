@@ -7,9 +7,8 @@ lists — the very duplication this protocol family exists to prevent (see
 [`output-composition.md`](output-composition.md)). When the threshold is met, append
 one entry per output file as below.
 
-> Threshold rationale: the original "log _every_ output to MANIFEST" rule is what
-> drove the `MANIFEST.md` clutter in small idea-discovery runs. A manifest earns its
-> keep only when there are enough artifacts that an index genuinely helps.
+> A manifest earns its keep only when there are enough artifacts that an index
+> genuinely helps.
 
 ## Format
 
@@ -42,9 +41,11 @@ Then append one row per output file written:
 
 ## Pre-flight Check
 
-Before writing output, if the skill depends on a prerequisite file from a previous stage:
+Before writing output, if the skill depends on a prerequisite file from a
+previous stage:
 
-1. Check if the prerequisite file exists at its expected stage-scoped path (e.g., `idea-stage/IDEA_REPORT.md`, `review-stage/AUTO_REVIEW.md`)
-2. If not found at the stage-scoped path, check the legacy root-level path (e.g., `./IDEA_REPORT.md`, `./AUTO_REVIEW.md`) — see [Path Fallback Rule](output-versioning.md#path-fallback-rule-backward-compatibility)
-3. If not found at either path, warn: "⚠️ Expected {file} (from {skill}) but not found. Run {skill} first?"
-4. Do not block — the user may have the file elsewhere or want to proceed anyway
+1. Check the exact stage-scoped path (for example,
+   `idea-stage/IDEA_REPORT.md` or `review-stage/AUTO_REVIEW.md`).
+2. If it is missing, stop with the expected path and the producing skill.
+3. Do not search other directories or continue with a warning. A resume is an
+   explicit operator action.

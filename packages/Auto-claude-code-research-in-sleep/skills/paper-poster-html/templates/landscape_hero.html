@@ -31,10 +31,10 @@
        the token block is the ONLY place color/font-size literals may live.
     3. Replace TODO content placeholders (search for "TODO"). The hero is the
        only "big" element — put your headline figure / table / diagram there.
-    4. Run `python3 scripts/poster_check.py measure poster.html` to verify the
+    4. Run `node "$SKILL_SCRIPTS/poster-check.js" measure poster.html` to verify the
        hero panel's bottom edge aligns with the supporting column's last card,
-       then `python3 scripts/render_preview.py poster.html` to produce the PDF.
-  STYLE CONTRACT (ARIS source gate, scripts/style_check.py):
+       then `node "$SKILL_SCRIPTS/render-preview.js" poster.html` to produce the PDF.
+  STYLE CONTRACT (ARIS source gate, style-check.js):
     - NO inline `style=` attributes anywhere in the markup. Use the utility
       classes (.fs-N, .mt-N, .mb-N, .w-NN, .text-secondary, .nowrap,
       .text-center) defined in the UTILITIES block below.
@@ -176,7 +176,7 @@
       }
 
       /* Poster container — exact print dimensions; data-measure-role="poster" so
-     poster_check.py can verify the canvas size.
+     poster-check.js can verify the canvas size.
      RETARGET: width/height must track @page size (see CANVAS block). */
       .poster {
         width: calc(1524 * var(--u));
@@ -394,7 +394,7 @@
      -----------------------------------------------------------------
      STRICT ALIGNMENT (non-negotiable):
        Cards in the supporting column must visually bottom-align with the hero
-       panel. Run `python3 scripts/poster_check.py measure poster.html` — spread
+       panel. Run `node "$SKILL_SCRIPTS/poster-check.js" measure poster.html` — spread
        between hero-bottom and column-last-card-bottom must be < 5 px (< 3 px
        ideal); the gap to the takeaways strip should land in 30–50 px.
        Mechanism:

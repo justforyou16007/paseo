@@ -55,19 +55,20 @@ This skill is most valuable for **theory papers** with ≥5 theorem-class enviro
 
 ## Constants
 
-- **REVIEWER_MODEL** = `gpt-5.5` (default; specify `gpt-5.4` if you want to fall back to the legacy default). Reviewer reasoning effort = `xhigh`.
-- **CONTEXT_POLICY** = `fresh` (REVIEWER_BIAS_GUARD). Each thread spawns a **fresh paseo codex reviewer sub-agent** (`create_agent`). **Never** continue a prior reviewer agent (`send_agent_prompt` / the `codex-reply` analog). No prior review summary, fix list, or executor explanation enters either prompt.
+- **REVIEWER_MODEL** = `gpt-5.5`. Reviewer reasoning effort = `xhigh`.
+- **CONTEXT_POLICY** = `fresh` (REVIEWER_BIAS_GUARD). Each thread spawns a **fresh paseo codex reviewer sub-agent** (`create_agent`). **Never** continue a prior reviewer agent. No prior review summary, fix list, or executor explanation enters either prompt.
 - **ATTACK_LENGTH** = approximately 200 words (do not exceed 250). Single coherent argument, not a list.
 - **DEFENSE_DECOMPOSITION** = 3-7 atomic rejection points extracted from the attack memo. Each gets its own classification.
 - **CLASSIFICATION** = `answered_by_current_text` / `partially_answered` / `still_unresolved`. (Names chosen so the adjudicator does not assume "fixed" implies prior history of patching — they read the paper as a fresh reviewer would.)
 - **OUTPUT** = `KILL_ARGUMENT.md` (human-readable) + `KILL_ARGUMENT.json` (machine-readable) in the paper directory.
-- **RENDER_HTML = true** — When `true` (default), auto-render `KILL_ARGUMENT.md` to HTML after writing the report. Uses **full Codex review gate** (audit-class artifact — full render-fidelity check matches the skill's cross-model audit invariant; the sidecar `KILL_ARGUMENT.json` is also passed to the renderer). Set `false` to skip, or pass `— render html: false`.
+- **RENDER_HTML = true** — When `true` (default), auto-render `KILL_ARGUMENT.md` to HTML after writing the report. Uses **full Paseo codex review gate** (audit-class artifact — full render-fidelity check matches the skill's cross-model audit invariant; the sidecar `KILL_ARGUMENT.json` is also passed to the renderer). Set `false` to skip, or pass `— render html: false`.
 
 ## Manifest Protocol (Worker Mode)
 
 When invoked with `— manifest: <path>`, this skill runs as a worker under an
 orchestrator (`/research-pipeline` or `/auto-research-loop`). The manifest
 provides all inputs; the skill writes its receipt to the manifest's directory.
+The required input-manifest file is the complete input authority for this worker.
 
 **Startup check:**
 ```
@@ -93,9 +94,6 @@ fi
   "primary_output": "KILL_ARGUMENT.json",
   "summary": { "overall_verdict": "<PASS|WARN|FAIL>", "still_unresolved": "<int>" },
   "dashboard_patch": {
-    "gaps.open": ["G3", "G5"],
-    "gaps.closed": ["G1", "G2"],
-    "gaps.total": 5,
     "plan_path": "<path or null>",
     "overall_verdict": "WARN"
   },
@@ -108,19 +106,15 @@ fi
 On failure, write receipt with `"status": "failed"` and structured `error` object
 per `worker-manifest.md`. Append system errors to `$WORKER_DIR/progress_error.md`.
 
-**Direct-call mode:** When invoked WITHOUT `— manifest:`, the skill operates
-normally using its own argument parsing. No receipt is written.
+The skill requires `— manifest:` and always writes a receipt.
 
-**Output path mapping:** In worker mode, every hardcoded output path in this
-skill's body (listed below) maps to `$OUTPUT_DIR/<filename>`. The orchestrator's
-subsequent input-manifests reference prior workers' outputs using their full
-`$WORKERS_DIR/<iter>-<phase>/outputs/<file>` path. In direct-call mode, the
-paths below are project-root-relative as written.
+**Output path mapping:** Every output path in this skill maps to
+`$OUTPUT_DIR/<filename>`. The orchestrator's input manifests reference these
+paths directly.
 
-| Direct-call path | Worker-mode path |
-|---|---|
-| `<paper-dir>/KILL_ARGUMENT.md` | `$OUTPUT_DIR/KILL_ARGUMENT.md` |
-| `<paper-dir>/KILL_ARGUMENT.json` | `$OUTPUT_DIR/KILL_ARGUMENT.json` |
+| Worker output |
+|---|
+| `$OUTPUT_DIR/KILL_ARGUMENT.md`, `$OUTPUT_DIR/KILL_ARGUMENT.json` |
 
 ## Workflow
 
@@ -331,7 +325,7 @@ Compose the human-readable report `<paper-dir>/KILL_ARGUMENT.md`:
 # Kill Argument Report — <paper title>
 
 **Date**: <YYYY-MM-DD>
-**Reviewer model**: gpt-5.5 xhigh, fresh threads (no codex-reply)
+**Reviewer model**: gpt-5.5 xhigh, fresh Paseo reviewer children
 **Attack thread**: <threadId 1>
 **Adjudicator thread**: <threadId 2>
 **Verdict**: <PASS / WARN / FAIL / NOT_APPLICABLE / BLOCKED / ERROR> (`reason_code: <...>`)
@@ -452,19 +446,31 @@ between the adversarial finding and its record.
 `decomposed_points[i]` whose `verdict == "still_unresolved"`, file one open
 problem entity. Resolve `$WIKI_SCRIPT` per
 [`shared-references/wiki-helper-resolution.md`](../shared-references/wiki-helper-resolution.md)
-(Variant B — warn and skip if unreachable), then:
+then stop if the helper cannot be resolved or fails.
+
+The audit vocabulary and the wiki's severity scale are different scales: the
+audit grades how badly an unresolved point damages the argument
+(`critical / major / minor`), the wiki grades a problem's priority
+(`high / medium / low`). Map before passing — `add_problem` rejects any value
+outside its own scale:
+
+| `severity_if_unresolved` | `--severity` |
+| ------------------------ | ------------ |
+| `critical`               | `high`       |
+| `major`                  | `medium`     |
+| `minor`                  | `low`        |
 
 ```bash
 node "$WIKI_SCRIPT" add_problem "<research-wiki-root>" \
   --slug "<stable-kebab-slug from decomposed_points[i].label>" \
   --title "<decomposed_points[i].label>" \
   --parent "problem:root" --status open \
-  --severity "<decomposed_points[i].severity_if_unresolved>" \
+  --severity "<mapped severity: critical->high, major->medium, minor->low>" \
   --statement "<the research sub-direction this sits in, and what is unanswered>" \
   --origin "kill-argument adversarial review of <target>, iteration <n>" \
   --evidence "<decomposed_points[i].attack_claim>, evidenced by <decomposed_points[i].evidence>" \
   --what-would-solve "<decomposed_points[i].recommended_fix>" \
-  || echo "WARN: add_problem failed for <slug> (continuing)" >&2
+  || { echo "ERROR: add_problem failed for <slug>; kill-argument recording is incomplete." >&2; exit 1; }
 ```
 
 Never delete or rewrite a problem another writer owns. A problem later shown to
@@ -478,8 +484,8 @@ claim would assert what no experiment has shown. Claims arrive later, from
 `/proof-checker`, once an experiment closes the problem.
 
 Points classified `answered_by_current_text` or `partially_answered` do **not**
-become gaps. A partial answer is a weakness to note in the report, not an open
-research question.
+become problems. A partial answer is a weakness to note in the report, not an
+open research question.
 
 **When `— plan-output: <path>` is given** — write an `EXPERIMENT_PLAN`-schema file
 containing one milestone per problem just filed (the same schema `/experiment-bridge`
@@ -499,11 +505,6 @@ Derive each milestone from the problem's `what would solve it`. If a
 objection), file the problem but **skip** its milestone, and note the omission in
 `KILL_ARGUMENT.md` under `## Recommendation`. Do not invent an experiment to fill
 the slot.
-
-**Receipt (direct-call mode).** When invoked with either argument (i.e. by a dispatching parent),
-write direct-call receipt `.aris/runs/<run_id>.kill-argument.done.json`:
-
-**Legacy:** This receipt format is used in direct-call mode. In worker mode (manifest protocol), the receipt is written to `$WORKER_DIR/receipt.json` instead.
 
 ```json
 {
@@ -553,22 +554,22 @@ To the user:
 - `<paper-dir>/KILL_ARGUMENT.json` — machine-readable ledger
 - `.aris/traces/kill-argument/<date>_runNN/` — per-thread codex traces (Attack memo + Adjudication memo)
 - Optional: applied fixes if user explicitly requests; default is **detect-only, do not auto-modify**.
-- `<paper-dir>/KILL_ARGUMENT.html` (when `RENDER_HTML = true`, default) — single-file HTML view auto-rendered via `/render-html "<paper-dir>/KILL_ARGUMENT.md" --json "<paper-dir>/KILL_ARGUMENT.json"`. Full review gate applies. The `.review.json` sidecar carries the render-fidelity verdict. **Non-blocking**: if `/render-html` fails (helper missing, Codex MCP unavailable, file write error), log the failure and treat the skill as complete — the HTML view is a convenience, not a prerequisite for the kill-argument verdict.
+- `<paper-dir>/KILL_ARGUMENT.html` (when `RENDER_HTML = true`, default) — single-file HTML view auto-rendered via `/render-html "<paper-dir>/KILL_ARGUMENT.md" --json "<paper-dir>/KILL_ARGUMENT.json"`. Full review gate applies. The `.review.json` sidecar carries the render-fidelity verdict. If rendering fails, fail the worker; set `RENDER_HTML=false` explicitly to omit this artifact.
 - (when `— problem-output` given) Open `problem` entities filed in the research wiki via `add_problem`.
 - (when `— plan-output` given) `<plan.md>` — diagnostic experiment plan.
-- (when either `— problem-output` or `— plan-output` given) `.aris/runs/<run_id>.kill-argument.done.json` — direct-call receipt for dispatching parents (legacy; worker mode uses `receipt.json`).
+- `$WORKER_DIR/receipt.json` — the only receipt consumed by dispatching parents.
 
 ## Key Rules
 
-- **Fresh thread per call.** Both Attack and Adjudication spawn a **fresh paseo codex reviewer sub-agent** (`create_agent`), never continued (`send_agent_prompt` / the `codex-reply` analog). Thread 1 and Thread 2 must not share codex context.
+- **Fresh reviewer child per call.** Both Attack and Adjudication spawn a **fresh paseo codex reviewer sub-agent** (`create_agent`), never continued. Thread 1 and Thread 2 must not share codex context.
 - **Zero prior context.** Neither thread receives prior round reviews, fix lists, executor summaries, or improvement-loop logs.
 - **Attack must commit.** Single argument, ~200 words. No "consider also" hedge. The whole value is in forcing the reviewer to pick the most damaging line.
 - **Adjudicator must classify, not minimize.** `still_unresolved` is honest if the paper has no effective response. Don't downgrade to `partially_answered` unless evidence is real.
 - **Author-chosen positions** (e.g., deliberate title scope, deliberate omission of qualifier): mark `partially_answered` with note that the position is intentional, AND say whether the position is sustainable under the attack. Don't auto-grade as `answered_by_current_text` just because it's intentional.
 - **Verdict is computed by the skill, not by the adjudicator.** The Codex thread emits per-point classifications; the skill code maps those to one of the 6 audit verdicts via the table in Step 4. Never let the adjudicator self-grade the top-level verdict.
 - **Detect-only by direct invocation; can be invoked by `/auto-paper-improvement-loop` Step 5.5 which then merges unresolved findings into its fix list.** When a user runs `/kill-argument paper/` directly, the output is informational and the human decides whether to act. When the skill is invoked from inside the auto-improvement loop, the loop reads `KILL_ARGUMENT.json`, deduplicates against its existing weakness list, and feeds novel `still_unresolved` points into Step 6 fixes — `/kill-argument` itself never edits paper files.
-- **Gap output is a projection, not interpretation.** Step 4.5 is mechanical: it reads `decomposed_points[i]` fields already produced by the adjudicator and writes them as gap entries. It does not re-analyze, re-phrase, or add judgment beyond what the adjudicator already provided. The gap's "Why it matters" IS the `attack_claim`; its "What would close it" IS the `recommended_fix`. If those are bad, the adjudicator needs to be better — do not compensate in the projection layer.
-- **Only `still_unresolved` → gaps.** `partially_answered` and `answered_by_current_text` do NOT become gaps. A partial answer is a weakness noted in the report, not an open research question requiring experiments.
+- **Problem output is a projection, not interpretation.** Step 4.5 is mechanical: it reads `decomposed_points[i]` fields already produced by the adjudicator and writes them as problem entities. It does not re-analyze, re-phrase, or add judgment beyond what the adjudicator already provided. The problem's "Why it matters" IS the `attack_claim`; its "What would close it" IS the `recommended_fix`. If those are bad, the adjudicator needs to be better — do not compensate in the projection layer.
+- **Only `still_unresolved` → problems.** `partially_answered` and `answered_by_current_text` do NOT become problems. A partial answer is a weakness noted in the report, not an open research question requiring experiments.
 
 ## When NOT to Use
 
@@ -579,7 +580,7 @@ To the user:
 
 ## Review Tracing
 
-After each paseo codex reviewer sub-agent call (fresh `create_agent`, or `send_agent_prompt` continuation), save the trace following `shared-references/review-tracing.md` (Policy C — forensic; never silently skip). Use `save_trace.sh` (resolved per the chain in `shared-references/integration-contract.md` §2) or write files directly to `.aris/traces/kill-argument/<date>_run<NN>/`. Both threads' raw responses should be preserved.
+After each paseo codex reviewer sub-agent call (fresh `create_agent`, or `send_agent_prompt` continuation), save the trace with `save_trace.sh` resolved through `shared-references/integration-contract.md` §2. If the helper is missing or fails, stop the gate. Both threads' raw responses should be preserved.
 
 ## Notes
 

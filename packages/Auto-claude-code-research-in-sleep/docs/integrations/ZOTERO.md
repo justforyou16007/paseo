@@ -41,9 +41,9 @@ When Zotero is configured, the default search order becomes:
 
 Override the default with `— sources: zotero, web` or `— sources: all`.
 
-## Fallback: no Zotero
-
-Without Zotero configured, `/research-lit` automatically skips it and uses local PDFs + web search instead. No errors, no warnings.
+If `zotero` is explicitly selected but its MCP server is not configured, `/research-lit` stops
+with a configuration error. Use an explicit source list that does not include Zotero when you
+want a web-only or local-PDF search.
 
 ## Combined Zotero + Obsidian workflow
 

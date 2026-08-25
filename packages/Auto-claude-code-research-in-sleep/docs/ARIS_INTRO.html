@@ -9,9 +9,9 @@
     <meta name="aris:source-path" content="docs/ARIS_INTRO.md" />
     <meta
       name="aris:source-sha256"
-      content="7757b71ab1b1bacc6a4df7c7dc1909d74acd17542bfe815ee6a25522a908d0eb"
+      content="f1f2857e53779f976eb46226e646de998d5c61b1eff405d2c68cd46b10cc150f"
     />
-    <meta name="aris:generated-at" content="2026-05-25 08:00 UTC" />
+    <meta name="aris:generated-at" content="2026-08-25 01:39 UTC" />
 
     <!-- MathJax 3 -->
     <script>
@@ -161,6 +161,13 @@
         letter-spacing: 0.12em;
         font-weight: 600;
         margin-bottom: 8px;
+      }
+      body.aris-blog header.hero .eyebrow {
+        font-family: inherit;
+        color: var(--ink-muted);
+        text-transform: none;
+        letter-spacing: 0.01em;
+        font-weight: 400;
       }
       header.hero h1 {
         font-size: 32px;
@@ -464,10 +471,180 @@
         header.hero {
           border-bottom-color: var(--ink);
         }
+        #cite-pop,
+        dialog.lightbox {
+          display: none !important;
+        }
+      }
+
+      /* --- P0 polish: TOC scrollspy active state ---------------------------- */
+      nav.toc a.active {
+        color: var(--accent);
+        font-weight: 600;
+        border-bottom-color: var(--accent);
+      }
+
+      /* --- P0 polish: Long-code auto-collapse ------------------------------- */
+      details.code-card {
+        margin: 14px 0;
+        background: #fafaf6;
+        border: 1px solid var(--border);
+        border-left: 4px solid var(--primary);
+        border-radius: 4px;
+      }
+      details.code-card > summary {
+        cursor: pointer;
+        padding: 8px 14px;
+        color: var(--ink-soft);
+        font-size: 13px;
+        font-family: "JetBrains Mono", "SF Mono", monospace;
+        list-style: none;
+        user-select: none;
+      }
+      details.code-card > summary::-webkit-details-marker {
+        display: none;
+      }
+      details.code-card > summary::before {
+        content: none;
+      }
+      details.code-card > pre {
+        margin: 0;
+        padding: 0;
+        border: none;
+        border-left: none;
+        border-radius: 0;
+      }
+      @media print {
+        details.code-card {
+          border: 1px solid #ccc;
+          background: white;
+        }
+        details.code-card > summary {
+          display: none !important;
+        }
+        details.code-card > pre {
+          border: 1px solid #ddd;
+          border-radius: 4px;
+          background: white;
+        }
+      }
+
+      /* --- P0 polish: Paper popover ([[ref]] popups) ------------------------ */
+      [data-ref] {
+        color: var(--primary);
+        border-bottom: 1px dotted var(--primary);
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      [data-ref]:hover {
+        background: rgba(26, 74, 140, 0.08);
+      }
+      #cite-pop {
+        position: fixed;
+        width: 360px;
+        max-width: calc(100vw - 32px);
+        background: white;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 14px 16px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+        font-size: 13px;
+        line-height: 1.5;
+        z-index: 1000;
+      }
+      #cite-pop[hidden] {
+        display: none;
+      }
+      #cite-pop .cp-title {
+        font-weight: 600;
+        color: var(--ink);
+        margin-bottom: 4px;
+        padding-right: 24px;
+      }
+      #cite-pop .cp-meta {
+        color: var(--ink-muted);
+        font-size: 12px;
+        margin-bottom: 6px;
+      }
+      #cite-pop .cp-key {
+        color: var(--accent);
+        font-style: italic;
+        margin-bottom: 8px;
+      }
+      #cite-pop .cp-link {
+        display: inline-block;
+        color: var(--primary);
+        font-weight: 500;
+      }
+      #cite-pop .cp-close {
+        position: absolute;
+        top: 6px;
+        right: 10px;
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: 16px;
+        color: var(--ink-muted);
+      }
+
+      /* --- P0 polish: Figure lightbox (native <dialog>) --------------------- */
+      dialog.lightbox {
+        border: none;
+        padding: 0;
+        background: rgba(0, 0, 0, 0.92);
+        width: 96vw;
+        height: 96vh;
+        max-width: 96vw;
+        max-height: 96vh;
+      }
+      dialog.lightbox::backdrop {
+        background: rgba(0, 0, 0, 0.92);
+      }
+      dialog.lightbox .lb-inner {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        gap: 16px;
+        position: relative;
+      }
+      dialog.lightbox img {
+        max-width: 90vw;
+        max-height: 84vh;
+        object-fit: contain;
+        cursor: zoom-out;
+      }
+      dialog.lightbox figcaption {
+        color: rgba(255, 255, 255, 0.85);
+        font-size: 14px;
+        text-align: center;
+        max-width: 700px;
+      }
+      dialog.lightbox .lb-close {
+        position: absolute;
+        top: 16px;
+        right: 20px;
+        background: none;
+        border: none;
+        color: white;
+        font-size: 28px;
+        cursor: pointer;
+      }
+
+      /* --- P0 polish: blog/talk mode active-H2 highlight (opt-in) ----------- */
+      body.aris-blog h2 {
+        scroll-margin-top: 24px;
+      }
+      body.aris-blog h2.aris-active-h2 {
+        background: linear-gradient(to right, rgba(26, 74, 140, 0.06), transparent);
+        border-radius: 4px;
+        padding-left: 12px;
+        margin-left: -12px;
       }
     </style>
   </head>
-  <body>
+  <body class="">
     <div class="layout">
       <nav class="toc">
         <h3>Contents</h3>
@@ -515,7 +692,7 @@
           </li>
           <li><a href="#real-results">Real Results</a></li>
           <li>
-            <a href="#the-77-skills">The 77 Skills</a>
+            <a href="#the-84-skills">The 84 Skills</a>
             <ul>
               <li><a href="#the-3-layer-audit-chain">The 3-layer audit chain</a></li>
             </ul>
@@ -538,8 +715,8 @@
           </p>
           <div class="meta">
             <span><strong>Source:</strong> <code>docs/ARIS_INTRO.md</code></span>
-            <span><strong>SHA256:</strong> <code>7757b71ab1b1</code></span>
-            <span><strong>Rendered:</strong> 2026-05-25 08:00 UTC</span>
+            <span><strong>SHA256:</strong> <code>535c1c3a59ef</code></span>
+            <span><strong>Rendered:</strong> 2026-08-24 18:13 UTC</span>
           </div>
         </header>
 
@@ -558,12 +735,11 @@
         </blockquote>
         <h2 id="tldr">TL;DR</h2>
         <p>
-          ARIS is a collection of <strong>87 composable Claude Code skills</strong> that orchestrate
-          <strong>cross-model collaboration</strong>: Claude Code drives the research (reads files,
-          writes code, deploys experiments) while an external LLM (GPT-5.4 / 5.5 via
-          <a href="https://github.com/openai/codex">Codex MCP</a>) acts as a critical reviewer. The
-          two models disagree, debate, and force each other to do better — adversarial, not
-          self-play.
+          ARIS is a collection of <strong>84 composable Claude Code skills</strong> that orchestrate
+          <strong>cross-model collaboration</strong>: Paseo Claude agents drive the research (read
+          files, write code, deploy experiments) while a Paseo codex agent (GPT-5.5) acts as the
+          default critical reviewer. The two model families disagree, debate, and force each other
+          to do better — adversarial, not self-play.
         </p>
         <p>
           Seven workflows (W1 / W1.5 / W2 / W3 / W4 / W5 / W6) compose into a full research
@@ -582,8 +758,8 @@
               href="https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/render-html/SKILL.md"
               ><code>/render-html</code></a
             >
-            produces this view — gated by a fresh cross-model Codex review (the same ARIS invariant
-            every other audit-class skill follows).
+            produces this view — gated by a fresh Paseo codex review (the same ARIS invariant every
+            other audit-class skill follows).
           </p>
         </div>
         <hr />
@@ -631,11 +807,10 @@
         </p>
         <h3 id="the-reviewer-independence-protocol">The reviewer-independence protocol</h3>
         <p>
-          Every review round uses a <strong>fresh codex thread</strong>. We never use
-          <code>codex-reply</code> to continue a previous review conversation. This is a hard rule,
-          learned from a real NeurIPS run where <code>codex-reply</code> chains inflated scores from
-          3/10 → 8/10 through narrative accumulation (the reviewer started defending its earlier
-          criticism instead of evaluating the current artifact). The protocol is codified at
+          Every fresh review round uses a <strong>new Paseo codex child</strong> with no prior
+          review context. A continuation is allowed only inside a skill that explicitly needs
+          reviewer memory, such as <code>/auto-review-loop</code> round 2+. The protocol is codified
+          at
           <a
             href="https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/shared-references/reviewer-independence.md"
             ><code>skills/shared-references/reviewer-independence.md</code></a
@@ -643,7 +818,7 @@
         </p>
         <pre class="diagram"><code>┌──────────────────────┐
 │  ARIS — execution    │     ┌───────────────────────┐
-│  (Claude Code)       │────▶│  Codex MCP (GPT-5.5)  │
+│  (Paseo Claude)      │────▶│ Paseo codex (GPT-5.5) │
 │  — reads files       │     │  — reads paper cold   │
 │  — writes code       │     │  — fresh thread       │
 │  — deploys to GPU    │     │  — scores 1-10        │
@@ -658,14 +833,9 @@
         <div class="callout callout-good">
           <div class="callout-title">Cross-family invariant.</div>
           <p>
-            The executor and reviewer <strong>must</strong> be different model families (Claude ×
-            GPT, GLM × DeepSeek, Antigravity × Gemini, …). Same-family review is a non-feature; if
-            you only have one provider, the cheapest fix is to add a free DeepSeek or Gemini
-            reviewer via
-            <a
-              href="https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/tree/main/mcp-servers/llm-chat"
-              ><code>llm-chat</code> MCP</a
-            >.
+            The executor and reviewer <strong>must</strong> be different model families. Configure
+            an explicitly supported external reviewer; if that reviewer is unavailable, stop the
+            workflow.
           </p>
         </div>
         <hr />
@@ -696,7 +866,7 @@
             <tr>
               <td style="text-align: center"><strong>1.5</strong></td>
               <td>Experiment Bridge</td>
-              <td>Plan → implement → GPT-5.4 code review → sanity check → deploy → collect</td>
+              <td>Plan → implement → GPT-5.5 code review → sanity check → deploy → collect</td>
               <td>
                 <a
                   href="https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/experiment-bridge/SKILL.md"
@@ -782,7 +952,7 @@
             Semantic Scholar / DeepXiv / Exa) builds a landscape map
           </li>
           <li>
-            🧠 <strong>Brainstorm</strong> — GPT-5.4 xhigh generates 8-12 concrete ideas anchored to
+            🧠 <strong>Brainstorm</strong> — GPT-5.5 xhigh generates 8-12 concrete ideas anchored to
             identified gaps
           </li>
           <li>
@@ -803,7 +973,7 @@
             Workflow 1.5
           </li>
         </ol>
-        <pre><code class="language-bash">/idea-discovery &quot;factorized gap in discrete diffusion LMs&quot; \
+        <pre><code class="language-bash">/idea-discovery "factorized gap in discrete diffusion LMs" \
     --- effort: max \
     --- sources: zotero, web, deepxiv</code></pre>
         <div class="callout callout-info">
@@ -839,7 +1009,7 @@
             <code>argparse</code> / <code>logging</code> / seeds where missing
           </li>
           <li>
-            🔬 <strong>GPT-5.4 code review</strong> — fresh-thread cross-model review of the
+            🔬 <strong>GPT-5.5 code review</strong> — fresh-thread cross-model review of the
             generated code BEFORE any GPU time is spent (catches ~80% of bugs that would otherwise
             burn 8-GPU-hour runs)
           </li>
@@ -852,8 +1022,9 @@
             in <code>screen</code>, capture stdout/stderr
           </li>
           <li>
-            📊 <strong>Collect</strong> — <code>/monitor-experiment</code> polls until completion,
-            fetches results, formats for downstream skills
+            📊 <strong>Collect</strong> — the monitoring heartbeat (armed at launch) polls
+            <code>job-status</code> until completion, <code>collect-outputs</code> fetches results,
+            formats for downstream skills
           </li>
         </ol>
         <pre><code class="language-bash">/experiment-bridge --- base repo: https://github.com/anthropic-experimental/some-baseline</code></pre>
@@ -880,7 +1051,7 @@
         </p>
         <ol>
           <li>
-            🔍 <strong>Deep review</strong> — GPT-5.4 xhigh reviews the paper, identifies weaknesses
+            🔍 <strong>Deep review</strong> — GPT-5.5 xhigh reviews the paper, identifies weaknesses
             (severity tagged)
           </li>
           <li>
@@ -897,13 +1068,13 @@
             auto-resume from <code>REVIEW_STATE.json</code>
           </li>
         </ol>
-        <pre><code class="language-bash">/auto-review-loop &quot;focus on Section 3-5, our CRF results are weak&quot; \
+        <pre><code class="language-bash">/auto-review-loop "focus on Section 3-5, our CRF results are weak" \
     --- difficulty: nightmare \
     --- effort: max</code></pre>
         <p>
-          The <code>difficulty: nightmare</code> flag lets GPT-5.4 read your repo directly via
-          <code>codex exec</code> — Claude can't filter what it sees. Maximum stress test before
-          submission.
+          The <code>difficulty: nightmare</code> flag gives the Paseo codex reviewer full repository
+          access for the strongest stress test before submission. The review still runs through the
+          configured Paseo child-agent contract.
         </p>
         <details>
           <summary><b>Key safety features (click to expand)</b></summary>
@@ -1003,7 +1174,7 @@
               href="https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/auto-paper-improvement-loop/SKILL.md"
               ><code>/auto-paper-improvement-loop</code></a
             >
-            runs 2 rounds of GPT-5.4 content review + 1 round of format check. Real ICLR run:
+            runs 2 rounds of GPT-5.5 content review + 1 round of format check. Real ICLR run:
             <strong>4/10 → 8.5/10 across 3 rounds</strong>
           </li>
         </ol>
@@ -1066,7 +1237,7 @@
             tone, internal consistency, character limit
           </li>
           <li>
-            🔬 <strong>GPT-5.4 stress test</strong> — fresh-thread reviewer reads the draft cold,
+            🔬 <strong>GPT-5.5 stress test</strong> — fresh-thread reviewer reads the draft cold,
             tries to break it
           </li>
           <li>
@@ -1075,7 +1246,7 @@
             <code>REBUTTAL_DRAFT_rich.md</code> (extended, for human editing)
           </li>
         </ol>
-        <pre><code class="language-bash">/rebuttal &quot;paper/ + reviews&quot; --- venue: ICML --- character limit: 5000</code></pre>
+        <pre><code class="language-bash">/rebuttal "paper/ + reviews" --- venue: ICML --- character limit: 5000</code></pre>
         <div class="callout callout-good">
           <div class="callout-title">
             Three safety gates — rebuttal will NOT finalize if any fails
@@ -1138,7 +1309,7 @@
             <code>/overleaf-sync push</code>
           </li>
         </ol>
-        <pre><code class="language-bash">/resubmit-pipeline &quot;paper/&quot; --- venue: NeurIPS</code></pre>
+        <pre><code class="language-bash">/resubmit-pipeline "paper/" --- venue: NeurIPS</code></pre>
         <div class="callout callout-good">
           <div class="callout-title">Hard constraints (cannot be overridden)</div>
           <p>
@@ -1189,7 +1360,7 @@
             slides don't introduce claims the paper can't back
           </li>
         </ol>
-        <pre><code class="language-bash">/paper-talk &quot;paper/&quot; --- venue: ICLR --- assurance: conference-ready</code></pre>
+        <pre><code class="language-bash">/paper-talk "paper/" --- venue: ICLR --- assurance: conference-ready</code></pre>
         <div class="callout callout-info">
           <div class="callout-title">Assurance ladder</div>
           <p>
@@ -1285,14 +1456,14 @@
         <div class="callout callout-good">
           <div class="callout-title">Reproducibility caveat.</div>
           <p>
-            Score values from GPT-5.4 are <em>signals</em>, not ground truth. ARIS iterates against
+            Score values from GPT-5.5 are <em>signals</em>, not ground truth. ARIS iterates against
             them, so high AI-review scores are an expected outcome of the loop, not independent
             proof of acceptance. Human reviewers still bring updated literature knowledge and venue
             taste an AI reviewer doesn't model.
           </p>
         </div>
         <hr />
-        <h2 id="the-87-skills">The 87 Skills</h2>
+        <h2 id="the-84-skills">The 84 Skills</h2>
         <p>
           Grouped by role (full catalog:
           <a
@@ -1337,7 +1508,7 @@
             </tr>
             <tr>
               <td>Experiments</td>
-              <td style="text-align: center">7</td>
+              <td style="text-align: center">6</td>
               <td>
                 <a
                   href="https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/experiment-bridge/SKILL.md"
@@ -1346,10 +1517,6 @@
                 <a
                   href="https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/run-experiment/SKILL.md"
                   ><code>/run-experiment</code></a
-                >,
-                <a
-                  href="https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/monitor-experiment/SKILL.md"
-                  ><code>/monitor-experiment</code></a
                 >,
                 <a
                   href="https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/experiment-audit/SKILL.md"
@@ -1627,15 +1794,14 @@
         <h2 id="中文版速览">中文版速览</h2>
         <p>
           ARIS（<strong>A</strong>utonomous <strong>R</strong>esearch via Adversarial
-          <strong>M</strong>ulti-Agent Collaboration，<strong>梦中科研</strong>）是一组 87
+          <strong>M</strong>ulti-Agent Collaboration，<strong>梦中科研</strong>）是一组 84
           个可组合的 Claude Code skills，编排<strong>跨模型对抗式协作</strong>：
         </p>
         <ul>
-          <li><strong>执行</strong>：Claude Code 读文件、写代码、跑实验、改论文</li>
+          <li><strong>执行</strong>：Paseo Claude agent 读文件、写代码、跑实验、改论文</li>
           <li>
-            <strong>审稿</strong>：GPT-5.4/5.5（via
-            <a href="https://github.com/openai/codex">Codex MCP</a
-            >）以<strong>跨家族</strong>审稿人身份打分、找弱点、提建议
+            <strong>审稿</strong>：Paseo codex
+            agent（GPT-5.5）以<strong>跨家族</strong>审稿人身份打分、找弱点、提建议
           </li>
           <li><strong>关键</strong>：每轮 review 用新 thread；执行者绝不审判自己的实验诚实度</li>
         </ul>
@@ -1645,18 +1811,17 @@
           投稿上验证过。
         </p>
         <div class="callout callout-info">
-          <div class="callout-title">新加入的 skill</div>
+          <div class="callout-title">HTML 阅读视图</div>
           <p>
             <a
               href="https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/render-html/SKILL.md"
               ><code>/render-html</code></a
             >
-            —— 把任何 ARIS 产出的 MD（如
+            —— 把 ARIS 产出的 MD（如
             <code>IDEA_REPORT.md</code
             >、<code>AUTO_REVIEW.md</code>、<code>KILL_ARGUMENT.md</code>）渲染成单文件
-            HTML，适合给人类读。Markdown 仍是 canonical source，HTML 是 generated view，永远嵌入源
-            SHA256 + 渲染时间戳防 drift。<strong>academic 模板默认走跨模型 Codex review gate</strong
-            >——同样的 ARIS 不变量。
+            HTML，供人类阅读。Markdown 是 canonical source，HTML 是带源 SHA256 和渲染时间戳的
+            generated view。<strong>academic 模板默认走 Paseo codex review gate</strong>，遵循同一审查不变量。
           </p>
         </div>
         <hr />
@@ -1670,26 +1835,13 @@ cd ~/your-paper-project
 mkdir -p .claude/skills &amp;&amp; cp -r ~/aris_repo/skills/* .claude/skills/
 export ARIS_REPO=~/aris_repo
 
-# 3. Configure the GPT-5.4 reviewer (Codex MCP)
-npm install -g @openai/codex
-codex setup                                    # pick gpt-5.5 when asked
-claude mcp add codex -s user -- codex mcp-server
+# 3. Start Paseo, which provides the workflow and reviewer agents
+paseo daemon start
+paseo daemon status                            # verify the agent MCP is ready
 
 # 4. Use in Claude Code
 claude
-&gt; /research-pipeline &quot;factorized gap in discrete diffusion LMs&quot;</code></pre>
-        <div class="callout callout-info">
-          <div class="callout-title">Alternative model combinations</div>
-          <p>
-            no Claude or OpenAI API required. See the
-            <a
-              href="https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep#-alternative-model-combinations"
-              >Alt routes</a
-            >
-            (Alt B/E for GLM × MiniMax-M3 or free DeepSeek-V3.1 via ModelScope; nine routes total,
-            including Antigravity-as-executor and Gemini-direct-API-as-reviewer).
-          </p>
-        </div>
+&gt; /research-pipeline "factorized gap in discrete diffusion LMs"</code></pre>
         <hr />
         <h2 id="inspirations">Inspirations</h2>
         <ul>
@@ -1772,11 +1924,266 @@ claude
             href="https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/render-html/SKILL.md"
             >ARIS <code>/render-html</code></a
           >
-          · source path <code>docs/ARIS_INTRO.md</code> · SHA256 <code>7757b71ab1b1</code> ·
-          generated at 2026-05-25 08:00 UTC. This is a generated view — edit the source Markdown,
+          · source path <code>docs/ARIS_INTRO.md</code> · SHA256 <code>f1f2857e5377</code> ·
+          generated at 2026-08-25 01:39 UTC. This is a generated view — edit the source Markdown,
           then re-render.
         </footer>
       </main>
     </div>
+
+    <!-- P0 polish: paper popover host (populated by IIFE below) -->
+    <div id="cite-pop" hidden role="dialog" aria-labelledby="cite-pop-title">
+      <button class="cp-close" type="button" aria-label="Close">×</button>
+      <div class="cp-content"></div>
+    </div>
+
+    <!-- P0 polish: figure lightbox (native <dialog>, graceful fallback) -->
+    <dialog class="lightbox" id="figure-lightbox" aria-label="Figure detail">
+      <div class="lb-inner">
+        <button class="lb-close" type="button" aria-label="Close">×</button>
+        <img alt="" />
+        <figcaption></figcaption>
+      </div>
+    </dialog>
+
+    <!-- P0 polish: paper registry sidecar, embedded by render-html.js (--papers) -->
+    <script>
+      window.PAPER_REGISTRY = {};
+    </script>
+
+    <!-- P0 polish: interactive enhancements (TOC scrollspy, code-card auto-collapse,
+     paper popovers, figure lightbox, print-restore for <details>, blog-mode H2). -->
+    <script>
+      (function () {
+        "use strict";
+
+        function escapeHtml(s) {
+          return String(s).replace(/[&<>"']/g, function (c) {
+            return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+          });
+        }
+
+        // --- Feature 5: Print degradation fix ---------------------------------
+        // Force every <details> open during print, restore the pre-print state after.
+        var _stashOpen = [];
+        var _printing = false;
+        window.addEventListener("beforeprint", function () {
+          if (_printing) return; // guard against multi-fire (Chrome print preview)
+          _printing = true;
+          _stashOpen = [];
+          document.querySelectorAll("details:not([open])").forEach(function (d) {
+            _stashOpen.push(d);
+            d.open = true;
+          });
+        });
+        window.addEventListener("afterprint", function () {
+          _stashOpen.forEach(function (d) {
+            if (d.isConnected) d.open = false;
+          });
+          _stashOpen = [];
+          _printing = false;
+        });
+
+        // --- Feature 3: TOC scrollspy -----------------------------------------
+        var tocLinks = [].slice.call(document.querySelectorAll("nav.toc a"));
+        var headings = tocLinks
+          .map(function (a) {
+            var id = a.getAttribute("href").replace(/^#/, "");
+            return document.getElementById(id);
+          })
+          .filter(Boolean);
+        if (headings.length && typeof IntersectionObserver !== "undefined") {
+          var linkById = new Map();
+          headings.forEach(function (h, i) {
+            linkById.set(h.id, tocLinks[i]);
+          });
+          var io = new IntersectionObserver(
+            function (entries) {
+              entries.forEach(function (en) {
+                if (!en.isIntersecting) return;
+                tocLinks.forEach(function (l) {
+                  l.classList.remove("active");
+                });
+                var lk = linkById.get(en.target.id);
+                if (lk) lk.classList.add("active");
+              });
+            },
+            { rootMargin: "-15% 0px -75% 0px" },
+          );
+          headings.forEach(function (h) {
+            io.observe(h);
+          });
+        }
+
+        // --- Feature 1: Long-code auto-collapse -------------------------------
+        var COLLAPSE_THRESHOLD = 30;
+
+        function wrapCodeCard(pre, openByDefault) {
+          if (!pre || pre.closest("details.code-card")) return;
+          var code = pre.querySelector("code");
+          if (!code) return;
+          var lines = code.textContent.replace(/\n+$/, "").split("\n").length;
+          var det = document.createElement("details");
+          det.className = "code-card";
+          det.open = openByDefault;
+          var sum = document.createElement("summary");
+          function updateSummary() {
+            sum.textContent =
+              (det.open ? "▾ Collapse code · " : "▸ Expand code · ") + lines + " lines";
+          }
+          updateSummary();
+          det.addEventListener("toggle", updateSummary);
+          pre.parentNode.insertBefore(det, pre);
+          det.appendChild(sum);
+          det.appendChild(pre);
+        }
+
+        // Honor explicit per-block flags first.
+        document.querySelectorAll("pre[data-collapse]").forEach(function (pre) {
+          var flag = pre.getAttribute("data-collapse");
+          if (flag === "collapsed") wrapCodeCard(pre, false);
+          // "open" → leave fully expanded, do not wrap.
+        });
+        // Then auto-wrap long unflagged blocks.
+        document.querySelectorAll("pre > code").forEach(function (code) {
+          var pre = code.closest("pre");
+          if (!pre || pre.closest("details") || pre.hasAttribute("data-collapse")) return;
+          var lines = code.textContent.replace(/\n+$/, "").split("\n").length;
+          if (lines >= COLLAPSE_THRESHOLD) wrapCodeCard(pre, false);
+        });
+
+        // --- Feature 10: Figure lightbox --------------------------------------
+        var lightbox = document.getElementById("figure-lightbox");
+        if (lightbox) {
+          var lbImg = lightbox.querySelector("img");
+          var lbCap = lightbox.querySelector("figcaption");
+          var lbClose = lightbox.querySelector(".lb-close");
+          function openLightbox(srcImg) {
+            lbImg.src = srcImg.src;
+            lbImg.alt = srcImg.alt || "";
+            var cap = srcImg.closest("figure")
+              ? srcImg.closest("figure").querySelector("figcaption")
+              : null;
+            lbCap.textContent = cap ? cap.textContent : "";
+            lbCap.hidden = !cap;
+            if (typeof lightbox.showModal === "function") lightbox.showModal();
+            else lightbox.hidden = false;
+          }
+          function closeLightbox() {
+            if (typeof lightbox.close === "function") lightbox.close();
+            else lightbox.hidden = true;
+          }
+          document.querySelectorAll("main figure img, main > p > img").forEach(function (img) {
+            if (img.closest("dialog")) return;
+            img.style.cursor = "zoom-in";
+            img.addEventListener("click", function () {
+              openLightbox(img);
+            });
+          });
+          if (lbClose) lbClose.addEventListener("click", closeLightbox);
+          lightbox.addEventListener("click", function (e) {
+            // Backdrop click closes; clicks inside .lb-inner do not bubble here.
+            if (e.target === lightbox) closeLightbox();
+          });
+        }
+
+        // --- Feature 2: Paper popover -----------------------------------------
+        var PAPERS = window.PAPER_REGISTRY || {};
+        var pop = document.getElementById("cite-pop");
+        var popContent = pop ? pop.querySelector(".cp-content") : null;
+        var popClose = pop ? pop.querySelector(".cp-close") : null;
+        var popTrigger = null;
+
+        function showPopover(el) {
+          var key = el.dataset.ref;
+          var info = PAPERS[key];
+          if (!info || !pop || !popContent) return;
+          popContent.innerHTML =
+            '<div class="cp-title" id="cite-pop-title">' +
+            escapeHtml(info.title || key) +
+            "</div>" +
+            (info.authors
+              ? '<div class="cp-meta">' +
+                escapeHtml(info.authors) +
+                (info.date ? " · " + escapeHtml(info.date) : "") +
+                (info.inst ? " · " + escapeHtml(info.inst) : "") +
+                "</div>"
+              : "") +
+            (info.key ? '<div class="cp-key">' + escapeHtml(info.key) + "</div>" : "") +
+            (info.arxiv
+              ? '<a class="cp-link" href="https://arxiv.org/abs/' +
+                encodeURIComponent(info.arxiv) +
+                '" target="_blank" rel="noopener">arXiv ' +
+                escapeHtml(info.arxiv) +
+                " ↗</a>"
+              : "");
+          var r = el.getBoundingClientRect();
+          pop.hidden = false; // unhide first so offsetHeight is measurable
+          var margin = 16;
+          var popWidth = Math.min(360, Math.max(0, window.innerWidth - margin * 2));
+          var popHeight = Math.min(
+            pop.offsetHeight || 200,
+            Math.max(0, window.innerHeight - margin * 2),
+          );
+          pop.style.left =
+            Math.max(margin, Math.min(r.left, window.innerWidth - popWidth - margin)) + "px";
+          pop.style.top =
+            Math.max(margin, Math.min(r.bottom + 8, window.innerHeight - popHeight - margin)) +
+            "px";
+          popTrigger = el;
+          if (popClose) popClose.focus();
+        }
+        function hidePopover() {
+          if (pop) pop.hidden = true;
+          if (popTrigger) popTrigger.focus();
+          popTrigger = null;
+        }
+        document.querySelectorAll("[data-ref]").forEach(function (el) {
+          el.setAttribute("tabindex", "0");
+          el.setAttribute("role", "button");
+          el.addEventListener("click", function (e) {
+            e.stopPropagation();
+            showPopover(el);
+          });
+          el.addEventListener("keydown", function (e) {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              showPopover(el);
+            }
+          });
+        });
+        if (popClose) popClose.addEventListener("click", hidePopover);
+        document.addEventListener("click", function (e) {
+          if (pop && !pop.hidden && !pop.contains(e.target) && !e.target.matches("[data-ref]"))
+            hidePopover();
+        });
+        document.addEventListener("keydown", function (e) {
+          if (e.key === "Escape" && pop && !pop.hidden) hidePopover();
+        });
+
+        // --- Feature 7: Blog-mode active-H2 highlight (opt-in) ----------------
+        if (document.body.classList.contains("aris-blog")) {
+          var h2s = [].slice.call(document.querySelectorAll("main h2"));
+          if (h2s.length && typeof IntersectionObserver !== "undefined") {
+            var io2 = new IntersectionObserver(
+              function (entries) {
+                entries.forEach(function (en) {
+                  if (en.isIntersecting) {
+                    h2s.forEach(function (h) {
+                      h.classList.remove("aris-active-h2");
+                    });
+                    en.target.classList.add("aris-active-h2");
+                  }
+                });
+              },
+              { rootMargin: "-15% 0px -75% 0px" },
+            );
+            h2s.forEach(function (h) {
+              io2.observe(h);
+            });
+          }
+        }
+      })();
+    </script>
   </body>
 </html>

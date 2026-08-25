@@ -131,9 +131,9 @@ interface ResolvedNode {
 // Sanitization
 // ============================================================
 
-function sanitizeColor(val: unknown, fallback = "#555555"): string {
+function sanitizeColor(val: unknown): string {
   if (typeof val === "string" && HEX_COLOR_RE.test(val)) return val;
-  return fallback;
+  throw new Error(`Invalid color value: ${String(val)}`);
 }
 
 function sanitizeText(val: unknown): string {
@@ -331,7 +331,7 @@ function validateSpec(spec: unknown): string[] {
     }
     nodeIds.add(nid as string);
     if (!("label" in n)) {
-      issues.push(`WARN: node '${nid}' missing 'label'`);
+      issues.push(`CRITICAL: node '${nid}' missing 'label'`);
     }
     for (const coord of ["x", "y"] as const) {
       if (!(coord in n)) {
@@ -352,7 +352,7 @@ function validateSpec(spec: unknown): string[] {
     }
     const shape = (n.shape as string) ?? "rounded";
     if (!ALLOWED_SHAPES.has(shape)) {
-      issues.push(`WARN: node '${nid}' unknown shape '${shape}', will use 'rounded'`);
+      issues.push(`CRITICAL: node '${nid}' unknown shape '${shape}'`);
     }
   }
 
@@ -379,7 +379,7 @@ function validateSpec(spec: unknown): string[] {
       }
       const style = (e.style as string) ?? "solid";
       if (!ALLOWED_STYLES.has(style)) {
-        issues.push(`WARN: edge[${i}] unknown style '${style}', will use 'solid'`);
+        issues.push(`CRITICAL: edge[${i}] unknown style '${style}'`);
       }
     }
 
@@ -388,7 +388,7 @@ function validateSpec(spec: unknown): string[] {
       if (typeof edge !== "object" || edge === null) continue;
       const val = edge.thickness;
       if (val !== undefined && val !== null && (typeof val === "boolean" || !isNumber(val))) {
-        issues.push(`WARN: edge[${i}] thickness must be a number`);
+        issues.push(`CRITICAL: edge[${i}] thickness must be a number`);
       }
     }
   }
@@ -404,13 +404,13 @@ function validateSpec(spec: unknown): string[] {
       const g = group as Record<string, unknown>;
       const nids = g.node_ids;
       if (nids !== undefined && !Array.isArray(nids)) {
-        issues.push(`WARN: group[${i}] node_ids must be a list`);
+        issues.push(`CRITICAL: group[${i}] node_ids must be a list`);
         continue;
       }
       if (Array.isArray(nids)) {
         for (const nid of nids) {
           if (!nodeIds.has(nid as string)) {
-            issues.push(`WARN: group[${i}] references unknown node '${nid}'`);
+            issues.push(`CRITICAL: group[${i}] references unknown node '${nid}'`);
           }
         }
       }
@@ -420,7 +420,7 @@ function validateSpec(spec: unknown): string[] {
         padVal !== null &&
         (typeof padVal === "boolean" || !isNumber(padVal))
       ) {
-        issues.push(`WARN: group[${i}] padding must be a number`);
+        issues.push(`CRITICAL: group[${i}] padding must be a number`);
       }
     }
   }
@@ -436,12 +436,12 @@ function validateSpec(spec: unknown): string[] {
       const l = label as Record<string, unknown>;
       const anchor = l.anchor as string | undefined;
       if (anchor && !ALLOWED_ANCHORS.has(anchor)) {
-        issues.push(`WARN: label[${i}] unknown anchor '${anchor}', will use 'middle'`);
+        issues.push(`CRITICAL: label[${i}] unknown anchor '${anchor}'`);
       }
       for (const field of ["x", "y", "font_size"] as const) {
         const val = l[field];
         if (val !== undefined && val !== null && (typeof val === "boolean" || !isNumber(val))) {
-          issues.push(`WARN: label[${i}] ${field} must be a number`);
+          issues.push(`CRITICAL: label[${i}] ${field} must be a number`);
         }
       }
     }
@@ -457,7 +457,7 @@ function validateSpec(spec: unknown): string[] {
       nfs !== null &&
       (typeof nfs === "boolean" || !isNumber(nfs) || nfs <= 0)
     ) {
-      issues.push(`WARN: node '${nid}' font_size must be a positive number`);
+      issues.push(`CRITICAL: node '${nid}' font_size must be a positive number`);
     }
   }
 
@@ -564,7 +564,9 @@ function renderSvg(spec: FigureSpec): string {
     const textColor = sanitizeColor(node.text_color ?? DEFAULT_NODE.text_color);
     const label = sanitizeText(node.label ?? "");
     let shape = node.shape ?? DEFAULT_NODE.shape;
-    if (!ALLOWED_SHAPES.has(shape)) shape = "rounded";
+    if (!ALLOWED_SHAPES.has(shape)) {
+      throw new Error(`node '${node.id}' has unknown shape '${shape}'`);
+    }
 
     const resolved: ResolvedNode = {
       id: node.id,
@@ -641,10 +643,15 @@ function renderSvg(spec: FigureSpec): string {
     const e = { ...DEFAULT_EDGE, ...edge };
     const src = nodeMap.get(e.from);
     const dst = nodeMap.get(e.to);
-    if (!src || !dst) continue;
+    if (!src || !dst) {
+      throw new Error(`edge '${e.from}' -> '${e.to}' references an unknown node`);
+    }
 
     const color = sanitizeColor(e.color);
-    const eStyle = ALLOWED_STYLES.has(e.style) ? e.style : "solid";
+    if (!ALLOWED_STYLES.has(e.style)) {
+      throw new Error(`edge '${e.from}' -> '${e.to}' has unknown style '${e.style}'`);
+    }
+    const eStyle = e.style;
 
     let markerId = "arrow-default";
     for (let ci = 0; ci < palette.length; ci++) {
@@ -871,8 +878,10 @@ function renderSvg(spec: FigureSpec): string {
 
   // --- Free labels ---
   for (const label of spec.labels ?? []) {
-    let anchor = label.anchor ?? "middle";
-    if (!ALLOWED_ANCHORS.has(anchor)) anchor = "middle";
+    const anchor = label.anchor ?? "middle";
+    if (!ALLOWED_ANCHORS.has(anchor)) {
+      throw new Error(`label '${label.text}' has unknown anchor '${anchor}'`);
+    }
     lines.push(
       `  ${svgElement(
         "text",
@@ -905,12 +914,9 @@ function svgToPng(svgPath: string, pngPath: string): boolean {
       stdio: ["pipe", "pipe", "pipe"],
     });
     return true;
-  } catch {
-    // rsvg-convert not available or failed
+  } catch (e) {
+    throw new Error(`could not convert SVG to PNG with rsvg-convert: ${String(e)}`);
   }
-
-  console.log("Warning: could not convert SVG to PNG (install rsvg-convert)");
-  return false;
 }
 
 // ============================================================
@@ -1013,9 +1019,8 @@ program
 
     if (opts.preview) {
       const pngPath = output.replace(/\.svg$/, ".png");
-      if (svgToPng(output, pngPath)) {
-        console.log(`✅ PNG preview: ${pngPath}`);
-      }
+      svgToPng(output, pngPath);
+      console.log(`✅ PNG preview: ${pngPath}`);
     }
   });
 

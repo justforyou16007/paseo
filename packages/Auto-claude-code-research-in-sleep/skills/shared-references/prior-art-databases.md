@@ -59,7 +59,7 @@ These are also prior art (non-patent literature, NPL):
 | ---------------- | ------------------- | ----------------------------------- | ------------------------------ |
 | Google Scholar   | scholar.google.com  | Broadest academic coverage          | No API, use WebSearch          |
 | Semantic Scholar | semanticscholar.org | CS, biomedical, 200M+ papers        | Yes (SEMANTIC_SCHOLAR_API_KEY) |
-| arXiv            | arxiv.org           | Preprints (CS, physics, math, etc.) | Yes (arxiv_fetch.py)           |
+| arXiv            | arxiv.org           | Preprints (CS, physics, math, etc.) | Yes (`arxiv-fetch.js`)         |
 | DBLP             | dblp.org            | CS bibliography                     | Yes (XML API)                  |
 | CrossRef         | crossref.org        | DOIs for all published works        | Yes (free, no key needed)      |
 | OpenAlex         | openalex.org        | 250M+ scholarly works               | Yes (free, no key needed)      |

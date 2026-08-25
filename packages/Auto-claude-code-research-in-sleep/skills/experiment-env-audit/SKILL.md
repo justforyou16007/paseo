@@ -266,8 +266,8 @@ The real working tree is never touched. No stash, no restore, no risk.
 PASS if the canary string appears in the run output — the build pipeline
 correctly propagates source changes into execution artifacts.
 FAIL if the canary is absent — stale build artifacts are served despite
-source code modification. This is the failure mode where agents modify
-experiment code but `run.sh` silently executes old compiled output.
+source code modification. `run.sh` must execute the compiled output produced
+from the current source.
 
 ### M. run.sh + collect.sh — a smoke experiment completes
 

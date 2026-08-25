@@ -787,10 +787,8 @@ function resolveHueCenters(tokensPath: string | null, tokenBlockText: string | n
         const h = hueFromHex(base);
         if (h !== null) centers[key] = h;
       }
-    } catch {
-      process.stderr.write(
-        `WARNING: could not read --tokens ${asciiSafe(tokensPath)}; falling back to :root.\n`,
-      );
+    } catch (e) {
+      throw new Error(`could not read --tokens ${asciiSafe(tokensPath)}: ${String(e)}`);
     }
   }
 
@@ -853,14 +851,17 @@ async function runRenderGate(
   const { viewport } = resolved;
 
   const { browser, page } = await openPrintEmulatedPage(pw, viewport);
-  let navTimedOut = false;
   try {
     await page.goto(`file://${htmlPath}`, {
       waitUntil: "networkidle",
       timeout: mathjaxTimeoutMs,
     });
-  } catch {
-    navTimedOut = true;
+  } catch (e) {
+    await browser.close();
+    process.stderr.write(
+      `ERROR (render gate): page load failed; refusing to inspect a partial poster: ${asciiSafe(String(e))}\n`,
+    );
+    return { results: [], envExit: 2 };
   }
 
   const settle = await settlePage(page, { mathjaxTimeoutMs, settleMs });
@@ -870,14 +871,6 @@ async function runRenderGate(
     process.stderr.write(`ERROR (render gate): ${fail}\n`);
     return { results: [], envExit: 2 };
   }
-  if (navTimedOut) {
-    await browser.close();
-    process.stderr.write(
-      `ERROR (render gate): page did not reach network-idle within ${mathjaxTimeoutMs} ms.\n`,
-    );
-    return { results: [], envExit: 2 };
-  }
-
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const data: any = await page.evaluate(_RENDER_JS);
   await browser.close();

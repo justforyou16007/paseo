@@ -247,13 +247,13 @@ if PAPER_CLAIM_AUDIT.json exists:
     fix them as priority items in the improvement round
 ```
 
-### Advisory, Never Blocking
+### Submission Gate
 
 Same pattern as `/experiment-audit`:
 
 - `PASS` → continue normally
-- `WARN` → print warning, continue, flag draft as "check numbers before submission"
-- `FAIL` → print alert, continue, but do NOT mark as submission-ready
+- `WARN` → mark the audit `BLOCKED` and stop the submission stage
+- `FAIL` → mark the audit `BLOCKED` and stop the submission stage
 
 ## Render HTML view (auto, when `RENDER_HTML = true`, default)
 
@@ -263,15 +263,17 @@ After writing `paper/PAPER_CLAIM_AUDIT.md` and `paper/PAPER_CLAIM_AUDIT.json`, i
 /render-html "paper/PAPER_CLAIM_AUDIT.md" --json "paper/PAPER_CLAIM_AUDIT.json"
 ```
 
-Uses **full Codex review gate** (audit-class artifact — render-fidelity check matches the skill's existing zero-context cross-model audit invariant). Output lands at `paper/PAPER_CLAIM_AUDIT.html` with embedded source SHA256 and a `.review.json` sidecar carrying the render verdict.
+Uses **full Paseo codex review gate** (audit-class artifact — render-fidelity check matches the skill's existing zero-context cross-model audit invariant). Output lands at `paper/PAPER_CLAIM_AUDIT.html` with embedded source SHA256 and a `.review.json` sidecar carrying the render verdict.
 
-**Non-blocking**: if `/render-html` fails (helper missing, Codex MCP unavailable, file write error), log the failure and treat the skill as complete — the JSON + MD verdict files are the canonical outputs; the HTML view is a convenience for human readers.
+If `/render-html` fails (helper missing, Paseo MCP unavailable, file write error), mark the
+audit `BLOCKED` and stop. The JSON + MD files remain diagnostic outputs, not a substitute for
+the requested HTML artifact. Set `RENDER_HTML = false` before the run to omit HTML explicitly.
 
 Skip if `RENDER_HTML = false` is set in the project's `CLAUDE.md` or passed as `— render html: false`.
 
 ## Key Rules
 
-- **Fresh thread EVERY run.** Never use `codex-reply`. Never carry context.
+- **Fresh reviewer child EVERY run.** Never carry context from another run.
 - **Zero executor interpretation.** Only file paths. No summaries.
 - **Only raw results.** No EXPERIMENT_LOG, no AUTO_REVIEW, no human summaries.
 - **Rounding rule.** Only standard rounding to displayed precision. 84.7% → 84.7% or 85% is OK. 84.7% → 85.3% is NOT OK.
@@ -279,7 +281,7 @@ Skip if `RENDER_HTML = false` is set in the project's `CLAUDE.md` or passed as `
 
 ## Review Tracing
 
-After each paseo codex reviewer sub-agent call (fresh `create_agent`, or `send_agent_prompt` continuation), save the trace following `shared-references/review-tracing.md` (Policy C — forensic; never silently skip). Use `save_trace.sh` (resolved per the chain in `shared-references/integration-contract.md` §2) or write files directly to `.aris/traces/<skill>/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).
+After each paseo codex reviewer sub-agent call (fresh `create_agent`, or `send_agent_prompt` continuation), save the trace with `save_trace.sh` resolved through `shared-references/integration-contract.md` §2. If the helper is missing or fails, stop the gate. Respect the `--- trace:` parameter (default: `full`).
 
 ## Submission Artifact Emission
 
@@ -304,7 +306,7 @@ The artifact conforms to the schema in `shared-references/assurance-contract.md`
     "/abs/path/to/results/run_2026_04_19.json": "sha256:..."
   },
   "trace_path":       ".aris/traces/paper-claim-audit/<date>_run<NN>/",
-  "thread_id":        "<codex mcp thread id>",
+  "thread_id":        "<paseo codex agent id>",
   "reviewer_model":   "gpt-5.5",
   "reviewer_reasoning": "xhigh",
   "generated_at":     "<UTC ISO-8601>",
@@ -347,7 +349,7 @@ external `results/` dirs. The verifier resolves relative entries via
 ### Thread independence
 
 Every invocation spawns a fresh paseo codex reviewer sub-agent (`create_agent`). Never
-continued (`send_agent_prompt` / the `codex-reply` analog). Do not accept prior audit outputs (PROOF_AUDIT, CITATION_AUDIT,
+continued (`send_agent_prompt`). Do not accept prior audit outputs (PROOF_AUDIT, CITATION_AUDIT,
 EXPERIMENT_LOG, AUTO_REVIEW summaries) as input to this audit — the fresh
 thread preserves reviewer independence per
 `shared-references/reviewer-independence.md`.

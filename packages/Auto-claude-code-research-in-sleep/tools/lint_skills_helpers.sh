@@ -4,12 +4,11 @@
 # Per shared-references/integration-contract.md §2, SKILL.md files must
 # resolve helpers via the canonical strict-safe chain
 #   .aris/tools/<helper>  →  tools/<helper>  →  $ARIS_REPO/tools/<helper>
-# (Codex mirror uses the mirror-side chain), NOT hardcode `python3 tools/foo.py`
-# or `bash tools/foo.sh` directly.
+# (Codex mirror uses the mirror-side chain), and must not hardcode a helper
+# or call `bash tools/foo.sh` directly.
 #
-# This script is ADVISORY: it always exits 0 and only prints findings.
-# A future enforcement layer (issue #178) may fail CI on new violations,
-# but Phase 2 keeps the contract gentle so the maintainer is not blocked.
+# This script reports findings and exits 0; the active integration contract
+# remains the source of truth for whether a helper is required.
 #
 # Run from the ARIS repo root:
 #     bash tools/lint_skills_helpers.sh
@@ -17,8 +16,7 @@
 set -u
 
 # Patterns that indicate hardcoded helper invocation (no resolver).
-INVOCATION_PY='python3 tools/(verify_papers|extract_paper_style|paper_illustration_image2|figure_renderer|arxiv_fetch|semantic_scholar_fetch|deepxiv_fetch|exa_search|openalex_fetch|research_wiki|iteration_log)\.py'
-INVOCATION_SH='bash tools/(verify_paper_audits|save_trace|verify_wiki_coverage|overleaf_audit)\.sh'
+INVOCATION_SH='bash tools/(verify_paper_audits|save_trace|overleaf_audit)\.sh'
 
 # Files exempted from the lint:
 #   - integration-contract.md (canonical docs include ❌ anti-pattern examples)
@@ -41,14 +39,11 @@ while IFS= read -r f; do
   if is_exempt "$f"; then
     continue
   fi
-  py_hits=$(grep -nE "$INVOCATION_PY" "$f" 2>/dev/null || true)
   sh_hits=$(grep -nE "$INVOCATION_SH" "$f" 2>/dev/null || true)
-  if [ -n "$py_hits" ] || [ -n "$sh_hits" ]; then
+  if [ -n "$sh_hits" ]; then
     violation_count=$((violation_count + 1))
     violation_report="${violation_report}
 === $f ==="
-    [ -n "$py_hits" ] && violation_report="${violation_report}
-${py_hits}"
     [ -n "$sh_hits" ] && violation_report="${violation_report}
 ${sh_hits}"
   fi
@@ -62,10 +57,7 @@ if [ "$violation_count" -gt 0 ]; then
   printf '%s\n\n' "$violation_report"
   echo "Resolution:"
   echo "  Migrate each violating SKILL.md to the canonical strict-safe resolver"
-  echo "  per shared-references/integration-contract.md §2 (assign a semantic"
-  echo "  variable like \$AUDIT_VERIFIER / \$TRACE_HELPER / \$<NAME>_FETCHER from"
-  echo "  the three-layer chain, then invoke as \`python3 \"\$VAR\" ...\` or"
-  echo "  \`bash \"\$VAR\" ...\`)."
+  echo "  per shared-references/integration-contract.md §2."
   echo ""
   echo "  Per-helper policy (Policy A gate / B side-effect / C forensic /"
   echo "  D1 cascade / D2 multi-source / E diagnostic) is documented in the"

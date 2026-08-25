@@ -23,8 +23,8 @@ Get a multi-round critical review of research work from the selected external re
 
 ## Constants
 
-- REVIEWER_MODEL = `gpt-5.5` — Default model for the Codex backend. Must be an OpenAI model (e.g., `gpt-5.5`, `o3`, `gpt-4o`). Manual backend uses whatever model the user chooses.
-- **REVIEWER_BACKEND = `codex`** — Default: Codex MCP (xhigh). Override with `— reviewer: oracle-pro` for Oracle MCP, or `— reviewer: manual` for Manual Review MCP. If manual-review MCP is unavailable, stop and print the install command; do not fall back to Codex. See `shared-references/reviewer-routing.md`.
+- REVIEWER_MODEL = `gpt-5.5` — Default model for the Paseo codex reviewer. Must be an OpenAI model (e.g., `gpt-5.5`, `o3`, `gpt-4o`). Manual backend uses whatever model the user chooses.
+- **REVIEWER_BACKEND = `codex`** — Default: Paseo codex reviewer (xhigh). Override with `— reviewer: oracle-pro` for Oracle MCP, or `— reviewer: manual` for Manual Review MCP. If the selected backend is unavailable, stop and print its install/configuration requirement; do not fall back to another backend. See `shared-references/reviewer-routing.md`.
 
 ## Reviewer Calling Convention
 
@@ -54,11 +54,9 @@ equally to both backends.
 
 ## Prerequisites
 
-- **Codex MCP Server** configured in Claude Code:
-  ```bash
-  claude mcp add codex -s user -- codex mcp-server
-  ```
-- This gives Claude Code access to Paseo codex sub-agent and `paseo-reviewer-dispatch.md` tools
+- Paseo MCP lifecycle must be available. If it is unavailable, block this
+  review and ask the user to start or configure the Paseo daemon. See
+  `shared-references/paseo-reviewer-dispatch.md` for the dispatch contract.
 
 ## Workflow
 
@@ -202,4 +200,4 @@ Update project memory/notes with key review conclusions.
 
 ## Review Tracing
 
-After each reviewer call (a paseo codex sub-agent — fresh `create_agent` or `send_agent_prompt` continuation; or the manual backend `mcp__manual_review__review` / `mcp__manual_review__review_reply`), save the trace following `shared-references/review-tracing.md` (Policy C — forensic; never silently skip). Use `save_trace.sh` (resolved per the chain in `shared-references/integration-contract.md` §2) or write files directly to `.aris/traces/<skill>/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).
+After each reviewer call (a paseo codex sub-agent — fresh `create_agent` or `send_agent_prompt` continuation; or the manual backend `mcp__manual_review__review` / `mcp__manual_review__review_reply`), save the trace with `save_trace.sh` resolved through `shared-references/integration-contract.md` §2. If the helper is missing or fails, stop the gate. Respect the `--- trace:` parameter (default: `full`).

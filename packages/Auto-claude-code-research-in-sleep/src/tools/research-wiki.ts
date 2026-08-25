@@ -5,24 +5,7 @@ import http from "http";
 import https from "https";
 import crypto from "crypto";
 import { createCli, runCli } from "../lib/cli.js";
-
-// threat_scan import (best-effort, same as Python)
-let scanForThreats: ((text: string, scope: string) => string[]) | null = null;
-let quarantine: ((text: string, scope: string, label: string) => [string, string[]]) | null = null;
-
-try {
-  const threatScanPath = path.resolve(
-    path.dirname(new URL(import.meta.url).pathname),
-    "threat-scan.js",
-  );
-  if (fs.existsSync(threatScanPath)) {
-    const mod = await import(threatScanPath);
-    if (typeof mod.scanForThreats === "function") scanForThreats = mod.scanForThreats;
-    if (typeof mod.quarantine === "function") quarantine = mod.quarantine;
-  }
-} catch {
-  // unavailable
-}
+import { quarantine, scanForThreats } from "./threat-scan.js";
 
 const ARXIV_API = "https://export.arxiv.org/api/query?id_list={ids}";
 const ARXIV_NS_ATOM = "http://www.w3.org/2005/Atom";
@@ -120,10 +103,6 @@ function xmlSelfClosingAttr(xml: string, localName: string, attr: string): strin
 
 // --- HTTP helpers ---
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function httpGet(url: string, timeout: number, ua: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const mod = url.startsWith("https") ? https : http;
@@ -164,32 +143,17 @@ function httpGet(url: string, timeout: number, ua: string): Promise<Buffer> {
 
 async function arxivApiGet(url: string, what: string, timeout = 15_000): Promise<string> {
   const ua = arxivUserAgent();
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const body = await httpGet(url, timeout, ua);
-      const text = body.toString("utf-8");
-      if (text.trim() === "Rate exceeded.") {
-        if (attempt < 3) {
-          await sleep(5000 * attempt);
-          continue;
-        }
-        throw new Error(`arXiv API rate-limited for ${what} after 3 attempts`);
-      }
-      return text;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes("429") && attempt < 3) {
-        await sleep(5000 * attempt);
-        continue;
-      }
-      if (attempt < 3 && !msg.includes("429")) {
-        await sleep(2000 * attempt);
-        continue;
-      }
-      throw new Error(`arXiv API fetch failed for ${what}: ${msg}`);
+  try {
+    const body = await httpGet(url, timeout, ua);
+    const text = body.toString("utf-8");
+    if (text.trim() === "Rate exceeded.") {
+      throw new Error("arXiv API rate-limited");
     }
+    return text;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`arXiv API fetch failed for ${what}: ${msg}`);
   }
-  return "";
 }
 
 function normalizeArxivId(arxivId: string): string {
@@ -438,6 +402,42 @@ const VALID_EDGE_TYPES = new Set([
   "uses",
 ]);
 
+function loadEdges(wikiRoot: string): Array<Record<string, string>> {
+  const edgesPath = path.join(wikiRoot, "graph", "edges.jsonl");
+  const edges: Array<Record<string, string>> = [];
+  if (!fs.existsSync(edgesPath)) return edges;
+  for (const [index, line] of fs.readFileSync(edgesPath, "utf-8").trim().split("\n").entries()) {
+    if (line.trim()) {
+      try {
+        edges.push(JSON.parse(line));
+      } catch (e) {
+        throw new Error(`invalid graph edge at ${edgesPath}:${index + 1}: ${String(e)}`);
+      }
+    }
+  }
+  return edges;
+}
+
+// Drop edges matching `keep === false`, rewriting edges.jsonl atomically-ish.
+// Returns the removed edges so callers can log what changed.
+function removeEdges(
+  wikiRoot: string,
+  keep: (e: Record<string, string>) => boolean,
+): Array<Record<string, string>> {
+  const edges = loadEdges(wikiRoot);
+  const removed = edges.filter((e) => !keep(e));
+  if (removed.length > 0) {
+    const edgesPath = path.join(wikiRoot, "graph", "edges.jsonl");
+    const kept = edges.filter(keep);
+    fs.writeFileSync(
+      edgesPath,
+      kept.map((e) => JSON.stringify(e)).join("\n") + (kept.length > 0 ? "\n" : ""),
+      "utf-8",
+    );
+  }
+  return removed;
+}
+
 function addEdge(
   wikiRoot: string,
   fromId: string,
@@ -453,18 +453,7 @@ function addEdge(
 
   const edgesPath = path.join(wikiRoot, "graph", "edges.jsonl");
 
-  const existingEdges: Array<Record<string, string>> = [];
-  if (fs.existsSync(edgesPath)) {
-    for (const line of fs.readFileSync(edgesPath, "utf-8").trim().split("\n")) {
-      if (line.trim()) {
-        try {
-          existingEdges.push(JSON.parse(line));
-        } catch {
-          continue;
-        }
-      }
-    }
-  }
+  const existingEdges = loadEdges(wikiRoot);
 
   for (const e of existingEdges) {
     if (e.from === fromId && e.to === toId && e.type === edgeType) {
@@ -510,7 +499,10 @@ function addEdge(
 
 function rebuildQueryPack(wikiRoot: string, maxChars = 8000): void {
   const root = wikiRoot;
-  const sections: string[] = [];
+  // `must` sections (Open Problems, Failed Ideas) are the live research state the
+  // next iteration's ideation feeds on; they get budget priority over background
+  // (Project Direction, papers, chains) when the pack is tight.
+  const sections: Array<{ text: string; must: boolean }> = [];
 
   // 1. Project direction
   const briefPath = path.join(path.dirname(root), "RESEARCH_BRIEF.md");
@@ -565,10 +557,10 @@ function rebuildQueryPack(wikiRoot: string, maxChars = 8000): void {
     }
 
     if (partsList.length > 0) {
-      sections.push(`## Project Direction\n${partsList.join("\n\n")}\n`);
+      sections.push({ text: `## Project Direction\n${partsList.join("\n\n")}\n`, must: false });
     } else {
       const flat = raw.trim().slice(0, 600);
-      if (flat) sections.push(`## Project Direction\n${flat}\n`);
+      if (flat) sections.push({ text: `## Project Direction\n${flat}\n`, must: false });
     }
   }
 
@@ -589,7 +581,10 @@ function rebuildQueryPack(wikiRoot: string, maxChars = 8000): void {
     }
     if (problems.length > 0) {
       const problemsText = problems.slice(0, 15).join("\n").slice(0, 1400);
-      sections.push(`## Open Problems (${problems.length} total)\n${problemsText}\n`);
+      sections.push({
+        text: `## Open Problems (${problems.length} total)\n${problemsText}\n`,
+        must: true,
+      });
     }
   }
 
@@ -624,7 +619,7 @@ function rebuildQueryPack(wikiRoot: string, maxChars = 8000): void {
     }
     if (failed.length > 0) {
       const failedText = failed.join("\n").slice(0, 1400);
-      sections.push(`## Failed Ideas (avoid repeating)\n${failedText}\n`);
+      sections.push({ text: `## Failed Ideas (avoid repeating)\n${failedText}\n`, must: true });
     }
   }
 
@@ -666,7 +661,10 @@ function rebuildQueryPack(wikiRoot: string, maxChars = 8000): void {
     }
     if (paperSummaries.length > 0) {
       const papersText = paperSummaries.slice(0, 12).join("\n").slice(0, 1800);
-      sections.push(`## Key Papers (${paperSummaries.length} total)\n${papersText}\n`);
+      sections.push({
+        text: `## Key Papers (${paperSummaries.length} total)\n${papersText}\n`,
+        must: false,
+      });
     }
   }
 
@@ -674,12 +672,12 @@ function rebuildQueryPack(wikiRoot: string, maxChars = 8000): void {
   const edgesPath = path.join(root, "graph", "edges.jsonl");
   if (fs.existsSync(edgesPath)) {
     const edges: Array<Record<string, string>> = [];
-    for (const line of fs.readFileSync(edgesPath, "utf-8").trim().split("\n")) {
+    for (const [index, line] of fs.readFileSync(edgesPath, "utf-8").trim().split("\n").entries()) {
       if (line.trim()) {
         try {
           edges.push(JSON.parse(line));
-        } catch {
-          continue;
+        } catch (e) {
+          throw new Error(`invalid graph edge at ${edgesPath}:${index + 1}: ${String(e)}`);
         }
       }
     }
@@ -689,27 +687,54 @@ function rebuildQueryPack(wikiRoot: string, maxChars = 8000): void {
         chains.push(`  ${e.from} --${e.type}--> ${e.to}`);
       }
       const chainsText = chains.join("\n").slice(0, 900);
-      sections.push(`## Recent Relationships (${edges.length} total)\n${chainsText}\n`);
+      sections.push({
+        text: `## Recent Relationships (${edges.length} total)\n${chainsText}\n`,
+        must: false,
+      });
     }
   }
 
-  // Assemble
-  let pack = "# Research Wiki Query Pack\n\n_Auto-generated. Do not edit._\n\n";
-  for (const s of sections) {
-    if (pack.length + s.length <= maxChars) {
-      pack += s;
-    } else {
-      const remaining = maxChars - pack.length - 20;
-      if (remaining > 100) {
-        let chunk = s.slice(0, remaining);
-        const lastNl = chunk.lastIndexOf("\n");
-        if (lastNl > remaining / 2) {
-          chunk = chunk.slice(0, lastNl);
-        }
-        pack += chunk + "\n...(truncated)\n";
-      }
-      break;
+  // Assemble. Inclusion is decided in priority order (must sections first, so
+  // background can never squeeze Open Problems / Failed Ideas out of the pack);
+  // the selected sections are then emitted in display order.
+  const header = "# Research Wiki Query Pack\n\n_Auto-generated. Do not edit._\n\n";
+  const included = new Set<number>();
+  let used = header.length;
+  const order = [...sections.keys()].sort(
+    (a, b) => Number(sections[b]!.must) - Number(sections[a]!.must) || a - b,
+  );
+  for (const idx of order) {
+    const section = sections[idx]!;
+    if (used + section.text.length <= maxChars) {
+      included.add(idx);
+      used += section.text.length;
+      continue;
     }
+    const remaining = maxChars - used - 20;
+    if (remaining > 100) {
+      let chunk = section.text.slice(0, remaining);
+      const lastNl = chunk.lastIndexOf("\n");
+      if (lastNl > remaining / 2) {
+        chunk = chunk.slice(0, lastNl);
+      }
+      if (section.must) {
+        // a must section is truncated rather than dropped
+        included.add(idx);
+        sections[idx] = { text: chunk + "\n...(truncated)\n", must: true };
+        used += sections[idx]!.text.length;
+      } else if (idx === order[order.length - 1]) {
+        // last candidate in display order: truncate instead of dropping
+        included.add(idx);
+        sections[idx] = { text: chunk + "\n...(truncated)\n", must: false };
+        used += sections[idx]!.text.length;
+      }
+    }
+    // an optional section that does not fit is skipped; smaller later sections
+    // still get their chance
+  }
+  let pack = header;
+  for (let i = 0; i < sections.length; i++) {
+    if (included.has(i)) pack += sections[i]!.text;
   }
 
   if (scanForThreats) {
@@ -731,7 +756,22 @@ function rebuildQueryPack(wikiRoot: string, maxChars = 8000): void {
   console.log(`query_pack.md rebuilt: ${pack.length} chars`);
 }
 
-function getStats(wikiRoot: string): void {
+function problemNodeIds(wikiRoot: string, status: string): string[] {
+  const d = path.join(wikiRoot, "problems");
+  if (!fs.existsSync(d)) return [];
+  const ids: string[] = [];
+  for (const f of fs
+    .readdirSync(d)
+    .filter((x: string) => x.endsWith(".md"))
+    .sort()) {
+    const meta = loadPaperFrontmatter(path.join(d, f));
+    if (meta.status !== status) continue;
+    ids.push(meta.node_id ?? `problem:${path.basename(f, ".md")}`);
+  }
+  return ids;
+}
+
+function getStats(wikiRoot: string, asJson = false): void {
   const root = wikiRoot;
 
   function countFiles(subdir: string): number {
@@ -766,6 +806,37 @@ function getStats(wikiRoot: string): void {
       .trim()
       .split("\n")
       .filter((l: string) => l.trim()).length;
+  }
+
+  if (asJson) {
+    // The wiki pages are the only source of truth for the problem tally: the
+    // three add_problem writers each know their own problems, none knows the
+    // whole set. `closed` is solved|refuted (adjudicated); `deferred` is
+    // neither open nor closed, so it shows up in `total` alone.
+    const byStatus = (status: string): string[] => problemNodeIds(root, status);
+    const open = byStatus("open");
+    const closed = [...byStatus("solved"), ...byStatus("refuted")].sort();
+    console.log(
+      JSON.stringify(
+        {
+          papers,
+          ideas,
+          experiments,
+          claims,
+          problems: {
+            open,
+            closed,
+            deferred: byStatus("deferred"),
+            total: problems,
+          },
+          edges: edgeCount,
+          wiki_root: root,
+        },
+        null,
+        2,
+      ),
+    );
+    return;
   }
 
   console.log("Research Wiki Stats");
@@ -836,18 +907,7 @@ async function ingestPaper(
       meta = { ...opts.prefetchedMeta };
       meta.arxiv_id = meta.arxiv_id || aid;
     } else {
-      try {
-        meta = await fetchArxivMetadata(aid);
-      } catch (e) {
-        if (opts.title) {
-          console.error(
-            `Warning: ${e instanceof Error ? e.message : e} — falling back to manual metadata.`,
-          );
-          meta = { arxiv_id: aid };
-        } else {
-          throw e;
-        }
-      }
+      meta = await fetchArxivMetadata(aid);
     }
     if (opts.title) meta.title = opts.title;
     if (authors.length > 0) meta.authors = authors;
@@ -1012,10 +1072,7 @@ function warnIfDangling(wikiRoot: string, nid: string, fn: string): void {
     exists = fs.existsSync(path.join(wikiRoot, "problems", `${restStr}.md`));
   }
   if (!exists) {
-    console.error(
-      `Warning: ${fn}: edge target ${nid} not found in this wiki ` +
-        `(dangling edge recorded — create the node or fix the id).`,
-    );
+    throw new Error(`${fn}: edge target ${nid} not found in this wiki`);
   }
 }
 
@@ -1455,6 +1512,24 @@ function addExperiment(
   }
   const wasUpdate = fs.existsSync(pagePath);
 
+  if (wasUpdate) {
+    // The experiment node owns its verdict, so it also owns the verdict edges.
+    // A re-judged experiment must not keep the previous verdict's supports /
+    // invalidates edges alongside the new ones (that pair is a contradiction).
+    // The caller re-adds the edge for the CURRENT verdict after this call, so
+    // purging here makes re-judging idempotent.
+    const removed = removeEdges(
+      root,
+      (e) => !(e.from === nodeId && (e.type === "supports" || e.type === "invalidates")),
+    );
+    for (const e of removed) {
+      appendLog(
+        root,
+        `add_experiment: dropped stale ${e.type} edge ${e.from} → ${e.to} (verdict re-judged)`,
+      );
+    }
+  }
+
   let metrics = opts.metrics ?? "";
   let reasoning = opts.reasoning ?? "";
 
@@ -1512,10 +1587,7 @@ function addExperiment(
       ideaId.startsWith("idea:") &&
       !fs.existsSync(path.join(root, "ideas", `${ideaId.split(":")[1]}.md`))
     ) {
-      console.error(
-        `Warning: add_experiment: idea ${ideaId} not found in this wiki ` +
-          `(dangling edge recorded — create the node or fix the id).`,
-      );
+      warnIfDangling(root, ideaId, "add_experiment");
     }
     addEdge(root, ideaId, nodeId, "tested_by", `exp ${finalSlug} tests idea`);
   }
@@ -1565,6 +1637,7 @@ function renderProblemPage(
   whatWouldSolve: string,
   caveats: string,
   tags: string[],
+  added = "",
 ): string {
   const lines: string[] = ["---"];
   lines.push("type: problem");
@@ -1573,7 +1646,7 @@ function renderProblemPage(
   lines.push(`status: ${status}`);
   lines.push(`severity: ${severity}`);
   lines.push(`parent: ${yamlQuote(parent)}`);
-  lines.push(`added: ${nowUtcIso()}`);
+  lines.push(`added: ${added || nowUtcIso()}`);
   lines.push("tags: [" + tags.map((t) => yamlQuote(t)).join(", ") + "]");
   lines.push("---");
   lines.push("");
@@ -1609,6 +1682,59 @@ function renderProblemPage(
   return lines.join("\n") + "\n";
 }
 
+// Read a problems/<slug>.md page back into its field values, so an update can
+// preserve whatever the caller did not pass. Body sections that still hold the
+// _TODO placeholder count as empty. Returns null when the page does not exist.
+function parseProblemPage(pagePath: string): {
+  title: string;
+  status: string;
+  severity: string;
+  parent: string;
+  added: string;
+  tags: string[];
+  statement: string;
+  origin: string;
+  evidence: string;
+  whatWouldSolve: string;
+  caveats: string;
+} | null {
+  if (!fs.existsSync(pagePath)) return null;
+  const text = fs.readFileSync(pagePath, "utf-8");
+  const fm = text.startsWith("---") ? text.slice(3, text.indexOf("\n---", 3)) : "";
+  const front: Record<string, string> = {};
+  for (const line of fm.split("\n")) {
+    const m = line.match(/^([a-z_]+):\s*(.*)$/);
+    if (m) front[m[1]] = m[2].trim().replace(/^["']|["']$/g, "");
+  }
+  const tags = (front.tags ?? "")
+    .replace(/^\[|\]$/g, "")
+    .split(",")
+    .map((t) => t.trim().replace(/^["']|["']$/g, ""))
+    .filter(Boolean);
+  const body = text.slice(text.indexOf("\n---", 3) + 4);
+  const sections: Record<string, string> = {};
+  const parts = body.split(/^## /m);
+  for (let i = 1; i < parts.length; i++) {
+    const nl = parts[i].indexOf("\n");
+    const name = parts[i].slice(0, nl === -1 ? undefined : nl).trim();
+    const content = (nl === -1 ? "" : parts[i].slice(nl + 1)).trim();
+    sections[name] = content.startsWith("_TODO:") ? "" : content;
+  }
+  return {
+    title: front.title ?? "",
+    status: front.status ?? "open",
+    severity: front.severity ?? "medium",
+    parent: front.parent ?? "",
+    added: front.added ?? "",
+    tags,
+    statement: sections["Statement"] ?? "",
+    origin: sections["Origin"] ?? "",
+    evidence: sections["Evidence"] ?? "",
+    whatWouldSolve: sections["What would solve it"] ?? "",
+    caveats: sections["Caveats"] ?? "",
+  };
+}
+
 function addProblem(
   wikiRoot: string,
   slug: string,
@@ -1630,25 +1756,39 @@ function addProblem(
   if (!fs.existsSync(path.join(root, "problems"))) {
     throw new Error(`${root} is not an initialized wiki (problems/ missing). Run \`init\` first.`);
   }
-  const status = opts.status ?? "open";
+  // An explicit --slug names the page; otherwise derive it from --title. Resolve
+  // the page first so an update call can inherit the fields it does not pass.
+  const finalSlug = problemSlugify(title, slug);
+  if (!finalSlug) {
+    throw new Error("add_problem: --slug or --title is required (one of them names the page)");
+  }
+  const nodeId = `problem:${finalSlug}`;
+  const pagePath = path.join(root, "problems", `${finalSlug}.md`);
+  const existing = parseProblemPage(pagePath);
+  if (existing && !title) {
+    // update calls may omit --title; the existing page is the authority
+    title = existing.title;
+  }
+  if (!existing && !title) {
+    throw new Error("add_problem: --title is required when creating a new problem");
+  }
+  const status = opts.status ?? existing?.status ?? "open";
   if (!PROBLEM_STATUSES.has(status)) {
     throw new Error(
       `unknown problem status '${status}'. Valid: ${[...PROBLEM_STATUSES].sort().join(", ")}`,
     );
   }
-  const severity = opts.severity ?? "medium";
+  const severity = opts.severity ?? existing?.severity ?? "medium";
   if (!PROBLEM_SEVERITY.has(severity)) {
     throw new Error(
       `unknown severity '${severity}'. Valid: ${[...PROBLEM_SEVERITY].sort().join(", ")}`,
     );
   }
 
-  const tags = opts.tags ?? [];
-  const finalSlug = problemSlugify(title, slug);
-  const nodeId = `problem:${finalSlug}`;
-
-  const pagePath = path.join(root, "problems", `${finalSlug}.md`);
-  if (fs.existsSync(pagePath) && !opts.updateOnExist) {
+  // Unspecified fields preserve the existing page, so a close call
+  // (--status solved --update-on-exist) never rewrites history it did not state.
+  const tags = opts.tags ?? existing?.tags ?? [];
+  if (existing && !opts.updateOnExist) {
     appendLog(
       root,
       `add_problem: skipped existing problem ${path.basename(pagePath)} (slug dedup)`,
@@ -1656,13 +1796,22 @@ function addProblem(
     console.log(`Problem already exists: ${path.basename(pagePath)} (slug dedup) - skipping.`);
     return pagePath;
   }
-  const wasUpdate = fs.existsSync(pagePath);
+  const wasUpdate = Boolean(existing);
 
-  let statement = opts.statement ?? "";
-  let origin = opts.origin ?? "";
-  let evidence = opts.evidence ?? "";
-  let whatWouldSolve = opts.whatWouldSolve ?? "";
-  let caveats = opts.caveats ?? "";
+  let statement = opts.statement ?? existing?.statement ?? "";
+  let origin = opts.origin ?? existing?.origin ?? "";
+  let evidence = opts.evidence ?? existing?.evidence ?? "";
+  if (
+    existing &&
+    opts.evidence &&
+    existing.evidence &&
+    opts.evidence.trim() !== existing.evidence.trim()
+  ) {
+    // closing evidence appends to the failure evidence - both remain true
+    evidence = `${existing.evidence}\n\n${opts.evidence}`;
+  }
+  let whatWouldSolve = opts.whatWouldSolve ?? existing?.whatWouldSolve ?? "";
+  let caveats = opts.caveats ?? existing?.caveats ?? "";
 
   if (quarantine) {
     const qHits: Array<[string, string[], string]> = [];
@@ -1700,9 +1849,19 @@ function addProblem(
     }
   }
 
-  let parentId = (opts.parent ?? "").trim();
+  let parentId = (opts.parent ?? existing?.parent ?? "").trim();
   if (parentId && !parentId.includes(":")) {
     parentId = `problem:${parentId}`;
+  }
+  if (parentId && parentId === nodeId) {
+    throw new Error(`add_problem: problem ${nodeId} cannot be its own parent`);
+  }
+
+  // Validate the parent before writing anything: a throw here must not leave a
+  // page on disk that has no child_of edge, no index entry and no query_pack
+  // listing — visible to a human browsing problems/, invisible to every reader.
+  if (parentId) {
+    warnIfDangling(root, parentId, "add_problem");
   }
 
   const rendered = renderProblemPage(
@@ -1717,18 +1876,12 @@ function addProblem(
     whatWouldSolve,
     caveats,
     tags,
+    existing?.added,
   );
   fs.writeFileSync(pagePath, rendered, "utf-8");
 
   if (parentId) {
-    if (parentId === nodeId) {
-      console.error(
-        `Warning: add_problem: problem ${nodeId} cannot be its own parent - edge skipped.`,
-      );
-    } else {
-      warnIfDangling(root, parentId, "add_problem");
-      addEdge(root, nodeId, parentId, "child_of", `problem ${finalSlug} is a sub-problem`);
-    }
+    addEdge(root, nodeId, parentId, "child_of", `problem ${finalSlug} is a sub-problem`);
   }
 
   rebuildIndex(root);
@@ -1749,34 +1902,15 @@ async function syncPapers(
   const ids = arxivIds.map((a) => a.trim()).filter(Boolean);
   if (ids.length === 0) return;
 
-  let batch: Record<string, ArxivMeta> = {};
-  try {
-    batch = await fetchArxivMetadataBatch(ids);
-  } catch (e) {
-    console.error(
-      `Warning: batch fetch failed (${e instanceof Error ? e.message : e}); falling back to per-id.`,
-    );
-  }
-
-  const errors: Array<[string, string]> = [];
+  const batch = await fetchArxivMetadataBatch(ids);
   for (const aid of ids) {
     const norm = normalizeArxivId(aid);
     const meta = batch[norm] ?? null;
-    try {
-      await ingestPaper(wikiRoot, {
-        arxivId: aid,
-        updateOnExist,
-        prefetchedMeta: meta,
-      });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error(`ERROR: ${aid}: ${msg}`);
-      errors.push([aid, msg]);
-    }
-  }
-  if (errors.length > 0) {
-    console.error(`\nsync: ${errors.length} error(s)`);
-    process.exit(1);
+    await ingestPaper(wikiRoot, {
+      arxivId: aid,
+      updateOnExist,
+      prefetchedMeta: meta,
+    });
   }
 }
 
@@ -1787,7 +1921,7 @@ function rebuildIndex(wikiRoot: string): void {
   const lines: string[] = [
     "# Research Wiki Index",
     "",
-    "_Auto-generated by `research_wiki.py rebuild_index`. Do not edit._",
+    "_Auto-generated by `research-wiki.js rebuild_index`. Do not edit._",
     "",
   ];
 
@@ -1894,8 +2028,9 @@ program
   .command("stats")
   .description("Print wiki statistics")
   .argument("<wiki_root>", "Wiki root directory")
-  .action((wikiRoot: string) => {
-    getStats(wikiRoot);
+  .option("--json", "Emit machine-readable stats, including problem node ids by status")
+  .action((wikiRoot: string, opts: { json?: boolean }) => {
+    getStats(wikiRoot, opts.json === true);
   });
 
 program
@@ -2061,10 +2196,14 @@ program
   .command("add_problem")
   .description("Create (or update) a problems/<slug>.md node (open problem entity)")
   .argument("<wiki_root>", "Wiki root directory")
-  .requiredOption("--title <title>", "Human-readable problem title")
+  // No defaults on title/status/severity: with --update-on-exist an unspecified
+  // field must preserve the existing page, not reset it. Creation-time defaults
+  // are applied inside addProblem. Other "" defaults become undefined in the
+  // action so the same rule can distinguish "not passed" from "passed empty".
+  .option("--title <title>", "Human-readable problem title (required on create)")
   .option("--slug <slug>", "Stable problem id", "")
-  .option("--status <status>", `One of: ${[...PROBLEM_STATUSES].sort().join(", ")}`, "open")
-  .option("--severity <s>", `One of: ${[...PROBLEM_SEVERITY].sort().join(", ")}`, "medium")
+  .option("--status <status>", `One of: ${[...PROBLEM_STATUSES].sort().join(", ")}`)
+  .option("--severity <s>", `One of: ${[...PROBLEM_SEVERITY].sort().join(", ")}`)
   .option("--parent <id>", "Parent problem node_id/slug (writes a child_of edge)", "")
   .option("--statement <text>", "What is unsolved (body)", "")
   .option(
@@ -2081,10 +2220,10 @@ program
     (
       wikiRoot: string,
       opts: {
-        title: string;
+        title?: string;
         slug: string;
-        status: string;
-        severity: string;
+        status?: string;
+        severity?: string;
         parent: string;
         statement: string;
         origin: string;
@@ -2095,16 +2234,16 @@ program
         updateOnExist: boolean;
       },
     ) => {
-      addProblem(wikiRoot, opts.slug, opts.title, {
+      addProblem(wikiRoot, opts.slug, opts.title ?? "", {
         status: opts.status,
         severity: opts.severity,
-        parent: opts.parent,
-        statement: opts.statement,
-        origin: opts.origin,
-        evidence: opts.evidence,
-        whatWouldSolve: opts.whatWouldSolve,
-        caveats: opts.caveats,
-        tags: splitCsv(opts.tags),
+        parent: opts.parent || undefined,
+        statement: opts.statement || undefined,
+        origin: opts.origin || undefined,
+        evidence: opts.evidence || undefined,
+        whatWouldSolve: opts.whatWouldSolve || undefined,
+        caveats: opts.caveats || undefined,
+        tags: opts.tags ? splitCsv(opts.tags) : undefined,
         updateOnExist: opts.updateOnExist,
       });
     },

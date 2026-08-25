@@ -32,9 +32,9 @@ posterly originals and the ARIS forks.
 | **Anti-patterns**            | Specific things the loop has been caught doing. Each maps to a HARD style/asset rule or a rubric cap.                            |
 
 Gate name shorthand (DESIGN_FINAL §3–§7):
-`preflight` (structure), `style` (`style_check.py`, 12 rules), `asset` (`asset_check.py`),
-`measure` (`poster_check.py measure`, column/footer/canvas geometry),
-`polish` (`poster_check.py polish`, figure-AR / orphan / whitespace).
+`preflight` (structure), `style` (`style-check.js`, 12 rules), `asset` (`asset-check.js`),
+`measure` (`poster-check.js measure`, column/footer/canvas geometry),
+`polish` (`poster-check.js polish`, figure-AR / orphan / whitespace).
 
 ---
 
@@ -238,14 +238,12 @@ Gate name shorthand (DESIGN_FINAL §3–§7):
 
 - **Purpose**: A scannable QR pointing at the paper / arXiv / code / project page, with a small
   label. Lives in the header right-block.
-- **Allowed variants**: none. The img is either a **local raster** QR or, as a last-resort
-  authoring placeholder, an inline SVG QR (one of the two sanctioned inline-SVG uses).
-- **Required data attributes**: none for the raster QR. If the QR is the inline-SVG fallback, it
-  is exempt from hue clustering (rule 4 exempts QR) but must still be a **local** asset in the
-  final poster.
+- **Allowed variants**: one local raster QR. The poster must not ship an
+  inline SVG or remote QR placeholder.
+- **Required data attributes**: none for the local raster QR.
 - **Token usage**: `--accent` (border), white background, `--accent` (`.qr-label`, sans).
 - **Inspected by**: `style` (rule 4 QR exemption; rule 11 — inline SVG allowed only for
-  logo / QR fallback / catalogued structural diagram), `preflight` (no remote `src` — a remote
+  logo / catalogued structural diagram), `preflight` (no remote `src` — a remote
   QR-service URL hangs `measure`'s networkidle wait and link-rots), verify-final (no remote
   asset, ≤20MB).
 - **Allowed fix operations**: (a) token retune (border color), (g) asset fix (regenerate the QR
@@ -347,7 +345,7 @@ its "Allowed fix operations" to these letters.
 | **(d)** | **Canvas / template reselect**                     | The upgrade path — pick a different template or retarget the canvas (README §"Retargeting").                          |
 | **(e)** | Global **component stylesheet** change             | May reference tokens only; **no new hex**.                                                                            |
 | **(f)** | Toggle a **predefined variant**                    | `.figure--wide`, `.card--compact`, `.eqn--large`, `.nowrap`, `.callout.gold`, etc. — must already be in this catalog. |
-| **(g)** | **Asset fix**                                      | Re-crop, swap for a sharper figure from the _same_ paper, re-run `preprocess_figures.py`.                             |
+| **(g)** | **Asset fix**                                      | Re-crop, swap for a sharper figure from the _same_ paper, re-run `preprocess-figures.js`.                             |
 
 **Forbidden inside the loop** (DESIGN_FINAL §10, last paragraph): new inline `style=`,
 new hex literal, homemade decorative SVG, single-element font-size override.

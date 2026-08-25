@@ -23,13 +23,14 @@ This skill chains five sub-skills into a single automated pipeline:
 
 Each phase builds on the previous one's output. The final deliverable is a polished, reviewed `paper/` directory with LaTeX source and compiled PDF.
 
-In this hybrid pack, the pipeline itself is unchanged, but `paper-plan` and `paper-write` use Orchestra-adapted shared references for stronger story framing and prose guidance.
+In this hybrid pack, `paper-plan` and `paper-write` use Orchestra-adapted
+shared references for story framing and prose guidance.
 
 ## Constants
 
 - **VENUE = `ICLR`** — Target venue. Options: `ICLR`, `NeurIPS`, `ICML`, `CVPR`, `ACL`, `AAAI`, `ACM`, `IEEE_JOURNAL` (IEEE Transactions / Letters), `IEEE_CONF` (IEEE conferences). Affects style file, page limit, citation format.
 - **MAX_IMPROVEMENT_ROUNDS = 2** — Number of review→fix→recompile rounds in the improvement loop.
-- **REVIEWER_MODEL = `gpt-5.5`** — Model used via Codex MCP for plan review, figure review, writing review, and improvement loop.
+- **REVIEWER_MODEL = `gpt-5.5`** — Model used by the Paseo codex reviewer for plan review, figure review, writing review, and improvement loop.
 - **AUTO_PROCEED = true** — Auto-continue between phases. Set `false` to pause and wait for user approval after each phase.
 - **HUMAN_CHECKPOINT = false** — When `true`, the improvement loop (Phase 5) pauses after each round's review to let you see the score and provide custom modification instructions. When `false` (default), the loop runs fully autonomously. Passed through to `/auto-paper-improvement-loop`.
 - **ILLUSTRATION = `figurespec`** — Architecture/illustration generator for Phase 2b: `figurespec` (default, deterministic JSON→SVG via `/figure-spec`, best for architecture/workflow/topology), `gemini` (AI-generated via `/paper-illustration`, best for qualitative method illustrations; needs `GEMINI_API_KEY`), `codex-image2` (AI-generated via `/paper-illustration-image2` through the local Codex native image bridge — no external API key, uses your ChatGPT Plus/Pro quota; experimental), `mermaid` (Mermaid syntax via `/mermaid-diagram`, free, best for flowcharts), or `false` (skip Phase 2b, manual only).
@@ -49,7 +50,7 @@ The more detailed the input (especially figure descriptions and quantitative res
 
 ## Optional: Style reference (`— style-ref: <source>`, opt-in)
 
-Lets the user steer **structural** style (section ordering, theorem density, sentence cadence, figure density, bibliography style) of the generated paper toward a reference paper they admire. **Default OFF — when the user does not pass `— style-ref`, do nothing differently from before.**
+Lets the user steer **structural** style (section ordering, theorem density, sentence cadence, figure density, bibliography style) of the generated paper toward a reference paper they admire. **Default OFF — the normal writer path does not read a style reference.**
 
 When `— style-ref: <source>` is in `$ARGUMENTS`, run the helper FIRST, before Phase 1 (paper-plan):
 
@@ -72,7 +73,7 @@ STYLE_STATUS=0
 CACHE=$(node "$STYLE_HELPER" --source "<source>") || STYLE_STATUS=$?
 case "$STYLE_STATUS" in
   0) ;;                                       # share $CACHE/style_profile.md with downstream WRITER phases only
-  2) echo "warning: style-ref skipped (missing optional dep)" >&2 ;;
+  2) echo "error: --style-ref requires the optional dependency; aborting pipeline" >&2 ; exit 1 ;;
   3) echo "error: --style-ref source failed; aborting pipeline" >&2 ; exit 1 ;;
   *) echo "error: helper failed unexpectedly; aborting pipeline" >&2 ; exit 1 ;;
 esac
@@ -97,6 +98,7 @@ Sources accepted: local TeX dir / file, local PDF, arXiv id, http(s) URL. Overle
 When invoked with `— manifest: <path>`, this skill runs as a worker under an
 orchestrator (`/research-pipeline` or `/auto-research-loop`). The manifest
 provides all inputs; the skill writes its receipt to the manifest's directory.
+The required input-manifest file is the complete input authority for this worker.
 
 **Startup check:**
 ```
@@ -134,20 +136,16 @@ fi
 On failure, write receipt with `"status": "failed"` and structured `error` object
 per `worker-manifest.md`. Append system errors to `$WORKER_DIR/progress_error.md`.
 
-**Direct-call mode:** When invoked WITHOUT `— manifest:`, the skill operates
-normally using its own argument parsing. No receipt is written.
+The skill requires `— manifest:` and always writes a receipt. There is no second
+direct-call path with different output semantics.
 
-**Output path mapping:** In worker mode, every hardcoded output path in this
-skill's body (listed below) maps to `$OUTPUT_DIR/<filename>`. The orchestrator's
-subsequent input-manifests reference prior workers' outputs using their full
-`$WORKERS_DIR/<iter>-<phase>/outputs/<file>` path. In direct-call mode, the
-paths below are project-root-relative as written.
+**Output path mapping:** Every output path in this skill maps to
+`$OUTPUT_DIR/<filename>`. The orchestrator's input manifests reference these
+paths directly.
 
-| Direct-call path | Worker-mode path |
-|---|---|
-| `PAPER_PLAN.md` | `$OUTPUT_DIR/PAPER_PLAN.md` |
-| `paper/` (entire directory) | `$OUTPUT_DIR/paper/` |
-| `figures/` | `$OUTPUT_DIR/figures/` |
+| Worker output |
+|---|
+| `$OUTPUT_DIR/PAPER_PLAN.md`, `$OUTPUT_DIR/paper/`, `$OUTPUT_DIR/figures/` |
 
 ## Pipeline
 
@@ -160,7 +158,7 @@ verifier reads the same value. **Run once at pipeline start, before Phase 1.**
 
 1. Explicit `— assurance: draft | submission` in `$ARGUMENTS`
 2. Derived from `— effort:`
-   - `lite` / `balanced` → `draft` (default, **zero change from current behavior**)
+   - `lite` / `balanced` → `draft` (default)
    - `max` / `beast` → `submission`
 3. Default: `draft`
 
@@ -173,9 +171,9 @@ echo "<resolved-level>" > paper/.aris/assurance.txt   # draft or submission
 
 **What each level does downstream:**
 
-- **`draft`** — Existing behavior. Audits run only when their content detector
-  matches (Phase 4.5 / 4.7 / 5.5 / 5.8). Missing artifacts are non-blocking.
-  Silent-skip allowed.
+- **`draft`** — Audits run only when their content detector matches (Phase 4.5 / 4.7 / 5.5 /
+  5.8). A detector that does not match makes that audit not applicable; once an audit is
+  invoked, a missing artifact blocks the phase.
 - **`submission`** — The three mandatory audits (proof-checker,
   paper-claim-audit, citation-audit) are treated as load-bearing gates. Each
   sub-audit must emit its JSON artifact (PASS / WARN / FAIL / NOT_APPLICABLE /
@@ -184,16 +182,16 @@ echo "<resolved-level>" > paper/.aris/assurance.txt   # draft or submission
   [`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2);
   a non-zero exit blocks the Final Report.
 
-**Escape hatch:** a user wanting the old "beast = depth-only, no audit gate"
-can pass `— effort: beast, assurance: draft` explicitly. Legal but
-discouraged for actual submissions. See
+The assurance level is explicit. `draft` is diagnostic; `submission` enables
+the mandatory audit gate. Once `assurance: submission` is selected, no effort
+setting disables those checks. See
 `shared-references/assurance-contract.md` for the full contract.
 
 **Announce the resolved level in-line before Phase 1:**
 
 ```
 📋 Assurance: <level> (derived from effort: <effort>)
-   <either "current behavior, no audit gate" OR "mandatory audits gated by verify_paper_audits.sh (resolved per integration-contract §2)">
+   <either "diagnostic audits only" OR "mandatory audits gated by verify_paper_audits.sh (resolved per integration-contract §2)">
 ```
 
 ### Phase 1: Paper Plan
@@ -303,8 +301,8 @@ If `— style-ref: <source>` was passed and the helper succeeded above, append `
 
 - Claude plans → Codex native image generation renders → Claude reviews (same multi-stage workflow as `gemini`, different renderer)
 - Best for: users who want a GPT-image-style renderer without needing `GEMINI_API_KEY`; uses your existing Codex / ChatGPT Plus/Pro quota
-- Output: `figures/ai_generated/figure_final.png` + `latex_include.tex` + `review_log.json` (emitted via the `/paper-illustration-image2` SKILL's `finalize` step, which delegates to the canonical `paper-illustration-image2.js` helper resolved per [integration-contract §2](../shared-references/integration-contract.md#2-canonical-helper--one-implementation-not-copy-pasted))
-- **Prerequisites** (beyond ARIS's standard Claude Code + Codex coexistence): the local Codex app-server must be signed in (`codex debug app-server send-message-v2 "ping"` succeeds), and the dedicated MCP bridge must be registered — see `mcp-servers/codex-image2/README.md` for the one-time `claude mcp add` command. Delegate the preflight to `/paper-illustration-image2` (which resolves the helper via the canonical chain), or invoke the helper directly via the shim at `tools/paper-illustration-image2.js preflight --workspace .` to confirm before relying on this path.
+- Output: `figures/ai_generated/figure_final.png` + `latex_include.tex` + `review_log.json` (emitted by the `/paper-illustration-image2` skill's `finalize` step through its single compiled helper)
+- **Prerequisites**: the local Codex app-server must be signed in and the dedicated MCP bridge must be registered. Delegate preflight to `/paper-illustration-image2`; it resolves the helper through the canonical locations in `shared-references/integration-contract.md`.
 - **Experimental**: this renderer shells through the Codex debug app-server, which Codex documents as an unstable surface. Prefer `figurespec` or `gemini` for production submission flows until `codex-image2` stabilizes.
 
 **When `illustration: false`** — skip entirely. All non-data figures must be created manually (draw.io, Figma, TikZ) and placed in `figures/` before Phase 3.
@@ -375,9 +373,9 @@ Dispatch a paseo claude sub-agent for `/paper-compile` per `shared-references/pa
 
 **What this does:**
 
-- `latexmk -pdf` with automatic multi-pass compilation
-- Auto-fix common errors (missing packages, undefined refs, BibTeX syntax)
-- Up to 3 compilation attempts
+- `latexmk -pdf` with its normal internal multi-pass compilation
+- One explicit compilation attempt; a failure leaves `compile.log` and blocks the phase
+- Fixes and a later compilation require a new invocation
 - Post-compilation checks: undefined refs, page count, font embedding
 - Precise page verification via `pdftotext`
 - Stale file detection
@@ -535,7 +533,7 @@ fi
 | -------------------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `submission`         | yes                   | **MANDATORY**. `FAIL` blocks the final report; `WARN` requires explicit user acknowledgment; `BLOCKED`/`ERROR` blocks the final report (cannot ship without an adversarial pass). |
 | `submission`         | no                    | Skip — `KILL_ARGUMENT.json` is written with `verdict: NOT_APPLICABLE, reason_code: not_theory_or_scope_paper` so the submission verifier sees a record.                           |
-| `internal` / `draft` | yes                   | **Advisory**. Run if the user passed `— kill-argument: true`; otherwise skip. `WARN`/`FAIL` is logged but does not block.                                                         |
+| `internal` / `draft` | yes                   | Run if the user passed `— kill-argument: true`; otherwise skip. When run, `WARN`/`FAIL` blocks the phase. |
 | `internal` / `draft` | no                    | Skip.                                                                                                                                                                             |
 
 `/kill-argument` itself never edits the paper; it writes `KILL_ARGUMENT.{md,json}`. If `still_unresolved critical` points are surfaced, queue them for the next `/auto-paper-improvement-loop` round (Step 5.5 of that skill auto-merges the findings into its fix list).
@@ -553,8 +551,8 @@ if paper/references.bib (or paper.bib) exists and contains entries cited from se
     regex) and spawns a paseo codex reviewer sub-agent (fresh) per
     shared-references/paseo-reviewer-dispatch.md for the verdict, writing
     paper/CITATION_AUDIT.json with trace_path + thread_id (= codex agent-id).
-    Fresh cross-family reviewer (gpt-5.5 via paseo codex sub-agent — Codex MCP
-    fallback) with web/DBLP/arXiv lookup verifies each entry:
+    Fresh cross-family reviewer (gpt-5.5 via paseo codex sub-agent) with
+    DBLP lookup verifies each entry:
       (i)   EXISTENCE — paper resolves at claimed arXiv ID / DOI / venue
       (ii)  METADATA — author names, year, venue, title match canonical sources
       (iii) CONTEXT — cited paper actually establishes the claim it supports
@@ -582,13 +580,10 @@ else:
 
 **Phase 6.0 — Submission Gate**
 
-Before writing the Final Report, resolve the active assurance level. This
-uses the **same derivation rule as Phase 0** so a run where Phase 0 was
-skipped or its write failed cannot silently downgrade a `beast` / `max` /
-`— assurance: submission` invocation back to draft.
+Before writing the Final Report, verify the assurance level recorded during
+Phase 0. The value must match the level derived from the invocation.
 
-**Resolution at the gate** (re-derive; do not trust `.aris/assurance.txt`
-alone):
+**Resolution at the gate**:
 
 1. Parse `$ARGUMENTS` for an explicit `— assurance: draft | submission` or
    an `— effort: lite | balanced | max | beast` directive.
@@ -596,23 +591,19 @@ alone):
    - explicit `assurance:` wins
    - else `lite` / `balanced` → `draft`, `max` / `beast` → `submission`
    - else `draft`
-3. Read `paper/.aris/assurance.txt`. If the file is missing, write it now
-   with the derived level.
-4. If the file's value **disagrees** with the derived level (e.g. file
-   says `draft` but `$ARGUMENTS` says `beast`), **overwrite** the file
-   with the derived level and surface a one-line warning in-chat:
-   `⚠️ .aris/assurance.txt was draft but $ARGUMENTS says submission; overriding.`
-5. Use the re-derived level as authoritative for the rest of Phase 6.
+3. Require `paper/.aris/assurance.txt`. If it is missing, stop with
+   `BLOCKED` and report that Phase 0 did not write the assurance state.
+4. If the file's value disagrees with the derived level, stop with `BLOCKED`.
+   Do not overwrite the state during finalization.
+5. Use the recorded level for the rest of Phase 6.
 
 ```bash
-# Final authoritative value, written and read from the same source
-ASSURANCE=<derived-from-$ARGUMENTS>        # draft | submission
-mkdir -p paper/.aris
-echo "$ASSURANCE" > paper/.aris/assurance.txt
+# Final authoritative value, read from the Phase 0 receipt
+ASSURANCE=$(tr -d '[:space:]' < paper/.aris/assurance.txt)  # draft | submission
 ```
 
-If `ASSURANCE=draft`, skip directly to the Final Report template below —
-**current behavior, no change** for the default `balanced` user.
+If `ASSURANCE=draft`, skip directly to the Final Report template below. The
+audits remain diagnostic in this mode.
 
 If `ASSURANCE=submission`, run the pre-flight checklist below, then the
 verifier. The verifier's exit code is the source of truth — do NOT
@@ -765,7 +756,7 @@ or directly if `assurance=draft`)
 ## Deliverables
 
 - paper/main.pdf — Final polished paper
-- paper/main_round0_original.pdf — Before improvement
+- paper/main_round0_original.pdf — Initial compile
 - paper/main_round1.pdf — After round 1
 - paper/main_round2.pdf — After round 2
 - paper/PAPER_IMPROVEMENT_LOG.md — Full review log
@@ -795,7 +786,7 @@ or directly if `assurance=draft`)
 
 ## Key Rules
 
-- **Large file handling**: If the Write tool fails due to file size, immediately retry using Bash (`cat << 'EOF' > file`) to write in chunks. Do NOT ask the user for permission — just do it silently.
+- **Large file handling**: If the Write tool fails, stop and report the write error. Do not switch to a second writer.
 - **Don't skip phases.** Each phase builds on the previous one — skipping leads to errors.
 - **Checkpoint between phases** when AUTO_PROCEED=false. Present results and wait for approval.
 - **Manual figures first.** If the paper needs architecture diagrams or qualitative results, the user must provide them before Phase 3.

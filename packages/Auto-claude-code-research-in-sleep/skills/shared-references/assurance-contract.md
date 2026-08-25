@@ -6,15 +6,10 @@ This contract is referenced by `paper-writing`, `paper-claim-audit`, `citation-a
 `proof-checker`, and the external verifier (canonical name `verify_paper_audits.sh`;
 callers resolve the actual path via `integration-contract.md` §2).
 
-## Why a separate axis from `effort`
+## Separate axes
 
-Historically `effort` (lite/balanced/max/beast) was conflated with audit strictness.
-The result: `effort: beast` did not guarantee mandatory audits ran — phases were
-gated by content detectors (e.g. `if \begin{theorem} exists`) and could silently
-skip. A user reported `effort: beast` produced a "draft-quality" paper with all
-three submission-gate audits skipped.
-
-The fix is to split the concerns:
+`effort` controls depth and cost. `assurance` controls whether audit verdicts are
+diagnostic or required for finalization.
 
 | Axis        | Controls                                                   | Default                             |
 | ----------- | ---------------------------------------------------------- | ----------------------------------- |
@@ -27,7 +22,7 @@ finalization."
 
 ## Assurance Levels
 
-### `draft` — current behavior, no breakage
+### `draft` — diagnostic audits
 
 - Audits run only if their content detector matches.
 - Silent skip allowed.
@@ -127,7 +122,7 @@ Field semantics:
     after running `paper-claim-audit`? The next verifier run will catch it.)
 - **`trace_path`** — directory containing the full reviewer prompt + response
   pair, per `review-tracing.md`. Required for mandatory audits — not optional.
-- **`thread_id`** — Codex MCP thread ID, for forensic traceability.
+- **`thread_id`** — Paseo codex reviewer agent ID, for forensic traceability.
 - **`reviewer_model`** + **`reviewer_reasoning`** — proves cross-family review
   invariant was honored.
 - **`generated_at`** — UTC ISO-8601 timestamp.
@@ -151,22 +146,19 @@ Field semantics:
 Phase 6 of `paper-writing` invokes the verifier; at `assurance: submission`,
 non-zero exit blocks Final Report generation.
 
-## Subskill Contract: "Always Emit, Never Block"
+## Subskill Contract: "Always Emit, Block on Failure"
 
 Child audit skills (`paper-claim-audit`, `citation-audit`, `proof-checker`)
 follow this contract:
 
 - **Always emit a verdict artifact**, even on detector-negative or error paths.
-- **Never block** the parent's flow themselves — they only emit verdicts.
-- **The parent skill** (`paper-writing` Phase 6 + verifier) decides whether a
-  given verdict blocks finalization. This decision lives in _one_ place
-  (`assurance` axis + verifier), not duplicated across child skills.
+- A detector-negative result is `NOT_APPLICABLE` and does not block.
+- `WARN`, `FAIL`, `BLOCKED`, and `ERROR` block the consuming phase. The parent
+  still performs the final aggregate check, but it may not turn a failed child
+  audit into a completed paper.
 
-Earlier wording in `paper-claim-audit` and `citation-audit` (e.g., "audit is
-advisory, never blocking") referred to this division of labor — but conflicted
-with `paper-writing`'s declaration that they were "mandatory submission gates."
-This contract resolves the conflict: child = always emit; parent = decides
-blocking based on assurance level.
+The parent aggregates only valid child results; it cannot turn a failed child
+audit into a completed paper.
 
 ## Examples
 
@@ -207,7 +199,7 @@ blocking based on assurance level.
 - Verifier: exit 1 (BLOCKED is submission-blocking)
 - Final Report: **refuses to finalize**; surfaces "Mandatory audit BLOCKED:
   paper-claim-audit cannot verify numeric claims — no raw result files found.
-  Add results/ or downgrade to `— assurance: draft`."
+  Add the raw result files and rerun the audit."
 
 ### Stale audit (user edited paper after running audits)
 
@@ -217,16 +209,6 @@ blocking based on assurance level.
 - Verifier rehashes → `audited_input_hashes` mismatch → `STALE` flag → exit 1
 - Final Report: refuses; instructs user to rerun `paper-claim-audit` and
   `citation-audit` before re-finalizing.
-
-## Backward Compatibility
-
-- Users on `effort: balanced` (default) get `assurance: draft` — **identical
-  current behavior, no breakage**.
-- Users explicitly using `effort: max` or `effort: beast` automatically get
-  `assurance: submission` — matching their intent.
-- Users wanting the old "beast = depth only, no audit enforcement" can pass
-  `— effort: beast, assurance: draft` (explicit override). This combination is
-  legal but discouraged for actual submissions.
 
 ## See Also
 
