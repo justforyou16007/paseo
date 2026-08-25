@@ -1,7 +1,7 @@
 ---
 name: research-setup
-description: 'Interactive Q&A setup wizard for new ARIS research projects. Bootstraps CLAUDE.md, RESEARCH_BRIEF.md, and research-wiki from user answers; experiment environment configuration is delegated to /experiment-env-manager, and baseline info (method, code location, expected metric) is written into RESEARCH_BRIEF so /auto-research-loop iteration 1 reproduces it through the normal pipeline. Resumable, bilingual (en/zh), smart defaults. Use when user says "研究项目初始化", "setup project", "初始化研究项目", "research setup", "new project", "配置项目", or wants to configure a new ARIS research workspace.'
-argument-hint: "[project-name] [— language: en|zh]"
+description: 'Interactive Q&A setup wizard for new ARIS research projects. Bootstraps CLAUDE.md, RESEARCH_BRIEF.md, and research-wiki from user answers; experiment environment configuration is delegated to /experiment-env-manager, and baseline info (method, code location, expected metric) is written into RESEARCH_BRIEF so /auto-research-loop iteration 1 reproduces it through the normal pipeline. Resumable, bilingual (en/zh). Quick mode (default) applies defaults for budget, timeline, early stop, and Paseo config, then shows a review checklist before finishing. Use when user says "研究项目初始化", "setup project", "初始化研究项目", "research setup", "new project", "配置项目", or wants to configure a new ARIS research workspace.'
+argument-hint: "[project-name] [— language: en|zh] [— mode: quick|full]"
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, AskUserQuestion, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission
 ---
 
@@ -25,11 +25,12 @@ Phase 1  Project basics (name, language)
 Phase 2  Research background (field, sub-area, problem)
 Phase 3  Prior work & baselines (papers, experiments, results)  [skippable]
 Phase 4  Experiment environment (delegated to /experiment-env-manager)
-Phase 4.5  Early stop configuration
-Phase 5  Research goals (budget, timeline, venue, constraints)
+Phase 4.5  Early stop configuration                 [quick mode: default, no questions]
+Phase 5  Research goals (venue, work type, metric; budget & timeline defaulted in quick mode)
 Phase 5.5  Reference knowledge (skills, documents, domain constraints) [skippable]
-Phase 6  Paseo substrate config (multi-agent orchestration)     [skippable]
+Phase 6  Paseo substrate config (multi-agent orchestration)     [quick mode: default, no questions]
 Phase 7  Artifact generation (CLAUDE.md, RESEARCH_BRIEF.md, research-wiki, .gitignore)
+Phase 7.4  Configuration review checklist (confirm or adjust defaults)
 Phase 7.5  Experiment environment configuration (delegated to /experiment-env-manager)
 Phase 7.6  Baseline info -> RESEARCH_BRIEF (no reproduction; loop iteration 1 reproduces it)
 Phase 8  Summary & next steps
@@ -45,9 +46,28 @@ Phase 8  Summary & next steps
 ## Constants
 
 - **STATE_FILE** = `.aris/setup-state.json`
+- **MODE** = `quick` (default) | `full`. Parsed from `$ARGUMENTS`
+  (`- mode: full`). `quick` applies the quick-mode defaults below without
+  asking; `full` asks every question interactively (the pre-checklist
+  behavior). Both modes end with the Phase 7.4 review checklist.
+
 - **TEMPLATES_DIR** — resolved via: `.aris/templates/` (installed project),
   then `templates/` (dev: running from ARIS repo). Gate: if both fail, error
   and exit — templates are required.
+
+Quick-mode defaults:
+
+| Item                    | Default value                | Adjusted in |
+| ----------------------- | ---------------------------- | ----------- |
+| Compute budget          | `100-500 GPU-hours`          | Phase 5 Q1  |
+| Timeline                | `3-6 months`                 | Phase 5 Q2  |
+| Early stop              | disabled (manual monitoring) | Phase 4.5   |
+| Paseo executor provider | `claude/sonnet-4-6`          | Phase 6 Q1  |
+| Paseo reviewer provider | `codex/gpt-5.5`              | Phase 6 Q2  |
+| Paseo heartbeat         | `off`                        | Phase 6 Q3  |
+
+Every quick-mode default is surfaced in the Phase 7.4 checklist and can be
+adjusted there in one round-trip; nothing is silently baked in past review.
 
 ## Output Language
 
@@ -115,6 +135,18 @@ Check for:
 Parse `$ARGUMENTS` for `— language: zh` or `— language: en`.
 If not specified, detect from user's message language.
 Store as `answers.language`.
+
+### 0e. Detect mode
+
+Parse `$ARGUMENTS` for `- mode: full` or `- mode: quick`.
+Default when absent: `quick`. Store as `answers.setup_mode`.
+
+In `quick` mode, Phase 4.5 and Phase 6 ask no questions and Phase 5 skips the
+budget and timeline questions; the quick-mode defaults (see Constants) are
+applied and their keys recorded in `answers.applied_defaults` (e.g.
+`["compute_budget", "timeline", "early_stop", "paseo"]`). Phase 7.4 shows
+all of them back to the user for confirmation. In `full` mode every question
+is asked interactively, as before.
 
 ---
 
@@ -229,6 +261,13 @@ here — it is transcribed from the generated experiment skill after Phase 7.5.
 
 ## Phase 4.5: Early Stop Configuration
 
+**Quick mode:** ask nothing. Set `answers.early_stop_enabled = false`
+(manual monitoring - the previous default answer), append `"early_stop"`
+to `answers.applied_defaults`, save state, move to Phase 5. The user can
+enable and configure early stopping at the Phase 7.4 checklist.
+
+**Full mode** (or when the user adjusts this item at Phase 7.4):
+
 **Question 1 (gate):**
 - **header**: "Early Stop" / "提前停止"
 - **question** (en): "Enable automatic early stopping for experiments?"
@@ -305,17 +344,26 @@ Parse the answers and construct:
 
 ## Phase 5: Research Goals
 
-Use AskUserQuestion with up to 4 questions (max 4 per batch):
+**Quick mode:** apply the defaults `answers.compute_budget = "100-500 GPU-hours"`
+and `answers.timeline = "3-6 months"`, append `"compute_budget"` and
+`"timeline"` to `answers.applied_defaults`, and ask only the questions below
+(skipping Q1 Budget and Q2 Timeline). The defaults are shown back at the
+Phase 7.4 checklist with a one-click adjust option.
 
-**Batch 1 (4 questions):**
+**Batching:** full mode asks Q1-Q8 in two batches of 4 (Q1-Q4, Q5-Q8).
+Quick mode skips Q1 and Q2 and asks the remaining six as Q3-Q6 then Q7-Q8.
+Q1 and Q2 below are kept as the question definitions for full mode and for
+Phase 7.4 adjustments.
 
 - Q1 header "Budget" / "预算", question: "Compute budget for this project?"
   (zh): "项目的算力预算？"
   options: `["< 100 GPU-hours", "100-500 GPU-hours", "> 500 GPU-hours"]` + "Other" for specific text
+  (full mode only)
 
 - Q2 header "Timeline" / "时间线", question: "Timeline for this project?"
   (zh): "项目的时间线？"
   options: `["1-2 months", "3-6 months", "> 6 months"]` + "Other"
+  (full mode only)
 
 - Q3 header "Venue" / "目标会议", question: "Target venue for publication?"
   (zh): "目标投稿会议/期刊？"
@@ -328,7 +376,7 @@ Use AskUserQuestion with up to 4 questions (max 4 per batch):
   - "Improvement on existing method" / "改进现有方法"
   - "Diagnostic study / analysis paper" / "诊断性研究 / 分析型论文"
 
-**Batch 2 (4 questions):**
+**Batch 2 (full mode: Q5-Q8; quick mode: Q7-Q8 only):**
 
 - Q5 header "Constraints" / "约束", question: "Any project constraints? (e.g., must use PyTorch, must compare against method X)"
   (zh): "项目有什么约束条件？（如：必须使用 PyTorch、必须与方法 X 比较）"
@@ -388,6 +436,16 @@ Record `answers.reference_skills[]`, `answers.reference_documents[]`,
 ---
 
 ## Phase 6: Paseo Substrate Config (Skippable)
+
+**Quick mode:** ask nothing. Keep the template's default Paseo block in
+CLAUDE.md as written (executor `claude/sonnet-4-6`, reviewer `codex/gpt-5.5`,
+heartbeat `off`), set `answers.paseo_configured = false`, append `"paseo"`
+to `answers.applied_defaults`, and record
+`answers.paseo_defaults = "executor claude/sonnet-4-6, reviewer codex/gpt-5.5, heartbeat off"`.
+The values are shown back at the Phase 7.4 checklist; adjusting them there
+sets `paseo_configured = true` and overwrites the block in CLAUDE.md.
+
+**Full mode** (or when the user adjusts this item at Phase 7.4):
 
 **Question 0 (gate):**
 - **header**: "Paseo"
@@ -578,6 +636,84 @@ If not, append the ARIS entries at the end with a header comment:
 .aris/setup-state.json
 ```
 
+### Phase 7.4: Configuration Review Checklist
+
+Before dispatching the env-manager sub-agent, show the user the complete
+configuration and offer a one-round-trip adjustment. This is the confirmation
+point for every quick-mode default and a last look at the user's own answers.
+It runs in **both** modes - the checklist is the single review surface.
+
+Print a checklist table in the detected language:
+
+```
+(zh)
+配置清单（带 * 的项为默认值，可直接调整）：
+
+| 配置项               | 取值                              | 来源        |
+| -------------------- | --------------------------------- | ----------- |
+| 算力预算             | 100-500 GPU-hours *               | 默认值      |
+| 时间线               | 3-6 months *                      | 默认值      |
+| 提前停止             | 关闭（手动监控）*                 | 默认值      |
+| Paseo executor       | claude/sonnet-4-6 *               | 默认值      |
+| Paseo reviewer       | codex/gpt-5.5 *                   | 默认值      |
+| Paseo heartbeat      | off *                             | 默认值      |
+| 项目名 / 领域 / 指标 / 目标会议 / 约束 / ... | <实际值>      | 你填写      |
+
+(en)
+Configuration checklist (items marked * are defaults; adjust if needed):
+
+| Item                                          | Value                            | Source      |
+| --------------------------------------------- | -------------------------------- | ----------- |
+| Compute budget                                | 100-500 GPU-hours *              | default     |
+| Timeline                                      | 3-6 months *                     | default     |
+| Early stop                                    | disabled (manual monitoring) *   | default     |
+| Paseo executor                                | claude/sonnet-4-6 *              | default     |
+| Paseo reviewer                                | codex/gpt-5.5 *                  | default     |
+| Paseo heartbeat                               | off *                            | default     |
+| Project name / field / metric / venue / ...   | <actual value>                   | your answer |
+```
+
+Rows whose key is in `answers.applied_defaults` show as defaults; all other
+collected answers (project name, field, sub-area, primary metric, metric
+target, venue, work type, constraints, non-goals, reference knowledge)
+show with their values.
+
+Then one AskUserQuestion:
+
+- **header**: "Review" / "配置确认"
+- **question** (en): "This configuration will be written into CLAUDE.md / RESEARCH_BRIEF.md. Confirm, or adjust an item?"
+  (zh): "以上配置将写入 CLAUDE.md / RESEARCH_BRIEF.md。确认，还是调整某项？"
+- **options**:
+  - "Confirm all (Recommended)" / "全部确认（推荐）"
+  - "Adjust budget / timeline" / "调整预算 / 时间线"
+  - "Adjust early stop" / "调整提前停止"
+  - "Adjust Paseo config" / "调整 Paseo 配置"
+
+If "Confirm all": record `answers.review_confirmed = true`, save state with
+`completed_stages` including `7.4`, move to Phase 7.5.
+
+If an adjust option is chosen (or the user types a specific item via "Other"):
+
+1. Re-ask the original questions for that item only, using the question
+   definitions from the owning phase (budget/timeline: Phase 5 Q1/Q2;
+   early stop: Phase 4.5; Paseo: Phase 6 Q1-Q3). These re-asks run
+   regardless of mode - quick mode only suppresses the initial ask.
+2. Update `answers`, and remove the item's key from `answers.applied_defaults`.
+3. Patch the already-generated artifacts directly (do not regenerate from
+   scratch):
+   - budget -> `## Compute Budget` in CLAUDE.md and `**Compute**` in RESEARCH_BRIEF.md
+   - timeline -> `**Timeline**` in RESEARCH_BRIEF.md
+   - early stop -> `## Early Stop Configuration` in CLAUDE.md (uncomment and
+     fill, same rules as 7b)
+   - Paseo -> overwrite the values in the `## ARIS Paseo` yaml block in
+     CLAUDE.md, set `answers.paseo_configured = true`
+4. Re-print the checklist and ask the review question again. Loop until the
+   user confirms. The user may also adjust non-defaulted items this way -
+   patch the corresponding CLAUDE.md / RESEARCH_BRIEF.md fields the same way.
+
+Placed after artifact generation (7b-7e) and before the Phase 7.5 env-manager
+dispatch so adjustments are baked in before the slow delegation starts.
+
 ### Phase 7.5: Experiment Environment Configuration (delegated)
 
 After CLAUDE.md exists, dispatch `/experiment-env-manager` as a **paseo
@@ -663,7 +799,7 @@ path. Do not dispatch any agent in this phase.
 {
   "version": 1,
   "completed": true,
-  "completed_stages": [1, 2, 3, 4, 4.5, 5, 5.5, 6, 7.5, 7.6],
+  "completed_stages": [1, 2, 3, 4, 4.5, 5, 5.5, 6, 7.4, 7.5, 7.6],
   "answers": { ... },
   "artifacts": [
     "CLAUDE.md",
@@ -683,7 +819,11 @@ Write to `.aris/setup-state.json`.
 
 ## Phase 8: Summary & Next Steps
 
-Print a summary of what was created:
+Print a summary of what was created. If `answers.applied_defaults` is
+non-empty, first restate those items in one line so the user sees the
+defaults one last time, e.g. `(zh) 默认配置：预算 100-500 GPU-hours、时间线 3-6 months、提前停止关闭、Paseo sonnet-4-6/gpt-5.5/heartbeat off（已在配置清单确认）` /
+`(en) Defaults applied: budget 100-500 GPU-hours, timeline 3-6 months, early stop off, Paseo sonnet-4-6/gpt-5.5/heartbeat off (confirmed in the review checklist)`.
+Adjust the line to match what the user actually changed or confirmed.
 
 ```
 (en)
@@ -739,8 +879,12 @@ Suggested next steps:
    the `AskUserQuestion` tool. Open-ended questions provide an example option plus "Other" for
    free-text input. Max 4 questions per AskUserQuestion call.
 
-2. **All stages shown by default.** Phase 3 and Phase 6 are skippable but always presented —
-   include a "Skip this stage" option, never silently skip.
+2. **Skippable stages are asked; defaulted stages are reviewed.** Phase 3 is
+   skippable but always presented - include a "Skip this stage" option, never
+   silently skip. In quick mode (the default), Phase 4.5 and Phase 6 ask
+   nothing and Phase 5 skips budget/timeline: the quick-mode defaults apply and
+   every one of them is shown in the Phase 7.4 checklist with a one-click
+   adjust option. `- mode: full` restores the fully interactive wizard.
 
 3. **State persistence.** Write `.aris/setup-state.json` after every completed stage. On resume,
    skip completed stages and pre-populate answers.
