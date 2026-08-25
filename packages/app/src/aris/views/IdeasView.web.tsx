@@ -237,7 +237,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[3],
   },
   meta: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
   badge: {
@@ -273,7 +273,7 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.palette.amber[500],
   },
   badgeText: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: "500",
     color: theme.colors.foregroundMuted,
   },

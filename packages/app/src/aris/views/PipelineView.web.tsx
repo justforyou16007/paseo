@@ -120,7 +120,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.full,
   },
   statusText: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: "#ffffff",
     fontWeight: "500",
   },
@@ -155,7 +155,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
   },
   phaseStatus: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
   phaseMeta: {
@@ -164,7 +164,7 @@ const styles = StyleSheet.create((theme) => ({
     marginTop: theme.spacing[1],
   },
   phaseMetaText: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
 }));

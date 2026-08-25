@@ -116,6 +116,7 @@ function ArisArtifactPanelContent({
 
 export const arisArtifactPanelRegistration: PanelRegistration<"aris-artifact"> = {
   kind: "aris-artifact",
+  resourceKey: (target) => target.stageId,
   component: ArisArtifactPanel,
   useDescriptor: useArisArtifactPanelDescriptor,
 };

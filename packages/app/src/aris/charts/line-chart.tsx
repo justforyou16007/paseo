@@ -289,6 +289,6 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: 4,
   },
   legendText: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
 }));

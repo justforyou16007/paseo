@@ -220,7 +220,7 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.palette.amber[500],
   },
   badgeText: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: "500",
     color: theme.colors.foregroundMuted,
   },

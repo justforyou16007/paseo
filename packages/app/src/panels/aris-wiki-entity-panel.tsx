@@ -221,7 +221,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.full,
   },
   typeChipText: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
   },
   entityId: {
@@ -246,6 +246,7 @@ const styles = StyleSheet.create((theme) => ({
 
 export const arisWikiEntityPanelRegistration: PanelRegistration<"aris-wiki-entity"> = {
   kind: "aris-wiki-entity",
+  resourceKey: (target) => `${target.entityType}:${target.entityId}`,
   component: ArisWikiEntityPanel,
   useDescriptor: useArisWikiEntityPanelDescriptor,
 };

@@ -551,7 +551,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.palette.blue[900],
   },
   activeBadgeText: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
   },
@@ -584,7 +584,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
   },
   tooltipTitle: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
     color: theme.colors.foreground,
   },

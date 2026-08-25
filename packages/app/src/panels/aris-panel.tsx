@@ -144,6 +144,10 @@ function ArisPanelContent({
 
 export const arisPanelRegistration: PanelRegistration<"aris"> = {
   kind: "aris",
+  resourceKey: (target) =>
+    target.runId
+      ? `aris_${target.view ?? "cockpit"}_${target.runId}`
+      : `aris_${target.view ?? "cockpit"}`,
   component: ArisPanel,
   useDescriptor: useArisPanelDescriptor,
 };

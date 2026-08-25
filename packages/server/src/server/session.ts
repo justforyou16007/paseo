@@ -41,7 +41,6 @@ import {
 } from "./persistence-hooks.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent/agent-loading.js";
 import {
-  formatSystemNotificationPrompt,
   sendPromptToAgent,
   waitForAgentRunStartWithTimeout,
   unarchiveAgentState,
@@ -71,6 +70,12 @@ import {
   CLIENT_SHUTDOWN_RPC_REASON,
   normalizeClientRestartRpcReason,
 } from "./lifecycle-reasons.js";
+import { DirectorySyncService } from "./directory-sync/index.js";
+import {
+  WorkspaceLabelError,
+  WorkspaceLabelStorageUncertainError,
+  type WorkspaceLabelService,
+} from "./workspace-labels/index.js";
 
 import { AgentManager, AgentRunCancellationError } from "./agent/agent-manager.js";
 import { buildTimelinePromptIndex } from "./agent/timeline-prompt-index.js";
@@ -145,7 +150,7 @@ import {
 import { wrapSpokenInput } from "./voice-config.js";
 import { isVoicePermissionAllowed } from "./voice-permission-policy.js";
 import {
-  readProjectIcon,
+  ProjectIconReader,
   removeProjectCustomIcon,
   setProjectCustomIcon,
 } from "../utils/project-custom-icon.js";
@@ -159,7 +164,7 @@ import {
   createAgentStructuredTextGeneration,
   createGitMetadataGenerator,
 } from "./session/checkout/git-metadata-generator.js";
-import { ChatScheduleLoopSession } from "./session/chat/chat-schedule-loop-session.js";
+import { ScheduleSession } from "./session/schedule/schedule-session.js";
 import { ProviderCatalogSession } from "./session/provider/provider-catalog-session.js";
 import { WorkspaceFilesSession } from "./session/files/workspace-files-session.js";
 import { AgentConfigSession } from "./session/agent-config/agent-config-session.js";
@@ -172,7 +177,7 @@ import type { HubRelationshipManagement } from "./hub/relationship-controller.js
 import { HubExecutionController } from "./hub/execution-controller.js";
 import type { HubExecutionAgents } from "./hub/daemon-executions.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
-import { PushTokenStore } from "./push/token-store.js";
+import type { PushNotifications } from "./push/index.js";
 import {
   archivePersistedWorkspaceRecord,
   archiveWorkspaceContents,
@@ -206,8 +211,6 @@ import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import type { Resolvable } from "./speech/provider-resolver.js";
 import type { SpeechReadinessSnapshot } from "./speech/speech-runtime.js";
 import type pino from "pino";
-import { FileBackedChatService } from "./chat/chat-service.js";
-import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
 import {
   createGitHubService,
@@ -400,6 +403,7 @@ type WorkspaceUpdatePayload = Extract<
 >["payload"];
 interface WorkspaceUpdatesSubscriptionState {
   subscriptionId: string;
+  syncEnabled?: boolean;
   filter?: WorkspaceUpdatesFilter;
   isBootstrapping: boolean;
   pendingUpdatesByWorkspaceId: Map<string, WorkspaceUpdatePayload>;
@@ -445,17 +449,17 @@ export interface SessionOptions {
   onWorkspaceRecovered?: (workspace: PersistedWorkspaceRecord) => Promise<void>;
   logger: pino.Logger;
   downloadTokenStore: DownloadTokenStore;
-  pushTokenStore: PushTokenStore;
+  pushNotifications: PushNotifications;
   paseoHome: string;
   worktreesRoot?: string;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
+  directorySync?: DirectorySyncService;
+  workspaceLabelService?: WorkspaceLabelService;
   filesystem?: SessionFileSystem;
-  chatService: FileBackedChatService;
   scheduleService: ScheduleService;
-  loopService: LoopService;
   checkoutDiffManager: CheckoutDiffManager;
   github?: ForgeService;
   createAgentMcpTransport?: AgentMcpTransportFactory;
@@ -465,6 +469,23 @@ export interface SessionOptions {
   workspaceGitService: WorkspaceGitService;
   workspaceAutoName: WorkspaceAutoName;
   daemonConfigStore: DaemonConfigStore;
+  pluginRuntime?: {
+    listPlugins(): import("@getpaseo/protocol/messages").PluginListItem[];
+    getLogs(pluginId: string): import("@getpaseo/protocol/messages").PluginLogEntry[];
+    installDirectory(input: {
+      path: string;
+      id?: string;
+    }): Promise<import("@getpaseo/protocol/messages").PluginListItem>;
+    inspectDirectory(path: string): Promise<{ id: string }>;
+    reloadPlugin(pluginId: string): Promise<import("@getpaseo/protocol/messages").PluginListItem>;
+    enablePlugin(pluginId: string): Promise<import("@getpaseo/protocol/messages").PluginListItem>;
+    disablePlugin(pluginId: string): Promise<import("@getpaseo/protocol/messages").PluginListItem>;
+    removePlugin(pluginId: string): Promise<void>;
+    subscribe(listener: (pluginId: string) => void): () => void;
+    catalog(): Array<{ id: string; clientBundle: string }>;
+    invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown>;
+  };
+  orchestrationSkills?: import("./orchestration-skills/index.js").OrchestrationSkills;
   mcpBaseUrl?: string | null;
   stt: Resolvable<SpeechToTextProvider | null>;
   sttLanguage?: string;
@@ -587,6 +608,10 @@ interface WorkspaceUpdateOptions {
   optimisticStatus?: WorkspaceDescriptorPayload["status"];
 }
 
+function resolveDirectorySync(service: DirectorySyncService | undefined): DirectorySyncService {
+  return service ?? new DirectorySyncService();
+}
+
 function describeRegistryTransition(record: ArchivedRecordSnapshot | null): RegistryTransition {
   if (!record) {
     return "created";
@@ -599,6 +624,23 @@ function describeRegistryTransition(record: ArchivedRecordSnapshot | null): Regi
  * It owns all state management, orchestration logic, and message processing.
  * Session has no knowledge of WebSockets - it only emits and receives messages.
  */
+function resolveWorkspaceLabelService(
+  service: WorkspaceLabelService | undefined,
+): WorkspaceLabelService | null {
+  return service ?? null;
+}
+
+function workspaceLabelErrorCode(error: unknown): string {
+  if (
+    error instanceof WorkspaceLabelError ||
+    error instanceof WorkspaceLabelStorageUncertainError ||
+    error instanceof SessionRequestError
+  ) {
+    return error.code;
+  }
+  return "workspace_label_failed";
+}
+
 export class Session {
   private readonly clientId: string;
   private scopes: readonly string[];
@@ -620,12 +662,14 @@ export class Session {
     | null;
   private readonly sessionLogger: pino.Logger;
   private readonly paseoHome: string;
+  private readonly projectIcons: ProjectIconReader;
   private readonly worktreesRoot: string | undefined;
 
   private agentManager: AgentManager;
   private readonly agentStorage: AgentStorage;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
+  private readonly directorySync: DirectorySyncService;
   private readonly filesystem: SessionFileSystem;
   private readonly github: ForgeService;
   private readonly renameCurrentBranch: typeof renameCurrentBranchDefault;
@@ -635,11 +679,15 @@ export class Session {
   private readonly workspaceProvisioning: WorkspaceProvisioningService;
   private readonly workspaceRecovery: WorkspaceRecoveryService;
   private readonly daemonConfigStore: DaemonConfigStore;
-  private readonly pushTokenStore: PushTokenStore;
+  private readonly pushNotifications: PushNotifications;
+  private readonly pluginRuntime: SessionOptions["pluginRuntime"];
+  private readonly orchestrationSkills: SessionOptions["orchestrationSkills"];
   private unsubscribeAgentEvents: (() => void) | null = null;
   private unsubscribeProjectMutations: (() => void) | null = null;
+  private unsubscribePluginChanges: (() => void) | null = null;
   private unsubscribeWorkspaceMutations: (() => void) | null = null;
   private registryMutationQueue: Promise<void> = Promise.resolve();
+  private projectUpdateQueue: Promise<void> = Promise.resolve();
   private isCleanedUp = false;
   private viewedTimelineAgentIds = new Set<string>();
   private readonly viewedTimelineAgentIdsBySource = new Map<object, Set<string>>();
@@ -648,6 +696,13 @@ export class Session {
   private unsubscribeTerminalWorkspaceContributionEvents: (() => void) | null = null;
   private readonly agentUpdates: AgentUpdatesService;
   private workspaceUpdatesSubscription: WorkspaceUpdatesSubscriptionState | null = null;
+  private readonly workspaceLabelService: WorkspaceLabelService | null;
+  private workspaceLabelSubscription: {
+    owner: object;
+    id: string;
+    unsubscribe: () => void;
+  } | null = null;
+  private projectSyncEnabled = false;
   private readonly workspaceUpdateTails = new Map<string, Promise<void>>();
   private clientActivity: {
     deviceType: "web" | "mobile";
@@ -657,6 +712,7 @@ export class Session {
     appVisible: boolean;
     appVisibilityChangedAt: Date;
   } | null = null;
+  private registeredPushToken: string | null = null;
   private readonly terminalManager: TerminalManager | null;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private readonly serviceProxy: ServiceProxySubsystem | null;
@@ -674,7 +730,7 @@ export class Session {
   private readonly workspaceDirectory: WorkspaceDirectory;
   private readonly voiceSession: VoiceSession;
   private readonly checkoutSession: CheckoutSession;
-  private readonly chatScheduleLoopSession: ChatScheduleLoopSession;
+  private readonly scheduleSession: ScheduleSession;
   private readonly providerCatalogSession: ProviderCatalogSession;
   private readonly workspaceFilesSession: WorkspaceFilesSession;
   private readonly agentConfigSession: AgentConfigSession;
@@ -700,23 +756,25 @@ export class Session {
       onWorkspaceRecovered,
       logger,
       downloadTokenStore,
-      pushTokenStore,
+      pushNotifications,
       paseoHome,
       worktreesRoot,
       agentManager,
       agentStorage,
       projectRegistry,
       workspaceRegistry,
+      directorySync,
+      workspaceLabelService,
       filesystem,
-      chatService,
       scheduleService,
-      loopService,
       checkoutDiffManager,
       github,
       renameCurrentBranch,
       workspaceGitService,
       workspaceAutoName,
       daemonConfigStore,
+      pluginRuntime,
+      orchestrationSkills,
       stt,
       sttLanguage,
       tts,
@@ -752,9 +810,13 @@ export class Session {
     this.getTransportBufferedAmount = getTransportBufferedAmount ?? (() => 0);
     this.onLifecycleIntent = onLifecycleIntent ?? null;
     this.onWorkspaceRecovered = onWorkspaceRecovered ?? null;
-    this.pushTokenStore = pushTokenStore;
+    this.pushNotifications = pushNotifications;
     this.paseoHome = paseoHome;
+    this.projectIcons = new ProjectIconReader(paseoHome);
     this.worktreesRoot = worktreesRoot;
+    this.pluginRuntime = pluginRuntime;
+    this.orchestrationSkills = orchestrationSkills;
+    this.unsubscribePluginChanges = this.subscribeToPluginChanges(pluginRuntime);
     this.sessionLogger = logger.child({
       module: "session",
       clientId: this.clientId,
@@ -774,6 +836,8 @@ export class Session {
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry;
     this.workspaceRegistry = workspaceRegistry;
+    this.directorySync = resolveDirectorySync(directorySync);
+    this.workspaceLabelService = resolveWorkspaceLabelService(workspaceLabelService);
     this.filesystem = filesystem ?? nodeSessionFileSystem;
     this.github = github ?? createGitHubService();
     this.renameCurrentBranch = renameCurrentBranch ?? renameCurrentBranchDefault;
@@ -836,27 +900,9 @@ export class Session {
       onBranchChanged,
       logger: this.sessionLogger,
     });
-    this.chatScheduleLoopSession = new ChatScheduleLoopSession({
-      host: {
-        emit: (msg) => this.emit(msg),
-        listStoredAgents: () => this.agentStorage.list(),
-        listLiveAgents: () => this.agentManager.listAgents(),
-        resolveAgentIdentifier: (identifier) => this.resolveAgentIdentifier(identifier),
-        sendAgentMessage: async (agentId, text) => {
-          await sendPromptToAgent({
-            agentManager: this.agentManager,
-            agentStorage: this.agentStorage,
-            agentId,
-            prompt: formatSystemNotificationPrompt(text),
-            unarchive: false,
-            logger: this.sessionLogger,
-          });
-        },
-      },
-      chatService,
+    this.scheduleSession = new ScheduleSession({
+      host: { emit: (msg) => this.emit(msg) },
       scheduleService,
-      loopService,
-      clientId: this.clientId,
       logger: this.sessionLogger,
     });
     this.providerCatalogSession = new ProviderCatalogSession({
@@ -929,10 +975,13 @@ export class Session {
       listWorkspaces: () => this.workspaceRegistry.list(),
       logger: this.sessionLogger,
       hubRelationships: options.hubRelationships,
+      reloadConfig: () => daemonConfigStore.reload(),
     });
     this.hubExecutionController = options.hubExecutionAgents
       ? new HubExecutionController({
           agents: options.hubExecutionAgents,
+          validateAgentConfiguration: (input) =>
+            providerSnapshotManager.validateAgentConfiguration(input),
           send: (message) => this.emit(message),
         })
       : null;
@@ -959,6 +1008,13 @@ export class Session {
         this.buildProjectPlacementForWorkspaceId(workspaceId),
       emitWorkspaceUpdateForWorkspaceId: (workspaceId) =>
         this.emitWorkspaceUpdateForWorkspaceId(workspaceId),
+      sequenceAgentUpdate: (payload, agent, project, agentId, includeSequence) =>
+        this.directorySync.sequenceAgentUpdate(
+          payload,
+          agent && project ? { agent, project } : null,
+          agentId,
+          includeSequence,
+        ),
       logger: this.sessionLogger,
     });
     this.createAgentLifecycleDispatch = new CreateAgentLifecycleDispatch({
@@ -1178,13 +1234,22 @@ export class Session {
     );
   }
 
-  emitProjectUpdate(update: ProjectUpdate): void {
+  emitProjectUpdate(update: ProjectUpdate): Promise<void> {
+    const queued = this.projectUpdateQueue
+      .catch(() => undefined)
+      .then(() => this.publishProjectUpdate(update));
+    this.projectUpdateQueue = queued;
+    return queued;
+  }
+
+  private async publishProjectUpdate(update: ProjectUpdate): Promise<void> {
+    const projectedPayload =
+      update.kind === "upsert"
+        ? { kind: "upsert" as const, project: await this.buildProjectDescriptor(update.project) }
+        : update;
     const message: SessionOutboundMessage = {
       type: "project.update",
-      payload:
-        update.kind === "upsert"
-          ? { kind: "upsert", project: this.buildProjectDescriptor(update.project) }
-          : update,
+      payload: this.directorySync.sequenceProjectUpdate(projectedPayload, this.projectSyncEnabled),
     };
     if (this.clientCapabilitiesBySource.size === 0 || !this.onMessageToSource) {
       if (this.supports(CLIENT_CAPS.projectUpdates)) this.emit(message);
@@ -1855,6 +1920,7 @@ export class Session {
   }
 
   private async dispatchInboundMessage(msg: SessionInboundMessage, source?: object): Promise<void> {
+    // Split into two links so the ?? chain stays under the lint complexity budget.
     const promise =
       this.dispatchVoiceAndControlMessage(msg) ??
       this.dispatchAgentRewindMessage(msg) ??
@@ -1865,14 +1931,202 @@ export class Session {
       this.dispatchAgentConfigMessage(msg) ??
       this.dispatchCheckoutMessage(msg) ??
       this.dispatchWorkspaceRecoveryMessage(msg) ??
+      this.dispatchWorkspaceLabelMessage(msg) ??
+      this.dispatchSecondaryInboundMessage(msg, source);
+    if (promise) await promise;
+  }
+
+  private dispatchSecondaryInboundMessage(
+    msg: SessionInboundMessage,
+    source?: object,
+  ): Promise<void> | undefined {
+    return (
       this.dispatchWorkspaceAndProjectMessage(msg) ??
       this.dispatchArisMessage(msg) ??
       this.dispatchWorkspaceFileMessage(msg, source) ??
       this.dispatchProviderMessage(msg) ??
+      this.dispatchOrchestrationSkillsMessage(msg) ??
+      this.dispatchPluginDirectoryMessage(msg) ??
+      this.dispatchPluginMessage(msg) ??
       this.dispatchTerminalMessage(msg) ??
-      this.dispatchChatScheduleLoopMessage(msg) ??
-      this.dispatchMiscMessage(msg);
-    if (promise) await promise;
+      this.dispatchScheduleMessage(msg) ??
+      this.dispatchMiscMessage(msg)
+    );
+  }
+
+  private dispatchOrchestrationSkillsMessage(
+    msg: SessionInboundMessage,
+  ): Promise<void> | undefined {
+    if (!this.orchestrationSkills || !msg.type.startsWith("agent.skills.")) return undefined;
+    const emitStatus = (
+      type:
+        | "agent.skills.get_status.response"
+        | "agent.skills.reconcile.response"
+        | "agent.skills.uninstall.response",
+      requestId: string,
+      operation: Promise<import("./orchestration-skills/index.js").SkillsSnapshot>,
+    ) =>
+      operation.then((status) => {
+        this.emit({ type, payload: { requestId, ...status } });
+        return undefined;
+      });
+    switch (msg.type) {
+      case "agent.skills.get_status.request":
+        return emitStatus(
+          "agent.skills.get_status.response",
+          msg.requestId,
+          this.orchestrationSkills.getStatus(),
+        );
+      case "agent.skills.reconcile.request":
+        return emitStatus(
+          "agent.skills.reconcile.response",
+          msg.requestId,
+          this.orchestrationSkills.reconcile(),
+        );
+      case "agent.skills.uninstall.request":
+        return emitStatus(
+          "agent.skills.uninstall.response",
+          msg.requestId,
+          this.orchestrationSkills.uninstall(),
+        );
+      case "agent.skills.save_selection.request":
+        return this.orchestrationSkills
+          .saveSelection(msg.selection, msg.confirmedRemovals)
+          .then((result) => {
+            this.emit({
+              type: "agent.skills.save_selection.response",
+              payload: { requestId: msg.requestId, ...result },
+            });
+            return undefined;
+          });
+      case "agent.skills.import_legacy_selection.request":
+        return this.orchestrationSkills
+          .importLegacySelectionIfUnset(msg.selection)
+          .then((result) => {
+            this.emit({
+              type: "agent.skills.import_legacy_selection.response",
+              payload: { requestId: msg.requestId, ...result },
+            });
+            return undefined;
+          });
+      default:
+        return undefined;
+    }
+  }
+
+  private dispatchPluginMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    if (msg.type === "plugin.list.request") {
+      this.emit({
+        type: "plugin.list.response",
+        payload: { requestId: msg.requestId, plugins: this.pluginRuntime?.listPlugins() ?? [] },
+      });
+      return undefined;
+    }
+    if (msg.type === "plugin.logs.get.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      this.emit({
+        type: "plugin.logs.get.response",
+        payload: {
+          requestId: msg.requestId,
+          pluginId: msg.pluginId,
+          entries: this.pluginRuntime.getLogs(msg.pluginId),
+        },
+      });
+      return undefined;
+    }
+    if (msg.type === "plugin.reload.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime.reloadPlugin(msg.pluginId).then((plugin) => {
+        this.emit({
+          type: "plugin.reload.response",
+          payload: { requestId: msg.requestId, plugin },
+        });
+        return undefined;
+      });
+    }
+    if (msg.type === "plugin.enable.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime.enablePlugin(msg.pluginId).then((plugin) => {
+        this.emit({
+          type: "plugin.enable.response",
+          payload: { requestId: msg.requestId, plugin },
+        });
+        return undefined;
+      });
+    }
+    if (msg.type === "plugin.disable.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime.disablePlugin(msg.pluginId).then((plugin) => {
+        this.emit({
+          type: "plugin.disable.response",
+          payload: { requestId: msg.requestId, plugin },
+        });
+        return undefined;
+      });
+    }
+    if (msg.type === "plugin.remove.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime.removePlugin(msg.pluginId).then(() => {
+        this.emit({ type: "plugin.remove.response", payload: { requestId: msg.requestId } });
+        return undefined;
+      });
+    }
+    if (msg.type === "plugin.catalog.get.request") {
+      this.emit({
+        type: "plugin.catalog.get.response",
+        payload: {
+          requestId: msg.requestId,
+          plugins: this.pluginRuntime?.catalog() ?? [],
+        },
+      });
+      return undefined;
+    }
+    if (msg.type === "plugin.rpc.invoke.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime
+        .invokePluginRpc(msg.pluginId, msg.method, msg.input)
+        .then((output) => {
+          this.emit({
+            type: "plugin.rpc.invoke.response",
+            payload: { requestId: msg.requestId, output },
+          });
+          return undefined;
+        });
+    }
+    return undefined;
+  }
+
+  private dispatchPluginDirectoryMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    if (msg.type === "plugin.directory.install.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime.installDirectory({ path: msg.path, id: msg.id }).then((plugin) => {
+        this.emit({
+          type: "plugin.directory.install.response",
+          payload: { requestId: msg.requestId, plugin },
+        });
+        return undefined;
+      });
+    }
+    if (msg.type === "plugin.directory.inspect.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime.inspectDirectory(msg.path).then(({ id }) => {
+        this.emit({
+          type: "plugin.directory.inspect.response",
+          payload: { requestId: msg.requestId, id },
+        });
+        return undefined;
+      });
+    }
+    return undefined;
+  }
+
+  private subscribeToPluginChanges(
+    pluginRuntime: SessionOptions["pluginRuntime"],
+  ): (() => void) | null {
+    if (!pluginRuntime) return null;
+    return pluginRuntime.subscribe((pluginId) => {
+      this.emit({ type: "status", payload: { status: "plugin_catalog_changed", pluginId } });
+    });
   }
 
   private dispatchVoiceAndControlMessage(msg: SessionInboundMessage): Promise<void> | undefined {
@@ -1984,6 +2238,9 @@ export class Session {
     if (msg.type === "hub.execution.agent.create.request") {
       return this.hubExecutionController?.createAgent(msg);
     }
+    if (msg.type === "hub.execution.agent.validate.request") {
+      return this.hubExecutionController?.validateAgent(msg);
+    }
     if (msg.type === "hub.execution.control.request") {
       return this.hubExecutionController?.controlExecution(msg);
     }
@@ -2045,6 +2302,8 @@ export class Session {
         return this.agentConfigSession.handleSetAgentFeatureRequest(msg);
       case "set_agent_thinking_request":
         return this.agentConfigSession.handleSetAgentThinkingRequest(msg);
+      case "agent.config.apply.request":
+        return this.agentConfigSession.handleAgentConfigApplyRequest(msg);
       case "get_daemon_config_request":
         this.emit({
           type: "get_daemon_config_response",
@@ -2055,6 +2314,9 @@ export class Session {
         return this.daemonSession.handleGetStatusRequest(msg);
       case "daemon.get_pairing_offer.request":
         return this.daemonSession.handleGetPairingOfferRequest(msg);
+      case "daemon.config.reload.request":
+        this.daemonSession.handleConfigReloadRequest(msg);
+        return undefined;
       case "hub.management.daemon.connect.request":
       case "hub.management.daemon.get_status.request":
       case "hub.management.daemon.disconnect.request":
@@ -2117,6 +2379,8 @@ export class Session {
         return this.checkoutSession.handleCheckoutPushRequest(msg);
       case "checkout.refresh.request":
         return this.checkoutSession.handleRefreshRequest(msg);
+      case "checkout.discard_changes.request":
+        return this.checkoutSession.handleCheckoutDiscardChangesRequest(msg);
       case "checkout_pr_create_request":
         return this.checkoutSession.handleCheckoutPrCreateRequest(msg);
       case "checkout_pr_merge_request":
@@ -2152,7 +2416,7 @@ export class Session {
       case "fetch_workspaces_request":
         return this.handleFetchWorkspacesRequest(msg);
       case "project.list.request":
-        return this.handleProjectListRequest(msg.requestId);
+        return this.handleProjectListRequest(msg);
       case "paseo_worktree_list_request":
         return this.handlePaseoWorktreeListRequest(msg);
       case "paseo_worktree_archive_request":
@@ -2193,6 +2457,23 @@ export class Session {
     }
   }
 
+  private dispatchWorkspaceLabelMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "workspace.label.list.request":
+        return this.handleWorkspaceLabelList(msg);
+      case "workspace.label.assignment.set.request":
+        return this.handleWorkspaceLabelAssignment(msg);
+      case "workspace.label.update.request":
+        return this.handleWorkspaceLabelUpdate(msg);
+      case "workspace.label.delete.request":
+        return this.handleWorkspaceLabelDelete(msg);
+      case "workspace.label.delete.inspect.request":
+        return this.handleWorkspaceLabelDeleteInspection(msg);
+      default:
+        return undefined;
+    }
+  }
+
   private dispatchWorkspaceFileMessage(
     msg: SessionInboundMessage,
     source?: object,
@@ -2207,6 +2488,14 @@ export class Session {
         return undefined;
       case "fs.file.write.request":
         return this.workspaceFilesSession.handleFileWriteRequest(msg);
+      case "fs.entry.create.request":
+        return this.workspaceFilesSession.handleFileEntryCreateRequest(msg);
+      case "fs.entry.rename.request":
+        return this.workspaceFilesSession.handleFileEntryRenameRequest(msg);
+      case "fs.entry.duplicate.request":
+        return this.workspaceFilesSession.handleFileEntryDuplicateRequest(msg);
+      case "fs.entry.delete.request":
+        return this.workspaceFilesSession.handleFileEntryDeleteRequest(msg);
       case "project_icon_request":
         return this.workspaceFilesSession.handleProjectIconRequest(msg);
       case "project.icon.get.request":
@@ -2295,51 +2584,26 @@ export class Session {
     }
   }
 
-  // eslint-disable-next-line complexity
-  private dispatchChatScheduleLoopMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+  private dispatchScheduleMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
-      case "chat/create":
-        return this.chatScheduleLoopSession.handleChatCreateRequest(msg);
-      case "chat/list":
-        return this.chatScheduleLoopSession.handleChatListRequest(msg);
-      case "chat/inspect":
-        return this.chatScheduleLoopSession.handleChatInspectRequest(msg);
-      case "chat/delete":
-        return this.chatScheduleLoopSession.handleChatDeleteRequest(msg);
-      case "chat/post":
-        return this.chatScheduleLoopSession.handleChatPostRequest(msg);
-      case "chat/read":
-        return this.chatScheduleLoopSession.handleChatReadRequest(msg);
-      case "chat/wait":
-        return this.chatScheduleLoopSession.handleChatWaitRequest(msg);
-      case "loop/run":
-        return this.chatScheduleLoopSession.handleLoopRunRequest(msg);
-      case "loop/list":
-        return this.chatScheduleLoopSession.handleLoopListRequest(msg);
-      case "loop/inspect":
-        return this.chatScheduleLoopSession.handleLoopInspectRequest(msg);
-      case "loop/logs":
-        return this.chatScheduleLoopSession.handleLoopLogsRequest(msg);
-      case "loop/stop":
-        return this.chatScheduleLoopSession.handleLoopStopRequest(msg);
       case "schedule/create":
-        return this.chatScheduleLoopSession.handleScheduleCreateRequest(msg);
+        return this.scheduleSession.handleScheduleCreateRequest(msg);
       case "schedule/list":
-        return this.chatScheduleLoopSession.handleScheduleListRequest(msg);
+        return this.scheduleSession.handleScheduleListRequest(msg);
       case "schedule/inspect":
-        return this.chatScheduleLoopSession.handleScheduleInspectRequest(msg);
+        return this.scheduleSession.handleScheduleInspectRequest(msg);
       case "schedule/logs":
-        return this.chatScheduleLoopSession.handleScheduleLogsRequest(msg);
+        return this.scheduleSession.handleScheduleLogsRequest(msg);
       case "schedule/pause":
-        return this.chatScheduleLoopSession.handleSchedulePauseRequest(msg);
+        return this.scheduleSession.handleSchedulePauseRequest(msg);
       case "schedule/resume":
-        return this.chatScheduleLoopSession.handleScheduleResumeRequest(msg);
+        return this.scheduleSession.handleScheduleResumeRequest(msg);
       case "schedule/delete":
-        return this.chatScheduleLoopSession.handleScheduleDeleteRequest(msg);
+        return this.scheduleSession.handleScheduleDeleteRequest(msg);
       case "schedule/run-once":
-        return this.chatScheduleLoopSession.handleScheduleRunOnceRequest(msg);
+        return this.scheduleSession.handleScheduleRunOnceRequest(msg);
       case "schedule/update":
-        return this.chatScheduleLoopSession.handleScheduleUpdateRequest(msg);
+        return this.scheduleSession.handleScheduleUpdateRequest(msg);
       default:
         return undefined;
     }
@@ -2352,6 +2616,16 @@ export class Session {
         return;
       case "register_push_token":
         this.handleRegisterPushToken(msg.token);
+        return;
+      case "push.unregister.request":
+        this.pushNotifications.revoke(msg.token);
+        if (this.registeredPushToken?.trim() === msg.token.trim()) {
+          this.registeredPushToken = null;
+        }
+        this.emit({
+          type: "push.unregister.response",
+          payload: { requestId: msg.requestId },
+        });
         return;
     }
   }
@@ -2610,25 +2884,22 @@ export class Session {
     didUnarchive: boolean;
     originalArchivedAt: string | null;
   } | null> {
-    const records = await this.agentStorage.list();
-    const matched = records
-      .filter(
-        (record) =>
-          record.persistence?.provider === handle.provider &&
-          record.persistence?.sessionId === handle.sessionId,
-      )
-      .reduce<StoredAgentRecord | null>((latest, candidate) => {
-        if (!latest) {
-          return candidate;
-        }
-        const updatedDelta =
-          Date.parse(resolveStoredAgentPayloadUpdatedAt(candidate)) -
-          Date.parse(resolveStoredAgentPayloadUpdatedAt(latest));
-        if (updatedDelta !== 0) {
-          return updatedDelta > 0 ? candidate : latest;
-        }
-        return Date.parse(candidate.createdAt) > Date.parse(latest.createdAt) ? candidate : latest;
-      }, null);
+    const records = await this.agentStorage.listByProviderSession(
+      handle.provider,
+      handle.sessionId,
+    );
+    const matched = records.reduce<StoredAgentRecord | null>((latest, candidate) => {
+      if (!latest) {
+        return candidate;
+      }
+      const updatedDelta =
+        Date.parse(resolveStoredAgentPayloadUpdatedAt(candidate)) -
+        Date.parse(resolveStoredAgentPayloadUpdatedAt(latest));
+      if (updatedDelta !== 0) {
+        return updatedDelta > 0 ? candidate : latest;
+      }
+      return Date.parse(candidate.createdAt) > Date.parse(latest.createdAt) ? candidate : latest;
+    }, null);
     if (!matched) {
       return null;
     }
@@ -2758,7 +3029,7 @@ export class Session {
 
       // Emit a project.update so clients that track the project as an empty
       // project (no workspaces yet) receive the resolved name immediately.
-      this.emitProjectUpdate({ kind: "upsert", project: updated });
+      await this.emitProjectUpdate({ kind: "upsert", project: updated });
 
       // Re-emit descriptors for every workspace under this project so the new
       // resolved name lands in the UI immediately.
@@ -2812,7 +3083,7 @@ export class Session {
         type: "project.icon.set.response",
         payload: { requestId, projectId, accepted: true, error: null },
       });
-      this.emitProjectUpdate({ kind: "upsert", project: updated });
+      await this.emitProjectUpdate({ kind: "upsert", project: updated });
 
       const affectedWorkspaceIds = (await this.workspaceRegistry.list())
         .filter((workspace) => workspace.projectId === projectId)
@@ -2838,7 +3109,7 @@ export class Session {
       const project = await this.projectRegistry.get(projectId);
       if (!project) throw new Error("Project not found");
 
-      const icon = await readProjectIcon({ paseoHome: this.paseoHome, project });
+      const icon = await this.projectIcons.read(project);
       this.emit({
         type: "project.icon.get.response",
         payload: { projectId, icon, error: null, requestId },
@@ -3152,6 +3423,9 @@ export class Session {
         prompt,
         messageId,
         runOptions,
+        // A typed or spoken message from the human answers any permission the
+        // agent is blocked on.
+        clearPendingPermissions: true,
         logger: this.sessionLogger,
       });
       return { ok: true };
@@ -3804,6 +4078,9 @@ export class Session {
     if (msg.appVisible && focusedTerminalId) {
       void this.clearFocusedTerminalAttention(focusedTerminalId);
     }
+    if (this.registeredPushToken) {
+      this.pushNotifications.renew(this.registeredPushToken);
+    }
   }
 
   private async clearFocusedTerminalAttention(terminalId: string): Promise<void> {
@@ -3822,7 +4099,8 @@ export class Session {
    * Handle push token registration
    */
   private handleRegisterPushToken(token: string): void {
-    this.pushTokenStore.addToken(token);
+    this.registeredPushToken = token;
+    this.pushNotifications.renew(token);
     this.sessionLogger.info("Registered push token");
   }
 
@@ -4505,6 +4783,7 @@ export class Session {
       name: resolveWorkspaceDisplayName(workspace),
       title: workspace.title,
       pinnedAt: workspace.pinnedAt,
+      ...(workspace.labels && workspace.labels.length > 0 ? { labels: workspace.labels } : {}),
       archivingAt: null,
       status: "done",
       statusEnteredAt: null,
@@ -4596,6 +4875,9 @@ export class Session {
       }),
       title: result.workspace.title,
       pinnedAt: result.workspace.pinnedAt,
+      ...(result.workspace.labels && result.workspace.labels.length > 0
+        ? { labels: result.workspace.labels }
+        : {}),
       archivingAt: null,
       status: "done",
       statusEnteredAt: result.workspace.createdAt,
@@ -4749,15 +5031,17 @@ export class Session {
     }
   }
 
-  private buildProjectDescriptor(
+  private async buildProjectDescriptor(
     project: PersistedProjectRecord,
-  ): WorkspaceProjectDescriptorPayload {
+  ): Promise<WorkspaceProjectDescriptorPayload> {
+    const icon = await this.projectIcons.snapshot(project);
     return {
       projectId: project.projectId,
       ...(project.projectKey ? { projectKey: project.projectKey } : {}),
       projectDisplayName: resolveProjectDisplayName(project),
       projectCustomName: project.customName ?? null,
       projectCustomIconRevision: project.customIconRevision ?? null,
+      projectIconRevision: icon.revision,
       projectRootPath: project.rootPath,
       projectKind: project.kind,
     };
@@ -4955,7 +5239,6 @@ export class Session {
         continue;
       }
       this.workspaceGitObserver.recordDescriptorState(workspaceId, nextWorkspace);
-
       if (!nextWorkspace) {
         if (this.shouldSkipWorkspaceRemoval(lastEmitted, options?.removedProjectId)) {
           continue;
@@ -4964,17 +5247,28 @@ export class Session {
           return;
         }
         subscription.lastEmittedByWorkspaceId.delete(workspaceId);
+        const removePayload = await this.buildWorkspaceRemoveUpdatePayload(
+          workspaceId,
+          options?.removedProjectId,
+        );
         this.bufferOrEmitWorkspaceUpdate(
           subscription,
-          await this.buildWorkspaceRemoveUpdatePayload(workspaceId, options?.removedProjectId),
+          this.directorySync.sequenceWorkspaceUpdate(
+            removePayload,
+            workspace ?? null,
+            workspaceId,
+            subscription.syncEnabled === true,
+          ),
         );
         continue;
       }
 
-      const nextPayload: WorkspaceUpdatePayload = {
-        kind: "upsert",
-        workspace: nextWorkspace,
-      };
+      const nextPayload: WorkspaceUpdatePayload = this.directorySync.sequenceWorkspaceUpdate(
+        { kind: "upsert", workspace: nextWorkspace },
+        workspace ?? null,
+        workspaceId,
+        subscription.syncEnabled === true,
+      );
 
       if (
         lastEmitted &&
@@ -5078,10 +5372,13 @@ export class Session {
         this.agentUpdates.beginSubscription({
           subscriptionId,
           filter: request.filter,
+          syncEnabled: Boolean(request.sync),
         });
       }
 
-      const payload = await this.listFetchAgentsEntries(request);
+      const payload = request.sync
+        ? await this.readAgentDirectorySync(request)
+        : await this.listFetchAgentsEntries(request);
       const snapshotUpdatedAtByAgentId = new Map<string, number>();
       for (const entry of payload.entries) {
         const parsedUpdatedAt = Date.parse(entry.agent.updatedAt);
@@ -5212,6 +5509,7 @@ export class Session {
       if (subscriptionId) {
         this.workspaceUpdatesSubscription = {
           subscriptionId,
+          syncEnabled: Boolean(request.sync),
           filter: request.filter,
           isBootstrapping: true,
           pendingUpdatesByWorkspaceId: new Map(),
@@ -5220,7 +5518,9 @@ export class Session {
         };
       }
 
-      const payload = await this.listFetchWorkspacesEntries(request);
+      const payload = request.sync
+        ? await this.readWorkspaceDirectorySync(request)
+        : await this.listFetchWorkspacesEntries(request);
       this.workspaceGitObserver.syncObservers(payload.entries);
       this.sessionLogger.debug(
         {
@@ -5270,27 +5570,220 @@ export class Session {
     }
   }
 
-  private async handleProjectListRequest(requestId: string): Promise<void> {
+  private async handleProjectListRequest(
+    request: Extract<SessionInboundMessage, { type: "project.list.request" }>,
+  ): Promise<void> {
     try {
-      const projects = (await this.projectRegistry.list())
-        .filter((project) => !project.archivedAt)
-        .map((project) => this.buildProjectDescriptor(project));
+      const projects = await Promise.all(
+        (await this.projectRegistry.list())
+          .filter((project) => !project.archivedAt)
+          .map((project) => this.buildProjectDescriptor(project)),
+      );
+      const synchronized = request.sync
+        ? this.directorySync.synchronizeProjects(projects, request.sync)
+        : null;
+      if (synchronized) this.projectSyncEnabled = true;
       this.emit({
         type: "project.list.response",
-        payload: { requestId, projects },
+        payload: {
+          requestId: request.requestId,
+          ...(synchronized ?? { projects }),
+        },
       });
     } catch (error) {
       this.sessionLogger.error({ err: error }, "Failed to handle project.list.request");
       this.emit({
         type: "rpc_error",
         payload: {
-          requestId,
+          requestId: request.requestId,
           requestType: "project.list.request",
           error: error instanceof Error ? error.message : "Failed to list projects",
           code: "project_list_failed",
         },
       });
     }
+  }
+
+  private requireWorkspaceLabels(): WorkspaceLabelService {
+    if (!this.workspaceLabelService) {
+      throw new SessionRequestError("workspace_labels_unavailable", "Workspace labels unavailable");
+    }
+    return this.workspaceLabelService;
+  }
+
+  private emitWorkspaceLabelError(
+    request: { requestId: string; type: string },
+    error: unknown,
+  ): void {
+    this.emit({
+      type: "rpc_error",
+      payload: {
+        requestId: request.requestId,
+        requestType: request.type,
+        code: workspaceLabelErrorCode(error),
+        error: error instanceof Error ? error.message : "Workspace label operation failed",
+      },
+    });
+  }
+
+  private async handleWorkspaceLabelList(
+    request: Extract<SessionInboundMessage, { type: "workspace.label.list.request" }>,
+  ): Promise<void> {
+    const owner = {};
+    try {
+      this.workspaceLabelSubscription?.unsubscribe();
+      this.workspaceLabelSubscription = {
+        owner,
+        id: request.subscribe.subscriptionId,
+        unsubscribe: () => undefined,
+      };
+      const service = this.requireWorkspaceLabels();
+      type LiveChange = Parameters<Parameters<typeof service.subscribe>[0]["onChange"]>[0];
+      const pending: LiveChange[] = [];
+      let ready = false;
+      const emitChange = (change: LiveChange): void => {
+        this.emit({
+          type: "workspace.label.update",
+          payload:
+            change.kind === "upsert"
+              ? {
+                  kind: "upsert",
+                  label: change.label,
+                  ...(change.previousName ? { previousName: change.previousName } : {}),
+                  generation: change.generation,
+                  seq: change.seq,
+                }
+              : {
+                  kind: "remove",
+                  name: change.name,
+                  generation: change.generation,
+                  seq: change.seq,
+                },
+        });
+      };
+      const subscription = await service.subscribe({
+        cursor: request.sync,
+        onChange: (change) => {
+          if (this.workspaceLabelSubscription?.owner !== owner) return;
+          if (!ready) pending.push(change);
+          else emitChange(change);
+        },
+      });
+      const ownsSubscription = this.workspaceLabelSubscription?.owner === owner;
+      if (ownsSubscription) {
+        this.workspaceLabelSubscription = {
+          owner,
+          id: request.subscribe.subscriptionId,
+          unsubscribe: subscription.unsubscribe,
+        };
+      } else {
+        subscription.unsubscribe();
+      }
+      this.emit({
+        type: "workspace.label.list.response",
+        payload: { requestId: request.requestId, ...subscription.snapshot },
+      });
+      ready = true;
+      if (ownsSubscription) {
+        for (const change of pending) {
+          if (change.seq > subscription.snapshot.sync.headSeq) emitChange(change);
+        }
+      }
+    } catch (error) {
+      if (this.workspaceLabelSubscription?.owner === owner) {
+        this.workspaceLabelSubscription = null;
+      }
+      this.emitWorkspaceLabelError(request, error);
+    }
+  }
+
+  private async handleWorkspaceLabelAssignment(
+    request: Extract<SessionInboundMessage, { type: "workspace.label.assignment.set.request" }>,
+  ): Promise<void> {
+    try {
+      const result = await this.requireWorkspaceLabels().setAssignment(request);
+      this.emit({
+        type: "workspace.label.assignment.set.response",
+        payload: { requestId: request.requestId, ...result },
+      });
+    } catch (error) {
+      this.emitWorkspaceLabelError(request, error);
+    }
+  }
+
+  private async handleWorkspaceLabelUpdate(
+    request: Extract<SessionInboundMessage, { type: "workspace.label.update.request" }>,
+  ): Promise<void> {
+    try {
+      const result = await this.requireWorkspaceLabels().update(request);
+      this.emit({
+        type: "workspace.label.update.response",
+        payload: { requestId: request.requestId, ...result },
+      });
+    } catch (error) {
+      this.emitWorkspaceLabelError(request, error);
+    }
+  }
+
+  private async handleWorkspaceLabelDelete(
+    request: Extract<SessionInboundMessage, { type: "workspace.label.delete.request" }>,
+  ): Promise<void> {
+    try {
+      const result = await this.requireWorkspaceLabels().delete(request.name);
+      this.emit({
+        type: "workspace.label.delete.response",
+        payload: { requestId: request.requestId, ...result },
+      });
+    } catch (error) {
+      this.emitWorkspaceLabelError(request, error);
+    }
+  }
+
+  private async handleWorkspaceLabelDeleteInspection(
+    request: Extract<SessionInboundMessage, { type: "workspace.label.delete.inspect.request" }>,
+  ): Promise<void> {
+    try {
+      const affectedWorkspaceCount = await this.requireWorkspaceLabels().countAffectedWorkspaces(
+        request.name,
+      );
+      this.emit({
+        type: "workspace.label.delete.inspect.response",
+        payload: { requestId: request.requestId, affectedWorkspaceCount },
+      });
+    } catch (error) {
+      this.emitWorkspaceLabelError(request, error);
+    }
+  }
+
+  private async readAgentDirectorySync(
+    request: Extract<SessionInboundMessage, { type: "fetch_agents_request" }>,
+  ) {
+    if (request.scope !== "active" || request.filter) {
+      throw new SessionRequestError(
+        "invalid_request",
+        "Sequenced agent directory reads require scope=active and no filter.",
+      );
+    }
+    const snapshot = await this.listFetchAgentsEntries({
+      ...request,
+      page: { limit: Number.MAX_SAFE_INTEGER },
+    });
+    return this.directorySync.synchronizeAgents(snapshot.entries, request.sync ?? {});
+  }
+
+  private async readWorkspaceDirectorySync(
+    request: Extract<SessionInboundMessage, { type: "fetch_workspaces_request" }>,
+  ) {
+    if (request.filter) {
+      throw new SessionRequestError(
+        "invalid_request",
+        "Sequenced workspace directory reads do not support filters.",
+      );
+    }
+    return this.directorySync.synchronizeWorkspaces(
+      await this.workspaceDirectory.listDescriptors(),
+      request.sync ?? {},
+    );
   }
 
   // Build the bootstrap snapshot used by `flushBootstrappedWorkspaceUpdates`
@@ -5671,7 +6164,7 @@ export class Session {
         type: "project.add.response",
         payload: {
           requestId: request.requestId,
-          project: this.buildProjectDescriptor(project),
+          project: await this.buildProjectDescriptor(project),
           error: null,
         },
       });
@@ -5705,7 +6198,7 @@ export class Session {
         payload: {
           requestId: request.requestId,
           directoryPath: result.directoryPath,
-          project: this.buildProjectDescriptor(result.project),
+          project: await this.buildProjectDescriptor(result.project),
           error: null,
           errorCode: null,
         },
@@ -5870,7 +6363,7 @@ export class Session {
           requestId: request.requestId,
           repo: repo.displayName,
           checkoutPath,
-          project: this.buildProjectDescriptor(project),
+          project: await this.buildProjectDescriptor(project),
           error: null,
         },
       });
@@ -6481,21 +6974,26 @@ export class Session {
             hasOlder: selectedTimeline.hasOlder,
             hasNewer: selectedTimeline.hasNewer,
             ...(msg.mergeWindow === true ? { mergeWindow: true } : {}),
-            entries: selectedTimeline.entries.map((entry) => ({
-              provider: snapshot.provider,
-              item: entry.item,
-              timestamp: entry.timestamp,
-              seqStart: entry.seqStart,
-              seqEnd: entry.seqEnd,
-              sourceSeqRanges: entry.sourceSeqRanges,
-              collapsed: (
-                source
-                  ? this.supportsForSource(CLIENT_CAPS.reasoningMergeEnum, source)
-                  : this.supports(CLIENT_CAPS.reasoningMergeEnum)
-              )
-                ? entry.collapsed
-                : entry.collapsed.filter((value) => value !== "reasoning_merge"),
-            })),
+            entries: selectedTimeline.entries.map((entry) => {
+              const payloadEntry = {
+                provider: snapshot.provider,
+                item: entry.item,
+                timestamp: entry.timestamp,
+                seqStart: entry.seqStart,
+                seqEnd: entry.seqEnd,
+                sourceSeqRanges: entry.sourceSeqRanges,
+                turnId: undefined as string | undefined,
+                collapsed: (
+                  source
+                    ? this.supportsForSource(CLIENT_CAPS.reasoningMergeEnum, source)
+                    : this.supports(CLIENT_CAPS.reasoningMergeEnum)
+                )
+                  ? entry.collapsed
+                  : entry.collapsed.filter((value) => value !== "reasoning_merge"),
+              };
+              payloadEntry.turnId = entry.turnId;
+              return payloadEntry;
+            }),
             error: null,
           },
         },
@@ -6764,11 +7262,12 @@ export class Session {
         {
           agentId,
           messageId: msg.messageId,
+          activeTurnBehavior: msg.activeTurnBehavior,
           textPrefix: msg.text.slice(0, 80),
         },
         "agent.session.send_agent_message",
       );
-      let dispatchResult: { outOfBand: boolean };
+      let dispatchResult: { disposition: "out_of_band" | "steered" | "turn_started" };
       try {
         dispatchResult = await sendPromptToAgent({
           agentManager: this.agentManager,
@@ -6776,6 +7275,8 @@ export class Session {
           agentId,
           prompt,
           messageId: msg.messageId,
+          activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt",
+          clearPendingPermissions: true,
           logger: this.sessionLogger,
         });
       } catch (error) {
@@ -6793,7 +7294,7 @@ export class Session {
         return;
       }
 
-      if (dispatchResult.outOfBand) {
+      if (dispatchResult.disposition !== "turn_started") {
         this.emit({
           type: "send_agent_message_response",
           payload: {
@@ -7027,8 +7528,12 @@ export class Session {
     }
     this.unsubscribeProjectMutations?.();
     this.unsubscribeProjectMutations = null;
+    this.unsubscribePluginChanges?.();
+    this.unsubscribePluginChanges = null;
     this.unsubscribeWorkspaceMutations?.();
     this.unsubscribeWorkspaceMutations = null;
+    this.workspaceLabelSubscription?.unsubscribe();
+    this.workspaceLabelSubscription = null;
     this.agentUpdates.dispose();
     await this.hubExecutionController?.cleanup();
     if (this.unsubscribeTerminalWorkspaceContributionEvents) {

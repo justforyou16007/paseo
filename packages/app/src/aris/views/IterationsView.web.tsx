@@ -111,7 +111,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.palette.blue[500],
   },
   iterationDate: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
 }));
