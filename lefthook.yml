@@ -6,6 +6,15 @@ pre-commit:
       exclude:
         - "package-lock.json"
         - "**/package-lock.json"
+        # Mirror .oxfmtrc.json ignorePatterns for the ARIS package: oxfmt errors
+        # out (exit 2) when every file it receives is ignored, so these paths
+        # must never reach it. ARIS src/ stays formatted and is NOT excluded.
+        - "packages/Auto-claude-code-research-in-sleep/tools/**"
+        - "packages/Auto-claude-code-research-in-sleep/mcp-servers/**"
+        - "packages/Auto-claude-code-research-in-sleep/skills/**"
+        - "packages/Auto-claude-code-research-in-sleep/templates/**"
+        - "packages/Auto-claude-code-research-in-sleep/tests/**"
+        - "packages/Auto-claude-code-research-in-sleep/aris-monitor/**"
       run: npm run format:check:files -- {staged_files}
     - name: lint
       glob: "*.{js,jsx,ts,tsx}"

@@ -369,8 +369,19 @@ not enforced by the ops.
 #### Step 1.9 — Baseline info
 
 `AskUserQuestion` — header: "Baseline"
-question: "Is there an existing baseline run, or should we create a mock?"
-options: `["Existing baseline (in EXPERIMENT_TRACKER)"]` / `["Create mock baseline"]`
+question: "Is there an existing baseline run, or should we establish a simple baseline (one real run of the entry point at reduced scale)?"
+options: `["Existing baseline (in EXPERIMENT_TRACKER)"]` / `["Create simple baseline (real entry point, reduced scale)"]`
+
+When "Create simple baseline" is chosen, follow up:
+
+`AskUserQuestion` — header: "Simple run"
+question (en): "What is the smallest meaningful run of the real entry point? (e.g., '--max-steps 100', '1 epoch on the val split')"
+question (zh): "真实入口点最小的一次可运行实验是什么？（如 '--max-steps 100'、'在验证集上跑 1 个 epoch'）"
+options: one concrete example option derived from the collected `run.template` + "Other" for free text.
+
+A simple baseline is a REAL run of the project's own entry point with
+reduced-scale arguments - never a synthetic script with invented metrics.
+The answer becomes `baseline.simple_args` in the PRD.
 
 #### Step 1.10 — Write PRD
 
@@ -407,7 +418,7 @@ Assemble the complete PRD JSON (full schema, all fields filled):
     "early_stop": { "enabled": false },
     "stall": { "no_log_growth_minutes": 45, "gpu_idle_threshold_pct": 5, "consecutive_alert_ticks": 3 }
   },
-  "baseline": { "kind": "real|mock", "evidence_source": "..." }
+  "baseline": { "kind": "real|simple", "simple_args": "...", "evidence_source": "..." }
 }
 ```
 
@@ -481,7 +492,11 @@ mcp__paseo__create_agent
   provider:       $ENV_EXECUTOR_PROVIDER
   settings:       { modeId: $ENV_EXECUTOR_MODE, thinkingOptionId: $ENV_EXECUTOR_THINKING }
   initialPrompt:  |
-    /experiment-env-audit — project: <project> — target: promoted — report-format: structured
+    /experiment-env-audit — project: <project> — target: promoted — report-format: structured — paseo-config: <PASEO_CONFIG>
+
+    <PASEO_CONFIG> is the resolved paseo-config path from Phase 0: hand it
+    over so the audit's reviewer dispatch (provider / mode / thinking) reads
+    the same CLAUDE.md ## ARIS Paseo values this run was configured with.
 
     Audit the experiment environment configuration at:
       Bundle:  .claude/skills/run-<project>-experiment/
@@ -617,7 +632,7 @@ WHILE TRUE:
               provider:       $ENV_EXECUTOR_PROVIDER
               settings:       { modeId: $ENV_EXECUTOR_MODE, thinkingOptionId: $ENV_EXECUTOR_THINKING }
               initialPrompt:  |
-                /experiment-env-audit — project: <project> — target: promoted — report-format: structured — patch-id: <CURRENT_PATCH_ID>
+                /experiment-env-audit — project: <project> — target: promoted — report-format: structured — patch-id: <CURRENT_PATCH_ID> — paseo-config: <PASEO_CONFIG>
               notifyOnFinish: $ENV_NOTIFY_ON_FINISH
 
             Wait → archive.
@@ -669,7 +684,7 @@ WHILE TRUE:
                provider:       $ENV_EXECUTOR_PROVIDER
                settings:       { modeId: $ENV_EXECUTOR_MODE, thinkingOptionId: $ENV_EXECUTOR_THINKING }
                initialPrompt:  |
-                 /experiment-env-audit — project: <project> — target: promoted — report-format: structured — patch-id: <CURRENT_PATCH_ID>
+                 /experiment-env-audit — project: <project> — target: promoted — report-format: structured — patch-id: <CURRENT_PATCH_ID> — paseo-config: <PASEO_CONFIG>
                notifyOnFinish: $ENV_NOTIFY_ON_FINISH
 
              Wait → archive → loop back to step 1.
@@ -914,7 +929,7 @@ done
      provider:       $ENV_EXECUTOR_PROVIDER
      settings:       { modeId: $ENV_EXECUTOR_MODE, thinkingOptionId: $ENV_EXECUTOR_THINKING }
      initialPrompt:  |
-       /experiment-env-audit — project: <project> — target: promoted — report-format: structured — patch-id: <CURRENT_PATCH_ID>
+       /experiment-env-audit — project: <project> — target: promoted — report-format: structured — patch-id: <CURRENT_PATCH_ID> — paseo-config: <PASEO_CONFIG>
      notifyOnFinish: $ENV_NOTIFY_ON_FINISH
    ```
 
@@ -946,7 +961,7 @@ mcp__paseo__create_agent
   provider:       $ENV_EXECUTOR_PROVIDER
   settings:       { modeId: $ENV_EXECUTOR_MODE, thinkingOptionId: $ENV_EXECUTOR_THINKING }
   initialPrompt:  |
-    /experiment-env-audit — project: <project> — target: promoted — report-format: structured
+    /experiment-env-audit — project: <project> — target: promoted — report-format: structured — paseo-config: <PASEO_CONFIG>
 
     An experiment failed with an unclassified error. The error report is at:
     <error report path>
@@ -1087,7 +1102,7 @@ mcp__paseo__create_agent
   provider:       $ENV_EXECUTOR_PROVIDER
   settings:       { modeId: $ENV_EXECUTOR_MODE, thinkingOptionId: $ENV_EXECUTOR_THINKING }
   initialPrompt:  |
-    /experiment-env-audit — project: <project> — target: promoted — report-format: structured
+    /experiment-env-audit — project: <project> — target: promoted — report-format: structured — paseo-config: <PASEO_CONFIG>
 
     On-demand environment audit requested by user.
     Bundle: .claude/skills/run-<project>-experiment/

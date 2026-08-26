@@ -29,7 +29,7 @@ Phase 3    Read run config from PRD
 Phase 4    Read feedback config from PRD (error, result) + monitor config
 Phase 4.5  Transport config — write .aris/experiment-env.json (internal) + CLAUDE.md env block
 Phase 5    Emit the project-local skill bundle (router SKILL.md + lib/ + ops/ + env.json)
-Phase 5.5  Establish runnable baseline (mock if PRD specifies) — requires Phase 5 scripts
+Phase 5.5  Establish runnable baseline (simple baseline if PRD specifies) — requires Phase 5 scripts
 Phase 6    Verify and promote: syntax check + dry-runs → finalize, print summary
 ```
 
@@ -514,10 +514,10 @@ command exits non-zero.
 
 Output: `{ "built": true, "verified": true }`.
 
-**`launch-job.sh <exp_name> [--gpu N] [--args "..."] [--entry-point <path>] [--print-command]`** —
+**`launch-job.sh <exp_name> [--gpu N] [--args "..."] [--print-command]`** —
 substitute into `run.template` and launch. Prints the resolved command before
-executing so the log records exactly what ran. `--entry-point` overrides
-`run.entry_point` (used by Phase 5.5 mock baseline). `--print-command` prints
+executing so the log records exactly what ran. `--args` replaces the default
+run arguments (used by Phase 5.5's simple baseline). `--print-command` prints
 the resolved command **without launching** — consumed by `queue-manager.ts`
 so the queue renders commands through the same frozen template instead of
 re-assembling its own.
@@ -677,63 +677,75 @@ Body sections, in order:
 
 ## Phase 5.5: Establish a Runnable Baseline
 
-**Trigger:** `prd.baseline.kind == "mock"`. When absent or `kind != "mock"`,
-skip this phase entirely.
+**Trigger:** `prd.baseline.kind == "simple"` (legacy PRDs that say `"mock"`
+are treated as `"simple"`). When absent or `kind` is anything else, skip this
+phase entirely.
+
+**What a simple baseline is:** one real run of the project's own
+`run.entry_point` at reduced scale (whatever `prd.baseline.simple_args`
+specifies — fewer steps, fewer epochs, a small data subset), executed
+through the same ops a normal experiment uses. The metric it produces is
+genuine output of the actual method at small scale — never a synthetic
+script or an invented number. It proves the environment end-to-end AND seeds
+`refine-logs/EXPERIMENT_TRACKER.md` with a real data point. It is NOT the
+paper baseline: `/auto-research-loop` iteration 1 still reproduces the full
+baseline.
 
 **Prerequisite:** Phase 5 has written all scripts to `$STAGING_DIR/scripts/`.
 This phase executes them for real (not dry-run) to prove the environment works
 end-to-end before Phase 6 promotes.
 
-1. Generate `.aris/env-config/<project>/mock/smoke_baseline.py` — minimal but
-   **real**: import the framework per `preparation.environment`, allocate a
-   tensor on the selected device, run ~10 steps on synthetic data, write
-   `{"<primary_metric_key>": <float>, "steps": 10}` to
-   `results/<exp_name>.json`, print a completion marker, `exit 0`.
+1. Resolve the reduced-scale arguments from `prd.baseline.simple_args`. If it
+   is absent or empty, do NOT guess a scale-down — ask the user
+   (AskUserQuestion, forwarded through paseo) for the smallest meaningful run
+   of the real entry point, then record the answer.
 
-2. Execute end-to-end through the **staging** bundle's ops using the
-   `--entry-point` flag to run the mock instead of the project's real entry
-   point:
+2. Execute end-to-end through the **staging** bundle's ops, launching the
+   project's real entry point with the simple args:
    ```bash
    sh "$STAGING_DIR/scripts/ops/sync-code.sh"
    sh "$STAGING_DIR/scripts/ops/build-env.sh"
-   sh "$STAGING_DIR/scripts/ops/launch-job.sh" smoke \
-     --entry-point ".aris/env-config/<project>/mock/smoke_baseline.py"
-   sh "$STAGING_DIR/scripts/ops/collect-outputs.sh" smoke
+   sh "$STAGING_DIR/scripts/ops/launch-job.sh" simple-baseline \
+     --args "<prd.baseline.simple_args>"
+   sh "$STAGING_DIR/scripts/ops/collect-outputs.sh" simple-baseline
    ```
 
 3. On success:
-   - Record evidence at `.aris/env-config/<project>/mock/SMOKE_RESULT.json`
-     + `smoke.log`.
-   - **Copy smoke metrics into the staging bundle for env-audit Check P:**
+   - Record evidence: copy the collected result (the artifact resolved from
+     `feedback.result.path_template` for exp `simple-baseline`) and the run
+     log into `.aris/env-config/<project>/baseline/` as `RUN_RESULT.json`
+     and `run.log`.
+   - **Copy the result into the staging bundle for env-audit Check P:**
      ```bash
-     cp ".aris/env-config/<project>/mock/SMOKE_RESULT.json" \
-        "$STAGING_DIR/smoke_baseline.json"
+     cp ".aris/env-config/<project>/baseline/RUN_RESULT.json" \
+        "$STAGING_DIR/simple_baseline.json"
      ```
      This file is promoted alongside the bundle (ends up at
-     `$SKILL_DIR/smoke_baseline.json`), so `/experiment-env-audit` Check P
-     reads it from `$BUNDLE_DIR/smoke_baseline.json` — the same path in both
-     staging and promoted locations.
-   - Append a `mock-baseline` row to `refine-logs/EXPERIMENT_TRACKER.md`.
+     `$SKILL_DIR/simple_baseline.json`), so `/experiment-env-audit` Check P
+     reads it from `$BUNDLE_DIR/simple_baseline.json` — the same path in
+     both staging and promoted locations.
+   - Append a `simple-baseline` row to `refine-logs/EXPERIMENT_TRACKER.md`,
+     recording the scale (e.g., "100 steps") so nobody mistakes the number
+     for the full baseline.
 
-4. On failure: fix the **configuration** (not the mock), up to
+4. On failure: fix the **configuration** (not the entry point), up to
    `MAX_VERIFY_RETRIES` = 3 times. Persistent failure means the environment
-   genuinely doesn't work → `status: "incomplete"` + hard stop with the real
+   genuinely doesn't work -> `status: "incomplete"` + hard stop with the real
    error message.
 
 Record in `env.json` (within `$STAGING_DIR`):
 
 ```json
 "baseline": {
-  "kind": "mock|reproduced",
-  "script": ".aris/env-config/<project>/mock/smoke_baseline.py",
-  "evidence": ".aris/env-config/<project>/mock/SMOKE_RESULT.json",
-  "smoke_baseline_path": "smoke_baseline.json",
+  "kind": "simple|reproduced",
+  "args": "<the reduced-scale args that ran>",
+  "evidence": ".aris/env-config/<project>/baseline/RUN_RESULT.json",
+  "simple_baseline_path": "simple_baseline.json",
   "verified_at": "<ISO-8601>"
 }
 ```
 
-When `baseline.kind == "mock"`, the generated skill accepts `— entry-point: <path>`
-to override the default entry point. Dry-runs substitute the mock, so Phase 6's
+Dry-runs substitute the real template with the simple args, so Phase 6's
 "no unsubstituted `{{placeholder}}`" rule needs no carve-out.
 
 ---
@@ -944,7 +956,7 @@ When `— patch: <path>` is provided:
 - **DEFAULT_EXCLUDES** = `.git, __pycache__, results/, logs/, checkpoints/, *.pt, *.ckpt, data/`
 - **DEFAULT_FAILURE_PATTERNS** = `Traceback`, `CUDA out of memory`, `Killed`, `AssertionError`, `RuntimeError`, `No such file`
 - **MAX_VERIFY_RETRIES** = 3
-- **MOCK_DIR_TEMPLATE** = `.aris/env-config/<project>/mock`
+- **BASELINE_DIR_TEMPLATE** = `.aris/env-config/<project>/baseline`
 - **HANDLE_DIR** = `handles/` (inside the generated skill directory)
 - **DEFAULT_MONITOR** = `{ interval_cron: "*/20 * * * *", escalate_cron: "23 * * * *", max_hours: 48, early_stop: {enabled: false}, stall: {no_log_growth_minutes: 45, gpu_idle_threshold_pct: 5, consecutive_alert_ticks: 3} }`
 
@@ -988,9 +1000,11 @@ When `— patch: <path>` is provided:
     `/experiment-plan`, `/ablation-planner`, `/analyze-results`) invoke the
     generated router skill or call `scripts/ops/<name>.sh` directly and read
     the structured JSON output — never the internals.
-11. **A mock baseline is not a guess.** It is generated by this skill, executed
-    end-to-end in the real environment, and verified with real output. Freezing
-    a command that was never executed — in any mode — is still forbidden (Rule 4).
+11. **A simple baseline is a real run, not a mock.** It is the project's own
+    entry point executed at reduced scale through the configured environment,
+    and verified with its real output. Synthetic scripts with invented metrics
+    are forbidden. Freezing a command that was never executed — in any mode —
+    is still forbidden (Rule 4).
 12. **Slug normalization.** Project slug derivation collapses consecutive
     non-alphanumerics to a single `-` and strips leading/trailing `-`.
     `Foo__Bar!` → `foo-bar`. This matches the env-manager's algorithm.
