@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { arisWikiEntityQueryKey } from "./query-keys";
 
-export type ArisWikiEntityType = "papers" | "ideas" | "experiments" | "claims" | "gap";
+export type ArisWikiEntityType = "papers" | "ideas" | "experiments" | "claims" | "problems" | "gap";
 
 export interface ArisWikiEntity {
   content: string;

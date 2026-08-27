@@ -452,6 +452,28 @@ Reviewer verdicts follow the same notification-driven model:
 4. The verdict file is the authoritative payload — preemption-safe.
    `<agent-response>` is at most a one-line status.
 
+### Arm the watchdog for reviewer dispatches too
+
+A lost finish notification freezes the parent identically whether the child
+was an executor or a reviewer, so **every reviewer dispatch and every
+continuation `send_agent_prompt` arms the dispatch watchdog** before the
+parent ends its turn — same handle file, same per-agent name, same bounds
+(`paseo-subagent-dispatch.md` §"Notification-driven feedback loop",
+`external-cadence.md` §"Paseo heartbeat bounds convention"). Record the child
+with `kind: "reviewer"` so the tick knows which supervision section applies.
+
+Two reviewer-specific limits on what a tick may then do:
+
+- A tick applies §"Idle reviewer supervision" below — including its
+  continuation prompt to an **idle** reviewer that has not written a verdict.
+  It never prompts a reviewer that is `running`; `replaceRunning` would
+  interrupt the round mid-way and silently corrupt the verdict.
+- A tick never **creates** a reviewer. Round 2's reviewer is created by the
+  loop's own claude agent when round 2 begins — pre-empting that loses
+  reviewer memory (continuation reviewers) or breaks
+  `REVIEWER_BIAS_GUARD` (fresh-per-round reviewers). See §"The fence,
+  restated for the reviewer".
+
 For continuation reviewers (W2 round 2+), the parent keeps the codex
 agent alive between rounds. The parent does NOT re-create — it calls
 `send_agent_prompt` to continue the same agent, then ends its turn and

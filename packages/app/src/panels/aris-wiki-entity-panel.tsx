@@ -2,7 +2,14 @@
 import { useMemo } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { BookOpen, Lightbulb, FlaskConical, CheckCircle2, Crosshair } from "lucide-react-native";
+import {
+  BookOpen,
+  Lightbulb,
+  FlaskConical,
+  CheckCircle2,
+  Crosshair,
+  Target,
+} from "lucide-react-native";
 import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
 import { usePaneContext } from "@/panels/pane-context";
 import { isWeb } from "@/constants/platform";
@@ -17,6 +24,7 @@ const ENTITY_TYPE_LABELS: Record<ArisWikiEntityType, string> = {
   ideas: "Idea",
   experiments: "Experiment",
   claims: "Claim",
+  problems: "Problem",
   gap: "Gap map",
 };
 
@@ -25,6 +33,7 @@ const ENTITY_TYPE_ICONS: Record<ArisWikiEntityType, typeof BookOpen> = {
   ideas: Lightbulb,
   experiments: FlaskConical,
   claims: CheckCircle2,
+  problems: Target,
   gap: Crosshair,
 };
 
@@ -33,6 +42,7 @@ const ENTITY_TYPE_COLOR: Record<ArisWikiEntityType, string> = {
   ideas: ARIS_KNOWLEDGE_GRAPH_NODE_COLORS.idea,
   experiments: ARIS_KNOWLEDGE_GRAPH_NODE_COLORS.experiment,
   claims: ARIS_KNOWLEDGE_GRAPH_NODE_COLORS.claim,
+  problems: ARIS_KNOWLEDGE_GRAPH_NODE_COLORS.problem,
   gap: ARIS_KNOWLEDGE_GRAPH_NODE_COLORS.gap,
 };
 

@@ -3,6 +3,7 @@ import type {
   ArisIdea,
   ArisExperiment,
   ArisClaim,
+  ArisProblem,
   ArisEdge,
   ArisMetricSeries,
   ArisExperimentRun,
@@ -15,6 +16,7 @@ export type {
   ArisIdea,
   ArisExperiment,
   ArisClaim,
+  ArisProblem,
   ArisEdge,
   ArisMetricSeries,
   ArisExperimentRun,
@@ -27,6 +29,7 @@ export interface ArisWikiData {
   ideas: ArisIdea[];
   experiments: ArisExperiment[];
   claims: ArisClaim[];
+  problems: ArisProblem[];
   edges: ArisEdge[];
   findings: string | null;
 }

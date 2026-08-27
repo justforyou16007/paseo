@@ -24,6 +24,7 @@ const NODE_KIND_TO_ENTITY_DIR: Record<Exclude<GraphNodeType, "default">, ArisWik
   idea: "ideas",
   experiment: "experiments",
   claim: "claims",
+  problem: "problems",
   gap: "gap",
 };
 
@@ -38,27 +39,31 @@ export interface ArisCockpitViewProps {
   activeView?: "cockpit" | "graph" | "review";
 }
 
+/**
+ * One node per wiki entity. Every kind is shaped the same way — an id and a
+ * title that falls back to the id — so they share one loop instead of five
+ * near-identical ones.
+ */
+function pushEntityNodes(
+  nodes: ArisKnowledgeGraphNode[],
+  entities: { id: string; title: string }[] | undefined,
+  group: string,
+): void {
+  for (const entity of entities ?? []) {
+    nodes.push({ id: entity.id, label: entity.title || entity.id, group });
+  }
+}
+
 function buildKnowledgeGraphFromWiki(wiki: ArisWikiData | null | undefined): ArisKnowledgeGraph {
   if (!wiki) {
     return { nodes: [], edges: [] };
   }
   const nodes: ArisKnowledgeGraphNode[] = [];
-  for (const paper of wiki.papers ?? []) {
-    nodes.push({ id: paper.id, label: paper.title || paper.id, group: "paper" });
-  }
-  for (const idea of wiki.ideas ?? []) {
-    nodes.push({ id: idea.id, label: idea.title || idea.id, group: "idea" });
-  }
-  for (const experiment of wiki.experiments ?? []) {
-    nodes.push({
-      id: experiment.id,
-      label: experiment.title || experiment.id,
-      group: "experiment",
-    });
-  }
-  for (const claim of wiki.claims ?? []) {
-    nodes.push({ id: claim.id, label: claim.title || claim.id, group: "claim" });
-  }
+  pushEntityNodes(nodes, wiki.papers, "paper");
+  pushEntityNodes(nodes, wiki.ideas, "idea");
+  pushEntityNodes(nodes, wiki.experiments, "experiment");
+  pushEntityNodes(nodes, wiki.claims, "claim");
+  pushEntityNodes(nodes, wiki.problems, "problem");
   const edges: ArisKnowledgeGraphEdge[] = (wiki.edges ?? []).map((edge) => ({
     source: edge.source,
     target: edge.target,
@@ -148,7 +153,8 @@ function ArisCockpitBody({
     (wiki?.papers?.length ?? 0) +
       (wiki?.ideas?.length ?? 0) +
       (wiki?.experiments?.length ?? 0) +
-      (wiki?.claims?.length ?? 0) >
+      (wiki?.claims?.length ?? 0) +
+      (wiki?.problems?.length ?? 0) >
     0;
   return (
     <View style={styles.screen}>

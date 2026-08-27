@@ -48,7 +48,14 @@ const INK = {
 
 type ArisKnowledgeGraphEdge = NonNullable<ArisKnowledgeGraph["edges"]>[number];
 
-export type GraphNodeType = "idea" | "experiment" | "claim" | "paper" | "gap" | "default";
+export type GraphNodeType =
+  | "idea"
+  | "experiment"
+  | "claim"
+  | "paper"
+  | "problem"
+  | "gap"
+  | "default";
 
 export interface GraphCanvasNode {
   id: string;
@@ -89,6 +96,8 @@ function nodeRadius(type: GraphNodeType): number {
       return 40;
     case "experiment":
       return 38;
+    case "problem":
+      return 36;
     case "claim":
       return 34;
     case "paper":
@@ -100,12 +109,27 @@ function nodeRadius(type: GraphNodeType): number {
   }
 }
 
+/** Flat-top hexagon inscribed in a circle of `radius`, as SVG polygon points. */
+function hexagonPoints(cx: number, cy: number, radius: number): string {
+  const dx = radius / 2;
+  const dy = radius * 0.866; // sin(60°)
+  return [
+    `${cx + radius},${cy}`,
+    `${cx + dx},${cy + dy}`,
+    `${cx - dx},${cy + dy}`,
+    `${cx - radius},${cy}`,
+    `${cx - dx},${cy - dy}`,
+    `${cx + dx},${cy - dy}`,
+  ].join(" ");
+}
+
 function graphNodeTypeFromGroup(group: string | undefined): GraphNodeType {
   switch (group) {
     case "idea":
     case "experiment":
     case "claim":
     case "paper":
+    case "problem":
     case "gap":
       return group;
     default:
@@ -243,6 +267,20 @@ const GraphCanvasNodeView = memo(function GraphCanvasNodeView({
       );
       break;
     }
+    case "problem": {
+      // Flat-top hexagon: a problem is the target the run is trying to close,
+      // so it needs a silhouette no other kind uses. Paper and idea are both
+      // circles and only differ by hue; a third circle would be unreadable.
+      shape = (
+        <Polygon
+          points={hexagonPoints(node.x, node.y, radius)}
+          fill={node.fill}
+          stroke={ringStroke}
+          strokeWidth={ringWidth}
+        />
+      );
+      break;
+    }
     case "gap":
       shape = (
         <Circle
@@ -315,6 +353,7 @@ const GROUP_LABEL_MAP: Record<string, string> = {
   idea: "Ideas",
   experiment: "Experiments",
   claim: "Claims",
+  problem: "Problems",
   gap: "Gaps",
 };
 
@@ -776,6 +815,7 @@ export function KnowledgeGraphView({
         node.group === "idea" ||
         node.group === "experiment" ||
         node.group === "claim" ||
+        node.group === "problem" ||
         node.group === "gap"
       ) {
         kinds.add(node.group);
@@ -835,17 +875,19 @@ const NODE_KIND_LABELS: Record<keyof typeof ARIS_KNOWLEDGE_GRAPH_NODE_COLORS, st
   idea: "Idea",
   experiment: "Experiment",
   claim: "Claim",
+  problem: "Problem",
   gap: "Gap",
 };
 
 const NODE_KIND_SHAPES: Record<
   keyof typeof ARIS_KNOWLEDGE_GRAPH_NODE_COLORS,
-  "circle" | "rect" | "diamond" | "dashed-circle"
+  "circle" | "rect" | "diamond" | "hexagon" | "dashed-circle"
 > = {
   paper: "circle",
   idea: "circle",
   experiment: "rect",
   claim: "diamond",
+  problem: "hexagon",
   gap: "dashed-circle",
 };
 
@@ -879,7 +921,7 @@ function NodeLegendSwatch({ kind }: { kind: keyof typeof ARIS_KNOWLEDGE_GRAPH_NO
 }
 
 function renderLegendShape(
-  shape: "circle" | "rect" | "diamond" | "dashed-circle",
+  shape: "circle" | "rect" | "diamond" | "hexagon" | "dashed-circle",
   color: string,
   center: number,
 ): ReactNode {
@@ -906,6 +948,15 @@ function renderLegendShape(
       ].join(" ");
       return <Polygon points={points} fill={color} stroke={INK.ringDefault} strokeWidth={1.5} />;
     }
+    case "hexagon":
+      return (
+        <Polygon
+          points={hexagonPoints(center, center, 6)}
+          fill={color}
+          stroke={INK.ringDefault}
+          strokeWidth={1.5}
+        />
+      );
     case "dashed-circle":
       return (
         <Circle

@@ -50,7 +50,7 @@ export type WorkspaceTabTarget =
   | { kind: "aris-artifact"; stageId: "W1" | "W1.5" | "W2" | "W3" | "W4" | "W5" | "W6" }
   | {
       kind: "aris-wiki-entity";
-      entityType: "papers" | "ideas" | "experiments" | "claims" | "gap";
+      entityType: "papers" | "ideas" | "experiments" | "claims" | "problems" | "gap";
       entityId: string;
     };
 

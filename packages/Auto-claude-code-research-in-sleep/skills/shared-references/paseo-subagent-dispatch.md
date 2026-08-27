@@ -253,6 +253,11 @@ mcp__paseo__create_agent:
   notifyOnFinish: true                    # push; completion re-invokes the parent
 ```
 
+Before ending the turn that dispatched this child, arm the dispatch watchdog
+on yourself — see §"Notification-driven feedback loop" below for the steps and
+[`external-cadence.md`](external-cadence.md) §"Paseo heartbeat bounds
+convention" for the bounds.
+
 ### The `initialPrompt` contract
 
 The child's prompt points at a **workflow definition** (a SKILL.md) and
@@ -504,7 +509,7 @@ assume**. The core principle:
 | Child state / log signal                                    | Parent action                                                                                                     |
 | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | Child completed its task (receipt.json exists in worker directory) | Read the receipt, `set done`, run the gate, `archive_agent`. This is the normal notification path — no idle     |
-| Child is **idle and waiting for its OWN sub-agent**         | Do not prompt it. The child is supervising correctly; end the turn again so the next completion notification can arrive. |
+| Child is **idle and waiting for its OWN sub-agent**         | Do not prompt it. The child is supervising correctly; end the turn again so the next completion notification can arrive. Safe because that child armed its own watchdog when it dispatched — it will wake itself. |
 | (child has live sub-agents listed via `list_agents`)        | Do NOT send a continuation prompt — that would interrupt the child's own supervision loop. Keep the parent wait armed. |
 | Child is **idle with no sub-agents, no receipt**            | The child may have stalled or hit a silent error. Send a **continuation prompt** via `send_agent_prompt`:         |
 |                                                             | `"You appear to have stopped. Continue your task and write the receipt file when done."` Then end the turn; the same child's next finish notification re-invokes the parent. |
@@ -516,9 +521,16 @@ assume**. The core principle:
 
 - ❌ **"The child is idle; I'll just do its work myself."** — Violates
   the core principle. Archive the child and re-dispatch if needed.
-- ❌ **"The child is idle; I'll wait forever."** — Set a timeout per
-  phase. After `max_idle_seconds` (configurable in CLAUDE.md
-  `## ARIS Paseo` → `max_phase_idle`), escalate.
+- ❌ **"The child is idle; I'll wait forever."** — The finish notification
+  is in-memory and has no timeout, so "waiting" and "frozen" look identical.
+  The timeout is the dispatch watchdog you armed before ending the turn
+  (`dispatch_heartbeat_cron`, default 30 min = `max_phase_idle`); when a tick
+  finds the child past that window, escalate per the matrix above.
+- ❌ **"The orchestrator has a heartbeat, so the chain is covered."** —
+  `create_heartbeat` is self-target-only; a heartbeat wakes nobody but its
+  creator. An intermediate agent with no watchdog of its own stays frozen,
+  and the orchestrator's tick reads it as "idle, waiting for its own
+  sub-agent → do nothing." Every dispatching level arms its own.
 - ❌ **"The child is idle; I'll kill it and recreate."** — Only if the
   child has no receipt and no sub-agents. If it has sub-agents, those
   grandchild agents would be orphaned (unless cascade-archive handles
@@ -541,6 +553,13 @@ prompt that re-invokes it after it ends its turn.
    starts a distinct child turn and therefore requires its own notification
    before the workflow advances. There is no wait tool to call and no
    polling; the parent ends its turn and the notification re-invokes it.
+   That notification is an **in-memory subscription** on the parent's side,
+   armed at dispatch — a daemon restart erases it, and nothing times out. So
+   the parent also arms a self-target watchdog before ending the turn
+   (`dispatch_heartbeat_cron`, default 30 min). **This is not polling**: on a
+   healthy run each tick reads the handle file, sees the child still
+   `running`, and ends the turn. The watchdog only does work when the
+   notification never came.
 3. **The child MUST write a receipt file** (`workers/<iter>-<phase>/receipt.json`)
    as its last action before stopping. The receipt is the authoritative
    payload — preemption-safe, survives crashes. Schema:
@@ -553,6 +572,16 @@ prompt that re-invokes it after it ends its turn.
    `create_agent` per awaited notification). Fan-out describes how
    work is sharded, not permission to leave a child turn unawaited; see
    `fan-out-pattern.md`.
+6. **Disarm the watchdog when no outstanding children remain** — not when
+   the first child finishes. One watchdog covers the parent, however many
+   children it is waiting on (the name is per-agent, so re-arming on the next
+   dispatch refreshes it rather than stacking a second one). The handle file's
+   `children` array tracks **awaited child turns, not live agents**: an entry
+   is removed once that turn's notification has been handled, whether or not
+   the agent is archived. A continuation reviewer stays alive between rounds
+   (`paseo-reviewer-dispatch.md`) and would otherwise pin the watchdog for the
+   rest of the run. When removing the entry empties the list,
+   `delete_heartbeat` and delete the handle file.
 
 ### Receipt file format
 
@@ -579,7 +608,25 @@ mkdir -p "$WORKER_DIR/outputs"
 # Write input-manifest.json ...
 child_id = create_agent(provider, "/<skill> — manifest: $WORKER_DIR/input-manifest.json",
                         notifyOnFinish=true)
-# end turn; the child's finish notification re-invokes the parent
+
+# --- arm the watchdog before ending the turn ---
+HANDLE = ".aris/runs/<run_id>/handles/dispatch-watch.$PASEO_AGENT_ID.json"
+handle = read_json(HANDLE) or new_handle()
+handle.children.append({id: child_id, kind: "executor", worker_dir: WORKER_DIR, ...})
+write_json(HANDLE, handle)                    # record the child before arming, so a
+                                              # tick can never fire onto an empty file
+WATCH_NAME = "dispatch-watch-<run_id>-$PASEO_AGENT_ID"
+handle.heartbeat_id = create_heartbeat(
+    name=WATCH_NAME,                                  # per-agent: re-arm = refresh
+    cron=<dispatch_heartbeat_cron>,                   # default "*/30 * * * *"
+    expiresIn=<dispatch_heartbeat_expires>,           # no maxRuns — see external-cadence.md
+    prompt="Check whether your dispatched sub-agents have finished: read "
+           "$HANDLE, then follow §\"What the watchdog tick does\" in "
+           "paseo-subagent-dispatch.md.")
+write_json(HANDLE, handle)
+
+# end turn; the child's finish notification re-invokes the parent —
+# or, if that notification is lost, the watchdog does
 # --- on the finish notification: ---
 
 receipt_path = "$WORKER_DIR/receipt.json"
@@ -591,6 +638,16 @@ if receipt_path exists:
     if gate_passes(phase, dashboard):
         run_state.accept(run_id, phase, verdict_id=..., reviewer=...)
     archive_agent(child_id)
+
+    # --- disarm if no awaited turn is outstanding ---
+    # keyed on the handled turn, not on archiving: a continuation reviewer
+    # stays alive across rounds and must not pin the watchdog
+    handle.children.remove(child_id)
+    if handle.children is empty:
+        delete_heartbeat(handle.heartbeat_id)
+        rm HANDLE
+    else:
+        write_json(HANDLE, handle)
 else:
     status = get_agent_status(child_id)
     if status == "idle":
@@ -598,6 +655,52 @@ else:
             "Write the completion receipt.json and stop.")
         # end turn; the continuation turn's notification re-invokes the parent
 ```
+
+### What the watchdog tick does
+
+The prompt above is one sentence on purpose. Every tick appends a turn to the
+parent's conversation, and a parent that waits overnight collects dozens of
+them — a procedure pasted into the prompt would be re-paid on every one, and
+would drift from this section the first time either changed. The prompt carries
+only what the woken agent cannot look up: which handle file to read. Everything
+else is here.
+
+The tick does this and nothing else:
+
+1. Read the handle file named in the prompt. Missing → nothing is being
+   awaited, but you cannot call `delete_heartbeat` without an id and heartbeats
+   are not listable. Recover the id by re-arming under `WATCH_NAME`
+   (`createOrReplace` by `(name, target)` returns the existing schedule), then
+   delete it and stop. The path spells out the name: a handle at
+   `.aris/runs/<run_id>/handles/dispatch-watch.<agent_id>.json` was armed as
+   `dispatch-watch-<run_id>-<agent_id>`.
+2. For each outstanding child: does its `receipt.json` exist?
+   - **yes** → the notification was lost. Run the "on the finish notification"
+     branch above verbatim, including the disarm step.
+   - **no** → `get_agent_status(child)`.
+3. `running` → do nothing, end the turn. Verdict agents included — the fence.
+4. `idle` / `error` → apply the supervision section for that child's kind:
+   §"Idle agent supervision" below for executors, `paseo-reviewer-dispatch.md`
+   §"Idle reviewer supervision" for reviewers. Add no policy here.
+5. All children handled and the outstanding list is empty → `delete_heartbeat`,
+   delete the handle file, continue the workflow.
+6. Append one line to `.aris/runs/<run_id>.monitor.jsonl`.
+
+A tick is a new turn in the parent's **existing** conversation, not a new
+agent — the history is still there. The handle file exists because that
+history is not guaranteed to still be *legible*: an overnight run compacts,
+and a resume may have to rebuild the agent under a new id
+(`resumable-runs.md`). Read the handle file rather than trusting recall. A
+tick that lands while the parent is mid-turn is skipped by paseo and the
+cadence continues, so the watchdog can never interrupt real work.
+
+The per-agent name is also the orphan cure. If the parent dies between arming
+and recording the id, the id is lost — but the next dispatch arms the same
+name, which replaces the orphan instead of stacking a second watchdog, and
+returns the id that was missing. Two other backstops: `expiresIn`, and
+archiving the agent (paseo completes a schedule whose target is gone). See
+`resumable-runs.md` for the resume case, where the agent comes back with a new
+id and cannot delete the old watchdog at all.
 
 > **Why the parent must end its turn even with `notifyOnFinish: true`:**
 > The notification is delivered as a prompt to the parent agent - it only

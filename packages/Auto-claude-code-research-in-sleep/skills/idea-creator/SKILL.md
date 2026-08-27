@@ -514,6 +514,15 @@ elif research-wiki/ exists AND [ -z "$WIKI_SCRIPT" ]:
     exit 1
 ```
 
+`--based-on` is the paper provenance of the idea — it becomes an
+`inspired_by` edge, and `inspired_by` only runs idea → paper. A bare slug is
+read as `paper:<slug>`. The problem an idea targets goes in
+`--target-problems` (that becomes the `addresses` edge); pass a `problem:` id
+to `--based-on` and the helper moves it there with a warning, and any other
+node kind is a hard error. When the wiki has no papers yet and nothing
+inspired the idea, omit `--based-on` rather than filling it with the problem
+id.
+
 ## Output Protocols
 
 > Follow these shared protocols for all output files:

@@ -3312,6 +3312,16 @@ export const ArisClaimSchema = z.object({
   confidence: z.number().nullable().optional(),
 });
 
+export const ArisProblemSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  content: z.string(),
+  status: z.enum(["open", "solved", "refuted", "deferred"]),
+  severity: z.enum(["high", "medium", "low"]),
+  parent: z.string().nullable().optional(),
+  tags: z.array(z.string()).default([]),
+});
+
 export const ArisEdgeSchema = z.object({
   source: z.string(),
   target: z.string(),
@@ -6401,6 +6411,10 @@ export const ArisWikiReadResponseSchema = z.object({
       ideas: z.array(ArisIdeaSchema).default([]),
       experiments: z.array(ArisExperimentSchema).default([]),
       claims: z.array(ArisClaimSchema).default([]),
+      // COMPAT(aris-problems): added in v0.16, remove the default once every
+      // daemon in the wild sends it. An older daemon omits `problems`, and the
+      // graph then renders problem endpoints as bare ids.
+      problems: z.array(ArisProblemSchema).default([]),
       edges: z.array(ArisEdgeSchema).default([]),
       findings: z.string().nullable().default(null),
     }),
@@ -7039,6 +7053,7 @@ export type ArisPaper = z.infer<typeof ArisPaperSchema>;
 export type ArisIdea = z.infer<typeof ArisIdeaSchema>;
 export type ArisExperiment = z.infer<typeof ArisExperimentSchema>;
 export type ArisClaim = z.infer<typeof ArisClaimSchema>;
+export type ArisProblem = z.infer<typeof ArisProblemSchema>;
 export type ArisEdge = z.infer<typeof ArisEdgeSchema>;
 export type ArisMetricSeries = z.infer<typeof ArisMetricSeriesSchema>;
 export type ArisExperimentRun = z.infer<typeof ArisExperimentRunSchema>;

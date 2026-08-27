@@ -209,7 +209,7 @@ the orchestrator session's self-target `create_heartbeat`. `/loop` and
 
 Two paseo-specific constraints follow directly from
 the existing fence and are restated here so a paseo driver author does not
-re-derive them:
+re-derive them, plus a third that bounds the dispatch watchdog:
 
 - **Never `send_agent_prompt` to a running verdict agent.** Paseo
   notifications use `replaceRunning: true`, so a heartbeat prompt to an
@@ -224,6 +224,24 @@ re-derive them:
   be re-created or
   re-prompted by the heartbeat — the fence forbids it; recovery is a
   human/cron decision, as below.
+- **The dispatch watchdog observes; it does not drive.** A watchdog tick may
+  read only: `get_agent_status`, `get_agent_activity`, receipts, artifacts.
+  Its one permitted write is the continuation prompt the idle-supervision
+  sections already sanction — `paseo-subagent-dispatch.md` §"Idle agent
+  supervision" for executors, `paseo-reviewer-dispatch.md` §"Idle reviewer
+  supervision" for reviewers. It adds no policy of its own. It never prompts
+  a `running` agent, and it never **creates** an agent — a re-created verdict
+  agent loses reviewer memory or pre-empts the bias guard, which the two
+  bullets above forbid. The tick's full procedure lives in
+  `paseo-subagent-dispatch.md` §"What the watchdog tick does"; the heartbeat's
+  own prompt is one sentence pointing there, so a tick costs one short turn.
+
+**Every level arms its own.** `create_heartbeat` is self-target-only, so a
+heartbeat can only ever wake the agent that created it. This is why the
+decision matrix's "child is idle waiting for its OWN sub-agent → do nothing"
+is safe: that child has its own watchdog and will wake itself. Skip a level
+and that level — plus everything above it — loses its recovery path. A single
+heartbeat at the top does not cover the chain.
 
 The `iteration-log.js` machinery is identical: the heartbeat writes its
 tick line first each tick and records new-finding counts via the canonical
@@ -232,30 +250,66 @@ not what the tick may do.
 
 ## Paseo heartbeat bounds convention (catch a silent death — and bound it)
 
-An external-cadence heartbeat is parasitic on a living session; if the session
-dies (context compaction, close) the heartbeat dies with it — but an ABANDONED
-heartbeat that outlives its job is the opposite failure (it keeps waking a
-dead pipeline forever). Every `mcp__paseo__create_heartbeat` MUST be bounded:
+ARIS arms two kinds of heartbeat. They have different jobs and different
+authority, but the same bounds:
 
-1. **Name it for upsert idempotence.** `name: "monitor-<project>-<exp>"` —
-   re-arming under the same name replaces, not duplicates
-   (`createOrReplace` by `(name, target)`).
-2. **Bound it at creation: `expiresIn` + `maxRuns`.** Even if the terminal
-   branch never runs, the heartbeat self-expires. `expiresIn` = the job's
-   `monitor.max_hours`; `maxRuns` = ceil(hours×60 / interval minutes).
+| Kind         | Config                    | Default          | What it does                                                                                                                       |
+| ------------ | ------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| **driver**   | `heartbeat_cron`          | `off`            | Advances an overnight pipeline: touches `run_state`, writes the iteration log, nudges stalled Type-A sub-phases. Top-level session. |
+| **watchdog** | `dispatch_heartbeat_cron` | `*/30 * * * *`   | Does nothing on a healthy run. Exists so an agent that dispatched a child can wake itself if the finish notification never arrives. |
+
+The watchdog is not optional and not a poll. **Any agent that calls
+`create_agent` and then ends its turn to wait must arm one before ending that
+turn** — see `paseo-subagent-dispatch.md` §"Notification-driven feedback loop"
+for the arm/cancel steps and why the notification alone is not enough.
+
+A paseo heartbeat is a persisted schedule, not a subscription in the caller's
+process — that is exactly why the watchdog is worth arming: it survives the
+daemon restart that erases a finish notification. The flip side is that an
+ABANDONED heartbeat keeps waking a dead pipeline until something stops it.
+Archiving the target agent is one such stop (paseo completes the schedule
+itself when the target is gone), but do not rely on it. Every
+`mcp__paseo__create_heartbeat` MUST be bounded:
+
+1. **Name it for upsert idempotence.** Re-arming under the same name replaces,
+   not duplicates (`createOrReplace` by `(name, target)`).
+   - driver: `name: "monitor-<project>-<exp>"`
+   - watchdog: `name: "dispatch-watch-<run_id>-<own_agent_id>"` — **one per
+     waiting agent, not one per child.** Same-name re-arm is an overwrite, so a
+     per-child name would silently clobber the previous child's watchdog. One
+     watchdog per waiting agent also means one id to keep and one to delete.
+2. **Bound it at creation.** Even if the terminal branch never runs, the
+   heartbeat self-expires.
+   - driver: `expiresIn` = the job's `monitor.max_hours`, `maxRuns` =
+     ceil(hours×60 / interval minutes).
+   - watchdog: `expiresIn` = `dispatch_heartbeat_expires` (default `24h`), and
+     **omit `maxRuns`**. A tick that lands while the agent is mid-turn is
+     skipped and recorded as a failed run, and failed runs count against
+     `maxRuns` — a busy agent would burn its watchdog's budget doing nothing.
 3. **Persist the id on disk.** Heartbeats are not listable and
-   `delete_heartbeat` is creator-only — the id must live in a file
-   (`handles/<exp>.monitor.json`) or the terminal branch cannot clean up.
+   `delete_heartbeat` is creator-only — the id must live in a file or the
+   terminal branch cannot clean up.
+   - driver: `handles/<exp>.monitor.json`
+   - watchdog: `.aris/runs/<run_id>/handles/dispatch-watch.<agent_id>.json`,
+     holding `heartbeat_id`, `agent_id`, `run_id`, `phase`, `armed_at`, and a
+     `children` array of `{id, kind, worker_dir, dispatched_at}`. The agent id
+     comes from `$PASEO_AGENT_ID`. A tick is a new turn in the agent's
+     existing conversation, so the history is still there — but an overnight
+     run compacts and a resume may rebuild the agent under a new id, so the
+     tick reads this file instead of trusting recall.
 4. **Delete on terminal.** The tick that observes the terminal state deletes
-   the heartbeat (id from disk) as its last action before stopping.
+   the heartbeat (id from disk) as its last action before stopping. For a
+   watchdog, terminal means **no outstanding children left** — not the first
+   child finishing.
 5. **Write a per-tick state line.** Each healthy tick appends one line to a
    `.aris/runs/<run_id>.monitor.jsonl` — the tick log is the heartbeat's own
    liveness evidence AND the record of machine-checkable facts (suspected
    NaN/divergence markers are recorded here as facts, never judged).
 
-Who arms it: the **launching agent itself** (create_heartbeat is
-self-target-only), as its last action before ending the turn —
-`/run-experiment` Step 5.5 per job, `/experiment-queue` Step 3f per queue.
+Who arms it: the **agent itself** (create_heartbeat is self-target-only). For
+the driver, that is the launching agent as its last action before ending the
+turn — `/run-experiment` Step 5.5 per job, `/experiment-queue` Step 3f per
+queue. For the watchdog, every dispatching agent at every level.
 
 ## Stall detection & forced structural pivot
 
@@ -330,23 +384,26 @@ The heartbeat's stall-detection responsibility uses the
 
 1. The heartbeat checks child agent status via `get_agent_status` only
    when a child's `notifyOnFinish` notification has **not arrived within
-   the expected window** (configurable via `max_phase_idle` in CLAUDE.md
-   `## ARIS Paseo`).
+   the expected window** (`max_phase_idle` in CLAUDE.md `## ARIS Paseo`).
+   For a dispatch watchdog the tick interval **is** that window: keep
+   `dispatch_heartbeat_cron` equal to `max_phase_idle` (defaults: `*/30` and
+   `1800`), so a tick landing at all means the window has expired. Ticking
+   more often than `max_phase_idle` just burns turns finding "not idle long
+   enough yet."
 2. It does NOT poll on a fixed sub-interval — it relies on the push
    notification as the primary signal. If no finish notification has
    arrived by the time `max_phase_idle` expires, the heartbeat
    investigates.
 3. When checking an agent that appears idle, it follows the decision
    matrix in [`paseo-subagent-dispatch.md`](paseo-subagent-dispatch.md)
-   §"Idle agent supervision":
-   - Child waiting for its own sub-agent → do nothing.
-   - Child stalled with no sub-agents → report BLOCKED and stop the
-     supervision branch. Do not send a continuation prompt or do the
-     child's work through the heartbeat.
-   - Child errored → report BLOCKED.
-4. **The heartbeat never does the child's work.** If a child is stalled,
-   the heartbeat reports BLOCKED and escalates; it never continues or
-   implements the stalled task itself.
+   §"Idle agent supervision" — that matrix is the single owner of the
+   per-state action; do not re-derive it here. The heartbeat adds no policy
+   of its own, and its writes stay inside the fence above.
+4. **The heartbeat never does the child's work.** Continuing a stalled child
+   is a prompt to that child. Implementing the child's task inside the tick,
+   or spawning a replacement to do it, is not — that is the child's owner's
+   decision, and if the matrix says the child is unrecoverable the tick
+   reports BLOCKED and escalates.
 
 ## Cross-references
 

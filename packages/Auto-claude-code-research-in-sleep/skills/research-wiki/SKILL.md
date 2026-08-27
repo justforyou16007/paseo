@@ -31,7 +31,7 @@ Inspired by [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6
 
 | Edge type       | From → To         | Meaning                       |
 | --------------- | ----------------- | ----------------------------- |
-| `extends`       | paper → paper     | Builds on prior work          |
+| `extends`       | paper\|claim → paper | Builds on prior work       |
 | `contradicts`   | paper → paper     | Disagrees with results/claims |
 | `addresses`     | idea\|claim → problem | Targets an open problem   |
 | `child_of`      | problem → problem | A sub-problem of a larger one |
@@ -40,6 +40,14 @@ Inspired by [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6
 | `supports`      | exp → claim\|idea | Experiment confirms claim     |
 | `invalidates`   | exp → claim\|idea | Experiment disproves claim    |
 | `supersedes`    | paper → paper     | Newer work replaces older     |
+| `uses`          | claim → paper     | Claim relies on this method   |
+| `depends_on`    | claim → claim     | Holds only if that claim holds |
+| `refutes`       | claim → claim     | Contradicts that claim        |
+
+The From → To column is enforced, not advisory: the helper rejects an edge
+whose endpoint kinds don't match and names the edge type that does fit. So
+`idea:x --inspired_by--> problem:y` fails with "for idea → problem use:
+addresses".
 
 Edges are stored in `graph/edges.jsonl` only. The `## Connections` section on each page is **auto-generated** from the graph — never hand-edit it.
 
@@ -363,6 +371,10 @@ for idea in all_generated_ideas (recommended + killed):
     # existing idea enriched by /result-to-claim). `outcome` ∈ {unknown, pending,
     # negative, mixed, positive} — the experiment verdict is set later by
     # /result-to-claim, never guessed at ideation.
+    # --based-on takes PAPER ids only (it becomes an inspired_by edge). A bare
+    # slug is read as paper:<slug>. Problems belong in --target-problems; pass
+    # one there and the helper redirects it with a warning. Any other kind is a
+    # hard error. When no paper inspired the idea, leave --based-on out.
 log "idea-creator wrote N ideas to wiki"
 ```
 

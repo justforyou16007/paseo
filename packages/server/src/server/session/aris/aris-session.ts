@@ -81,6 +81,15 @@ interface WikiData {
     status: "proposed" | "confirmed" | "rejected";
     confidence: number | null;
   }>;
+  problems: Array<{
+    id: string;
+    title: string;
+    content: string;
+    status: "open" | "solved" | "refuted" | "deferred";
+    severity: "high" | "medium" | "low";
+    parent: string | null;
+    tags: string[];
+  }>;
   edges: Array<{
     source: string;
     target: string;
@@ -211,6 +220,7 @@ export class ArisSession {
           ideas: wiki.ideas,
           experiments: wiki.experiments,
           claims: wiki.claims,
+          problems: wiki.problems,
           edges: wiki.edges,
           findings: wiki.findings,
         },
@@ -505,11 +515,12 @@ export class ArisSession {
   private async readWiki(cwd: string): Promise<WikiData> {
     const root = await this.resolveWorkspaceRoot(cwd);
 
-    const [papers, ideas, experiments, claims] = await Promise.all([
+    const [papers, ideas, experiments, claims, problems] = await Promise.all([
       this.readMarkdownDirectory(root, "research-wiki/papers"),
       this.readMarkdownDirectory(root, "research-wiki/ideas"),
       this.readMarkdownDirectory(root, "research-wiki/experiments"),
       this.readMarkdownDirectory(root, "research-wiki/claims"),
+      this.readMarkdownDirectory(root, "research-wiki/problems"),
     ]);
 
     const edges = await this.readEdges(root);
@@ -520,6 +531,7 @@ export class ArisSession {
       ideas: ideas.map((file) => this.toIdea(file)),
       experiments: experiments.map((file) => this.toExperiment(file)),
       claims: claims.map((file) => this.toClaim(file)),
+      problems: problems.map((file) => this.toProblem(file)),
       edges,
       findings,
     };
@@ -756,6 +768,19 @@ export class ArisSession {
     };
   }
 
+  private toProblem(file: ParsedMarkdownFile): WikiData["problems"][number] {
+    const { frontmatter, content } = file;
+    return {
+      id: file.id,
+      title: toString(frontmatter.title) ?? file.id,
+      content,
+      status: toProblemStatus(frontmatter.status),
+      severity: toProblemSeverity(frontmatter.severity),
+      parent: toStringOrNull(frontmatter.parent),
+      tags: toStringArray(frontmatter.tags),
+    };
+  }
+
   private async ensureWatcher(cwd: string, runId: string | undefined): Promise<void> {
     const key = runId ? `${cwd}:${runId}` : cwd;
     if (this.watchers.has(key)) {
@@ -951,6 +976,20 @@ function toClaimStatus(value: unknown): WikiData["claims"][number]["status"] {
     return value;
   }
   return "proposed";
+}
+
+function toProblemStatus(value: unknown): WikiData["problems"][number]["status"] {
+  if (value === "open" || value === "solved" || value === "refuted" || value === "deferred") {
+    return value;
+  }
+  return "open";
+}
+
+function toProblemSeverity(value: unknown): WikiData["problems"][number]["severity"] {
+  if (value === "high" || value === "medium" || value === "low") {
+    return value;
+  }
+  return "medium";
 }
 
 function extractMetricsFromMarkdown(content: string): ExperimentRunData["metrics"] {

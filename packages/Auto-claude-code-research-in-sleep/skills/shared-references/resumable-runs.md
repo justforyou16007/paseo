@@ -133,6 +133,17 @@ The `verdict_id` recorded at `accept` is either the paseo codex agent id or the
 verifier-report path and hash for deterministic phases. Resume treats the
 stored value as an opaque handle and checks live agents with `list_agents`.
 
+**Reclaim the dead agent's watchdog by archiving it.** A resuming agent comes
+back with a **new** agent id, and `delete_heartbeat` is creator-only — it
+cannot delete the watchdog the dead agent armed on itself. Do not try:
+`archive_agent` the dead agent instead. Paseo then fails that schedule's next
+tick with a target-gone error and completes the schedule itself, so nothing is
+orphaned. The resuming agent arms its own watchdog and writes a fresh
+`handles/dispatch-watch.<new_agent_id>.json`; the stale handle file from the
+dead agent can be deleted with it. See
+[`external-cadence.md`](external-cadence.md) §"Paseo heartbeat bounds
+convention".
+
 ## Cross-references
 
 - `acceptance-gate.md` — the source rule (`done` = execution-completeness, safe

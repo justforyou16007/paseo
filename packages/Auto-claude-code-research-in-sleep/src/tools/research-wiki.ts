@@ -402,6 +402,59 @@ const VALID_EDGE_TYPES = new Set([
   "uses",
 ]);
 
+// Which node kinds each edge type may connect — the semantics documented in
+// the research-wiki SKILL table, enforced here so a wrong pairing cannot reach
+// `edges.jsonl`. An edge type absent from this map is written without endpoint
+// checks (that includes legacy types such as `addresses_gap`).
+const EDGE_ENDPOINT_KINDS: Record<string, { from: string[]; to: string[] }> = {
+  extends: { from: ["paper", "claim"], to: ["paper"] },
+  contradicts: { from: ["paper"], to: ["paper"] },
+  supersedes: { from: ["paper"], to: ["paper"] },
+  addresses: { from: ["idea", "claim"], to: ["problem"] },
+  child_of: { from: ["problem"], to: ["problem"] },
+  inspired_by: { from: ["idea"], to: ["paper"] },
+  tested_by: { from: ["idea", "claim"], to: ["exp"] },
+  supports: { from: ["exp"], to: ["claim", "idea"] },
+  invalidates: { from: ["exp"], to: ["claim", "idea"] },
+  uses: { from: ["claim"], to: ["paper"] },
+  depends_on: { from: ["claim"], to: ["claim"] },
+  refutes: { from: ["claim"], to: ["claim"] },
+};
+
+function nodeKindOf(nodeId: string): string {
+  const idx = nodeId.indexOf(":");
+  return idx > 0 ? nodeId.slice(0, idx) : "";
+}
+
+// Edge types that would accept this exact pair of kinds, so the error can name
+// the edge the caller most likely meant.
+function edgeTypesForKinds(fromKind: string, toKind: string): string[] {
+  return Object.entries(EDGE_ENDPOINT_KINDS)
+    .filter(([, spec]) => spec.from.includes(fromKind) && spec.to.includes(toKind))
+    .map(([type]) => type);
+}
+
+function assertEdgeEndpointKinds(fromId: string, toId: string, edgeType: string): void {
+  const spec = EDGE_ENDPOINT_KINDS[edgeType];
+  if (!spec) return;
+  const fromKind = nodeKindOf(fromId);
+  const toKind = nodeKindOf(toId);
+  const fromOk = spec.from.includes(fromKind);
+  const toOk = spec.to.includes(toKind);
+  if (fromOk && toOk) return;
+
+  const expected = `${spec.from.join("|")} --${edgeType}--> ${spec.to.join("|")}`;
+  const got = `${fromKind || "?"} --${edgeType}--> ${toKind || "?"}`;
+  const suggestions = edgeTypesForKinds(fromKind, toKind);
+  const hint =
+    suggestions.length > 0
+      ? ` For ${fromKind} → ${toKind} use: ${suggestions.join(", ")}.`
+      : ` No edge type connects ${fromKind || "?"} → ${toKind || "?"}.`;
+  throw new Error(
+    `add_edge: '${edgeType}' connects ${expected}, got ${got} ` + `(${fromId} -> ${toId}).${hint}`,
+  );
+}
+
 function loadEdges(wikiRoot: string): Array<Record<string, string>> {
   const edgesPath = path.join(wikiRoot, "graph", "edges.jsonl");
   const edges: Array<Record<string, string>> = [];
@@ -450,6 +503,7 @@ function addEdge(
       `Warning: unknown edge type '${edgeType}'. Valid: ${[...VALID_EDGE_TYPES].join(", ")}`,
     );
   }
+  assertEdgeEndpointKinds(fromId, toId, edgeType);
 
   const edgesPath = path.join(wikiRoot, "graph", "edges.jsonl");
 
@@ -1278,6 +1332,43 @@ function renderIdeaPage(
   return lines.join("\n") + "\n";
 }
 
+function dedupeIds(ids: string[]): string[] {
+  return [...new Set(ids)];
+}
+
+// `--based-on` records the papers an idea came from, so a bare slug means a
+// paper. When the wiki has no papers yet, agents reach for the problem id they
+// do have — but "this idea targets that problem" is an `addresses` edge, not
+// `inspired_by`. Redirect problems into `--target-problems` instead of writing
+// `idea --inspired_by--> problem`, and reject any other kind outright.
+function splitIdeaBasedOn(
+  values: string[],
+  ideaSlug: string,
+): { papers: string[]; problems: string[] } {
+  const papers: string[] = [];
+  const problems: string[] = [];
+  for (const raw of values) {
+    const nodeId = normalizeNodeId(raw, "paper:");
+    if (!nodeId) continue;
+    const kind = nodeKindOf(nodeId);
+    if (kind === "paper") {
+      papers.push(nodeId);
+    } else if (kind === "problem") {
+      problems.push(nodeId);
+      console.error(
+        `Warning: idea ${ideaSlug}: --based-on '${nodeId}' is a problem, not a paper; ` +
+          `recorded as --target-problems (addresses edge) instead of inspired_by.`,
+      );
+    } else {
+      throw new Error(
+        `upsert_idea: --based-on takes paper ids, got '${nodeId}'. ` +
+          `Cite papers here; use --target-problems for problems, and add_edge for anything else.`,
+      );
+    }
+  }
+  return { papers: dedupeIds(papers), problems: dedupeIds(problems) };
+}
+
 function upsertIdea(
   wikiRoot: string,
   slug: string,
@@ -1359,10 +1450,12 @@ function upsertIdea(
     }
   }
 
-  const basedOnIds = (opts.basedOn ?? []).map((t) => normalizeNodeId(t, "paper:")).filter(Boolean);
-  const targetProblemIds = (opts.targetProblems ?? [])
-    .map((t) => normalizeNodeId(t, "problem:"))
-    .filter(Boolean);
+  const basedOn = splitIdeaBasedOn(opts.basedOn ?? [], finalSlug);
+  const basedOnIds = basedOn.papers;
+  const targetProblemIds = dedupeIds([
+    ...(opts.targetProblems ?? []).map((t) => normalizeNodeId(t, "problem:")).filter(Boolean),
+    ...basedOn.problems,
+  ]);
 
   const rendered = renderIdeaPage(
     finalSlug,
@@ -2154,7 +2247,12 @@ program
   .option("--thesis <text>", "Core hypothesis / direction (body)", "")
   .option("--risks <text>", "Novelty / feasibility risks (body)", "")
   .option("--tags <list>", "Comma-separated tag list", "")
-  .option("--based-on <list>", "Comma-separated paper node_ids/slugs", "")
+  .option(
+    "--based-on <list>",
+    "Comma-separated paper node_ids/slugs the idea came from (inspired_by edges; " +
+      "papers only — problems go to --target-problems)",
+    "",
+  )
   .option(
     "--target-problems <list>",
     "Comma-separated problem node_ids/slugs this idea addresses",

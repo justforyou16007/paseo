@@ -88,7 +88,14 @@ function isArisArtifactStageId(value: unknown): value is (typeof ARIS_ARTIFACT_S
   );
 }
 
-const ARIS_WIKI_ENTITY_TYPES = ["papers", "ideas", "experiments", "claims", "gap"] as const;
+const ARIS_WIKI_ENTITY_TYPES = [
+  "papers",
+  "ideas",
+  "experiments",
+  "claims",
+  "problems",
+  "gap",
+] as const;
 
 function isArisWikiEntityType(value: unknown): value is (typeof ARIS_WIKI_ENTITY_TYPES)[number] {
   return typeof value === "string" && (ARIS_WIKI_ENTITY_TYPES as readonly string[]).includes(value);
