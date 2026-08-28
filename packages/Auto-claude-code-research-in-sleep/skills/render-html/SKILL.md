@@ -288,9 +288,17 @@ Verdict rules:
 2. Save the raw codex trace to `.aris/traces/render-html/<YYYY-MM-DD>_run<NN>/review.{txt,json}` per `shared-references/review-tracing.md`.
 3. Print a one-line summary to the user: `verdict, N blocking, N warnings, trace: <path>`.
 
+**Sidecar `verdict` values are `PASS | WARN | FAIL | ERROR | BLOCKED`.** The
+reviewer emits only the first four - `BLOCKED` is written by this skill when no
+review verdict exists to write, and it never comes back from codex. Consumers
+must treat `BLOCKED` as "not reviewed", which is not the same as `FAIL`
+("reviewed and rejected").
+
 **If `verdict == FAIL`**: the HTML is **NOT** a delivered review-passed view. Tell the user the blocking issues, point them at the source (fix MD or template, not the HTML), and re-render. Do not silently overwrite or mark as complete.
 
-**If `verdict == WARN`**: mark the render `BLOCKED` and do not deliver it as a completed reviewed artifact.
+**If `verdict == WARN`**: do not deliver the render as a completed reviewed artifact. Keep the reviewer's `WARN` in the sidecar - do not overwrite it with `BLOCKED`; `BLOCKED` is reserved for "no review happened".
+
+**If Paseo codex sub-agent is not available** (e.g., user runs `/render-html` on a setup where Paseo MCP isn't wired): emit `verdict: BLOCKED` to the sidecar and stop. Do not deliver an HTML file as if it passed review. The user must rerun with Paseo MCP available or explicitly pass `--no-review` for a non-reviewed structural conversion.
 
 **If Paseo codex sub-agent is not available** (e.g., user runs `/render-html` on a setup where Paseo MCP isn't wired): emit `verdict: BLOCKED` to the sidecar and stop. Do not deliver an HTML file as if it passed review. The user must rerun with Paseo MCP available or explicitly pass `--no-review` for a non-reviewed structural conversion.
 

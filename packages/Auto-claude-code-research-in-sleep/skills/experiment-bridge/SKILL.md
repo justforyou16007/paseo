@@ -122,6 +122,21 @@ worker.
 ordered `experiments[].slug` list. The orchestrator uses the bounded
 `experiments` records for research-wiki writes and never reads result files.
 
+**Two different verdicts live in this receipt. Do not mix them up.**
+
+| Field | Allowed values | Answers |
+|---|---|---|
+| `summary.analysis_verdict` | `pass` / `warn` / `user_override` | Did the analyzer's cross-model verifier accept the analysis? Copied verbatim from the internal analyze-results receipt. |
+| `experiments[].verdict` | `yes` / `partial` / `no` | Did this experiment support the idea it tested? Judged here, from the experiment's own outcome. |
+
+`experiments[].confidence` is `high` / `medium` / `low`.
+
+Both `experiments[]` enums are the research-wiki experiment vocabulary - the
+orchestrator feeds these records straight into `add_experiment --verdict
+--confidence`, which rejects anything else. `dashboard-merge.js` also rejects
+the receipt outright, so an analyzer-style value here fails the whole
+iteration.
+
 On failure, write receipt with `"status": "failed"` and structured `error` object
 per `worker-manifest.md`. Append system errors to `$WORKER_DIR/progress_error.md`.
 
@@ -492,8 +507,12 @@ Require `status=done`, matching run/iteration, an existing
 The analyzer must use those manifest-bound tracker/results paths; reject an
 analysis that substituted project-root `results/`, `logs/`, or stale
 `refine-logs/` files.
-Propagate the analyzer's metric current/delta/significance and verdict into the
-experiment-bridge receipt. Do not apply the nested receipt to the dashboard;
+Propagate the analyzer's metric current/delta/significance into
+`dashboard_patch`, and the analyzer's verdict into `summary.analysis_verdict`
+verbatim (`pass` / `warn` / `user_override`). That verdict does NOT belong in
+`experiments[].verdict` - the two fields answer different questions and use
+different vocabularies. See the receipt schema above.
+Do not apply the nested receipt to the dashboard;
 only the final experiment-bridge receipt crosses the worker boundary. A missing
 or failed analyzer is a failed experiment-bridge receipt, never a warning or a
 substitution with raw rows.

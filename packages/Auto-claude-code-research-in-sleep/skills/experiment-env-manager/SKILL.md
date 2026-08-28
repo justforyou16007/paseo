@@ -715,15 +715,17 @@ env-audit writes `complete`.
    # Create temp file adjacent to env.json (same filesystem = atomic mv)
    tmp="$SKILL_DIR/env.json.tmp.$$"
    jq --arg v "$VERDICT" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-     '.status = "complete" | .audit = { "verdict": $v, "audited_at": $t }' \
+     '.status = "complete" | .audit = { "verdict": $v, "audited_at": $t, "override": false }' \
      "$SKILL_DIR/env.json" > "$tmp" && mv "$tmp" "$SKILL_DIR/env.json"
    ```
 
-   When the verdict was "user_override" (forced deploy), write a distinct
-   status so downstream consumers can distinguish:
+   On a forced deploy (user overrode a failing audit), set `override` instead of
+   overwriting `verdict`. `verdict` always answers "what did the audit find" -
+   which is what a forced deploy needs to stay visible - and `override` answers
+   "did the user ship it anyway":
    ```bash
-   jq --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-     '.status = "complete" | .audit = { "verdict": "user_override", "audited_at": $t }' \
+   jq --arg v "$VERDICT" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+     '.status = "complete" | .audit = { "verdict": $v, "audited_at": $t, "override": true }' \
      "$SKILL_DIR/env.json" > "$tmp" && mv "$tmp" "$SKILL_DIR/env.json"
    ```
 
@@ -744,6 +746,10 @@ env-audit writes `complete`.
      "completed_at": "<ISO-8601>"
    }
    ```
+
+   `audit_verdict` is the audit's own verdict, lowercased. It is never
+   `user_override` - a forced deploy is `result: "user_override"` with
+   `audit_verdict: "fail"`, which keeps both facts readable.
 
 3. Update `CLAUDE.md` `## Experiment Skill` section (if present) with the
    skill directory path and audit status.
@@ -1021,7 +1027,7 @@ VERDICT=$(jq -r '.overall_verdict' "$AUDIT_JSON" | tr 'A-Z' 'a-z')
 SKILL_DIR=".claude/skills/run-${PROJECT}-experiment"
 tmp="$SKILL_DIR/env.json.tmp.$$"
 jq --arg v "$VERDICT" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  '.status = "complete" | .audit = { "verdict": $v, "audited_at": $t }' \
+  '.status = "complete" | .audit = { "verdict": $v, "audited_at": $t, "override": false }' \
   "$SKILL_DIR/env.json" > "$tmp" && mv "$tmp" "$SKILL_DIR/env.json"
 ```
 
@@ -1166,7 +1172,7 @@ Run the same Phase 6 finalization as Mode A:
 SKILL_DIR=".claude/skills/run-${PROJECT}-experiment"
 tmp="$SKILL_DIR/env.json.tmp.$$"
 jq --arg v "$VERDICT" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  '.status = "complete" | .audit = { "verdict": $v, "audited_at": $t }' \
+  '.status = "complete" | .audit = { "verdict": $v, "audited_at": $t, "override": false }' \
   "$SKILL_DIR/env.json" > "$tmp" && mv "$tmp" "$SKILL_DIR/env.json"
 ```
 

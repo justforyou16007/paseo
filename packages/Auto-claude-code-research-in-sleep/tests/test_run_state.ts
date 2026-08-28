@@ -1980,6 +1980,79 @@ test("dashboard-merge: final review metric replaces the bridge metric for the sa
   } finally { cleanup(d); }
 });
 
+// ============================================================================
+// experiment-bridge — the two verdicts in one receipt must not be conflated
+// ============================================================================
+
+test("dashboard-merge: an analyzer verdict in experiments[].verdict is rejected", () => {
+  const d = tmpDir();
+  try {
+    writeDash(d, "run1", makeDashboard({ current_phase: "experiment-bridge" }));
+
+    // `pass` is the analyze-results vocabulary (pass|warn|user_override). It
+    // belongs in summary.analysis_verdict. experiments[].verdict is the
+    // research-wiki vocabulary (yes|partial|no) and must reject it outright,
+    // rather than let a foreign word reach add_experiment.
+    const receipt = writeWorkerReceipt(d, "run1", "1-experiment-bridge", {
+      worker: "experiment-bridge",
+      primary_output: "analysis/EXPERIMENT_RESULTS.md",
+      summary: { experiments_run: 1, analysis_verdict: "pass" },
+      dashboard_patch: {
+        "metric.current": 0.71,
+        experiment_ids: ["iter-1-main"],
+      },
+      experiments: [{
+        slug: "iter-1-main",
+        title: "Iteration 1 main run",
+        idea: "idea-1",
+        verdict: "pass",
+        confidence: "medium",
+        metrics: "F1=0.71",
+        reasoning: "Analyzer verdict copied into the wrong field.",
+        provenance: ".aris/runs/run1/workers/1-experiment-bridge/outputs/analysis/EXPERIMENT_RESULTS.md",
+        tags: ["iteration-1"],
+      }],
+    });
+
+    const dashPath = path.join(d, ".aris", "runs", "run1", "dashboard.json");
+    const before = fs.readFileSync(dashPath, "utf-8");
+
+    const r = dashMergeCli("apply", "--root", d, "--run-id", "run1", "--receipt", receipt);
+    assert.notEqual(r.exitCode, 0, "an analyzer-style verdict must not merge");
+    assert.ok(r.stderr.includes("verdict is invalid"), r.stderr);
+
+    assert.equal(fs.readFileSync(dashPath, "utf-8"), before,
+      "a rejected receipt must leave the dashboard untouched");
+  } finally { cleanup(d); }
+});
+
+test("contract: experiment-bridge documents both verdict vocabularies separately", () => {
+  const eb = fs.readFileSync(path.resolve("skills/experiment-bridge/SKILL.md"), "utf-8");
+  const protocol = eb.slice(eb.indexOf("## Manifest Protocol"), eb.indexOf("## Workflow"));
+
+  // The receipt carries two fields named "verdict"-ish. If the skill only shows
+  // one by example, an agent fills the wrong one from the analyzer's receipt.
+  for (const value of ["`yes`", "`partial`", "`no`"]) {
+    assert.ok(protocol.includes(value),
+      `experiment-bridge must state ${value} as an experiments[].verdict value`);
+  }
+  for (const value of ["`high`", "`medium`", "`low`"]) {
+    assert.ok(protocol.includes(value),
+      `experiment-bridge must state ${value} as an experiments[].confidence value`);
+  }
+  assert.ok(protocol.includes("summary.analysis_verdict"),
+    "experiment-bridge must name the field the analyzer's verdict goes into");
+
+  // The propagation instruction must name its destination field. "Propagate the
+  // analyzer's verdict into the receipt" is what sent `pass` into experiments[].
+  const analyzer = eb.slice(eb.indexOf("Propagate the analyzer"));
+  const sentence = analyzer.slice(0, analyzer.indexOf("\n\n")).replace(/\s+/g, " ");
+  assert.ok(sentence.includes("summary.analysis_verdict"),
+    "the propagation step must name summary.analysis_verdict as the destination");
+  assert.ok(sentence.includes("experiments[].verdict"),
+    "the propagation step must say the analyzer verdict does not go into experiments[].verdict");
+});
+
 test("dashboard-merge: an applied receipt remains idempotent after the phase advances", () => {
   const d = tmpDir();
   try {
