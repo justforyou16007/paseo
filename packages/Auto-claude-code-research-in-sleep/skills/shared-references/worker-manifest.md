@@ -63,15 +63,31 @@ Written by the orchestrator before dispatching the worker.
   files (open problem ids, metric target, reference knowledge). Keep this bounded.
 - **`output_dir`** — where the worker MUST write all its output files
 
+The manifest carries no field for the worker directory, because the worker
+already knows it: it is the directory holding the manifest itself. Derive it,
+never guess it — `WORKER_DIR=$(dirname "$MANIFEST_PATH")`.
+
 ### Worker behavior on startup
 
 1. Read `input-manifest.json` from its working directory (path passed in prompt)
 2. Read files listed in `inputs` as needed
 3. Use `context` values for scalar parameters
 4. Write ALL output artifacts to `output_dir`
-5. Write `receipt.json` as the last action
+5. Write `receipt.json` as the last action, into the **worker directory** —
+   `$(dirname "$MANIFEST_PATH")/receipt.json`, beside `input-manifest.json`
 6. On any system error during execution: append one `LEVEL | location | reason`
    line to `progress_error.md` in the worker directory
+
+**The receipt is not an output artifact.** Rule 4 sends artifacts to
+`output_dir`; the receipt is the exception, and it is the one file the
+orchestrator actually looks for. A receipt written to
+`output_dir/receipt.json` is invisible to the orchestrator, which polls
+`workers/<iter>-<phase>/receipt.json` only — the phase then reads as "child
+finished without a receipt" and the whole iteration stalls. Pointing the
+merger at the misplaced file does not rescue it either: `dashboard-merge.js`
+verifies that a receipt has a sibling `input-manifest.json` and rejects it
+otherwise, so `outputs/receipt.json` fails ownership validation by
+construction.
 
 ## `receipt.json` Schema
 

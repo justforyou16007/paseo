@@ -278,12 +278,15 @@ Run context (this run, do not re-derive):
 
 Operating rules (non-negotiable):
   1. Resolve every helper via integration-contract.md §2 (.aris/dist/tools → dist/tools (see integration-contract.md §2)). Never hardcode a path.
-  2. Write every artifact under the `output_dir` from the input manifest. Do NOT write elsewhere.
+  2. Write every artifact under the `output_dir` from the input manifest. Do NOT write elsewhere. The receipt is the one exception — see below.
   3. When you need the GPT-5.5 reviewer, spawn/continue a paseo codex sub-agent per paseo-reviewer-dispatch.md.
   4. Do NOT call run-state.js accept. You may `set done --artifact <path>`; acceptance is the orchestrator's job (acceptance-gate.md).
   5. On completion, write the receipt per worker-manifest.md and stop. Do not call accept, do not start the next phase.
 
-Receipt (write last to the worker directory's receipt.json — path from your input-manifest):
+Receipt (write last, to the worker directory — the directory that contains your
+input-manifest.json, i.e. `$(dirname <manifest path from your prompt>)/receipt.json`.
+NOT output_dir; the manifest holds no receipt path, so derive it from the
+manifest's own location):
   Per worker-manifest.md schema: { worker, iteration, status, error,
   primary_output (relative to output_dir), summary, dashboard_patch,
   completed_at, has_errors, error_count }
@@ -652,7 +655,8 @@ else:
     status = get_agent_status(child_id)
     if status == "idle":
         send_agent_prompt(child_id,
-            "Write the completion receipt.json and stop.")
+            "Write the completion receipt.json to your worker directory "
+            "(beside input-manifest.json, not in output_dir) and stop.")
         # end turn; the continuation turn's notification re-invokes the parent
 ```
 

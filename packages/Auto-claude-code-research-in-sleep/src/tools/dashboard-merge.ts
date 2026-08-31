@@ -16,7 +16,6 @@ interface Receipt {
   completed_at: string;
   has_errors: boolean;
   error_count: number;
-  experiments?: unknown;
 }
 
 interface WorkerRule {
@@ -211,8 +210,11 @@ function validateDashboard(raw: unknown, runId: string, dashboardPath: string): 
     fail(`dashboard run_id '${String(raw.run_id)}' does not match '${runId}'`);
   }
   if (!isNonEmptyString(raw.project)) fail("dashboard.project must be a non-empty string");
-  if (!["running", "finishing", "completed", "invalid"].includes(String(raw.status))) {
+  if (!["running", "finishing", "completed", "invalid", "failed"].includes(String(raw.status))) {
     fail(`dashboard.status '${String(raw.status)}' is invalid`);
+  }
+  if (raw.failure !== undefined && raw.failure !== null && !isObject(raw.failure)) {
+    fail("dashboard.failure must be an object or null");
   }
   if (!Number.isInteger(raw.iteration) || (raw.iteration as number) < 1) {
     fail("dashboard.iteration must be an integer >= 1");
@@ -419,45 +421,6 @@ function validateOwnership(
   }
 }
 
-function validateExperiments(receipt: Receipt): void {
-  if (!Array.isArray(receipt.experiments) || receipt.experiments.length === 0) {
-    fail("experiment-bridge receipt needs a non-empty experiments array");
-  }
-  const slugs: string[] = [];
-  for (const [index, value] of receipt.experiments.entries()) {
-    if (!isObject(value)) fail(`receipt.experiments[${index}] must be an object`);
-    if (!isNonEmptyString(value.slug) || !SLUG_PATTERN.test(value.slug)) {
-      fail(`receipt.experiments[${index}].slug is invalid`);
-    }
-    if (!isNonEmptyString(value.title)) fail(`receipt.experiments[${index}].title is required`);
-    if (value.verdict !== "yes" && value.verdict !== "partial" && value.verdict !== "no") {
-      fail(`receipt.experiments[${index}].verdict is invalid`);
-    }
-    if (
-      value.confidence !== "high" &&
-      value.confidence !== "medium" &&
-      value.confidence !== "low"
-    ) {
-      fail(`receipt.experiments[${index}].confidence is invalid`);
-    }
-    if (!(value.idea === "" || isNonEmptyString(value.idea))) {
-      fail(`receipt.experiments[${index}].idea must be a string`);
-    }
-    if (!isNonEmptyString(value.metrics) || typeof value.reasoning !== "string") {
-      fail(`receipt.experiments[${index}] needs metrics and reasoning`);
-    }
-    if (!isPlanPath(value.provenance) || !isStringArray(value.tags)) {
-      fail(`receipt.experiments[${index}] has invalid provenance or tags`);
-    }
-    slugs.push(value.slug);
-  }
-  if (new Set(slugs).size !== slugs.length) fail("receipt.experiments contains duplicate slugs");
-  const patchIds = receipt.dashboard_patch.experiment_ids;
-  if (!Array.isArray(patchIds) || JSON.stringify(patchIds) !== JSON.stringify(slugs)) {
-    fail("dashboard_patch.experiment_ids must exactly match receipt.experiments[].slug");
-  }
-}
-
 function validatePatch(receipt: Receipt, dashboard: JsonObject): void {
   const rule = WORKER_RULES[receipt.worker];
   for (const key of Object.keys(receipt.dashboard_patch)) {
@@ -479,10 +442,6 @@ function validatePatch(receipt: Receipt, dashboard: JsonObject): void {
   // Every cross-check below reads required keys, so it runs only once they are
   // all present — otherwise a missing key surfaces as a TypeError instead of the
   // message that names it.
-
-  if (receipt.worker === "experiment-bridge") {
-    validateExperiments(receipt);
-  }
 
   if (receipt.worker === "auto-review-loop") {
     const metric = dashboard.metric as JsonObject;
@@ -568,6 +527,22 @@ function apply(root: string, runId: string, receiptPath: string): void {
   validateOwnership(root, runId, receiptPath, receipt, dashboard);
 
   if (receipt.status === "failed") {
+    // A failed receipt is a terminal event, not a no-op. The resume path
+    // decides "stage completed" from dashboard state, so the failure must be
+    // recorded here - the only durable writer the orchestrator consults.
+    // Without this, a failed receipt leaves status=running and resume reads
+    // the file's mere existence as completion.
+    dashboard.status = "failed";
+    dashboard.failure = {
+      worker: receipt.worker,
+      iteration: receipt.iteration,
+      phase: dashboard.current_phase,
+      error: receipt.error,
+      failed_at: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+    };
+    appliedReceipts.push(normalizedReceipt);
+    dashboard.updated_at = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+    atomicWrite(dashboardPath, dashboard);
     console.log(JSON.stringify({ applied: false, reason: "failed-receipt" }));
     return;
   }

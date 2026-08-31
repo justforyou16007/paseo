@@ -1219,9 +1219,14 @@ test("dashboard-merge: failed receipt is not merged", () => {
     const out = JSON.parse(r.stdout.trim());
     assert.equal(out.applied, false);
     assert.equal(out.reason, "failed-receipt");
-    // applied_receipts must not record a failed receipt
+    // A failed receipt is not merged as a patch, but it IS recorded: the run
+    // flips to status=failed and the receipt joins applied_receipts so the
+    // failure record is idempotent.
     const updated = JSON.parse(fs.readFileSync(path.join(d, ".aris", "runs", "run1", "dashboard.json"), "utf-8"));
-    assert.equal((updated.applied_receipts as string[]).length, 0);
+    assert.equal(updated.status, "failed");
+    assert.equal((updated.applied_receipts as string[]).length, 1);
+    // the patch stays unapplied
+    assert.equal((updated.metric as { current: number }).current, 0.72);
   } finally { cleanup(d); }
 });
 
@@ -1918,17 +1923,6 @@ test("dashboard-merge: final review metric replaces the bridge metric for the sa
     });
     writeDash(d, "run1", dash);
 
-    const experiments = [{
-      slug: "iter-1-attempt",
-      title: "Improvement attempt",
-      idea: "idea-1",
-      verdict: "yes",
-      confidence: "high",
-      metrics: "F1=0.65",
-      reasoning: "Improved over the anchored baseline.",
-      provenance: ".aris/runs/run1/workers/1-experiment-bridge/outputs/analysis/EXPERIMENT_RESULTS.md",
-      tags: ["iteration-1"],
-    }];
     const baseReceipt = writeWorkerReceipt(d, "run1", "1-experiment-bridge", {
       worker: "experiment-bridge",
       primary_output: "analysis/EXPERIMENT_RESULTS.md",
@@ -1939,7 +1933,6 @@ test("dashboard-merge: final review metric replaces the bridge metric for the sa
         statistical_significance: false,
         experiment_ids: ["iter-1-attempt"],
       },
-      experiments,
     });
     dashMergeCli("apply", "--root", d, "--run-id", "run1", "--receipt", baseReceipt);
 
@@ -1984,73 +1977,138 @@ test("dashboard-merge: final review metric replaces the bridge metric for the sa
 // experiment-bridge — the two verdicts in one receipt must not be conflated
 // ============================================================================
 
-test("dashboard-merge: an analyzer verdict in experiments[].verdict is rejected", () => {
+test("dashboard-merge: a failed receipt records status=failed instead of vanishing", () => {
+  // The bug this guards: a failed receipt used to print {applied:false} and
+  // leave status=running. Resume decides "stage completed" from dashboard
+  // state, so the failure left no trace and the next stage started on top of
+  // the failed one.
   const d = tmpDir();
   try {
     writeDash(d, "run1", makeDashboard({ current_phase: "experiment-bridge" }));
-
-    // `pass` is the analyze-results vocabulary (pass|warn|user_override). It
-    // belongs in summary.analysis_verdict. experiments[].verdict is the
-    // research-wiki vocabulary (yes|partial|no) and must reject it outright,
-    // rather than let a foreign word reach add_experiment.
     const receipt = writeWorkerReceipt(d, "run1", "1-experiment-bridge", {
       worker: "experiment-bridge",
-      primary_output: "analysis/EXPERIMENT_RESULTS.md",
-      summary: { experiments_run: 1, analysis_verdict: "pass" },
-      dashboard_patch: {
-        "metric.current": 0.71,
-        experiment_ids: ["iter-1-main"],
-      },
-      experiments: [{
-        slug: "iter-1-main",
-        title: "Iteration 1 main run",
-        idea: "idea-1",
-        verdict: "pass",
-        confidence: "medium",
-        metrics: "F1=0.71",
-        reasoning: "Analyzer verdict copied into the wrong field.",
-        provenance: ".aris/runs/run1/workers/1-experiment-bridge/outputs/analysis/EXPERIMENT_RESULTS.md",
-        tags: ["iteration-1"],
-      }],
+      status: "failed",
+      primary_output: null,
+      error: { category: "code_error", message: "training diverged", recoverable: false },
+      summary: {},
+      dashboard_patch: {},
     });
-
     const dashPath = path.join(d, ".aris", "runs", "run1", "dashboard.json");
-    const before = fs.readFileSync(dashPath, "utf-8");
 
     const r = dashMergeCli("apply", "--root", d, "--run-id", "run1", "--receipt", receipt);
-    assert.notEqual(r.exitCode, 0, "an analyzer-style verdict must not merge");
-    assert.ok(r.stderr.includes("verdict is invalid"), r.stderr);
+    assert.equal(r.exitCode, 0, r.stderr);
+    assert.ok(r.stdout.includes("failed-receipt"), r.stdout);
 
+    const dash = JSON.parse(fs.readFileSync(dashPath, "utf-8"));
+    assert.equal(dash.status, "failed", "a failed receipt must set dashboard.status=failed");
+    assert.equal(dash.failure.worker, "experiment-bridge");
+    assert.equal(dash.failure.phase, "experiment-bridge");
+    assert.equal(dash.failure.error.message, "training diverged");
+    assert.equal(dash.current_phase, "experiment-bridge",
+      "a failed stage must not advance current_phase");
+    assert.equal((dash.metric as { current: number }).current, 0.72,
+      "no patch may be applied from a failed receipt");
+
+    // Re-applying the same receipt is a no-op - the failure record itself is
+    // covered by applied_receipts.
+    const before = fs.readFileSync(dashPath, "utf-8");
+    const r2 = dashMergeCli("apply", "--root", d, "--run-id", "run1", "--receipt", receipt);
+    assert.equal(r2.exitCode, 0, r2.stderr);
+    assert.ok(r2.stdout.includes("already-applied"), r2.stdout);
     assert.equal(fs.readFileSync(dashPath, "utf-8"), before,
-      "a rejected receipt must leave the dashboard untouched");
-  } finally { cleanup(d); }
+      "re-applying a failed receipt must not touch the dashboard");
+  } finally {
+    cleanup(d);
+  }
 });
 
-test("contract: experiment-bridge documents both verdict vocabularies separately", () => {
+test("contract: experiment-bridge carries no per-experiment verdict surface", () => {
+  // /result-to-claim is the sole writer of wiki experiment nodes and judges
+  // verdict/confidence itself. A per-experiment verdict in this receipt would
+  // duplicate that judgment with a different vocabulary, be validated
+  // against nobody's reading, and reject the whole receipt on a word the
+  // wiki never sees - which is exactly the bug that started this cleanup.
   const eb = fs.readFileSync(path.resolve("skills/experiment-bridge/SKILL.md"), "utf-8");
   const protocol = eb.slice(eb.indexOf("## Manifest Protocol"), eb.indexOf("## Workflow"));
 
-  // The receipt carries two fields named "verdict"-ish. If the skill only shows
-  // one by example, an agent fills the wrong one from the analyzer's receipt.
-  for (const value of ["`yes`", "`partial`", "`no`"]) {
-    assert.ok(protocol.includes(value),
-      `experiment-bridge must state ${value} as an experiments[].verdict value`);
-  }
-  for (const value of ["`high`", "`medium`", "`low`"]) {
-    assert.ok(protocol.includes(value),
-      `experiment-bridge must state ${value} as an experiments[].confidence value`);
-  }
+  assert.ok(!protocol.includes('"experiments"'),
+    "the receipt schema must not carry an experiments[] array");
+  assert.ok(!protocol.includes("add_experiment"),
+    "the skill must not claim to feed add_experiment - /result-to-claim owns that");
+
+  // The analyzer's verdict still needs its one named destination.
   assert.ok(protocol.includes("summary.analysis_verdict"),
     "experiment-bridge must name the field the analyzer's verdict goes into");
-
-  // The propagation instruction must name its destination field. "Propagate the
-  // analyzer's verdict into the receipt" is what sent `pass` into experiments[].
   const analyzer = eb.slice(eb.indexOf("Propagate the analyzer"));
   const sentence = analyzer.slice(0, analyzer.indexOf("\n\n")).replace(/\s+/g, " ");
   assert.ok(sentence.includes("summary.analysis_verdict"),
     "the propagation step must name summary.analysis_verdict as the destination");
-  assert.ok(sentence.includes("experiments[].verdict"),
-    "the propagation step must say the analyzer verdict does not go into experiments[].verdict");
+});
+
+test("contract: every receipt instruction names the directory it goes in", () => {
+  // The failure this guards: a worker told only "write receipt.json last",
+  // right after being told "write all artifacts to output_dir", puts the
+  // receipt in outputs/. The orchestrator polls the worker directory only, so
+  // the phase reads as "finished without a receipt" and the run stalls.
+  const skillFiles = fs
+    .readdirSync(path.resolve("skills"), { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => path.resolve("skills", e.name, "SKILL.md"))
+    .filter((p) => fs.existsSync(p));
+  assert.ok(skillFiles.length > 5, "expected to find the skill set");
+
+  const files = [
+    ...skillFiles,
+    path.resolve("skills/shared-references/worker-manifest.md"),
+    path.resolve("skills/shared-references/paseo-subagent-dispatch.md"),
+  ];
+  for (const file of files) {
+    const lines = fs.readFileSync(file, "utf-8").split("\n");
+    lines.forEach((line, i) => {
+      // Blockquotes in these docs summarise the protocol for the orchestrator
+      // ("workers ... write receipt.json"); they are not instructions a worker
+      // follows, so they have no directory to name.
+      if (line.trimStart().startsWith(">")) return;
+      if (!/write[^\n]*receipt\.json/i.test(line)) return;
+      // The instruction, plus the two lines after it, must resolve to a
+      // directory: the variable, or prose naming the worker directory.
+      const window = lines.slice(i, i + 3).join(" ");
+      const named =
+        window.includes("$WORKER_DIR/receipt.json") ||
+        /workers\/[^\s`]*\/receipt\.json/.test(window) ||
+        /worker directory/i.test(window) ||
+        /dirname/i.test(window) ||
+        /substitute the absolute path/i.test(window);
+      assert.ok(
+        named,
+        `${path.relative(process.cwd(), file)}:${i + 1} tells an agent to write ` +
+          `receipt.json without naming a directory: ${line.trim()}`,
+      );
+    });
+  }
+});
+
+test("contract: the summary worker is told the receipt does not go in output_dir", () => {
+  // summary is dispatched as a raw inline prompt, not `/<skill> - manifest:`,
+  // so it never inherits any skill's startup boilerplate. output_dir is the
+  // only path the manifest hands it, which is exactly the wrong one.
+  const loop = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
+  const start = loop.indexOf("Dispatch: summary sub-agent");
+  assert.ok(start > 0, "summary dispatch block not found");
+  const prompt = loop.slice(start, loop.indexOf("```", loop.indexOf("```", start) + 3));
+
+  assert.ok(
+    /receipt\.json[^\n]*NOT into output_dir/i.test(prompt),
+    "the summary prompt must say the receipt does not go into output_dir",
+  );
+  assert.ok(
+    /worker directory/i.test(prompt),
+    "the summary prompt must name the worker directory as the receipt's home",
+  );
+  assert.ok(
+    /input-manifest\.json/.test(prompt),
+    "the summary prompt must anchor the worker directory to input-manifest.json",
+  );
 });
 
 test("dashboard-merge: an applied receipt remains idempotent after the phase advances", () => {
@@ -2070,17 +2128,6 @@ test("dashboard-merge: an applied receipt remains idempotent after the phase adv
         "metric.current": 0.65,
         experiment_ids: ["iter-1-attempt"],
       },
-      experiments: [{
-        slug: "iter-1-attempt",
-        title: "Improvement attempt",
-        idea: "idea-1",
-        verdict: "yes",
-        confidence: "high",
-        metrics: "F1=0.65",
-        reasoning: "Ran.",
-        provenance: ".aris/runs/run1/workers/1-experiment-bridge/outputs/analysis/EXPERIMENT_RESULTS.md",
-        tags: ["iteration-1"],
-      }],
     });
     const first = dashMergeCli("apply", "--root", d, "--run-id", "run1", "--receipt", receiptPath);
     assert.equal(first.exitCode, 0, first.stderr);
@@ -2138,6 +2185,38 @@ test("contract: auto-research-loop invalid_metric uses failed status, not accept
 
   // Code block must exit with error
   assert.ok(codeBlock.includes("exit 1"), "invalid_metric must exit with non-zero");
+});
+
+test("contract: auto-research-loop treats worker failure as a first-class status", () => {
+  const arl = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
+
+  // status=failed must exist as a vocabulary value, distinct from invalid
+  // (broken metric config) - conflating them loses the failure's cause.
+  const statusSection = arl.slice(arl.indexOf("**Status values:**"), arl.indexOf("On resume,"));
+  assert.ok(statusSection.includes("`failed`"),
+    "dashboard status vocabulary must include failed (worker failure)");
+
+  // The resume path must exit on a failed run before dispatching anything.
+  const resumeSection = arl.slice(
+    arl.indexOf("# ---- RESUME PATH ----"),
+    arl.indexOf("# ---- FRESH START PATH ----"),
+  );
+  assert.ok(
+    resumeSection.includes('[ "$STATUS" = "failed" ]') && resumeSection.includes("dashboard.failure"),
+    "a failed run must exit on resume instead of re-entering its loop",
+  );
+
+  // The resume decision table must not treat a receipt's existence as
+  // completion - its status decides.
+  const receiptRule = arl.slice(arl.indexOf("checks for existing"), arl.indexOf("- No receipt"));
+  assert.ok(receiptRule.includes("`status=done`") && receiptRule.includes("`status=failed`"),
+    "the receipt-exists rule must branch on the receipt's status");
+
+  // The dispatch cycle must merge before judging, so the failure is recorded
+  // by the merger rather than silently dropped by the orchestrator.
+  const dispatch = arl.slice(arl.indexOf("## Dispatch Pattern"), arl.indexOf("## Run Directory"));
+  assert.ok(dispatch.includes("ALWAYS merge"),
+    "the dispatch cycle must merge failed receipts too, not branch around the merge");
 });
 
 test("contract: auto-research-loop dashboard status vocabulary includes invalid", () => {

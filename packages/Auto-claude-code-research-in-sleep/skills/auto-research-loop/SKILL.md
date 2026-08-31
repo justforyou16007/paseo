@@ -89,14 +89,24 @@ For the full manifest and receipt JSON schemas, see `shared-references/worker-ma
 5. Wait for the completion notification - end the turn and let the child's
    finish notification re-invoke this agent (never poll).
 
-6. Read $WORKER_DIR/receipt.json:
-   - If status=failed -> record the failed receipt and stop the iteration. Do not retry the worker here; experiment failures use the experiment repair contract inside `/experiment-bridge`.
-   - Merge atomically and idempotently:
-     node "$DASH_MERGE" apply --root "$ROOT" --run-id "$RUN_ID" \
-          --receipt "$WORKER_DIR/receipt.json"
-     (skip-once semantics via dashboard.applied_receipts is built in; the
-     patch merge and the applied_receipts record land in ONE atomic write)
-   - Update dashboard: current_phase = "<phase-name>", updated_at = now.
+6. Read $WORKER_DIR/receipt.json, then ALWAYS merge it - both statuses, no branch
+   around the merge call:
+          node "$DASH_MERGE" apply --root "$ROOT" --run-id "$RUN_ID" \
+               --receipt "$WORKER_DIR/receipt.json"
+   The merger is idempotent (skip-once semantics via dashboard.applied_receipts;
+   the patch merge and the applied_receipts record land in ONE atomic write) and
+   handles both receipt statuses itself:
+   - status=done -> the dashboard patch is applied
+   - status=failed -> the merger records the failure into the dashboard
+     (status="failed" + a `failure` object with worker/phase/error). This is
+     the ONLY place a worker failure becomes durable - the orchestrator never
+     writes failure state itself.
+   After the merge returns, check what it recorded:
+   - If dashboard.status = "failed" -> stop the iteration HERE. Do not update
+     current_phase, do not advance to the next stage. Do not retry the worker;
+     experiment failures use the experiment repair contract inside `/experiment-bridge`.
+     A resume of this run reports the recorded failure and exits.
+   - Otherwise -> update dashboard: current_phase = "<phase-name>", updated_at = now.
 
 Error tracking: dashboard-merge.js applies receipt.has_errors /
 receipt.error_count to dashboard.system_errors automatically. The orchestrator
@@ -138,7 +148,7 @@ The dashboard tracks intra-iteration state for crash-safe resume:
 |---|---|
 | `iteration` | Current iteration number (1-based) |
 | `current_phase` | Last completed or in-progress phase within the iteration (`idea-discovery` -> `experiment-bridge` -> `auto-review-loop`) |
-| `status` | `running` / `finishing` / `completed` / `invalid` |
+| `status` | `running` / `finishing` / `completed` / `invalid` / `failed` |
 | `stop_reason` | `null` while looping; one of `metric_met`, `budget_exhausted`, `patience_exhausted`, `invalid_metric` when the stop gate fires |
 | `config` | Immutable run inputs needed after restart: auto-write/render flags, patience |
 
@@ -147,10 +157,15 @@ The dashboard tracks intra-iteration state for crash-safe resume:
 - `finishing` - stop gate fired, summary/paper-writing in progress
 - `completed` - all terminal phases reached (success)
 - `invalid` - metric configuration is broken (invalid_metric); run cannot continue
+- `failed` - a worker wrote a `status:"failed"` receipt; `dashboard-merge.js`
+  recorded it (`dashboard.failure` holds worker/phase/error) and the run
+  stopped at that phase. `invalid` means the *metric config* is broken;
+  `failed` means the *work* broke. They are different diseases with the same
+  prognosis: report on resume, do not dispatch.
 
 On resume, `status=finishing` means: skip the loop, continue from summary.
-`status=invalid` reports the persisted metric error and exits without
-dispatching. Only `status=completed` means nothing to do.
+`status=invalid` or `status=failed` reports the persisted error and exits
+without dispatching. Only `status=completed` means nothing to do.
 
 ## Phase Diagram
 
@@ -349,6 +364,13 @@ if [ -n "$ARG_RESUME" ]; then
     if [ "$STATUS" = "invalid" ]; then
         INVALID_REASON=$(jq -r '.stop_reason // "invalid_metric"' "$DASHBOARD")
         echo "ERROR: run $RUN_ID cannot resume because its metric state is invalid ($INVALID_REASON)."
+        exit 1
+    fi
+
+    if [ "$STATUS" = "failed" ]; then
+        FAILED_PHASE=$(jq -r '.failure.phase // "unknown"' "$DASHBOARD")
+        FAILED_WORKER=$(jq -r '.failure.worker // "unknown"' "$DASHBOARD")
+        echo "ERROR: run $RUN_ID stopped at phase $FAILED_PHASE (worker $FAILED_WORKER) with a failed receipt. Inspect dashboard.failure and the worker directory; restart explicitly if you want to retry."
         exit 1
     fi
 
@@ -716,7 +738,7 @@ Dispatch: summary sub-agent via `mcp__paseo__create_agent` with prompt:
 ```
 Generate NARRATIVE_REPORT.md from the provided inputs. Required sections:
 metric_trajectory, stop_reason, iteration_log, open_problems, artifacts.
-Write to the output_dir specified in the manifest.
+Write it to the output_dir specified in the manifest.
 
 Then close the run's books on the research wiki, in this order:
 1. If manifest.context.stop_reason == "metric_met", close the run's root
@@ -731,8 +753,12 @@ Then close the run's books on the research wiki, in this order:
    Copy its .problems.open, .problems.closed and .problems.total verbatim
    into the receipt. Do not assemble these lists by hand.
 
-Write receipt.json last. The receipt must set worker="summary", run_id/iteration
-from the manifest, primary_output="NARRATIVE_REPORT.md",
+Write receipt.json last, NOT into output_dir. It goes in the worker directory:
+the directory that contains input-manifest.json, one level above output_dir.
+That is the only path the orchestrator polls, and dashboard-merge.js rejects
+any receipt without a sibling input-manifest.json. The receipt must set
+worker="summary", run_id/iteration from the manifest,
+primary_output="NARRATIVE_REPORT.md",
 dashboard_patch.summary_path to the run-relative report path, and
 dashboard_patch."problems.open" / "problems.closed" / "problems.total" from
 step 3.
@@ -839,15 +865,24 @@ STATUS=$(jq -r '.status' "$DASHBOARD")
 | `loop` | `finishing` | Skip loop, proceed to summary (stop gate already fired) |
 | `summary` | `finishing` | Resume summary |
 | `paper-writing` | `finishing` | Resume paper-writing |
+| any | `failed` | Report `dashboard.failure` and exit without dispatching |
+
+The `failed` row short-circuits every row above it: the resume code checks
+`status` before consulting `RESUME_OUTER`, because a worker in any phase -
+including summary and paper-writing - can write a failed receipt.
 
 Within the iteration loop, `current_phase` tells the orchestrator which stage
 was last started (`idea-discovery` -> `experiment-bridge` -> `auto-review-loop` ->
 `metric-gate`). The orchestrator checks for existing
 `$WORKERS_DIR/${ITERATION}-<phase>/receipt.json`:
-- Receipt exists -> stage completed; merge with
+- Receipt exists -> read its `status`, then merge with
   `dashboard-merge.js apply` (it skips receipts already in
   `dashboard.applied_receipts`, so a crash between merge and bookkeeping
-  cannot double-apply), then advance
+  cannot double-apply):
+  - `status=done` -> stage completed; advance
+  - `status=failed` -> the merge records `dashboard.status="failed"`; report
+    the failure and stop. The receipt's EXISTENCE is never evidence of
+    completion - only its `status` is.
 - No receipt -> re-dispatch the stage
 - `current_phase == "metric-gate"` -> no worker directory exists for this phase, and
   none is needed: the Stage 3 receipt is already merged (it is what moved

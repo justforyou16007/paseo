@@ -99,43 +99,21 @@ worker.
     "statistical_significance": false,
     "experiment_ids": ["iter-1-main"]
   },
-  "experiments": [
-    {
-      "slug": "iter-1-main",
-      "title": "Iteration 1 main run",
-      "idea": "<selected idea id>",
-      "verdict": "partial",
-      "confidence": "medium",
-      "metrics": "F1=0.71",
-      "reasoning": "Initial evidence collected; review may request fixes.",
-      "provenance": ".aris/runs/<run-id>/workers/1-experiment-bridge/outputs/analysis/EXPERIMENT_RESULTS.md",
-      "tags": ["iteration-1"]
-    }
-  ],
   "completed_at": "<ISO-8601>",
   "has_errors": false,
   "error_count": 0
 }
 ```
 
-`dashboard_patch.experiment_ids` must exactly equal the
-ordered `experiments[].slug` list. The orchestrator uses the bounded
-`experiments` records for research-wiki writes and never reads result files.
-
-**Two different verdicts live in this receipt. Do not mix them up.**
-
-| Field | Allowed values | Answers |
-|---|---|---|
-| `summary.analysis_verdict` | `pass` / `warn` / `user_override` | Did the analyzer's cross-model verifier accept the analysis? Copied verbatim from the internal analyze-results receipt. |
-| `experiments[].verdict` | `yes` / `partial` / `no` | Did this experiment support the idea it tested? Judged here, from the experiment's own outcome. |
-
-`experiments[].confidence` is `high` / `medium` / `low`.
-
-Both `experiments[]` enums are the research-wiki experiment vocabulary - the
-orchestrator feeds these records straight into `add_experiment --verdict
---confidence`, which rejects anything else. `dashboard-merge.js` also rejects
-the receipt outright, so an analyzer-style value here fails the whole
-iteration.
+`dashboard_patch.experiment_ids` lists the slugs of the experiments this
+worker actually ran, in run order. It is a record for the dashboard, nothing
+more: wiki experiment nodes are born in `/result-to-claim` (dispatched by
+`/auto-review-loop`), which judges verdict and confidence itself. This receipt
+carries NO per-experiment verdict, confidence, or wiki-bound fields - do not
+invent them, and do not copy the analyzer's verdict into the dashboard patch.
+The analyzer's verdict (`pass` / `warn` / `user_override`) goes into
+`summary.analysis_verdict` verbatim, per the propagation rule in the
+analyze-results dispatch below.
 
 On failure, write receipt with `"status": "failed"` and structured `error` object
 per `worker-manifest.md`. Append system errors to `$WORKER_DIR/progress_error.md`.
@@ -509,9 +487,8 @@ analysis that substituted project-root `results/`, `logs/`, or stale
 `refine-logs/` files.
 Propagate the analyzer's metric current/delta/significance into
 `dashboard_patch`, and the analyzer's verdict into `summary.analysis_verdict`
-verbatim (`pass` / `warn` / `user_override`). That verdict does NOT belong in
-`experiments[].verdict` - the two fields answer different questions and use
-different vocabularies. See the receipt schema above.
+verbatim (`pass` / `warn` / `user_override`) - the dashboard patch carries no
+verdict of any kind. See the receipt schema above.
 Do not apply the nested receipt to the dashboard;
 only the final experiment-bridge receipt crosses the worker boundary. A missing
 or failed analyzer is a failed experiment-bridge receipt, never a warning or a

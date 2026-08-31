@@ -290,9 +290,16 @@ Bundle contents (write to `idea-stage/claude_brainstorm_bundle.md`):
 
     Be creative but grounded. A great idea is one where the answer matters regardless of which way it goes.
 
-    When done, write `$WORKER_DIR/receipt.json` with:
+    When done, write `[substitute the absolute path of $WORKER_DIR/receipt.json
+    here when writing this bundle — the child has no shell and cannot expand a
+    variable]` with:
     { "phase": "idea-generation", "num_ideas": <int>, "summary": "<1-2 lines>" }
 ```
+
+Every `[...]` above is a fill-in: resolve it while writing the bundle. The
+receipt path especially — the child's only instruction is "read this bundle and
+follow it", so a literal `$WORKER_DIR` reaches it as meaningless text and it
+will invent a location you then cannot find.
 
 ### Phase 3: Mechanical consolidation + objective feasibility gate
 
