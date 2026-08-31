@@ -2,7 +2,7 @@
 import { ActivityIndicator, Text, View } from "react-native";
 import { Layers } from "lucide-react-native";
 import type { ArisWorkflowStage, ArisWorkflowStageId } from "@getpaseo/protocol/messages";
-import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
+import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
 import { usePaneContext } from "@/panels/pane-context";
 import { isWeb } from "@/constants/platform";
 import { useArisWorkflowStatus } from "@/aris/use-aris-workflow-status";
@@ -114,9 +114,7 @@ function ArisArtifactPanelContent({
   );
 }
 
-export const arisArtifactPanelRegistration: PanelRegistration<"aris-artifact"> = {
-  kind: "aris-artifact",
-  resourceKey: (target) => target.stageId,
+export const arisArtifactPanelRegistration = definePanel("aris-artifact", {
   component: ArisArtifactPanel,
   useDescriptor: useArisArtifactPanelDescriptor,
-};
+});

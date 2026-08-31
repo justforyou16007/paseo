@@ -3,7 +3,11 @@ import { arisPanelRegistration } from "@/panels/aris-panel";
 import { arisArtifactPanelRegistration } from "@/panels/aris-artifact-panel";
 import { arisWikiEntityPanelRegistration } from "@/panels/aris-wiki-entity-panel";
 import { browserPanelRegistration } from "@/desktop/browser/panel";
-import { commitDiffPanelRegistration, workingDiffPanelRegistration } from "@/panels/diff-panel";
+import {
+  changesTreePanelRegistration,
+  commitDiffPanelRegistration,
+  workingDiffPanelRegistration,
+} from "@/panels/diff-panel";
 import { draftPanelRegistration } from "@/panels/draft-panel";
 import { filePanelRegistration } from "@/panels/file-panel";
 import { filesPanelRegistration } from "@/panels/files-panel";
@@ -36,6 +40,7 @@ export function ensurePanelsRegistered(): void {
   registerPanel(pullRequestPanelRegistration);
   registerPanel(commitDiffPanelRegistration);
   registerPanel(workingDiffPanelRegistration);
+  registerPanel(changesTreePanelRegistration);
   registerPanel(pluginPanelRegistration);
   panelsRegistered = true;
 }

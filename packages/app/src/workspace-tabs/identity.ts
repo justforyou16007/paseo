@@ -64,6 +64,7 @@ function normalizeSimpleWorkspaceTabTarget(value: WorkspaceTabTarget): Workspace
       const browserId = trimNonEmpty(value.browserId);
       return browserId ? { kind: "browser", browserId } : null;
     }
+    case "changes_tree":
     case "files":
     case "pull_request":
       return { kind: value.kind };
@@ -205,6 +206,9 @@ function secondaryWorkspaceTabTargetsEqual(
   if (left.kind === "files" && right.kind === "files") {
     return true;
   }
+  if (left.kind === "changes_tree" && right.kind === "changes_tree") {
+    return true;
+  }
   if (left.kind === "pull_request" && right.kind === "pull_request") {
     return true;
   }
@@ -307,7 +311,7 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
   if (target.kind === "aris-wiki-entity") {
     return `aris-wiki-entity_${target.entityType}_${target.entityId}`;
   }
-  if (target.kind === "files" || target.kind === "pull_request") {
+  if (target.kind === "changes_tree" || target.kind === "files" || target.kind === "pull_request") {
     return target.kind;
   }
   if (target.kind === "plugin") {

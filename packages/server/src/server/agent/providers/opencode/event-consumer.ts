@@ -5,10 +5,7 @@ import {
 } from "@opencode-ai/sdk/v2/client";
 import type { Logger } from "pino";
 
-export type OpenCodeEventSourceInput =
-  | GlobalEvent
-  | { type: "reconnected" }
-  | { type: "server-exited"; error: Error };
+export type OpenCodeEventSourceInput = GlobalEvent | { type: "server-exited"; error: Error };
 
 export interface OpenCodeEventSource {
   ready(): Promise<void>;
@@ -181,14 +178,15 @@ export class OpenCodeEventConsumer implements OpenCodeEventSource {
           return { delivered, phase, outcome: "ended" };
         }
         armWatchdog();
-        if (!delivered) {
-          delivered = true;
-          if (this.connected) this.publish({ type: "reconnected" });
-          this.connected = true;
-          this.resolveReady();
-        }
+        delivered = true;
         phase = "stream";
         this.phase = phase;
+        if (!this.connected && event.payload.type === "server.connected") {
+          this.connected = true;
+          this.resolveReady();
+          continue;
+        }
+        this.logPluginFailure(event);
         this.publish(event);
       }
       let outcome: OpenCodeConnectionOutcome = "ended";
@@ -212,6 +210,20 @@ export class OpenCodeEventConsumer implements OpenCodeEventSource {
       signal.removeEventListener("abort", abortRequest);
       requestAbort.abort();
     }
+  }
+
+  private logPluginFailure(event: GlobalEvent): void {
+    if (event.payload.type !== "session.error") return;
+    const error = event.payload.properties.error;
+    if (!containsPluginError(error)) return;
+    this.logger.warn(
+      {
+        directory: event.directory,
+        sessionId: event.payload.properties.sessionID,
+        error,
+      },
+      "OpenCode plugin failed",
+    );
   }
 
   private logConnectionFailure(
@@ -262,6 +274,14 @@ export class OpenCodeEventConsumer implements OpenCodeEventSource {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function containsPluginError(error: unknown): boolean {
+  try {
+    return JSON.stringify(error).toLowerCase().includes("plugin");
+  } catch {
+    return false;
+  }
 }
 
 export type OpenCodeEventConsumerFactory = (

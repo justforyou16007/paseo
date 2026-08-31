@@ -10,7 +10,7 @@ import {
   Crosshair,
   Target,
 } from "lucide-react-native";
-import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
+import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
 import { usePaneContext } from "@/panels/pane-context";
 import { isWeb } from "@/constants/platform";
 import { useWorkspace } from "@/stores/session-store-hooks";
@@ -254,9 +254,7 @@ const styles = StyleSheet.create((theme) => ({
   },
 }));
 
-export const arisWikiEntityPanelRegistration: PanelRegistration<"aris-wiki-entity"> = {
-  kind: "aris-wiki-entity",
-  resourceKey: (target) => `${target.entityType}:${target.entityId}`,
+export const arisWikiEntityPanelRegistration = definePanel("aris-wiki-entity", {
   component: ArisWikiEntityPanel,
   useDescriptor: useArisWikiEntityPanelDescriptor,
-};
+});

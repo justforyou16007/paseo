@@ -1,7 +1,7 @@
 /* eslint-disable jsx-no-new-object-as-prop -- ARIS panel uses inline styles for rapid prototyping */
 import { ActivityIndicator, Text, View } from "react-native";
 import { Network, FlaskConical, Microscope } from "lucide-react-native";
-import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
+import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
 import { usePaneContext } from "@/panels/pane-context";
 import { isWeb } from "@/constants/platform";
 import { useArisReviewQuery } from "@/aris/use-aris-review-query";
@@ -142,12 +142,7 @@ function ArisPanelContent({
   );
 }
 
-export const arisPanelRegistration: PanelRegistration<"aris"> = {
-  kind: "aris",
-  resourceKey: (target) =>
-    target.runId
-      ? `aris_${target.view ?? "cockpit"}_${target.runId}`
-      : `aris_${target.view ?? "cockpit"}`,
+export const arisPanelRegistration = definePanel("aris", {
   component: ArisPanel,
   useDescriptor: useArisPanelDescriptor,
-};
+});
