@@ -847,6 +847,16 @@ Created:
   • .claude/skills/ — ARIS skills installed
 ```
 
+What this setup does NOT produce: the tester agent on its own machine, the
+search gate compiled from its contract, and the root charter. A formal outer run
+needs all three, and `/auto-research-loop` stops on a missing charter. Point the
+user at the skill that finishes them:
+
+```
+Next, for a formal run:
+  /aris-setup   (tester agent + search gate + root charter; it skips whatever this setup already did)
+```
+
 Then suggest next steps based on work type:
 
 **If "New research direction":**

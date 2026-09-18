@@ -4,7 +4,7 @@
 
 ## TL;DR
 
-ARIS is a collection of **84 composable Claude Code skills** that orchestrate **cross-model collaboration**: Paseo Claude agents drive the research (read files, write code, deploy experiments) while a Paseo codex agent (GPT-5.5) acts as the default critical reviewer. The two model families disagree, debate, and force each other to do better — adversarial, not self-play.
+ARIS is a collection of **87 composable Claude Code skills** that orchestrate **cross-model collaboration**: Paseo Claude agents drive the research (read files, write code, deploy experiments) while a Paseo codex agent (GPT-5.5) acts as the default critical reviewer. The two model families disagree, debate, and force each other to do better — adversarial, not self-play.
 
 Seven workflows (W1 / W1.5 / W2 / W3 / W4 / W5 / W6) compose into a full research lifecycle: idea discovery → experiment bridge → auto-review → paper writing → rebuttal → resubmit → conference talk. Tested end-to-end on real ICLR/NeurIPS submissions. Score progression on a real overnight run: **5/10 → 7.5/10 with 20+ GPU experiments**.
 
@@ -265,7 +265,7 @@ A real overnight 4-round run on an ML research project, from borderline reject t
 
 ---
 
-## The 84 Skills
+## The 87 Skills
 
 Grouped by role (full catalog: [`docs/SKILLS_CATALOG.md`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/docs/SKILLS_CATALOG.md)).
 
@@ -277,7 +277,7 @@ Grouped by role (full catalog: [`docs/SKILLS_CATALOG.md`](https://github.com/wan
 | Audits                 |   5   | [`/proof-checker`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/proof-checker/SKILL.md), [`/paper-claim-audit`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/paper-claim-audit/SKILL.md), [`/citation-audit`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/citation-audit/SKILL.md), [`/result-to-claim`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/result-to-claim/SKILL.md), [`/kill-argument`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/kill-argument/SKILL.md)   |
 | Talks & posters        |   5   | [`/paper-talk`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/paper-talk/SKILL.md), [`/paper-slides`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/paper-slides/SKILL.md), [`/paper-poster-html`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/paper-poster-html/SKILL.md), [`/slides-polish`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/slides-polish/SKILL.md)                                                                                                                                               |
 | Wiki & meta            |   6   | [`/research-wiki`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/research-wiki/SKILL.md), [`/meta-optimize`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/meta-optimize/SKILL.md), [`/research-pipeline`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/research-pipeline/SKILL.md), [`/research-refine`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/research-refine/SKILL.md)                                                                                                                                   |
-| Integrations & support |  31   | [`/feishu-notify`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/feishu-notify/SKILL.md), [`/figure-spec`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/figure-spec/SKILL.md), [`/render-html`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/render-html/SKILL.md), [`/overleaf-sync`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/overleaf-sync/SKILL.md) …                                                                                                                                                     |
+| Integrations & support |  32   | [`/feishu-notify`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/feishu-notify/SKILL.md), [`/figure-spec`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/figure-spec/SKILL.md), [`/render-html`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/render-html/SKILL.md), [`/overleaf-sync`](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/blob/main/skills/overleaf-sync/SKILL.md) …                                                                                                                                                     |
 
 ### The 3-layer audit chain
 
@@ -310,7 +310,7 @@ ARIS skills are plain `SKILL.md` files. They run anywhere an agent reads markdow
 
 ## 中文版速览
 
-ARIS（**A**utonomous **R**esearch via Adversarial **M**ulti-Agent Collaboration，**梦中科研**）是一组 84 个可组合的 Claude Code skills，编排**跨模型对抗式协作**：
+ARIS（**A**utonomous **R**esearch via Adversarial **M**ulti-Agent Collaboration，**梦中科研**）是一组 87 个可组合的 Claude Code skills，编排**跨模型对抗式协作**：
 
 - **执行**：Paseo Claude agent 读文件、写代码、跑实验、改论文
 - **审稿**：Paseo codex agent（GPT-5.5）以**跨家族**审稿人身份打分、找弱点、提建议

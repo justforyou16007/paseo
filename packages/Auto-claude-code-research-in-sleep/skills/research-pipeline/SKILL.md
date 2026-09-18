@@ -205,6 +205,15 @@ else
     # Emit paseo run config (must happen after RUN_ID is assigned)
     CFG=$(bash "$RENDER" --emit-config --run-id "$RUN_ID" --root "$ROOT")
 
+    # Create or reuse the standalone run contract before opening phase state.
+    WORKFLOW_TOOLS=".aris/dist/tools/workflow-tools-cli.js"
+    [ -f "$WORKFLOW_TOOLS" ] || WORKFLOW_TOOLS="dist/tools/workflow-tools-cli.js"
+    [ -f "$WORKFLOW_TOOLS" ] || {
+      echo "ERROR: workflow-tools-cli.js is required by /research-pipeline. Run /aris-update or build the ARIS runtime." >&2
+      exit 1
+    }
+    node "$WORKFLOW_TOOLS" run-open --project "$ROOT" --run "$RUN_ID" || exit 1
+
     # Initialize run-state
     node "$RUN_STATE" start "$ROOT" "$RUN_ID" --phases "$PHASES"
 
@@ -217,7 +226,6 @@ else
   "project": "$(basename "$ROOT")",
   "status": "running",
   "iteration": 1,
-  "max_iterations": 1,
   "current_phase": "idea-discovery",
   "config": {
     "research_direction": ${RESEARCH_DIRECTION_JSON},

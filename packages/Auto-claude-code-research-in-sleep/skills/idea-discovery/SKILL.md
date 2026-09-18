@@ -1,6 +1,6 @@
 ---
 name: idea-discovery
-description: 'Workflow 1: Full idea discovery pipeline to go from a broad research direction to validated, pilot-tested ideas. Use when user says "找idea全流程", "idea discovery pipeline", "从零开始找方向", or wants the complete idea exploration workflow.'
+description: 'Discover ideas: survey literature, generate and filter candidates, verify novelty, and produce a refined proposal with an experiment plan. Runs directly or as a dispatched worker, where it reads only the manifest inputs and the sealed Wiki head.'
 argument-hint: [research-direction]
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, WebSearch, WebFetch, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent
 # Cross-model review uses paseo codex sub-agent exclusively (paseo-reviewer-dispatch.md)
@@ -8,9 +8,100 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, WebSearch, WebFetch, mcp_
 
 > **Paseo substrate.** This workflow runs as a paseo claude sub-agent; its sub-skills dispatch as paseo sub-agents and its cross-model reviewer as a paseo codex sub-agent. See `shared-references/paseo-subagent-dispatch.md` + `paseo-reviewer-dispatch.md`.. **Strict mode**: Paseo MCP is required; if unavailable, the run BLOCKS (per `paseo-subagent-dispatch.md`).
 
-# Workflow 1: Idea Discovery Pipeline
+# Idea Discovery
 
-Orchestrate a complete idea discovery workflow for: **$ARGUMENTS**
+## Scope
+
+The skill runs in worker mode or directly, and nothing else about it changes
+between the two:
+
+- **Worker mode** — invoked with `— manifest: <path>`. The manifest supplies
+  every input, including a Wiki request pinned to a sealed head, and the skill
+  writes its receipt beside the manifest. The
+  [manifest protocol](#manifest-protocol-worker-mode) below is the full
+  contract.
+- **Direct mode** — invoked without a manifest. The skill reads the project
+  checkout and the Wiki at its live head.
+
+A dispatched run is an ordinary run. Its manifest names the work to do, not the
+scheduler that dispatched it, so nothing here asks who the parent is or what
+position this run occupies in someone else's plan. Parent identity lives in
+`run.json` and is read by the parent.
+
+### Inputs and read boundary (worker mode)
+
+Require `inputs.run_manifest` to name the sealed run manifest containing
+`wiki_root`, `scope`, `wiki_head`, and `input_snapshot`. The execution manifest
+names `wiki_request_file`, Wiki `schema_version`/`query_version`, and any local
+brief, literature or prior-idea files. Read these values from the manifest; do
+not infer them from the current checkout or the Wiki tail. The manifest follows
+[the shared read boundary](../shared-references/worker-manifest.md#worker-behavior-on-startup).
+Resolve `research-wiki.js` through
+`shared-references/integration-contract.md`, then run exactly the supplied
+query (`RUN_MANIFEST_PATH` is `inputs.run_manifest`):
+
+```bash
+node "$WIKI_SCRIPT" query "$WIKI_ROOT" \
+  --manifest "$RUN_MANIFEST_PATH" --request-file "$WIKI_REQUEST_FILE" > "$OUTPUT_DIR/wiki-query.json"
+```
+
+Check that the result has the requested scope and the same head, Wiki
+schema/query versions, workflow revision, input snapshot, and contract versions
+as the manifest. Save its hash as part of the phase evidence. A query at the
+live head, a direct-mode query pack used as a substitute, or an unlisted file is
+not an input to a dispatched run.
+
+The run may read the frozen brief and local source files and may write only
+under its declared `output_dir`/workspace scope. It must not read tester-private
+results, incumbent state, or another run's workspace.
+
+### Work and child dispatch
+
+Produce a ranked candidate set and an experiment plan. Keep the work bounded by
+the manifest budget; do not start a second long-horizon loop or silently add
+pilot budget.
+
+The plan is where recursion is decided: every child it declares carries a
+complete local charter, and `experiment-bridge` only executes that plan. Keep
+experiments this run performs itself in its own experiment plan.
+
+`/research-lit` and `/idea-creator` write Wiki data through their own direct
+paths and do not accept a scoped no-write context. In worker mode, consume the
+frozen literature/idea files named by the manifest, or dispatch a child under a
+contract that guarantees file-only output. If the run needs fresh literature or
+idea creation and neither is available, fail with
+`CHILD_WRITE_SCOPE_UNSUPPORTED` and report the missing API. Do not invoke their
+Wiki writers and do not silently fall back to reading the live head.
+
+### Artifacts and hand-off
+
+Write the selected candidates and plan under the declared output directory,
+including the structured `idea-discovery.json` hand-off artifact. It carries the
+run identity, frozen Wiki query hash, the candidate list, plan hash/paths, budget
+used, and evidence references. List dispatched tasks in `children`; each child
+declares its position, experiment plan, resource request, and complete local
+charter (task, expected output, inputs, measurement, baseline, resources, and
+policy). The bridge checks the frozen scope and reserves this run's budget.
+Declare `strategy` (`bfs` or `dfs`) and `strategy_reason` in the plan; these are
+research decisions made here.
+
+<!-- A2-5-BRIDGE-CONTRACT:START -->
+```json
+{
+  "contract": "idea-discovery.bridge-input",
+  "fields": {
+    "children": {"required": true, "type": "array<object>", "required_item_fields": ["position_id", "execution_plan", "charter", "resource_request"], "example": []},
+    "strategy": {"required": true, "enum": ["bfs", "dfs"]},
+    "strategy_reason": {"required": true, "type": "string"}
+  }
+}
+```
+<!-- A2-5-BRIDGE-CONTRACT:END -->
+
+Write the worker receipt last with `status`, `primary_output`, output hash, and
+the same identity. The receipt is execution evidence only; it is not a review
+verdict and it does not write the Wiki. The run's own `auto-review-loop` is what
+rules on the evidence this phase produced.
 
 ## Overview
 
@@ -43,13 +134,14 @@ Each phase builds on the previous one's output. The final deliverables are a val
 
 ## Manifest Protocol (Worker Mode)
 
-When invoked with `— manifest: <path>`, this skill runs as a worker under an
-orchestrator (`/research-pipeline` or `/auto-research-loop`). The manifest
-provides all inputs; the skill writes its receipt to the manifest's directory.
+When invoked with `— manifest: <path>`, this skill runs as a worker under
+`/research-pipeline` or `/auto-research-loop`. The manifest provides all
+inputs; the skill writes its receipt to the manifest's directory.
 
-**Worker mode only.** The worker runs the full pipeline —
-`/research-pipeline` and `/auto-research-loop` differ only in what they put in
-`manifest.context`. There is no short branch and no per-orchestrator variant.
+**One pipeline.** A worker runs the full pipeline below — `/research-pipeline`
+and `/auto-research-loop` differ only in what they put in `manifest.context`,
+and a dispatched run differs from a directly invoked one only in where its
+inputs come from. There is no short branch and no per-orchestrator variant.
 The loop's later iterations supply the previous iteration's evidence paths in
 `inputs` and its metric state in `context`; Phase 0 reads those alongside
 `RESEARCH_BRIEF.md` and the research wiki's `query_pack.md`, whose Open Problems
@@ -296,7 +388,7 @@ Which ideas should I validate further? Or should I regenerate with different con
 - **User picks ideas** (or no response + AUTO_PROCEED=true) → proceed to Phase 3 with top-ranked ideas.
 - **User unhappy with all ideas** → collect feedback ("what's missing?", "what direction do you prefer?"), update the prompt with user's constraints, and re-run Phase 2 (idea generation). Before
   regenerating, read the already-tried directions (research-wiki Failed Ideas + any
-  `.aris/runs/<run_id>.iterations.jsonl`) and forbid a candidate too close to one already
+  `.aris/runs/<run_id>/iterations.jsonl`) and forbid a candidate too close to one already
   tried — enforced direction diversity; when an overnight heartbeat drives the run,
   record each chosen direction via `iteration-log.js note ... --direction "<frame>"`
   so later ticks can reject near-duplicates (see

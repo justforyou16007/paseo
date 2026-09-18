@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "mode": "workflow",
+  "task_id": "task:replace-me",
+  "workflow_id": "workflow:replace-me",
+  "revision": "flow:r1",
+  "objective": {
+    "primary": {
+      "name": "tester_score",
+      "direction": "higher_better"
+    },
+    "constraints": [
+      {
+        "name": "safety_score",
+        "op": ">=",
+        "value": 0.9
+      }
+    ]
+  },
+  "task_setup_revision": "setup:r1",
+  "model_usage_policy": {
+    "revision": "policy:r1",
+    "approval_id": "approval:replace-me",
+    "roles": [
+      {
+        "role_id": "main-model",
+        "allowed_modules": ["main"],
+        "allowed_uses": ["generate", "train"],
+        "judge_targets": [],
+        "judge_generation_lag": null,
+        "artifact_binding": "previous_promoted",
+        "promotion_output": "main.model",
+        "user_confirmed": true,
+        "approval_id": "approval:replace-me"
+      },
+      {
+        "role_id": "main-judge",
+        "allowed_modules": ["validation-scorer", "promotion-tester"],
+        "allowed_uses": ["judge"],
+        "judge_targets": ["main-model.next"],
+        "judge_generation_lag": 1,
+        "artifact_binding": {
+          "source": "previous_promoted",
+          "source_role": "main-model",
+          "artifact_id": null
+        },
+        "promotion_output": null,
+        "user_confirmed": true,
+        "approval_id": "approval:replace-me"
+      }
+    ]
+  },
+  "validation_policy": {
+    "scorer_id": "rule-checker",
+    "scorer_revision_binding": "from_active_scorer_pointer",
+    "research_feedback": "detailed",
+    "cross_judge_score_comparison": "forbidden"
+  },
+  "scorers": [
+    {
+      "id": "rule-checker",
+      "kind": "deterministic_rules",
+      "definition_binding": "from_active_scorer_revision",
+      "judge_binding": null
+    },
+    {
+      "id": "quality-judge",
+      "kind": "llm_rubric",
+      "definition_binding": "from_active_scorer_revision",
+      "judge_binding": "from_model_usage_policy"
+    }
+  ],
+  "promotion_tester": {
+    "tester_id": "task-final-test",
+    "definition_version": "tester:v1",
+    "research_feedback": "fuzzy_advice_only",
+    "max_exposures_per_task": 12
+  },
+  "wave_policy": {
+    "max_parallel_modules": 1,
+    "dependent_modules": "sequential",
+    "ablation_design": "full_factorial"
+  },
+  "structure_wave_policy": {
+    "exclusive": true,
+    "max_candidates": 1,
+    "module_versions": "frozen"
+  },
+  "scorer_wave_policy": {
+    "exclusive": true,
+    "max_candidates": 1,
+    "experiment_parallelism": 1,
+    "execution_order": "baseline_then_candidate",
+    "blocks_other_wave_kinds": true
+  },
+  "owner_limits": {
+    "revision": "limits:r1",
+    "max_nodes": 24,
+    "max_edges": 48,
+    "max_fan_out_per_node": 4,
+    "max_unrolled_cycles": 3,
+    "max_jobs_per_candidate": 96,
+    "max_compute_per_candidate": {
+      "amount": 500,
+      "unit": "gpu_hours"
+    }
+  },
+  "modules": [
+    {
+      "id": "main",
+      "evolvable": true,
+      "version": "main:v1",
+      "patch_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "inputs": ["task-input@1", "feedback@1"],
+      "input_ports": ["task", "feedback"],
+      "outputs": ["main-model@1"],
+      "write_scope": ["src/main/**"],
+      "local_metric": "main_score",
+      "execution": {
+        "max_jobs": 1,
+        "max_compute": {
+          "amount": 1,
+          "unit": "gpu_hours"
+        }
+      }
+    }
+  ],
+  "enabled_module_ids": ["main"],
+  "edges": [],
+  "feedback_edges": [
+    {
+      "from": "evaluation.error_profile",
+      "to": "main.feedback",
+      "barrier": "next_outer_iteration",
+      "contract": "feedback@1"
+    }
+  ],
+  "cycles": []
+}

@@ -177,6 +177,47 @@ re-create a verdict-bearing loop's claude agent per round (the fence in
 `external-cadence.md`). Ownership is a **lifecycle** authority, not a
 verdict authority.
 
+## Dispatching a research child
+
+A research child is a standalone run. The parent creates its run contract and
+seals the Wiki binding it is dispatched against, and that binding is the whole
+message: `project_root`, `run_id`, `worker`, `scope`, `input_snapshot`. No
+parent run id, no position in a wave, no iteration counter — a child is told
+what to do, not who dispatched it. Any other field is refused at the seal.
+
+The input snapshot and the Wiki request pinned to a head and schema/query
+version are what the child reads. A child must not reconstruct its context from
+the current checkout, the Wiki tail, or an inline prompt.
+
+The child then walks the ordinary phases in its own run — `idea-discovery`,
+`experiment-bridge`, `auto-review-loop`, `metric-gate` — and accepts or rejects
+its own evidence inside its own `auto-review-loop`. There is no parent-side
+review of a child's work and no parent-owned phase machine for it. Children of
+the child are planned by its experiment plan and materialized by its
+`experiment-bridge`; the bridge executes a plan, it does not invent one.
+
+What the parent reads back is the child's `result-package.json`, and nothing
+else inside the child. Parent-side identity — which position the child filled,
+which iteration and generation dispatched it — lives in the parent's own
+runtime record, because the parent is the only one who needs it.
+
+Workspace lifecycle is separate from child completion:
+
+```text
+fresh child:  workspace-create -> execute -> workspace-seal
+retry/resume: workspace-restore (same run id and sealed patch)
+cleanup:      parent confirmation -> workspace-remove
+```
+
+Never call `workspace-create` to retry a child. A worker must not remove its own
+workspace. The parent may call `workspace-remove` only after the child's result
+package is published and matches the parent's record of that child. A worker
+self-report is not sufficient evidence for removal.
+
+A skill must stop before dispatching a child whose current contract writes
+unscoped Wiki data or needs an unavailable metric-gate input. Report the missing
+scoped/no-write or metric adapter API; do not reach around the scope.
+
 ### Relationship to existing ARIS principles
 
 - The DRIVE/ACQUIT split (`acceptance-gate.md`) is preserved: a Rule 1
@@ -604,6 +645,10 @@ These internal receipts are not read by orchestrators.
 
 ### Parent dispatch flow (pseudocode)
 
+The following path is the plain-run form. It is correct for any run whose
+workers live directly below the run root. It does not cover a workflow outer
+cycle, whose workers live under the cycle directory.
+
 ```
 # Dispatch via manifest protocol
 WORKER_DIR = ".aris/runs/<run_id>/workers/<iter>-<phase>"
@@ -659,6 +704,31 @@ else:
             "(beside input-manifest.json, not in output_dir) and stop.")
         # end turn; the continuation turn's notification re-invokes the parent
 ```
+
+### Workflow outer-cycle dispatch branch
+
+When the current run is the workflow outer run, use the verified cycle worker
+root defined in [`bridge-expansion.md`](bridge-expansion.md). Keep the exact
+manifest path in a variable before creating the child and retain it until the
+bridge hand-off:
+
+```
+# Read workflow-runtime.json.outer_iteration before dispatch.
+OUTER_ITERATION = workflow-runtime.json.outer_iteration
+CYCLE_WORKERS_ROOT = <the verified root from bridge-expansion.md>
+WORKER_DIR = "$CYCLE_WORKERS_ROOT/${OUTER_ITERATION}-idea-discovery"
+IDEA_DISCOVERY_MANIFEST_PATH = "$WORKER_DIR/input-manifest.json"
+mkdir -p "$WORKER_DIR/outputs"
+# Write input-manifest.json at IDEA_DISCOVERY_MANIFEST_PATH ...
+child_id = create_agent(provider,
+                        "/idea-discovery — manifest: $IDEA_DISCOVERY_MANIFEST_PATH",
+                        notifyOnFinish=true)
+
+# Keep IDEA_DISCOVERY_MANIFEST_PATH unchanged when running bridge-input.
+```
+
+The worker-directory suffix follows the generic `<iter>-<phase>` convention;
+the cycle worker root itself is defined only by the bridge hand-off above.
 
 ### What the watchdog tick does
 

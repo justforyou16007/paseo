@@ -324,7 +324,7 @@ tuning of the same frame.
   (fail if unresolved), then
   `node "$ITER_LOG" note <root> <run_id> <phase> <new_findings> [--direction "..."]`.
   Consecutive zero-finding iterations accumulate a `stale_count` in
-  `.aris/runs/<run_id>.iterations.jsonl` — a sidecar that does **not** touch run_state's
+  `.aris/runs/<run_id>/iterations.jsonl` — a sidecar that does **not** touch run_state's
   done/accepted state.
 - **Forced pivot ladder** (the heartbeat reads the returned `pivot`):
   - `stale_count >= 2` → **pivot structure, not tactics**: change a structural constraint

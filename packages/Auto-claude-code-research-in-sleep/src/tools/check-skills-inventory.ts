@@ -2,6 +2,7 @@
 import fs from "fs";
 import path from "path";
 import { createCli, runCli } from "../lib/cli.js";
+import { isWikiEdgeType } from "./wiki-operations.js";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const SKILLS_ROOT = path.join(REPO_ROOT, "skills");
@@ -350,9 +351,8 @@ function checkInventory(): string[] {
     failures,
   );
   require_(
-    /VALID_EDGE_TYPES[\s\S]{0,600}?"child_of"/.test(rwiki) &&
-      /VALID_EDGE_TYPES[\s\S]{0,600}?"addresses"/.test(rwiki),
-    "src/tools/research-wiki.ts VALID_EDGE_TYPES must contain `child_of` (problem tree) and `addresses` (idea → problem); an unknown edge type is rejected at write time",
+    isWikiEdgeType("child_of") && isWikiEdgeType("addresses") && !isWikiEdgeType("unknown_edge"),
+    "Wiki edge validation must support child_of and addresses and reject unknown edge types",
     failures,
   );
   require_(
@@ -360,6 +360,90 @@ function checkInventory(): string[] {
     "the free-text gap map is retired: no add_gap writer and no gap-planner skill (problems are entities, audited by whoever writes them)",
     failures,
   );
+
+  // Long-horizon workflow install surface: skill inventory alone cannot catch
+  // a build that forgot one of the state or gate entrypoints. Keep this check
+  // on source names and command declarations so it works before dist exists.
+  const workflowHelpers = [
+    "workflow-cli.ts",
+    "workflow-tools-cli.ts",
+    "workflow-summary.ts",
+    "structure-wave.ts",
+    "structure-adapters.ts",
+    "scorer-wave-runtime.ts",
+    "tester-feedback-signal.ts",
+    "tester-agent.ts",
+    "tester-agent-cli.ts",
+    "search-policy.ts",
+    "search-audit-cli.ts",
+    "project-setup.ts",
+    "project-setup-cli.ts",
+  ];
+  for (const helper of workflowHelpers) {
+    require_(
+      fs.existsSync(path.join(REPO_ROOT, "src", "tools", helper)),
+      `long-horizon helper is missing: src/tools/${helper}`,
+      failures,
+    );
+  }
+  const workflowCli = read(path.join(REPO_ROOT, "src", "tools", "workflow-cli.ts"));
+  const workflowToolsCli = read(path.join(REPO_ROOT, "src", "tools", "workflow-tools-cli.ts"));
+  require_(
+    /\.command\("summary"\)/.test(workflowCli),
+    "workflow-cli.ts must expose the public summary command",
+    failures,
+  );
+  for (const command of ["scorer-register", "tester-feedback-signal", "composition-create"]) {
+    require_(
+      new RegExp(`\\.command\\("${command}"\\)`).test(workflowToolsCli),
+      `workflow-tools-cli.ts must expose ${command}`,
+      failures,
+    );
+  }
+  require_(
+    fs.existsSync(path.join(REPO_ROOT, "templates", "WORKFLOW_RESEARCH_SPEC_TEMPLATE.json")),
+    "the long-horizon workflow specification template is missing",
+    failures,
+  );
+  require_(
+    fs.existsSync(path.join(REPO_ROOT, "templates", "TESTER_AGENT_CONFIG_TEMPLATE.json")),
+    "the tester agent config template is missing",
+    failures,
+  );
+  // The remote tester designs the test from the manual in this bundle, and the
+  // guard snippet is what the research side's hook is installed from. Either one
+  // missing turns a gate into a no-op, which no skill inventory would notice.
+  require_(
+    fs.existsSync(path.join(REPO_ROOT, "templates", "tester-agent-bundle", "TESTER_AGENT.md")),
+    "the remote tester operating manual is missing",
+    failures,
+  );
+  require_(
+    fs.existsSync(path.join(REPO_ROOT, "templates", "claude-hooks", "search_guard.json")),
+    "the search guard hook snippet is missing",
+    failures,
+  );
+  require_(
+    fs.existsSync(path.join(REPO_ROOT, "src", "templates", "search-guard.ts")),
+    "the search guard hook implementation is missing",
+    failures,
+  );
+  const workflowIntegration = read(
+    path.join(SKILLS_ROOT, "shared-references", "integration-contract.md"),
+  );
+  for (const helper of [
+    "workflow-cli.js",
+    "workflow-tools-cli.js",
+    "tester-agent-cli.js",
+    "search-audit-cli.js",
+    "project-setup-cli.js",
+  ]) {
+    require_(
+      workflowIntegration.includes(`| \`${helper}\``),
+      `integration-contract.md must register ${helper}`,
+      failures,
+    );
+  }
 
   // The loop is thin: one iteration = research-pipeline Stage 1-3 + the metric
   // gate. Every wiki write happens inside a pipeline skill, so a second writer

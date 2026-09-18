@@ -47,14 +47,90 @@ Iterative, metric-target-driven research. The loop is
 Two different "stop" concepts are in play; they never mix:
 
 - **`/auto-review-loop`'s stop condition** ends the *current iteration's
-  review/fix rounds* (verdict in {ready, almost, not ready} with a score).
-  It is a quality verdict about the iteration's work. It is recorded on the
-  dashboard (`last_review`) and **never terminates the research loop**.
+  review/fix rounds* (verdict in {ready, almost, not ready, insufficient} with
+  a score). It is a quality verdict about the iteration's work. It is recorded
+  on the dashboard (`last_review`) and **never terminates the research loop**.
+  `insufficient` is the one verdict that is not a grade: it says the review
+  could not grade anything, so the candidate goes back to the bridge to be run
+  properly. It still does not terminate the loop, and it does not advance the
+  iteration.
 - **This skill's stop condition** terminates the *research loop itself*. It
   is pure dashboard arithmetic (`metric-gate.js evaluate`): metric target,
   direction, tolerance, iteration budget, and patience. It consumes no
   reviewer verdict, no `metric_progress`, and no stop/continue/pivot signal -
   `/auto-review-loop` does not produce those fields.
+
+## Entry Mode and Recursion
+
+Decide the entry mode before reading any state. The Workflow entry uses a
+charter and manifest frozen by whoever created this run. A direct legacy
+invocation is allowed only when the caller explicitly asks for `standalone`, and
+it is always a depth-0 run. It is never a recursive child, and it is never a
+fallback for a charter that failed to load - a missing charter stops startup.
+
+### Depth-0 root entry
+
+Users invoke this skill directly for the root run; there is no separate outer
+entry skill. When a Workflow invocation has depth 0, start from the immutable
+root charter produced by setup. Read it through
+`readRootCharter` in `src/tools/root-charter.ts`; that reader checks the charter
+against `run.json`. The run it belongs to has `parent_run_id: null`, `depth: 0`
+and `scope_path: "/"`. The charter carries no identity fields of its own; it
+names `baseline_ref: "W_0"` and carries the frozen resource inventory, owner
+limits, tester binding and expected output.
+
+The caller supplies the charter reference, baseline reference, resource
+inventory reference, input snapshot, write scope, Wiki request and head, and
+budget. Forward those as manifest fields. Never assemble `workspace_root`,
+`wiki_root` or a resource request by concatenating prompt values, current
+checkout paths or old receipts. Use `workflow-cli.js start`/`resume` for
+startup and recovery; expansion is a separate command (Stage 2) and neither
+`start` nor `resume` performs it.
+
+### A child is told what to do, not who dispatched it
+
+A dispatch seals the child's manifest from exactly these fields, and any other
+field is refused:
+
+`project_root`, `run_id`, `worker`, `scope`, `input_snapshot`
+
+No parent run id, no position in a wave, no iteration counter. A worker
+therefore cannot make its behaviour depend on where it sits in someone else's
+run, which is what keeps a child's result readable on its own terms. Reject a
+recursive invocation before dispatching any work when any of charter identity,
+execution, baseline, resource inventory, workspace, Wiki head, input snapshot,
+budget, write scope or model policy is absent, conflicting, or supplied by the
+prompt instead of the manifest. A missing helper or an unavailable required
+resource stops the current phase. Do not warn and continue on a local default.
+
+Three pieces of the recursive substrate are owned outside this skill itself: a
+charter-only `workflow-cli` start adapter, child charter/result-package
+persistence, and the Paseo workspace create/archive path. If one is missing at
+runtime, stop with the exact missing artifact or helper. Never document it as
+complete and never synthesize a local replacement. If the bridge command cannot
+be resolved, the status report
+must not say that the old runtime is already using it. A missing connection is
+a hard stop and a report item, not a reason to call the old path.
+
+## One sequence at depth 0, 1 and 2
+
+Every run walks the same phases regardless of depth. A child is a standalone
+run, so nothing outside it owns this sequence - the loop walks it, and
+`dashboard-merge` is what decides which worker may write from which phase:
+
+```text
+idea-discovery
+-> experiment-bridge
+-> auto-review-loop
+-> metric-gate
+-> completed
+branch: bridge-repair (from a bridge that failed, or a review that could not rule)
+```
+
+`analyze-results` is not a phase. It runs inside `experiment-bridge` and its
+receipt is registered against that phase. `bridge-repair` has no successor of
+its own: only the repair handler may leave it, and it always returns to
+`experiment-bridge` or ends the run.
 
 ## Dispatch Pattern
 
@@ -176,6 +252,10 @@ loop        --- Iteration loop (1 -> MAX_ITERATIONS) ---
                           + research wiki; writes IDEA_REPORT.md and
                           EXPERIMENT_PLAN.md via idea-discovery)
               Stage 2     Experiment Bridge (+ internal Analyze Results)
+              [repair]    Bridge Repair (conditional; entered when Stage 2
+                          returns a failed receipt, or when Stage 3 returns
+                          `insufficient`. Retries the same Stage 2 with the
+                          same frozen inputs - it never skips ahead)
               Stage 3     Auto Review/Fix (+ final Analyze Results; its
                           termination dispatches /result-to-claim, which
                           absorbs the round into the research wiki)
@@ -432,12 +512,15 @@ else
   "project": "$PROJECT_NAME",
   "status": "running",
   "iteration": 1,
-  "max_iterations": ${ARG_MAX_ITERATIONS:-5},
   "current_phase": "init",
   "config": {
     "auto_write": $AUTO_WRITE,
     "render_html": $RENDER_HTML,
-    "patience": $PATIENCE
+    "patience": $PATIENCE$(
+      # Optional backstop. Unset means no round limit: what bounds the run is
+      # its budget ledger and its metric target, not a round count.
+      [ -n "${ARG_MAX_ITERATIONS:-}" ] && printf ',\n    "max_iterations": %s' "$ARG_MAX_ITERATIONS"
+    )
   },
   "metric": $METRIC_JSON,
   "best_idea": null,
@@ -537,6 +620,10 @@ structured analysis at `analysis/EXPERIMENT_RESULTS.md` in
 
 Dispatch: `/experiment-bridge — manifest: $WORKER_DIR/input-manifest.json`
 
+In Workflow mode the bridge is reached through one command-line hand-off, not
+through this dispatch prompt. Read "Expansion is owned by one bridge" below and
+run that command before treating the bridge as started.
+
 **Dashboard patch fields:** `metric.current`, `metric.delta`,
 `statistical_significance`, `experiment_ids`. The metric values come from
 experiment-bridge's internal analyze-results receipt. `metric.baseline` is
@@ -546,7 +633,154 @@ Anchoring) or set at init.
 The orchestrator performs **no wiki writes** here. Experiment nodes, verdicts,
 and edges are born by `/result-to-claim` at Stage 3's termination.
 
+**A failed bridge receipt is not a merge.** `dashboard-merge.js` records it as
+`status = "bridge_repair_pending"`, `current_phase = "bridge-repair"` and a
+`bridge_failure` block carrying the receipt, its input manifest, both hashes
+and the frozen input hash. Dispatch `/auto-review-loop` with
+`context.purpose = "bridge_repair"` and `context.repair_reason = "execution"`.
+Merging its repair receipt returns the run to `experiment-bridge` on
+`repair_status = "fixed"`, and ends the run as `failed` on `exhausted`. The
+retry must carry the same frozen inputs; a changed input is a new candidate,
+not a repair.
+
 After merge, set `current_phase = "auto-review-loop"` and proceed to Stage 3.
+
+---
+
+## Expansion is owned by one bridge
+
+The loop reaches the bridge through one command-line hand-off. After
+`idea-discovery` has produced its upstream artifact and receipt, resolve
+`workflow-cli.js` through the shared integration contract and set `WORKFLOW_CLI`
+to that one resolved path. Run the deterministic `bridge-input` preparation
+command from [`shared-references/bridge-expansion.md`](../shared-references/bridge-expansion.md)
+first. It reads the frozen inputs for the current run - including the
+`IDEA_DISCOVERY_MANIFEST_PATH` handed to the idea worker - and writes
+`BRIDGE_INPUT_JSON`; then run exactly:
+
+```bash
+node "$WORKFLOW_CLI" bridge-expand \
+  --execution-root "$EXECUTION_ROOT" \
+  --project "$PROJECT_ROOT" \
+  --run "$OUTER_RUN_ID" \
+  --input "$BRIDGE_INPUT_JSON" \
+  --evidence "$BRIDGE_EVIDENCE_PATH"
+```
+
+## Bridge variable sources
+
+Set every command variable before invoking the command; none may be inferred
+from a directory listing or left to the agent's guess.
+
+- `WORKFLOW_CLI` is the one `workflow-cli.js` resolved by
+  `integration-contract.md`: installed projects use `.aris/dist/tools/workflow-cli.js`,
+  and development runs use `dist/tools/workflow-cli.js`.
+- `PROJECT_ROOT` is the absolute `project root` from the dispatch contract's
+  initial prompt. It is not a `run.json` field; the current contract is
+  `$PROJECT_ROOT/.aris/runs/$OUTER_RUN_ID/run.json`.
+- `OUTER_RUN_ID` is `run.json.run_id` (`src/tools/run-contract.ts:32`).
+- `EXECUTION_ROOT` uses the exact `workflow-runtime.json.execution_root` entry
+  in [`shared-references/bridge-expansion.md`](../shared-references/bridge-expansion.md).
+- `BRIDGE_INPUT_JSON` uses the exact `.../outputs/bridge-input.json` entry in
+  [`shared-references/bridge-expansion.md`](../shared-references/bridge-expansion.md).
+- `BRIDGE_EVIDENCE_PATH` uses the exact sibling `.../receipt.json` entry in
+  [`shared-references/bridge-expansion.md`](../shared-references/bridge-expansion.md).
+
+The command delegates the child plan, resource classification, budget
+settlement and dynamic matrix to
+`planExperimentBridge` in `src/tools/experiment-bridge.ts`. Do not reproduce
+those decisions in this skill or in a worker. The bridge is BFS by default.
+DFS needs a completed round, bottleneck evidence, positive remaining depth
+budget and an independent acceptance condition. A depth budget of zero plans no
+children; a child is checked against its own `charter_expected_output` rather
+than the parent's full-workflow metric.
+
+The command then passes the unchanged hashed plan to
+`materializeBridgeChildren`, which only writes the planned child contracts. Its
+JSON result is the input to the downstream phases and the outer owner. A
+missing helper, bridge input, evidence file or non-zero command exit stops the
+current phase and produces a report; there is no second expansion
+implementation to try.
+
+## Result status routing
+
+The bridge applies the priority below before interpreting execution outcome.
+The table is the contract implemented by `resultStatusPolicy` in
+`src/tools/result-package.ts` and used by `src/tools/experiment-bridge.ts`.
+
+The priority is:
+
+| status | failure code | validation | tester exposure | stop gate |
+| --- | --- | --- | --- | --- |
+| `not_executable` | `RESOURCE_SCOPE_ALIGNMENT_REQUIRED` | no | no | no |
+| `infra_unavailable` | `INFRA_UNAVAILABLE` | no | no | no |
+| `succeeded` | — | yes | yes | no |
+| `failed` | — | yes | yes | yes |
+
+1. Any requested resource outside the frozen inventory is `not_executable`.
+2. A request inside the inventory whose runtime probe is unavailable is
+   `infra_unavailable`.
+3. An available request with a successful execution is `succeeded`.
+4. An available request that ran and failed is `failed`.
+
+Only `failed` is a stop-gate failure. The two unavailable states remain visible
+to the outer owner, but they do not enter validation, tester exposure or the
+no-progress stop count. "Cannot perform this run" is different evidence from
+"performed the run and it failed"; counting a missing accelerator as a failed
+research attempt would make an environment problem close a research direction.
+
+Every sibling keeps its own result. One unavailable position does not cancel
+other positions. Dynamic ablation is built from positions whose policy enters
+validation: no candidate means no matrix, one candidate means `00/10`, and two
+candidates mean `00/10/01/11`. Once frozen, a changed width or a missing
+constructible cell rejects the whole wave. The implementations are
+`buildDynamicAblationPlan`, `validateFrozenDynamicAblationPlan` and
+`decideWave` in `src/tools/experiment-bridge.ts`, backed by
+`buildAblationPlan` in `src/tools/workflow-compiler.ts`.
+
+## Phase boundaries
+
+### Idea, bridge and execution
+
+`idea-discovery` proposes work against the supplied charter and pinned Wiki
+head. `experiment-bridge` validates the supplied baseline, resource inventory
+and scope before producing its plan. The execution worker writes only within
+the supplied write scope and returns a hashed receipt plus the declared
+artifact.
+
+If the bridge or execution receipt is genuinely `failed` or unusable, the
+scheduler may open a bounded `bridge-repair` review with the same frozen input,
+dispatching `/auto-review-loop` with `context.purpose = "bridge_repair"` and
+`context.repair_reason = "execution"`. Repair may fix the current
+implementation or environment, then retry the same identity. It may not change
+the method meaning, interface, connection, metric gate or tester definition. An
+out-of-scope resource is not repaired by silently changing the request; an
+unavailable resource is not turned into a measured negative result.
+
+### Where each review verdict goes
+
+`analyze-results` runs inside `experiment-bridge` and may inspect only the
+experiment evidence belonging to the current run. It must not turn
+`not_executable` or `infra_unavailable` into a validation sample. Stage 3's
+`/auto-review-loop` then reviews that evidence through the canonical receipt; a
+worker's self-approval or prose message is not enough.
+
+The verdict decides where the run goes next, and the four verdicts do not share
+a path:
+
+- `ready` / `almost` - the result was judged and stands. Continue to the
+  metric gate; `/result-to-claim` writes the iteration's claim into the Wiki.
+- `not ready` - the idea was judged and did not hold up. The iteration
+  advances and Stage 1 starts over, because the next attempt is a different
+  idea.
+- `insufficient` - the evidence does not settle the question. What fell short
+  is the experiment, so open `bridge-repair` with
+  `context.repair_reason = "insufficient_evidence"` and keep the same idea, the
+  same candidate and the same iteration. The repair tunes the experiment (see
+  `/dse-loop`), then the bridge reruns and the new evidence is reviewed again.
+  Do not send this back to `idea-discovery`: nobody asked for a new idea. When
+  the repair budget runs out the run completes with no result rather than
+  failing.
 
 ---
 
@@ -556,8 +790,8 @@ Dispatch `/auto-review-loop` for cross-model review of the iteration's results.
 The manifest mirrors `/research-pipeline` Stage 3.
 
 > **Boundary.** This review ends the current iteration's review/fix rounds.
-> Its verdict ({ready, almost, not ready} + score) is recorded on the
-> dashboard and reported in the summary. It is a quality verdict - it NEVER
+> Its verdict ({ready, almost, not ready, insufficient} + score) is recorded on
+> the dashboard and reported in the summary. It is a quality verdict - it NEVER
 > terminates the research loop and is not an input to the stop gate.
 > Do not ask this worker for stop/continue/pivot decisions or
 > `metric_progress`; those fields are not part of its contract.
@@ -596,6 +830,22 @@ node (verdict owner), `tested_by`/`supports`/`invalidates` edges, the idea
 outcome, and the rebuilt query pack. On a `partial`/`no` verdict it also
 creates the failure analysis as a child open problem. The orchestrator adds
 nothing to this and never writes the wiki itself.
+
+**`insufficient` means the review could not rule at all.** The other three
+verdicts are judgements of the result: the review looked at the evidence and
+graded it. `insufficient` says the experiment never settled the question -
+parameters were off, the sample was too small, a control was not held. What
+fell short is the experiment, not the idea, so nobody asked for a new one.
+Merging that receipt puts the run back into `bridge-repair` with
+`context.repair_reason = "insufficient_evidence"`, keeping the same idea, the
+same candidate and the same iteration. The repair is a search over the knobs
+`EXPERIMENT_PLAN.md` already names and `/experiment-bridge` already exposed as
+runtime flags; dispatch `/dse-loop` to do the tuning. Changing a value is a
+repair, changing which question the experiment asks is not.
+
+An unjudgeable result never enters `metric.history`, and when the repair budget
+runs out the run completes with no result rather than failing - "we could not
+measure this" is different evidence from "we measured this and it lost".
 
 After merge, set `current_phase = "metric-gate"` and run the Baseline
 Anchoring step (iteration 1 only), then the Gate.
@@ -649,8 +899,9 @@ identical answer - nothing is accumulated across calls.
 |---|---|---|---|
 | 1 | `metric.current` null / non-finite, or metric config (target/direction/tolerance/history) invalid | `invalid_metric` | error - stop and report; never continue on a broken metric |
 | 2 | `current >= target - abs(target) * tolerance` (higher_better) or `current <= target + abs(target) * tolerance` (lower_better) | `metric_met` | arithmetic success |
-| 3 | `iteration >= max_iterations` | `budget_exhausted` | pure budget termination |
+| 3 | the run's budget ledger cannot fund another reservation | `budget_exhausted` | pure budget termination |
 | 4 | trailing no-improvement iterations in `metric.history` >= `patience` | `patience_exhausted` | pure arithmetic termination |
+| 5 | `config.max_iterations` is set and `iteration >= config.max_iterations` | `iteration_cap` | backstop only - omit the field and there is no round limit |
 
 - **Quality vs budget.** `metric_met` is arithmetic. `budget_exhausted` and
   `patience_exhausted` are pure budget/arithmetic terminations - they say
@@ -791,6 +1042,127 @@ node "$RUN_STATE" accept "$ROOT" "$RUN_ID" summary \
 
 ---
 
+## Result package export (on stop)
+
+The summary narrates the run; this picks the round that came out best and
+writes it as the run's result package. It is a separate step because no single
+iteration can make the pick: an iteration only ever knows whether it beat the
+one before it, and the stop gate firing does not mean the last round was the
+best round. The whole series lives in this run's own Wiki, so the choice is
+made here, from the Wiki, once the loop has stopped.
+
+This is also what a parent run reads. A recursive parent never opens a child's
+dashboard or Wiki - it reads `result-package.json` and nothing else - so a
+child that never exported has produced nothing its parent can use.
+
+Run it after the summary worker has closed the run's books, before paper
+writing:
+
+It takes three commands, because the package has to be reviewed and a package
+cannot be reviewed after it is published:
+
+```bash
+# 1. Build the package without writing it. Prints the digest to be reviewed.
+node "$WIKI_SCRIPT" plan_result_package "$ROOT" \
+    --run "$RUN_ID" \
+    --tester-definition "<frozen tester definition path>" \
+    --wiki-root "<wiki dir>"
+
+# 2. The reviewer -- a worker that is not this run -- rules on that digest.
+node "$WIKI_SCRIPT" submit_result_review "$ROOT" \
+    --run "$RUN_ID" --review-id "<review id>" \
+    --reviewer "<reviewer worker id>" \
+    --package-sha256 "<package_sha256 from step 1>" \
+    --verdict approved --evidence "<what it read>"
+
+# 3. Publish. Refused unless the stored review approves this exact digest.
+node "$WIKI_SCRIPT" export_result_package "$ROOT" \
+    --run "$RUN_ID" --review-id "<review id>" \
+    --tester-definition "<frozen tester definition path>" \
+    --wiki-root "<wiki dir>"
+```
+
+Step 1 prints `{winner, ranked_iterations, package_sha256, candidate}` and step
+3 prints `{winner, ranked_iterations, result_package}`. That JSON is all the
+orchestrator reads - the Wiki traversal happens inside the helper, the same way
+the stop gate's arithmetic happens inside `metric-gate.js` (Rule 1).
+
+The digest is what makes this a review rather than a formality. Steps 1 and 3
+build the package the same way from the same evidence, so they agree; change
+anything between them -- a new Wiki page, a different summary, another tester
+definition -- and the digest moves, the stored verdict no longer describes what
+is being written, and the export fails with `RESULT_REVIEW_SUBJECT_MISMATCH`.
+A missing review is `RESULT_REVIEW_NOT_FOUND`, a `rejected` one is
+`RESULT_REVIEW_REJECTED`, and a run naming itself as its own reviewer is
+`REVIEWER_NOT_INDEPENDENT`. A verdict is immutable once stored: the package may
+already have been published on the strength of it. `--wiki-root` defaults to the run's own Wiki
+(`.aris/runs/$RUN_ID/wiki`); a standalone run whose Wiki is `research-wiki/`
+must pass it. The package lands at `.aris/runs/$RUN_ID/result-package.json`,
+with its human-readable `result-summary.md` beside it (`--summary` overrides
+the generated text), and is immutable: re-running with the same inputs is a
+no-op, and re-running after the Wiki moved on fails with `IMMUTABLE_CONFLICT`
+rather than overwriting. Identity fields (`parent_run_id`, `scope_path`,
+`input_snapshot_sha256`) are copied from `run.json`, so the caller cannot get
+them wrong.
+
+### How the best iteration is chosen
+
+Three criteria, in order:
+
+1. **The tester's declared metrics.** This is the held-out judgment, so it
+   decides first. All of `gate.primaries` count together: an iteration loses
+   only to one that is at least as good on every declared metric and strictly
+   better on at least one. Two iterations that each win a different metric
+   neither beat the other, and the next criterion separates them.
+2. **The metric gate's reading for that iteration**, in the dashboard's own
+   `metric.direction`. This is the loop's internal stop-condition measurement,
+   so it only breaks ties the tester left open.
+3. **The later iteration**, so the answer is the same on every re-run.
+
+Once any iteration has a tester reading, iterations without one are out of the
+running entirely - they have no measurement on the evidence that decides
+first. Pass `--tester-definition` whenever that is the case; without it the
+export cannot know which direction each declared metric improves and stops
+with `TESTER_DEFINITION_REQUIRED`.
+
+### What the export cross-checks
+
+Two facts are recorded in two places on purpose, and the export exists partly
+to confirm they agree. Neither duplicate is a second source of truth; a
+disagreement is a hard failure, never a silent preference for one side.
+
+| Check | Failure |
+|---|---|
+| Each page's `gate_metric` equals the dashboard's `metric.history` value for the same iteration | `GATE_METRIC_MISMATCH` |
+| The dashboard has a reading at all for an iteration whose page recorded one | `GATE_METRIC_MISSING` |
+| Every judged page names the tester definition passed in `--tester-definition` | `TESTER_DEFINITION_MISMATCH` |
+| Every judged page records exactly the metric names that definition declares | `TESTER_METRIC_SET_MISMATCH` |
+| Some experiment page carries an `iteration` | `NO_EXPORTABLE_EXPERIMENT` |
+| No two pages claim the same iteration | `DUPLICATE_ID` |
+
+### What each iteration has to record for this to work
+
+The export reads only what `/result-to-claim` wrote at that iteration's
+termination, so `add_experiment` must carry:
+
+- `--iteration <n>` - the outer iteration this experiment belongs to. A page
+  without it is not a candidate.
+- `--gate-metric <value>` - that iteration's metric-gate reading, the same
+  number the dashboard received.
+- `--tester-feedback <receipt> --tester-public-key <key>` - both or neither.
+  Tester numbers enter the Wiki only through a signature-verified public
+  receipt; there is no flag for typing them in. The receipt names the
+  iteration it judged, so supplying `--iteration` as well is only allowed when
+  the two agree.
+
+Recorded tester values stay readable after they land: the export ranks by
+them, and a Wiki query or the markdown projection returns the same numbers,
+alongside the coarse conclusion, directions and advice. What never enters the
+page is the test content behind those numbers. See
+[Fixed tester boundary](#fixed-tester-boundary).
+
+---
+
 ## Paper Writing (optional)
 
 Gate: `metric.current >= metric.target - abs(metric.target) * tolerance` (higher_better; symmetric for lower_better) AND `iteration >= 2`.
@@ -919,6 +1291,61 @@ state fails validation.
 > reported, but it neither stops nor extends the loop. There is no compound
 > Type-A/Type-B gate: a reviewer's opinion is never a termination basis, and a
 > deterministic stop is never acquitted with a reviewer id.
+
+---
+
+## Workspace and Wiki boundary
+
+The caller supplies `workspace_root`, `write_scope`, `wiki_root`, the Wiki
+request and its exact head. Keep a run's Wiki under that run's
+`worktrees/<run_id>/` directory; do not use a shared Wiki or derive a second
+location here. The current local workspace adapter records the concrete
+worktree as `.aris/worktrees/<run_id>` and still creates it with Git. That is
+an implementation boundary, not permission for a worker to concatenate paths or
+to claim Paseo workspace archival is already wired up.
+
+If the workspace, scope or Wiki helper is missing, stop. Do not substitute the
+current checkout, an ancestor directory or an old receipt.
+
+## Fixed tester boundary
+
+The tester exists so the research loop cannot train against its own target.
+After submission, the research side may receive only the terminal gate
+conclusion and the fixed coarse public feedback that the current remote
+contract exposes. It may not analyze the tester run.
+
+Never send or read tester case content, answers, prompts, per-case output,
+per-case scores, private observations, fine-grained categories or private URIs.
+The sanitizer's forbidden key vocabulary includes `case_id`, `case_ids`,
+`prompt`, `question`, `answer`, `score`, `scores`, `per_case`,
+`private_uri`, `artifact_uri`, `result_uri`, `raw_result`, `exact_example` and
+`category`.
+The submission carries bindings and hashes such as artifact hashes, harness
+hash, case manifest digest, input distribution and judge binding; it does not
+carry the private cases themselves, which never leave the tester machine. The
+response validator
+in `src/tools/tester-agent.ts` accepts only terminal status, coarse
+`error_analysis` and signed public receipts. `src/tools/tester-feedback.ts`
+allows only the fixed coarse conclusion/direction/advice vocabulary and rejects
+private keys.
+
+The one numeric channel out of the tester is `tester_feedback.metrics`: the
+aggregate value of each metric the tester definition declared in
+`gate.primaries`, and nothing else. The names are frozen into
+`definition_sha256` at task setup, and publishing checks both directions -
+every declared metric must be reported, no undeclared one may be - so the
+tester cannot widen its own disclosure later. There is still no defect list
+field; do not describe one as available research input. What the tester says
+about defects is the fixed coarse vocabulary - `conclusion`, `directions`,
+`advice`, `confidence` - and nothing finer. A tester receipt is
+never evidence for `analyze-results`, for Stage 3's review, or for a
+research claim. Public tester metrics and that coarse verdict enter the Wiki
+under their own source, and any research reader may read them back:
+`idea-discovery`, a bridge repair and the result-package export all see the
+same aggregates. Reading them is not tuning against the held-out set, because
+the cases, prompts, answers and per-case scores that would let you tune never
+reach the Wiki at all. When you cite one, write it as what the tester
+reported, not as your own finding.
 
 ---
 

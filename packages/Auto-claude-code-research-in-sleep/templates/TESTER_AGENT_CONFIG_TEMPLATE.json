@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "mode": "tester_agent",
+  "tester_id": "tester:example",
+  "project_id": "project:example",
+  "ssh_target": "tester@tester-host.invalid",
+  "daemon_port": 6767,
+  "agent_id": "agent:replace-with-the-deployed-id",
+  "remote_receipt_dir": "/home/tester/aris/receipts",
+  "public_key_path": "/home/owner/aris/tester-public-key.pem",
+  "public_key_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "submission_contract_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "request_timeout_ms": 600000
+}

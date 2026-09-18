@@ -1,0 +1,16 @@
+{
+  "_comment": "Merge this into your project's .claude/settings.json -- `search-audit-cli.js install-guard --project <dir>` does it for you and rewrites ARIS_DIST to this checkout's dist directory. Refuses network calls that name what the tester built its held-out cases on, and appends every network call to .aris/search-audit.jsonl. This is keyword and domain matching, NOT a sandbox: a paraphrase, a synonym or a typo goes through, and the benchmark is probably in the model's weights already. It stops the cheap contamination path (typing the benchmark's name into a search box) and nothing more. With no .aris/search-policy.json present it refuses every network call rather than allowing them.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "WebSearch|WebFetch|Bash|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${ARIS_DIST}/templates/search-guard.js\" --project \"${CLAUDE_PROJECT_DIR}\""
+          }
+        ]
+      }
+    ]
+  }
+}

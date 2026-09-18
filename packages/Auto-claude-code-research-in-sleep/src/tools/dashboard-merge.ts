@@ -1,6 +1,13 @@
+import { settleExecutionReceipt, runBudgetExhausted } from "./run-budget.js";
+import { assertRunId } from "./workflow-spec.js";
+import { assertResearchVisible } from "./wiki-scope.js";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { createCli, runCli } from "../lib/cli.js";
+import { canonicalJsonString } from "./canonical-json.js";
+import { readStateFile, withStateFileLock, writeStateJsonAtomic } from "./state-file.js";
+import { requireRunContract, runJsonPath, runOwnedPath } from "./run-contract.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -8,10 +15,16 @@ interface Receipt {
   worker: string;
   iteration: number;
   run_id: string;
+  phase?: string;
   status: "done" | "failed";
   error: JsonObject | null;
   primary_output: string | null;
+  primary_output_sha256?: string;
+  output_sha256?: string;
   summary: JsonObject;
+  // Bridge-repair receipts are allowed to carry JSON null at runtime; normal
+  // workers always use an object. Branches that handle repair check this before
+  // reading the patch.
   dashboard_patch: JsonObject;
   completed_at: string;
   has_errors: boolean;
@@ -24,7 +37,6 @@ interface WorkerRule {
   requiredPatchKeys: readonly string[];
 }
 
-const RUN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
 // Problem entity node ids (research-wiki `problems/<slug>.md`). Replaces the old
 // free-text gap ids (G1, G2, ...).
@@ -69,7 +81,14 @@ function isIdea(value: unknown): boolean {
 }
 
 function isReviewVerdict(value: unknown): boolean {
-  return value === "ready" || value === "almost" || value === "not ready";
+  // "not ready" and "insufficient" are different findings. "not ready" means the
+  // review judged the result and it did not hold up, so the next attempt needs a
+  // different idea. "insufficient" means the review could not judge at all: the
+  // experiment fell short of settling the question, so the same idea goes back to
+  // the bridge to be run properly.
+  return (
+    value === "ready" || value === "almost" || value === "not ready" || value === "insufficient"
+  );
 }
 
 function isScore(value: unknown): boolean {
@@ -78,6 +97,10 @@ function isScore(value: unknown): boolean {
 
 function isPlanPath(value: unknown): value is string {
   return isNonEmptyString(value) && !path.isAbsolute(value) && !value.split(/[\\/]/).includes("..");
+}
+
+function isSha256(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
 }
 
 const WORKER_RULES: Readonly<Record<string, WorkerRule>> = {
@@ -119,7 +142,7 @@ const WORKER_RULES: Readonly<Record<string, WorkerRule>> = {
     requiredPatchKeys: ["metric.current"],
   },
   "auto-review-loop": {
-    phases: ["auto-review-loop", "auto-review"],
+    phases: ["auto-review-loop", "auto-review", "bridge-repair"],
     patchKeys: {
       "last_review.verdict": isReviewVerdict,
       "last_review.score": isScore,
@@ -166,8 +189,7 @@ const WORKER_RULES: Readonly<Record<string, WorkerRule>> = {
 };
 
 function fail(message: string): never {
-  console.error(`error: ${message}`);
-  process.exit(1);
+  throw new Error(`error: ${message}`);
 }
 
 function assertNoDangerousKeys(value: unknown, location: string): void {
@@ -188,15 +210,9 @@ function assertIsoTimestamp(value: unknown, location: string): asserts value is 
   }
 }
 
-function validateRunId(runId: string): void {
-  if (!RUN_ID_PATTERN.test(runId) || runId.includes("..")) {
-    fail(`invalid run id '${runId}'`);
-  }
-}
-
 function readJson(filePath: string, label: string): unknown {
   try {
-    return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    return readStateFile(filePath);
   } catch (error) {
     fail(`cannot read ${label} at ${filePath}: ${String(error)}`);
   }
@@ -210,7 +226,11 @@ function validateDashboard(raw: unknown, runId: string, dashboardPath: string): 
     fail(`dashboard run_id '${String(raw.run_id)}' does not match '${runId}'`);
   }
   if (!isNonEmptyString(raw.project)) fail("dashboard.project must be a non-empty string");
-  if (!["running", "finishing", "completed", "invalid", "failed"].includes(String(raw.status))) {
+  if (
+    !["running", "bridge_repair_pending", "finishing", "completed", "invalid", "failed"].includes(
+      String(raw.status),
+    )
+  ) {
     fail(`dashboard.status '${String(raw.status)}' is invalid`);
   }
   if (raw.failure !== undefined && raw.failure !== null && !isObject(raw.failure)) {
@@ -219,9 +239,7 @@ function validateDashboard(raw: unknown, runId: string, dashboardPath: string): 
   if (!Number.isInteger(raw.iteration) || (raw.iteration as number) < 1) {
     fail("dashboard.iteration must be an integer >= 1");
   }
-  if (!Number.isInteger(raw.max_iterations) || (raw.max_iterations as number) < 1) {
-    fail("dashboard.max_iterations must be an integer >= 1");
-  }
+
   if (!isNonEmptyString(raw.current_phase)) {
     fail("dashboard.current_phase must be a non-empty string");
   }
@@ -291,6 +309,29 @@ function validateReceipt(raw: unknown, runId: string, receiptPath: string): Rece
   if (!isObject(raw)) fail(`receipt at ${receiptPath} is not a JSON object`);
   assertNoDangerousKeys(raw, "receipt");
 
+  const allowedFields = [
+    "worker",
+    "iteration",
+    "run_id",
+    "phase",
+    "status",
+    "error",
+    "primary_output",
+    "primary_output_sha256",
+    "output_sha256",
+    "summary",
+    "dashboard_patch",
+    "completed_at",
+    "has_errors",
+    "error_count",
+    "module_run_id",
+    "module_id",
+    "scope",
+  ];
+  for (const key of Object.keys(raw)) {
+    if (!allowedFields.includes(key)) fail(`receipt at ${receiptPath} has unknown field '${key}'`);
+  }
+
   if (!isNonEmptyString(raw.worker) || !(raw.worker in WORKER_RULES)) {
     fail(`receipt at ${receiptPath} has unsupported worker '${String(raw.worker)}'`);
   }
@@ -300,10 +341,27 @@ function validateReceipt(raw: unknown, runId: string, receiptPath: string): Rece
   if (raw.run_id !== runId) {
     fail(`receipt run_id '${String(raw.run_id)}' does not match '${runId}'`);
   }
+  if (raw.phase !== undefined && !isNonEmptyString(raw.phase)) {
+    fail(`receipt at ${receiptPath} has an invalid phase`);
+  }
+  for (const field of ["primary_output_sha256", "output_sha256"] as const) {
+    if (raw[field] !== undefined && !isSha256(raw[field])) {
+      fail(`receipt at ${receiptPath} has an invalid ${field}`);
+    }
+  }
+  for (const field of ["module_run_id", "module_id", "scope"] as const) {
+    if (raw[field] !== undefined && !isNonEmptyString(raw[field])) {
+      fail(`receipt at ${receiptPath} has an invalid ${field}`);
+    }
+  }
   if (raw.status !== "done" && raw.status !== "failed") {
     fail(`receipt at ${receiptPath} has invalid status '${String(raw.status)}'`);
   }
-  if (!isObject(raw.summary) || !isObject(raw.dashboard_patch)) {
+  if (
+    !isObject(raw.summary) ||
+    (!isObject(raw.dashboard_patch) &&
+      !(raw.dashboard_patch === null && raw.worker === "auto-review-loop"))
+  ) {
     fail(`receipt at ${receiptPath} needs summary and dashboard_patch objects`);
   }
   assertIsoTimestamp(raw.completed_at, "receipt.completed_at");
@@ -320,7 +378,11 @@ function validateReceipt(raw: unknown, runId: string, receiptPath: string): Rece
 
   if (raw.status === "done") {
     if (raw.error !== null) fail(`done receipt at ${receiptPath} must set error to null`);
-    if (!isNonEmptyString(raw.primary_output)) {
+    const bridgeRepairReceipt =
+      raw.worker === "auto-review-loop" &&
+      raw.primary_output === null &&
+      raw.dashboard_patch === null;
+    if (!bridgeRepairReceipt && !isNonEmptyString(raw.primary_output)) {
       fail(`done receipt at ${receiptPath} needs primary_output`);
     }
   } else {
@@ -328,7 +390,7 @@ function validateReceipt(raw: unknown, runId: string, receiptPath: string): Rece
     if (raw.primary_output !== null) {
       fail(`failed receipt at ${receiptPath} must set primary_output to null`);
     }
-    if (Object.keys(raw.dashboard_patch).length !== 0) {
+    if (raw.dashboard_patch !== null && Object.keys(raw.dashboard_patch).length !== 0) {
       fail(`failed receipt at ${receiptPath} must not contain a dashboard patch`);
     }
   }
@@ -352,8 +414,9 @@ function validateOwnership(
   receiptPath: string,
   receipt: Receipt,
   dashboard: JsonObject,
+  checkPhase = true,
 ): void {
-  const workersRoot = path.resolve(root, ".aris", "runs", runId, "workers");
+  const workersRoot = path.join(moduleRunRoot(root, runId), "workers");
   const normalizedReceipt = path.resolve(receiptPath);
   const relative = path.relative(workersRoot, normalizedReceipt);
   if (
@@ -363,9 +426,19 @@ function validateOwnership(
   ) {
     fail(`receipt must be named receipt.json under ${workersRoot}`);
   }
+  assertRealPathInside(
+    moduleRunRoot(root, runId),
+    normalizedReceipt,
+    "receipt escapes its run directory",
+  );
 
   const manifestPath = path.join(path.dirname(normalizedReceipt), "input-manifest.json");
   if (!fs.existsSync(manifestPath)) fail(`receipt has no sibling input-manifest.json`);
+  assertRealPathInside(
+    moduleRunRoot(root, runId),
+    manifestPath,
+    "receipt input manifest escapes its run directory",
+  );
   const manifestRaw = readJson(manifestPath, "input manifest");
   if (!isObject(manifestRaw)) fail(`input manifest at ${manifestPath} is not an object`);
   assertNoDangerousKeys(manifestRaw, "manifest");
@@ -382,28 +455,57 @@ function validateOwnership(
   if (!isNonEmptyString(manifestRaw.output_dir)) fail("input manifest needs output_dir");
 
   const outputDir = resolveOutputDir(root, path.dirname(normalizedReceipt), manifestRaw.output_dir);
+  assertRealPathInside(
+    moduleRunRoot(root, runId),
+    outputDir,
+    "receipt output directory escapes its run directory",
+  );
   if (receipt.status === "done") {
-    const primaryOutput = receipt.primary_output as string;
-    if (path.isAbsolute(primaryOutput) || primaryOutput.split(/[\\/]/).includes("..")) {
-      fail("receipt.primary_output must stay within output_dir");
-    }
-    const artifact = path.resolve(outputDir, primaryOutput);
-    const artifactRelative = path.relative(outputDir, artifact);
-    if (artifactRelative.startsWith("..") || path.isAbsolute(artifactRelative)) {
-      fail("receipt.primary_output escapes output_dir");
-    }
-    if (!fs.existsSync(artifact)) fail(`primary output does not exist: ${artifact}`);
-
-    if (receipt.worker === "idea-discovery") {
-      // The loop's next stage (experiment-bridge) consumes this plan directly, so the
-      // path in the patch must name a file this worker actually produced.
-      const expectedPlan = path.resolve(outputDir, "EXPERIMENT_PLAN.md");
-      if (!fs.existsSync(expectedPlan)) {
-        fail("idea-discovery output is missing EXPERIMENT_PLAN.md");
+    const bridgeRepair =
+      receipt.worker === "auto-review-loop" &&
+      (receipt.phase === undefined ||
+        receipt.phase === "bridge-repair" ||
+        receipt.phase === "auto-review-loop") &&
+      isObject(manifestRaw.context) &&
+      manifestRaw.context.purpose === "bridge_repair";
+    if (bridgeRepair) {
+      if (receipt.primary_output !== null) {
+        fail("bridge repair receipt must not publish a primary output");
       }
-      const planPath = receipt.dashboard_patch.plan_path;
-      if (!isPlanPath(planPath) || path.resolve(root, planPath) !== expectedPlan) {
-        fail("idea-discovery plan_path must name this worker's EXPERIMENT_PLAN.md");
+    } else {
+      const primaryOutput = receipt.primary_output as string;
+      if (path.isAbsolute(primaryOutput) || primaryOutput.split(/[\\/]/).includes("..")) {
+        fail("receipt.primary_output must stay within output_dir");
+      }
+      const artifact = path.resolve(outputDir, primaryOutput);
+      const artifactRelative = path.relative(outputDir, artifact);
+      if (artifactRelative.startsWith("..") || path.isAbsolute(artifactRelative)) {
+        fail("receipt.primary_output escapes output_dir");
+      }
+      if (!fs.existsSync(artifact)) fail(`primary output does not exist: ${artifact}`);
+      if (!fs.statSync(artifact).isFile()) fail(`primary output is not a file: ${artifact}`);
+      assertRealPathInside(outputDir, artifact, "receipt.primary_output escapes output_dir");
+      const declaredHash = receipt.primary_output_sha256 ?? receipt.output_sha256;
+      if (declaredHash !== undefined) {
+        const actualHash = crypto
+          .createHash("sha256")
+          .update(fs.readFileSync(artifact))
+          .digest("hex");
+        if (actualHash !== declaredHash)
+          fail("receipt primary output hash does not match its contents");
+      }
+
+      if (receipt.worker === "idea-discovery") {
+        // The loop's next stage (experiment-bridge) consumes this plan directly, so the
+        // path in the patch must name a file this worker actually produced.
+        const expectedPlan = path.resolve(outputDir, "EXPERIMENT_PLAN.md");
+        if (!fs.existsSync(expectedPlan)) {
+          fail("idea-discovery output is missing EXPERIMENT_PLAN.md");
+        }
+        const planPath = receipt.dashboard_patch.plan_path;
+        if (!isPlanPath(planPath) || path.resolve(root, planPath) !== expectedPlan) {
+          fail("idea-discovery plan_path must name this worker's EXPERIMENT_PLAN.md");
+        }
       }
     }
   }
@@ -414,7 +516,7 @@ function validateOwnership(
     );
   }
   const rule = WORKER_RULES[receipt.worker];
-  if (!rule.phases.includes(dashboard.current_phase as string)) {
+  if (checkPhase && !rule.phases.includes(dashboard.current_phase as string)) {
     fail(
       `worker '${receipt.worker}' cannot write while dashboard.current_phase is '${String(dashboard.current_phase)}'`,
     );
@@ -502,70 +604,469 @@ function updateMetricHistory(dashboard: JsonObject, receipt: Receipt): void {
   }
 }
 
-function atomicWrite(filePath: string, value: JsonObject): void {
-  const temporary = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf-8");
-  fs.renameSync(temporary, filePath);
+function assertRealPathInside(parent: string, child: string, message: string): void {
+  let realParent: string;
+  let realChild: string;
+  try {
+    realParent = fs.realpathSync.native(parent);
+    realChild = fs.realpathSync.native(child);
+  } catch {
+    fail(message);
+  }
+  const relative = path.relative(realParent, realChild);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) fail(message);
+}
+
+function moduleRunRoot(root: string, runId: string): string {
+  return runOwnedPath(root, runId);
+}
+
+function moduleRelativePath(root: string, runId: string, target: string, label: string): string {
+  const runRoot = moduleRunRoot(root, runId);
+  const relative = path.relative(runRoot, path.resolve(target));
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    fail(`${label} must stay inside the module run directory`);
+  }
+  return relative;
+}
+
+function moduleReceiptHash(receiptPath: string): string {
+  if (!fs.existsSync(receiptPath) || !fs.statSync(receiptPath).isFile()) {
+    fail("module receipt is not a regular file");
+  }
+  return crypto.createHash("sha256").update(fs.readFileSync(receiptPath)).digest("hex");
+}
+
+function frozenBridgeInputHash(manifest: JsonObject): string {
+  return crypto
+    .createHash("sha256")
+    .update(
+      canonicalJsonString({
+        inputs: manifest.inputs ?? null,
+        context: manifest.context ?? null,
+      }),
+      "utf8",
+    )
+    .digest("hex");
+}
+
+function readReceiptManifest(root: string, runId: string, receiptPath: string): JsonObject {
+  const runRoot = moduleRunRoot(root, runId);
+  const manifestPath = path.join(path.dirname(path.resolve(receiptPath)), "input-manifest.json");
+  assertRealPathInside(runRoot, manifestPath, "receipt input manifest escapes its run directory");
+  const manifest = readJson(manifestPath, "input manifest");
+  if (!isObject(manifest)) fail("input manifest is not an object");
+  return manifest;
+}
+
+function isBridgeRepairManifest(manifest: JsonObject, receipt: Receipt): boolean {
+  return (
+    receipt.worker === "auto-review-loop" &&
+    (receipt.phase === undefined ||
+      receipt.phase === "bridge-repair" ||
+      receipt.phase === "auto-review-loop") &&
+    isObject(manifest.context) &&
+    manifest.context.purpose === "bridge_repair"
+  );
+}
+
+interface RecordedBridgeFacts {
+  bridge_receipt_ref: string;
+  bridge_receipt_sha256: string;
+  bridge_manifest_ref: string;
+  bridge_manifest_sha256: string;
+  frozen_input_sha256: string;
+}
+
+/**
+ * Re-prove that the bridge attempt being sent back for repair is the attempt
+ * the dashboard recorded. The refs alone would let a later write point the
+ * repair at different evidence, so both files are re-read and re-hashed here
+ * and the frozen input hash is recomputed from the manifest on disk.
+ */
+function verifyRecordedBridgeFacts(
+  root: string,
+  runId: string,
+  dashboard: JsonObject,
+): RecordedBridgeFacts {
+  const recorded = dashboard.last_bridge_receipt;
+  if (!isObject(recorded)) {
+    fail("no recorded experiment-bridge receipt to send back for repair");
+  }
+  const runRoot = moduleRunRoot(root, runId);
+  const receiptRef = recorded.receipt_ref;
+  const manifestRef = recorded.manifest_ref;
+  if (!isNonEmptyString(receiptRef) || !isNonEmptyString(manifestRef)) {
+    fail("recorded bridge receipt refs are invalid");
+  }
+  const receiptPath = path.resolve(runRoot, receiptRef);
+  const manifestPath = path.resolve(runRoot, manifestRef);
+  assertRealPathInside(runRoot, receiptPath, "recorded bridge receipt escapes its run");
+  assertRealPathInside(runRoot, manifestPath, "recorded bridge manifest escapes its run");
+  if (moduleReceiptHash(receiptPath) !== recorded.receipt_sha256) {
+    fail("recorded bridge receipt changed on disk");
+  }
+  if (moduleReceiptHash(manifestPath) !== recorded.manifest_sha256) {
+    fail("recorded bridge input manifest changed on disk");
+  }
+  const manifest = readJson(manifestPath, "bridge input manifest");
+  if (!isObject(manifest)) fail("bridge input manifest is not a JSON object");
+  return {
+    bridge_receipt_ref: receiptRef,
+    bridge_receipt_sha256: recorded.receipt_sha256 as string,
+    bridge_manifest_ref: manifestRef,
+    bridge_manifest_sha256: recorded.manifest_sha256 as string,
+    frozen_input_sha256: frozenBridgeInputHash(manifest),
+  };
+}
+
+function applyStandaloneBridgeRepair(
+  root: string,
+  runId: string,
+  receiptPath: string,
+  receipt: Receipt,
+  dashboard: JsonObject,
+  manifest: JsonObject,
+  receiptHash: string,
+): void {
+  if (dashboard.status !== "bridge_repair_pending" || dashboard.current_phase !== "bridge-repair") {
+    fail("bridge repair receipt requires a pending bridge repair dashboard");
+  }
+  if (!isObject(dashboard.bridge_failure) || dashboard.bridge_failure.status !== "pending") {
+    fail("dashboard.bridge_failure is not pending");
+  }
+  if (!isObject(receipt.summary)) fail("bridge repair receipt needs a summary");
+  const repairStatus = receipt.summary.repair_status;
+  if (repairStatus !== "fixed" && repairStatus !== "exhausted") {
+    fail("bridge repair summary needs fixed or exhausted status");
+  }
+  if (
+    receipt.summary.semantic_change === true ||
+    receipt.summary.research_semantics_changed === true ||
+    receipt.summary.workflow_graph_changed === true ||
+    receipt.summary.node_interface_changed === true ||
+    receipt.summary.connection_changed === true ||
+    receipt.summary.tester_definition_changed === true ||
+    receipt.summary.scoring_policy_changed === true
+  ) {
+    fail("bridge repair changed a frozen research boundary");
+  }
+  const bridgeFailure = dashboard.bridge_failure as JsonObject;
+  const currentAttempts = Number(bridgeFailure.repair_attempts);
+
+  if (!Number.isInteger(currentAttempts) || currentAttempts < 0) fail("repair counter is invalid");
+  settleExecutionReceipt(root, runId, manifest, receipt.summary);
+  if (repairStatus === "exhausted" && !runBudgetExhausted(root, runId))
+    fail("repair still has execution budget");
+  const nextAttempts = currentAttempts + 1;
+
+  if (receipt.summary.repair_round !== undefined && receipt.summary.repair_round !== nextAttempts) {
+    fail("bridge repair round does not match the dashboard");
+  }
+  if (!isObject(manifest.context) || manifest.context.purpose !== "bridge_repair") {
+    fail("bridge repair manifest purpose is invalid");
+  }
+  const runRoot = moduleRunRoot(root, runId);
+  const receiptRef = moduleRelativePath(root, runId, receiptPath, "bridge repair receipt");
+  const manifestPath = path.join(path.dirname(path.resolve(receiptPath)), "input-manifest.json");
+  const manifestRef = moduleRelativePath(root, runId, manifestPath, "bridge repair manifest");
+  const appliedReceipts = dashboard.applied_receipts as string[];
+  const appliedHashes = isObject(dashboard.applied_receipt_hashes)
+    ? dashboard.applied_receipt_hashes
+    : {};
+  if (!appliedReceipts.includes(path.resolve(receiptPath))) {
+    appliedReceipts.push(path.resolve(receiptPath));
+  }
+  appliedHashes[path.resolve(receiptPath)] = receiptHash;
+  dashboard.applied_receipt_hashes = appliedHashes;
+  dashboard.bridge_failure = {
+    ...bridgeFailure,
+    repair_attempts: nextAttempts,
+    status: repairStatus,
+    repair_receipt_ref: receiptRef,
+    repair_receipt_sha256: receiptHash,
+    repair_manifest_ref: manifestRef,
+    repair_manifest_sha256: moduleReceiptHash(manifestPath),
+  };
+  if (repairStatus === "fixed") {
+    dashboard.current_phase = "experiment-bridge";
+    dashboard.status = "running";
+  } else if (bridgeFailure.reason === "insufficient_evidence") {
+    // The bridge ran; the repair spent its rounds tuning the experiment and
+    // still produced nothing anyone could rule on. Nothing broke, so the run
+    // ends without a result. Marking it failed would read as "this direction
+    // was tested and lost", which is a claim the evidence never supported.
+    dashboard.current_phase = "completed";
+    dashboard.status = "completed";
+    dashboard.outcome = "no_proposal";
+  } else {
+    dashboard.current_phase = "bridge-repair";
+    dashboard.status = "failed";
+  }
+  if (dashboard.status === "failed") {
+    dashboard.failure = {
+      ...(isObject(dashboard.failure) ? dashboard.failure : {}),
+      repair_status: repairStatus,
+      repair_attempts: nextAttempts,
+      bridge_receipt_ref: bridgeFailure.bridge_receipt_ref,
+    };
+  }
+  dashboard.updated_at = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  writeStateJsonAtomic(path.join(runRoot, "dashboard.json"), dashboard);
 }
 
 function apply(root: string, runId: string, receiptPath: string): void {
-  validateRunId(runId);
-  const dashboardPath = path.join(root, ".aris", "runs", runId, "dashboard.json");
+  assertRunId(runId, "run_id");
+  const dashboardPath = path.join(moduleRunRoot(root, runId), "dashboard.json");
   if (!fs.existsSync(dashboardPath)) fail(`no dashboard at ${dashboardPath}`);
+  assertRealPathInside(
+    moduleRunRoot(root, runId),
+    dashboardPath,
+    "dashboard escapes its run directory",
+  );
   if (!fs.existsSync(receiptPath)) fail(`no receipt at ${receiptPath}`);
 
-  const receipt = validateReceipt(readJson(receiptPath, "receipt"), runId, receiptPath);
-  const dashboard = validateDashboard(readJson(dashboardPath, "dashboard"), runId, dashboardPath);
-
-  const normalizedReceipt = path.resolve(receiptPath);
-  const appliedReceipts = dashboard.applied_receipts as string[];
-  if (appliedReceipts.includes(normalizedReceipt)) {
-    console.log(JSON.stringify({ applied: false, reason: "already-applied" }));
-    return;
+  const receiptRaw = readJson(receiptPath, "receipt");
+  assertResearchVisible(receiptRaw);
+  if (isObject(receiptRaw) && receiptRaw.reviewed_run_kind !== undefined) {
+    fail("review receipts cannot be sent to dashboard-merge");
   }
+  const dashboardRaw = readJson(dashboardPath, "dashboard");
+  assertResearchVisible(dashboardRaw);
 
-  validateOwnership(root, runId, receiptPath, receipt, dashboard);
+  withStateFileLock(dashboardPath, () => {
+    // The receipt is immutable input, but the dashboard must be read and
+    // changed under the same path-derived lock. Otherwise two valid receipts
+    // can both read the same applied_receipts array and one update disappears.
+    const currentReceiptRaw = readJson(receiptPath, "receipt");
+    assertResearchVisible(currentReceiptRaw);
+    if (isObject(currentReceiptRaw) && currentReceiptRaw.reviewed_run_kind !== undefined) {
+      fail("review receipts cannot be sent to dashboard-merge");
+    }
+    const receipt = validateReceipt(currentReceiptRaw, runId, receiptPath);
+    const dashboard = validateDashboard(readJson(dashboardPath, "dashboard"), runId, dashboardPath);
+    const normalizedReceipt = path.resolve(receiptPath);
+    const receiptHash = moduleReceiptHash(normalizedReceipt);
+    const appliedReceipts = dashboard.applied_receipts as string[];
+    if (appliedReceipts.includes(normalizedReceipt)) {
+      const appliedHashes = isObject(dashboard.applied_receipt_hashes)
+        ? dashboard.applied_receipt_hashes
+        : {};
+      if (
+        appliedHashes[normalizedReceipt] !== undefined &&
+        appliedHashes[normalizedReceipt] !== receiptHash
+      ) {
+        fail("receipt path already applied with different content");
+      }
+      validateOwnership(root, runId, receiptPath, receipt, dashboard, false);
+      console.log(JSON.stringify({ applied: false, reason: "already-applied" }));
+      return;
+    }
 
-  if (receipt.status === "failed") {
-    // A failed receipt is a terminal event, not a no-op. The resume path
-    // decides "stage completed" from dashboard state, so the failure must be
-    // recorded here - the only durable writer the orchestrator consults.
-    // Without this, a failed receipt leaves status=running and resume reads
-    // the file's mere existence as completion.
-    dashboard.status = "failed";
-    dashboard.failure = {
-      worker: receipt.worker,
-      iteration: receipt.iteration,
-      phase: dashboard.current_phase,
-      error: receipt.error,
-      failed_at: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
-    };
+    validateOwnership(root, runId, receiptPath, receipt, dashboard);
+
+    const receiptManifest = readReceiptManifest(root, runId, receiptPath);
+    if (isBridgeRepairManifest(receiptManifest, receipt)) {
+      applyStandaloneBridgeRepair(
+        root,
+        runId,
+        receiptPath,
+        receipt,
+        dashboard,
+        receiptManifest,
+        receiptHash,
+      );
+      console.log(JSON.stringify({ applied: true, reason: "bridge-repair-recorded" }));
+      return;
+    }
+
+    if (
+      receipt.worker === "experiment-bridge" &&
+      (receipt.phase === undefined || receipt.phase === "experiment-bridge") &&
+      receipt.status === "done" &&
+      isObject(dashboard.bridge_failure) &&
+      dashboard.bridge_failure.status === "fixed" &&
+      dashboard.bridge_failure.frozen_input_sha256 !== frozenBridgeInputHash(receiptManifest)
+    ) {
+      fail("bridge retry inputs changed after repair; start a new candidate");
+    }
+
+    if (receipt.worker === "experiment-bridge")
+      settleExecutionReceipt(root, runId, receiptManifest, receipt.summary);
+
+    if (receipt.status === "failed") {
+      if (
+        receipt.worker === "experiment-bridge" &&
+        (receipt.phase === undefined || receipt.phase === "experiment-bridge")
+      ) {
+        if (dashboard.status !== "running" || dashboard.current_phase !== "experiment-bridge") {
+          fail("a bridge failure can only be recorded from the running experiment-bridge phase");
+        }
+        const previousFailure = isObject(dashboard.bridge_failure)
+          ? dashboard.bridge_failure
+          : null;
+        if (previousFailure?.status === "pending") {
+          fail("a bridge repair is already pending");
+        }
+        if (
+          previousFailure?.status === "fixed" &&
+          previousFailure.frozen_input_sha256 !== frozenBridgeInputHash(receiptManifest)
+        ) {
+          fail("a repaired bridge must be retried with the same frozen inputs");
+        }
+        const repairAttempts = Number(previousFailure?.repair_attempts ?? 0);
+
+        const bridgeFailure = {
+          schema_version: 1,
+          // This merge path only ever fires on a failed bridge receipt; the
+          // evidence-too-weak repair is opened further down, when the review
+          // loop reports a verdict it could not rule on.
+          reason: "execution",
+          bridge_receipt_ref: moduleRelativePath(root, runId, receiptPath, "bridge receipt"),
+          bridge_receipt_sha256: receiptHash,
+          bridge_manifest_ref: moduleRelativePath(
+            root,
+            runId,
+            path.join(path.dirname(path.resolve(receiptPath)), "input-manifest.json"),
+            "bridge manifest",
+          ),
+          bridge_manifest_sha256: moduleReceiptHash(
+            path.join(path.dirname(path.resolve(receiptPath)), "input-manifest.json"),
+          ),
+          frozen_input_sha256: frozenBridgeInputHash(receiptManifest),
+          error: receipt.error,
+          repair_attempts: repairAttempts,
+
+          status: "pending",
+          repair_receipt_ref: null,
+          repair_receipt_sha256: null,
+        };
+        const appliedHashes = isObject(dashboard.applied_receipt_hashes)
+          ? dashboard.applied_receipt_hashes
+          : {};
+        appliedHashes[normalizedReceipt] = receiptHash;
+        dashboard.applied_receipt_hashes = appliedHashes;
+        appliedReceipts.push(normalizedReceipt);
+        dashboard.status = "bridge_repair_pending";
+        dashboard.current_phase = "bridge-repair";
+        dashboard.bridge_failure = bridgeFailure;
+        dashboard.failure = {
+          worker: receipt.worker,
+          iteration: receipt.iteration,
+          phase: receipt.phase,
+          error: receipt.error,
+          failed_at: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+        };
+        dashboard.updated_at = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+        writeStateJsonAtomic(dashboardPath, dashboard);
+        console.log(JSON.stringify({ applied: false, reason: "bridge-repair-pending" }));
+        return;
+      }
+      // A failed receipt is a terminal event, not a no-op. The resume path
+      // decides "stage completed" from dashboard state, so the failure must be
+      // recorded here - the only durable writer the orchestrator consults.
+      dashboard.status = "failed";
+      dashboard.failure = {
+        worker: receipt.worker,
+        iteration: receipt.iteration,
+        phase: dashboard.current_phase,
+        error: receipt.error,
+        failed_at: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+      };
+      appliedReceipts.push(normalizedReceipt);
+      const appliedHashes = isObject(dashboard.applied_receipt_hashes)
+        ? dashboard.applied_receipt_hashes
+        : {};
+      appliedHashes[normalizedReceipt] = receiptHash;
+      dashboard.applied_receipt_hashes = appliedHashes;
+      dashboard.updated_at = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+      writeStateJsonAtomic(dashboardPath, dashboard);
+      console.log(JSON.stringify({ applied: false, reason: "failed-receipt" }));
+      return;
+    }
+
+    validatePatch(receipt, dashboard);
+    for (const [key, value] of Object.entries(receipt.dashboard_patch)) {
+      setDotPath(dashboard, key, value);
+    }
+
+    const review = isObject(dashboard.last_review) ? dashboard.last_review : null;
+    if (receipt.worker === "auto-review-loop" && review?.verdict === "insufficient") {
+      // The review could not rule on the result, and it diagnosed the cause as
+      // the experiment rather than the idea: parameters off, sample too small, a
+      // control not held. Nobody asked for a new idea, so the candidate goes
+      // back to the bridge to be run properly and the iteration does not
+      // advance. An unjudgeable result also never enters metric history, which
+      // is why this returns before updateMetricHistory.
+      const previousFailure = isObject(dashboard.bridge_failure) ? dashboard.bridge_failure : null;
+      if (previousFailure?.status === "pending") fail("a bridge repair is already pending");
+      if (runBudgetExhausted(root, runId)) {
+        fail("no execution budget left to retune the experiment");
+      }
+      const appliedHashes = isObject(dashboard.applied_receipt_hashes)
+        ? dashboard.applied_receipt_hashes
+        : {};
+      appliedHashes[normalizedReceipt] = receiptHash;
+      dashboard.applied_receipt_hashes = appliedHashes;
+      appliedReceipts.push(normalizedReceipt);
+      dashboard.status = "bridge_repair_pending";
+      dashboard.current_phase = "bridge-repair";
+      dashboard.bridge_failure = {
+        schema_version: 1,
+        reason: "insufficient_evidence",
+        ...verifyRecordedBridgeFacts(root, runId, dashboard),
+        error: {
+          verdict: review.verdict,
+          score: review.score,
+          reviewer_id: review.reviewer_id,
+        },
+        // Repair rounds are counted per candidate, not per cause. A candidate
+        // that already burned rounds on a broken bridge does not get a fresh
+        // allowance for tuning.
+        repair_attempts: Number(previousFailure?.repair_attempts ?? 0),
+        status: "pending",
+        repair_receipt_ref: null,
+        repair_receipt_sha256: null,
+      };
+      dashboard.updated_at = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+      writeStateJsonAtomic(dashboardPath, dashboard);
+      console.log(JSON.stringify({ applied: false, reason: "bridge-repair-pending" }));
+      return;
+    }
+
+    updateMetricHistory(dashboard, receipt);
+
+    if (receipt.has_errors) {
+      const systemErrors = dashboard.system_errors as JsonObject;
+      systemErrors.total = (systemErrors.total as number) + receipt.error_count;
+      systemErrors.last = `${receipt.iteration}-${receipt.worker}`;
+    }
+
+    if (receipt.worker === "experiment-bridge") {
+      // The review that follows may find this evidence too thin to rule on. If
+      // it does, the repair has to go back to this exact attempt, so record
+      // which receipt produced the evidence while it is still in hand.
+      const bridgeManifestPath = path.join(
+        path.dirname(path.resolve(receiptPath)),
+        "input-manifest.json",
+      );
+      dashboard.last_bridge_receipt = {
+        receipt_ref: moduleRelativePath(root, runId, receiptPath, "bridge receipt"),
+        receipt_sha256: receiptHash,
+        manifest_ref: moduleRelativePath(root, runId, bridgeManifestPath, "bridge manifest"),
+        manifest_sha256: moduleReceiptHash(bridgeManifestPath),
+        frozen_input_sha256: frozenBridgeInputHash(receiptManifest),
+      };
+    }
+
     appliedReceipts.push(normalizedReceipt);
     dashboard.updated_at = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
-    atomicWrite(dashboardPath, dashboard);
-    console.log(JSON.stringify({ applied: false, reason: "failed-receipt" }));
-    return;
-  }
+    writeStateJsonAtomic(dashboardPath, dashboard);
 
-  validatePatch(receipt, dashboard);
-  for (const [key, value] of Object.entries(receipt.dashboard_patch)) {
-    setDotPath(dashboard, key, value);
-  }
-  updateMetricHistory(dashboard, receipt);
-
-  if (receipt.has_errors) {
-    const systemErrors = dashboard.system_errors as JsonObject;
-    systemErrors.total = (systemErrors.total as number) + receipt.error_count;
-    systemErrors.last = `${receipt.iteration}-${receipt.worker}`;
-  }
-
-  appliedReceipts.push(normalizedReceipt);
-  dashboard.updated_at = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
-  atomicWrite(dashboardPath, dashboard);
-
-  console.log(
-    JSON.stringify({ applied: true, worker: receipt.worker, iteration: receipt.iteration }),
-  );
+    console.log(
+      JSON.stringify({ applied: true, worker: receipt.worker, iteration: receipt.iteration }),
+    );
+  });
 }
 
 const program = createCli(

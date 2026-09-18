@@ -1,3 +1,5 @@
+import { runOwnedPath } from "./run-contract.js";
+import { assertRunId } from "./workflow-spec.js";
 import fs from "fs";
 import path from "path";
 import { createCli, runCli } from "../lib/cli.js";
@@ -10,11 +12,7 @@ function now(): string {
 }
 
 function logPath(root: string, runId: string): string {
-  const safe = runId.replace(/[^A-Za-z0-9\-_.]/g, "");
-  if (!safe || safe !== runId || runId === "." || runId === "..") {
-    throw new Error(`invalid run_id '${runId}' (use [A-Za-z0-9-_.])`);
-  }
-  return path.join(root, ".aris", "runs", `${runId}.iterations.jsonl`);
+  return runOwnedPath(root, assertRunId(runId, "run_id"), "iterations.jsonl");
 }
 
 function lastStale(filePath: string): number {

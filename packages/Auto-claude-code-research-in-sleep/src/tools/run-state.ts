@@ -1,11 +1,29 @@
 import fs from "fs";
 import path from "path";
 import { createCli, runCli } from "../lib/cli.js";
+import {
+  openExistingRun,
+  legacyRunStatePath,
+  requireRunContract,
+  readRun,
+  type RunRecord,
+} from "./run-contract.js";
+import { readStateFile, withStateFileLock, writeStateJsonAtomic } from "./state-file.js";
+import { A1Error } from "./workflow-spec.js";
 
 const EXECUTOR_STATUSES = new Set(["running", "done", "failed", "skipped"]);
 const TERMINAL_STATUSES = new Set(["accepted", "skipped"]);
 const ALL_STATUSES = new Set(["pending", ...EXECUTOR_STATUSES, "accepted"]);
 const PHASE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9\-_.]*$/;
+const RUN_STATE_FIELDS = ["run_id", "created", "updated", "phases"] as const;
+const PHASE_RECORD_FIELDS = [
+  "phase",
+  "status",
+  "artifact",
+  "verdict_id",
+  "reviewer",
+  "updated",
+] as const;
 
 interface PhaseRecord {
   phase: string;
@@ -28,112 +46,8 @@ function now(): string {
 }
 
 function runPath(root: string, runId: string): string {
-  const safe = runId.replace(/[^A-Za-z0-9\-_.]/g, "");
-  if (!safe || safe !== runId || runId === "." || runId === "..") {
-    throw new Error(`invalid run_id '${runId}' (use [A-Za-z0-9-_.])`);
-  }
-  return path.join(root, ".aris", "runs", `${runId}.json`);
-}
-
-// --- Advisory file locking with ownership token ---
-// Lock file contains a unique token: PID:timestamp:random.
-// Release verifies token ownership before unlinking.
-// Stale-lock policy: a lock held by a dead local PID is broken immediately.
-// A malformed lock older than LOCK_MAX_AGE_MS is broken as a last resort.
-// PID ownership is host-local; cross-host shared-filesystem locking is outside
-// this tool's single-orchestrator-per-run contract.
-
-const LOCK_MAX_AGE_MS = 120_000;
-const LOCK_RETRY_MS = 50;
-const LOCK_TIMEOUT_MS = 10_000;
-
-function lockPath(filePath: string): string {
-  return filePath + ".lock";
-}
-
-function makeLockToken(): string {
-  return `${process.pid}:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function acquireLock(filePath: string): string {
-  const lp = lockPath(filePath);
-  const token = makeLockToken();
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
-
-  while (true) {
-    try {
-      const fd = fs.openSync(
-        lp,
-        fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY,
-      );
-      try {
-        fs.writeSync(fd, token + "\n");
-      } finally {
-        fs.closeSync(fd);
-      }
-      return token;
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-
-      try {
-        const content = fs.readFileSync(lp, "utf-8").trim();
-        const holderPid = parseInt(content.split(":")[0], 10);
-        const lockTime = parseInt(content.split(":")[1], 10);
-
-        // If holder PID is a valid local PID and still alive, never break.
-        if (!isNaN(holderPid) && holderPid > 0 && isPidAlive(holderPid)) {
-          // PID alive — wait, do not break regardless of age
-        } else if (!isNaN(holderPid) && holderPid > 0 && !isPidAlive(holderPid)) {
-          // PID confirmed dead — break immediately
-          try {
-            fs.unlinkSync(lp);
-          } catch {
-            /* race */
-          }
-          continue;
-        } else if (!isNaN(lockTime) && Date.now() - lockTime > LOCK_MAX_AGE_MS) {
-          // Malformed/unverifiable owner + old enough — break
-          try {
-            fs.unlinkSync(lp);
-          } catch {
-            /* race */
-          }
-          continue;
-        }
-      } catch {
-        // The lock may have disappeared between open/read or may be unreadable.
-        // Retry through the bounded timeout path below instead of spinning.
-      }
-
-      if (Date.now() >= deadline) {
-        throw new Error(`run-state lock timeout after ${LOCK_TIMEOUT_MS}ms on ${filePath}`);
-      }
-
-      const sleepMs = LOCK_RETRY_MS + Math.floor(Math.random() * LOCK_RETRY_MS);
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, sleepMs);
-    }
-  }
-}
-
-function releaseLock(filePath: string, token: string): void {
-  const lp = lockPath(filePath);
-  try {
-    const content = fs.readFileSync(lp, "utf-8").trim();
-    if (content === token) {
-      fs.unlinkSync(lp);
-    }
-  } catch {
-    /* lock file already gone */
-  }
+  requireRunContract(root, runId);
+  return legacyRunStatePath(root, runId);
 }
 
 // --- Validation ---
@@ -158,71 +72,112 @@ function isStringOrNull(v: unknown): v is string | null {
   return v === null || typeof v === "string";
 }
 
+function failRunState(code: string, message: string, filePath: string): never {
+  throw new A1Error(code, message, filePath);
+}
+
 function validateState(state: unknown, filePath: string, expectedRunId?: string): RunState {
+  if (typeof state !== "object" || state === null || Array.isArray(state)) {
+    failRunState("CORRUPT_RUN_STATE", "run-state must be an object", filePath);
+  }
+  const stateObject = state as Record<string, unknown>;
+  const allowedStateFields = new Set<string>(RUN_STATE_FIELDS);
+  for (const key of Object.keys(stateObject)) {
+    if (!allowedStateFields.has(key)) {
+      failRunState("UNKNOWN_FIELD", `unknown run-state top-level field '${key}'`, filePath);
+    }
+  }
   if (
-    typeof state !== "object" ||
-    state === null ||
-    typeof (state as RunState).run_id !== "string" ||
-    typeof (state as RunState).created !== "string" ||
-    typeof (state as RunState).updated !== "string" ||
-    !Array.isArray((state as RunState).phases)
+    typeof stateObject.run_id !== "string" ||
+    typeof stateObject.created !== "string" ||
+    typeof stateObject.updated !== "string" ||
+    !Array.isArray(stateObject.phases)
   ) {
-    throw new Error(`corrupt run-state at ${filePath}: missing required top-level fields`);
+    failRunState("CORRUPT_RUN_STATE", "run-state is missing required top-level fields", filePath);
   }
   const s = state as RunState;
   if (expectedRunId && s.run_id !== expectedRunId) {
-    throw new Error(
-      `run_id mismatch at ${filePath}: file contains '${s.run_id}' but requested '${expectedRunId}'`,
+    failRunState(
+      "IDENTITY_MISMATCH",
+      `run_id mismatch: file contains '${s.run_id}' but requested '${expectedRunId}'`,
+      filePath,
     );
   }
   if (s.phases.length === 0) {
-    throw new Error(`corrupt run-state at ${filePath}: phases array is empty`);
+    failRunState("CORRUPT_RUN_STATE", "phases array is empty", filePath);
   }
   const seenPhases = new Set<string>();
-  for (const ph of s.phases) {
+  const allowedPhaseFields = new Set<string>(PHASE_RECORD_FIELDS);
+  for (const rawPhase of s.phases as unknown[]) {
+    if (typeof rawPhase !== "object" || rawPhase === null || Array.isArray(rawPhase)) {
+      failRunState("CORRUPT_RUN_STATE", "invalid phase record", filePath);
+    }
+    const phaseObject = rawPhase as Record<string, unknown>;
+    const phaseName = typeof phaseObject.phase === "string" ? phaseObject.phase : "<unknown>";
+    for (const key of Object.keys(phaseObject)) {
+      if (!allowedPhaseFields.has(key)) {
+        failRunState(
+          "UNKNOWN_FIELD",
+          `unknown run-state phase field '${key}' in phase '${phaseName}'`,
+          filePath,
+        );
+      }
+    }
+    const ph = rawPhase as PhaseRecord;
     if (typeof ph.phase !== "string" || typeof ph.status !== "string") {
-      throw new Error(`corrupt run-state at ${filePath}: invalid phase record`);
+      failRunState("CORRUPT_RUN_STATE", "invalid phase record", filePath);
     }
     if (!PHASE_NAME_RE.test(ph.phase)) {
-      throw new Error(`corrupt run-state at ${filePath}: unsafe phase name '${ph.phase}'`);
+      failRunState("CORRUPT_RUN_STATE", `unsafe phase name '${ph.phase}'`, filePath);
     }
     if (!ALL_STATUSES.has(ph.status)) {
-      throw new Error(
-        `corrupt run-state at ${filePath}: phase '${ph.phase}' has unknown status '${ph.status}'`,
+      failRunState(
+        "CORRUPT_RUN_STATE",
+        `phase '${ph.phase}' has unknown status '${ph.status}'`,
+        filePath,
       );
     }
     if (seenPhases.has(ph.phase)) {
-      throw new Error(`corrupt run-state at ${filePath}: duplicate phase '${ph.phase}'`);
+      failRunState("CORRUPT_RUN_STATE", `duplicate phase '${ph.phase}'`, filePath);
     }
     seenPhases.add(ph.phase);
     if (typeof ph.updated !== "string") {
-      throw new Error(`corrupt run-state at ${filePath}: phase '${ph.phase}' missing updated`);
+      failRunState("CORRUPT_RUN_STATE", `phase '${ph.phase}' missing updated`, filePath);
     }
     if (!isStringOrNull(ph.artifact)) {
-      throw new Error(
-        `corrupt run-state at ${filePath}: phase '${ph.phase}' artifact not string|null`,
-      );
+      failRunState("CORRUPT_RUN_STATE", `phase '${ph.phase}' artifact not string|null`, filePath);
     }
     if (!isStringOrNull(ph.verdict_id)) {
-      throw new Error(
-        `corrupt run-state at ${filePath}: phase '${ph.phase}' verdict_id not string|null`,
-      );
+      failRunState("CORRUPT_RUN_STATE", `phase '${ph.phase}' verdict_id not string|null`, filePath);
     }
     if (!isStringOrNull(ph.reviewer)) {
-      throw new Error(
-        `corrupt run-state at ${filePath}: phase '${ph.phase}' reviewer not string|null`,
-      );
+      failRunState("CORRUPT_RUN_STATE", `phase '${ph.phase}' reviewer not string|null`, filePath);
     }
     if (
       ph.status === "accepted" &&
       (!ph.verdict_id || !ph.verdict_id.trim() || !ph.reviewer || !ph.reviewer.trim())
     ) {
-      throw new Error(
-        `corrupt run-state at ${filePath}: accepted phase '${ph.phase}' lacks verdict provenance`,
+      failRunState(
+        "CORRUPT_RUN_STATE",
+        `accepted phase '${ph.phase}' lacks verdict provenance`,
+        filePath,
       );
     }
   }
   return s;
+}
+
+function readValidatedState(filePath: string, expectedRunId: string): RunState {
+  try {
+    return readStateFile(filePath, (parsed, currentPath) =>
+      validateState(parsed, currentPath, expectedRunId),
+    );
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("corrupt JSON in state file at ")) {
+      failRunState("CORRUPT_RUN_STATE", `corrupt JSON in run-state file`, filePath);
+    }
+    throw error;
+  }
 }
 
 function load(root: string, runId: string): RunState {
@@ -230,36 +185,18 @@ function load(root: string, runId: string): RunState {
   if (!fs.existsSync(p)) {
     throw new Error(`no run state at ${p}`);
   }
-  let raw: string;
-  try {
-    raw = fs.readFileSync(p, "utf-8");
-  } catch (err) {
-    throw new Error(`cannot read run state at ${p}: ${err}`);
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error(`corrupt JSON in run state at ${p}`);
-  }
-  return validateState(parsed, p, runId);
+  return readValidatedState(p, runId);
+}
+
+function readExistingStateBeforeBootstrap(filePath: string, runId: string): RunState | null {
+  if (!fs.existsSync(filePath)) return null;
+  return readValidatedState(filePath, runId);
 }
 
 function save(state: RunState, filePath: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   state.updated = now();
-  const tmpPath = filePath + `.${process.pid}.${Date.now()}.tmp`;
-  try {
-    fs.writeFileSync(tmpPath, JSON.stringify(state, null, 2) + "\n", "utf-8");
-    fs.renameSync(tmpPath, filePath);
-  } catch (err) {
-    try {
-      fs.unlinkSync(tmpPath);
-    } catch {
-      /* ignore */
-    }
-    throw err;
-  }
+  writeStateJsonAtomic(filePath, state);
 }
 
 function findPhase(state: RunState, phase: string): PhaseRecord {
@@ -274,26 +211,34 @@ function findPhase(state: RunState, phase: string): PhaseRecord {
 
 function withLock(root: string, runId: string, mutator: (state: RunState) => RunState): RunState {
   const p = runPath(root, runId);
-  const token = acquireLock(p);
-  try {
+  return withStateFileLock(p, () => {
     const state = mutator(load(root, runId));
     save(state, p);
     return state;
-  } finally {
-    releaseLock(p, token);
-  }
+  });
 }
 
 export function startRun(root: string, runId: string, phases: string[]): RunState {
   validatePhases(phases);
-  const p = runPath(root, runId);
-  fs.mkdirSync(path.dirname(p), { recursive: true });
+  // Start only opens an existing contract; A/B own contract creation.
+  // It initializes the legacy phase file after the contract has been checked.
+  const p = legacyRunStatePath(root, runId);
 
-  const token = acquireLock(p);
-  try {
-    if (fs.existsSync(p)) {
-      return load(root, runId);
-    }
+  // Validate an existing legacy file before opening the contract.
+  // The second read under the state lock closes the race where
+  // another process changes the file between this preflight and the bootstrap.
+  readExistingStateBeforeBootstrap(p, runId);
+
+  // The old phase file remains at its historical path. Identity stays in
+  // the existing run.json, separate from phase transitions.
+  return withStateFileLock(p, () => {
+    const existingState = readExistingStateBeforeBootstrap(p, runId);
+    openExistingRun({
+      project_root: root,
+      run_id: runId,
+    });
+    if (existingState !== null) return existingState;
+
     const ts = now();
     const state: RunState = {
       run_id: runId,
@@ -310,9 +255,7 @@ export function startRun(root: string, runId: string, phases: string[]): RunStat
     };
     save(state, p);
     return state;
-  } finally {
-    releaseLock(p, token);
-  }
+  });
 }
 
 export function setStatus(
@@ -403,15 +346,29 @@ export function getStatus(root: string, runId: string): RunState {
   return load(root, runId);
 }
 
-function isRunStateFile(filePath: string): boolean {
+/** Read the canonical identity belonging to a phase run. */
+export function getRunContract(root: string, runId: string): RunRecord {
+  return readRun(root, runId);
+}
+
+type RunStateListEntry = "valid" | "missing-contract" | "ignore";
+
+function classifyRunStateFile(root: string, filePath: string): RunStateListEntry {
   const stem = path.basename(filePath, ".json");
+  let parsed: unknown;
   try {
     const raw = fs.readFileSync(filePath, "utf-8");
-    const parsed = JSON.parse(raw);
+    parsed = JSON.parse(raw);
     validateState(parsed, filePath, stem);
-    return true;
   } catch {
-    return false;
+    return "ignore";
+  }
+  try {
+    requireRunContract(root, stem);
+    return "valid";
+  } catch (error) {
+    if ((error as { code?: unknown }).code === "RUN_CONTRACT_NOT_FOUND") return "missing-contract";
+    throw error;
   }
 }
 
@@ -508,7 +465,7 @@ program
   .argument("<root>")
   .argument("<run_id>")
   .action((root: string, runId: string) => {
-    printStatus(load(root, runId));
+    printStatus(getStatus(root, runId));
   });
 
 program
@@ -523,8 +480,11 @@ program
       .sort();
     for (const f of files) {
       const fp = path.join(d, f);
-      if (isRunStateFile(fp)) {
+      const entry = classifyRunStateFile(root, fp);
+      if (entry === "valid") {
         console.log(f.replace(/\.json$/, ""));
+      } else if (entry === "missing-contract") {
+        console.log(`${f.replace(/\.json$/, "")} [contract missing]`);
       }
     }
   });

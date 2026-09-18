@@ -1,5 +1,9 @@
+import { runBudgetExhausted, settleExecutionReceipt } from "./run-budget.js";
+import { runOwnedPath } from "./run-contract.js";
+import { assertOuterWikiScope, assertResearchVisible } from "./wiki-scope.js";
 import fs from "fs";
 import path from "path";
+import { pathToFileURL } from "url";
 import { createCli, runCli } from "../lib/cli.js";
 
 // metric-gate - the deterministic metric configuration + stop-gate evaluator
@@ -19,20 +23,33 @@ import { createCli, runCli } from "../lib/cli.js";
 //
 // Stop reasons are mutually exclusive; the first match in this priority
 // order wins: invalid_metric > metric_met > budget_exhausted >
-// patience_exhausted. Quality verdicts (auto-review-loop's ready/almost)
-// are recorded on the dashboard but never participate in this decision -
-// they end the current idea's review rounds, not the research loop.
+// patience_exhausted > iteration_cap. Quality verdicts (auto-review-loop's
+// ready/almost) are recorded on the dashboard but never participate in this
+// decision - they end the current idea's review rounds, not the research loop.
+//
+// A round count is not a stop criterion. What a run is allowed to spend is its
+// budget ledger, and what it has to reach is its metric target; `budget_exhausted`
+// means the ledger cannot fund another reservation, never `iteration >= N`.
+// `config.max_iterations` is an optional backstop for a run whose budget is
+// large enough that a non-terminating loop would burn it all before anyone
+// looks: omit it and there is no round limit at all, set it and it fires last,
+// after every criterion that carries meaning about the research itself.
 
 const DIRECTIONS = new Set(["higher_better", "lower_better"]);
 const RUN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
-interface MetricConfig {
+export interface MetricConfig {
   configured: true;
   name: string | null;
   target: number;
   direction: "higher_better" | "lower_better";
   tolerance: number;
   baseline: number | null;
+}
+
+export interface ModuleMetricConfig extends MetricConfig {
+  module_id: string;
+  patience: number;
 }
 
 function fail(msg: string): never {
@@ -63,22 +80,33 @@ function stripHtmlComments(text: string): string {
   return text.replace(/<!--[\s\S]*?-->/g, "");
 }
 
-function parseNumber(raw: string, field: string): number {
-  const v = Number(raw.trim());
-  if (!Number.isFinite(v)) {
-    fail(`Metric Target '${field}' is not a finite number: '${raw.trim()}'`);
-  }
-  return v;
-}
+// Reading the `## Metric Target` block has two callers with opposite needs. The
+// `config` CLI must die on anything unusable - /auto-research-loop cannot run on
+// a half-filled target. /aris-setup's status report must do the opposite: say
+// "metric_target: not ready", name the reason, and keep checking the remaining
+// stages. So the reader reports why it could not produce a config and lets the
+// caller choose; `parseMetricConfig` is the fatal wrapper the CLI keeps using.
+export type MetricConfigRead =
+  | { status: "ok"; config: MetricConfig }
+  | { status: "missing_file"; reason: string }
+  | { status: "not_configured"; reason: string }
+  | { status: "invalid"; reason: string };
 
-function parseMetricConfig(root: string): MetricConfig | null {
+export function readMetricConfig(root: string): MetricConfigRead {
   const claudePath = path.join(root, "CLAUDE.md");
   if (!fs.existsSync(claudePath)) {
-    fail(`no CLAUDE.md at ${claudePath} - /auto-research-loop requires a '## Metric Target' block`);
+    return {
+      status: "missing_file",
+      reason: `no CLAUDE.md at ${claudePath} - /auto-research-loop requires a '## Metric Target' block`,
+    };
   }
   const section = stripHtmlComments(extractSection(fs.readFileSync(claudePath, "utf-8")));
   if (section.trim() === "") {
-    return null; // absent or fully commented out -> not configured
+    // absent or fully commented out -> not configured
+    return {
+      status: "not_configured",
+      reason: "'## Metric Target' is absent from CLAUDE.md or fully commented out",
+    };
   }
 
   const values = new Map<string, string>();
@@ -91,49 +119,201 @@ function parseMetricConfig(root: string): MetricConfig | null {
 
   const primary = values.get("primary");
   if (primary === undefined || primary === "") {
-    fail(
-      "'## Metric Target' has no active 'primary: <number> <unit>' line (a commented-out template block does not count)",
-    );
+    return {
+      status: "invalid",
+      reason:
+        "'## Metric Target' has no active 'primary: <number> <unit>' line (a commented-out template block does not count)",
+    };
   }
   const parts = primary.split(/\s+/);
-  const target = parseNumber(parts[0], "primary");
+  const target = Number(parts[0].trim());
+  if (!Number.isFinite(target)) {
+    return {
+      status: "invalid",
+      reason: `Metric Target 'primary' is not a finite number: '${parts[0].trim()}'`,
+    };
+  }
   const name = parts.slice(1).join(" ") || null;
 
   const directionRaw = values.get("direction") || "higher_better";
   if (!DIRECTIONS.has(directionRaw)) {
-    fail(`Metric Target 'direction' must be higher_better or lower_better, got '${directionRaw}'`);
+    return {
+      status: "invalid",
+      reason: `Metric Target 'direction' must be higher_better or lower_better, got '${directionRaw}'`,
+    };
   }
   const direction = directionRaw as MetricConfig["direction"];
 
   const toleranceRaw = values.get("tolerance");
   let tolerance = 0.01;
   if (toleranceRaw !== undefined && toleranceRaw !== "") {
-    tolerance = parseNumber(toleranceRaw, "tolerance");
+    tolerance = Number(toleranceRaw.trim());
+    if (!Number.isFinite(tolerance)) {
+      return {
+        status: "invalid",
+        reason: `Metric Target 'tolerance' is not a finite number: '${toleranceRaw.trim()}'`,
+      };
+    }
     if (tolerance < 0 || tolerance >= 1) {
-      fail(`Metric Target 'tolerance' must be in [0, 1), got ${tolerance}`);
+      return {
+        status: "invalid",
+        reason: `Metric Target 'tolerance' must be in [0, 1), got ${tolerance}`,
+      };
     }
   }
 
   const baselineRaw = values.get("baseline");
   let baseline: number | null = null;
   if (baselineRaw !== undefined && baselineRaw !== "" && baselineRaw !== '""') {
-    baseline = parseNumber(baselineRaw, "baseline");
+    baseline = Number(baselineRaw.trim());
+    if (!Number.isFinite(baseline)) {
+      return {
+        status: "invalid",
+        reason: `Metric Target 'baseline' is not a finite number: '${baselineRaw.trim()}'`,
+      };
+    }
   }
 
-  return { configured: true, name, target, direction, tolerance, baseline };
+  return {
+    status: "ok",
+    config: { configured: true, name, target, direction, tolerance, baseline },
+  };
+}
+
+function parseMetricConfig(root: string): MetricConfig | null {
+  const read = readMetricConfig(root);
+  if (read.status === "missing_file" || read.status === "invalid") {
+    fail(read.reason);
+  }
+  return read.status === "ok" ? read.config : null;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function assertExactKeys(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+  location: string,
+): void {
+  const allowedSet = new Set(allowed);
+  for (const key of Object.keys(value)) {
+    if (!allowedSet.has(key)) throw new Error(`${location} has unknown field '${key}'`);
+  }
+}
+
+function requiredFiniteNumber(value: unknown, location: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`${location} must be a finite number`);
+  }
+  return value;
+}
+
+function requiredNonEmptyString(value: unknown, location: string): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`${location} must be a non-empty string`);
+  }
+  return value;
+}
+
+export function parseModuleMetricConfig(
+  metricPath: string,
+  expectedModuleId?: string,
+): ModuleMetricConfig {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(fs.readFileSync(metricPath, "utf-8"));
+  } catch (error: unknown) {
+    throw new Error(
+      `cannot read module metric file ${metricPath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (!isObject(raw)) throw new Error(`module metric at ${metricPath} must be a JSON object`);
+  assertExactKeys(raw, ["schema_version", "module_id", "primary", "patience"], metricPath);
+  if (raw.schema_version !== 1) throw new Error(`${metricPath}.schema_version must be 1`);
+  const moduleId = requiredNonEmptyString(raw.module_id, `${metricPath}.module_id`);
+  if (!RUN_ID_PATTERN.test(moduleId))
+    throw new Error(`${metricPath}.module_id is not a valid identifier`);
+  if (expectedModuleId !== undefined && moduleId !== expectedModuleId) {
+    throw new Error(
+      `module metric module_id '${moduleId}' does not match dashboard module_id '${expectedModuleId}'`,
+    );
+  }
+  if (!isObject(raw.primary)) throw new Error(`${metricPath}.primary must be an object`);
+  assertExactKeys(
+    raw.primary,
+    ["name", "target", "direction", "tolerance", "baseline"],
+    `${metricPath}.primary`,
+  );
+  const name = requiredNonEmptyString(raw.primary.name, `${metricPath}.primary.name`);
+  const target = requiredFiniteNumber(raw.primary.target, `${metricPath}.primary.target`);
+  const direction = raw.primary.direction;
+  if (typeof direction !== "string" || !DIRECTIONS.has(direction)) {
+    throw new Error(`${metricPath}.primary.direction must be higher_better or lower_better`);
+  }
+  const tolerance = requiredFiniteNumber(raw.primary.tolerance, `${metricPath}.primary.tolerance`);
+  if (tolerance < 0 || tolerance >= 1) {
+    throw new Error(`${metricPath}.primary.tolerance must be in [0, 1)`);
+  }
+  const baseline = requiredFiniteNumber(raw.primary.baseline, `${metricPath}.primary.baseline`);
+  if (typeof raw.patience !== "number" || !Number.isInteger(raw.patience) || raw.patience < 1) {
+    throw new Error(`${metricPath}.patience must be a positive integer`);
+  }
+  return {
+    configured: true,
+    module_id: moduleId,
+    name,
+    target,
+    direction: direction as MetricConfig["direction"],
+    tolerance,
+    baseline,
+    patience: raw.patience,
+  };
+}
+
+function resolveMetricPath(
+  root: string,
+  positional: string | undefined,
+  optionPath: string | undefined,
+): string | undefined {
+  if (positional !== undefined && optionPath !== undefined) {
+    throw new Error(
+      "provide module-metric.json either as a positional path or --module-metric, not both",
+    );
+  }
+  const value = optionPath ?? positional;
+  if (value === undefined) return undefined;
+  return path.isAbsolute(value) ? value : path.resolve(root, value);
+}
+
+function selectMetricOption(
+  moduleMetric: string | undefined,
+  metricFile: string | undefined,
+): string | undefined {
+  if (moduleMetric !== undefined && metricFile !== undefined) {
+    throw new Error("provide only one of --module-metric and --metric-file");
+  }
+  return moduleMetric ?? metricFile;
 }
 
 // ---------------------------------------------------------------------------
 // Stop-gate evaluation
 // ---------------------------------------------------------------------------
 
-interface HistoryEntry {
+export interface HistoryEntry {
   iter: number;
   value: number;
 }
 
 interface Decision {
-  stop_reason: "metric_met" | "budget_exhausted" | "patience_exhausted" | "invalid_metric" | null;
+  stop_reason:
+    | "metric_met"
+    | "budget_exhausted"
+    | "patience_exhausted"
+    | "iteration_cap"
+    | "invalid_metric"
+    | null;
   metric_met: boolean;
   current: number | null;
   target: number;
@@ -141,9 +321,11 @@ interface Decision {
   tolerance: number;
   threshold: number;
   iteration: number;
-  max_iterations: number;
+
   no_progress_streak: number;
   patience: number;
+  /** null when the run set no backstop, which is the default. */
+  max_iterations: number | null;
   invalid_reason?: string;
 }
 
@@ -202,18 +384,55 @@ function invalidMetricDecision(reason: string): Decision {
     tolerance: 0,
     threshold: 0,
     iteration: 0,
-    max_iterations: 0,
+
     no_progress_streak: 0,
     patience: 0,
+    max_iterations: null,
     invalid_reason: reason,
   };
 }
 
-function evaluateDashboard(root: string, runId: string): Decision {
-  if (!RUN_ID_PATTERN.test(runId) || runId.includes("..")) {
-    fail(`invalid run id '${runId}'`);
+function dashboardPath(root: string, runId: string): string {
+  return runOwnedPath(root, runId, "dashboard.json");
+}
+
+export interface DashboardMetricRecord {
+  direction: "higher_better" | "lower_better";
+  /** One reading per outer iteration, in the order the loop appended them. */
+  history: HistoryEntry[];
+}
+
+/**
+ * The dashboard's per-iteration readings, for callers that need the series
+ * rather than the stop decision. `evaluateDashboard` answers "should the loop
+ * stop now"; this answers "what did iteration N measure". It throws instead of
+ * exiting, because its callers are libraries rather than the gate CLI.
+ */
+export function readDashboardMetric(root: string, runId: string): DashboardMetricRecord {
+  const dashPath = dashboardPath(root, runId);
+  if (!fs.existsSync(dashPath)) throw new Error(`DASHBOARD_NOT_FOUND: ${dashPath}`);
+  const dash = JSON.parse(fs.readFileSync(dashPath, "utf-8")) as Record<string, unknown>;
+  assertResearchVisible(dash);
+  const metric = (dash.metric ?? {}) as Record<string, unknown>;
+  const direction = metric.direction;
+  if (typeof direction !== "string" || !DIRECTIONS.has(direction))
+    throw new Error("INVALID_DASHBOARD_METRIC: metric.direction is missing or unknown");
+  const history: HistoryEntry[] = [];
+  for (const entry of Array.isArray(metric.history) ? (metric.history as unknown[]) : []) {
+    const row = entry as Record<string, unknown>;
+    if (!Number.isInteger(row?.iter) || !isFiniteNumber(row?.value))
+      throw new Error(`INVALID_DASHBOARD_METRIC: malformed history entry ${JSON.stringify(entry)}`);
+    history.push({ iter: row.iter as number, value: row.value as number });
   }
-  const dashPath = path.join(root, ".aris", "runs", runId, "dashboard.json");
+  return { direction: direction as DashboardMetricRecord["direction"], history };
+}
+
+export function evaluateDashboard(
+  root: string,
+  runId: string,
+  moduleMetricPath?: string,
+): Decision {
+  const dashPath = dashboardPath(root, runId);
   if (!fs.existsSync(dashPath)) {
     fail(`no dashboard at ${dashPath}`);
   }
@@ -224,54 +443,90 @@ function evaluateDashboard(root: string, runId: string): Decision {
     fail(`corrupt dashboard at ${dashPath}: ${err}`);
   }
 
+  assertResearchVisible(dash);
+  const dashboardModuleId =
+    typeof dash.module_id === "string"
+      ? dash.module_id
+      : typeof dash.module === "string"
+        ? dash.module
+        : undefined;
+  const workflowMode =
+    dash.workflow_mode === true ||
+    dash.run_kind === "module" ||
+    dash.mode === "workflow" ||
+    dash.mode === "module" ||
+    dashboardModuleId !== undefined ||
+    typeof dash.workflow_id === "string";
+  if (workflowMode && (dash.scope === "standalone" || dash.allow_standalone === true)) {
+    throw new Error("STANDALONE_OUTER_DECISION_FORBIDDEN");
+  }
+  if (workflowMode && dash.wiki_scope !== undefined) {
+    if (typeof dash.wiki_scope !== "string") throw new Error("INVALID_WIKI_SCOPE");
+    assertOuterWikiScope(dash.wiki_scope, dash.allow_standalone === true);
+  }
+  if (workflowMode && moduleMetricPath === undefined) {
+    fail("workflow/module mode requires an explicit module-metric.json input");
+  }
+  const moduleMetric =
+    moduleMetricPath === undefined
+      ? undefined
+      : parseModuleMetricConfig(moduleMetricPath, dashboardModuleId);
+
   // Malformed metric fields → invalid_metric JSON (not exit 1).
   // The orchestrator reads stop_reason from the JSON and handles it
   // deterministically. Crashing would leave the loop in a limbo state.
   const metric = (dash.metric ?? {}) as Record<string, unknown>;
-  const direction = metric.direction;
+  const direction = moduleMetric?.direction ?? metric.direction;
   if (typeof direction !== "string" || !DIRECTIONS.has(direction)) {
     return invalidMetricDecision(
       `dashboard metric.direction must be higher_better or lower_better, got '${String(direction)}'`,
     );
   }
-  if (!isFiniteNumber(metric.target)) {
+  const targetValue = moduleMetric?.target ?? metric.target;
+  if (!isFiniteNumber(targetValue)) {
     return invalidMetricDecision("dashboard metric.target is not a finite number");
   }
-  if (
-    !isFiniteNumber(metric.tolerance) ||
-    (metric.tolerance as number) < 0 ||
-    (metric.tolerance as number) >= 1
-  ) {
+  const toleranceValue = moduleMetric?.tolerance ?? metric.tolerance;
+  if (!isFiniteNumber(toleranceValue) || toleranceValue < 0 || toleranceValue >= 1) {
     return invalidMetricDecision(
-      `dashboard metric.tolerance must be a finite number in [0, 1), got '${String(metric.tolerance)}'`,
+      `dashboard metric.tolerance must be a finite number in [0, 1), got '${String(toleranceValue)}'`,
     );
   }
-  const target = metric.target as number;
-  const tolerance = metric.tolerance as number;
+  const target = targetValue as number;
+  const tolerance = toleranceValue;
   // Use abs(target) so the band works correctly when target is negative
   // (e.g. a loss of -2.5 with tolerance 0.01 should allow -2.525 for lower_better).
   const band = Math.abs(target) * tolerance;
   const threshold = direction === "lower_better" ? target + band : target - band;
 
   const iteration = dash.iteration;
-  const maxIterations = dash.max_iterations;
+
   if (!Number.isInteger(iteration) || (iteration as number) < 1) {
     return invalidMetricDecision(
       `dashboard.iteration must be an integer >= 1, got '${String(iteration)}'`,
     );
   }
-  if (!Number.isInteger(maxIterations) || (maxIterations as number) < 1) {
-    return invalidMetricDecision(
-      `dashboard.max_iterations must be an integer >= 1, got '${String(maxIterations)}'`,
-    );
-  }
 
   const config = (dash.config ?? {}) as Record<string, unknown>;
-  const patience = config.patience ?? 2;
+  const patience = moduleMetric?.patience ?? config.patience ?? 2;
   if (!Number.isInteger(patience) || (patience as number) < 1) {
     return invalidMetricDecision(
       `dashboard.config.patience must be an integer >= 1, got '${String(patience)}'`,
     );
+  }
+
+  // Optional. `undefined` and `null` both mean "no round limit"; anything else
+  // has to be a usable count, because a malformed backstop that silently does
+  // nothing is worse than no backstop.
+  const maxIterationsRaw = config.max_iterations;
+  let maxIterations: number | null = null;
+  if (maxIterationsRaw !== undefined && maxIterationsRaw !== null) {
+    if (!Number.isInteger(maxIterationsRaw) || (maxIterationsRaw as number) < 1) {
+      return invalidMetricDecision(
+        `dashboard.config.max_iterations must be an integer >= 1 when set, got '${String(maxIterationsRaw)}'`,
+      );
+    }
+    maxIterations = maxIterationsRaw as number;
   }
 
   const historyRaw = Array.isArray(metric.history) ? (metric.history as unknown[]) : [];
@@ -287,18 +542,21 @@ function evaluateDashboard(root: string, runId: string): Decision {
   }
 
   const current = metric.current;
-  const baseline = isFiniteNumber(metric.baseline) ? metric.baseline : null;
+  const baselineValue = moduleMetric?.baseline ?? metric.baseline;
+  const baseline = isFiniteNumber(baselineValue) ? baselineValue : null;
   let stopReason: Decision["stop_reason"] = null;
   if (!isFiniteNumber(current)) {
     stopReason = "invalid_metric";
   } else if (direction === "lower_better" ? current <= threshold : current >= threshold) {
     stopReason = "metric_met";
-  } else if ((iteration as number) >= (maxIterations as number)) {
+  } else if (runBudgetExhausted(root, runId)) {
     stopReason = "budget_exhausted";
   } else {
     const streak = noProgressStreak(history, direction, baseline);
     if (streak >= (patience as number)) {
       stopReason = "patience_exhausted";
+    } else if (maxIterations !== null && (iteration as number) >= maxIterations) {
+      stopReason = "iteration_cap";
     }
   }
 
@@ -314,9 +572,10 @@ function evaluateDashboard(root: string, runId: string): Decision {
     tolerance,
     threshold,
     iteration: iteration as number,
-    max_iterations: maxIterations as number,
+
     no_progress_streak: streak,
     patience: patience as number,
+    max_iterations: maxIterations,
   };
 }
 
@@ -332,36 +591,71 @@ const program = createCli(
 program
   .command("config")
   .argument("<root>", "project root (contains CLAUDE.md)")
-  .action((root: string) => {
-    const cfg = parseMetricConfig(path.resolve(root));
-    if (cfg === null) {
-      fail(
-        "'## Metric Target' is not configured in CLAUDE.md. " +
-          "Uncomment the block from templates/CLAUDE_MD_TEMPLATE.md and fill in " +
-          "'primary: <number> <unit>'. A commented-out template block is not a configuration.",
+  .argument("[module_metric]", "explicit module-metric.json path")
+  .option("--module-metric <path>", "explicit module-metric.json path")
+  .option("--metric-file <path>", "alias for --module-metric")
+  .action(
+    (
+      root: string,
+      positional: string | undefined,
+      options: { moduleMetric?: string; metricFile?: string },
+    ) => {
+      const rootPath = path.resolve(root);
+      const explicitPath = resolveMetricPath(
+        rootPath,
+        positional,
+        selectMetricOption(options.moduleMetric, options.metricFile),
       );
-    }
-    console.log(JSON.stringify(cfg));
-  });
+      const cfg = explicitPath
+        ? parseModuleMetricConfig(explicitPath)
+        : parseMetricConfig(rootPath);
+      if (cfg === null) {
+        fail(
+          "'## Metric Target' is not configured in CLAUDE.md. " +
+            "Uncomment the block from templates/CLAUDE_MD_TEMPLATE.md and fill in " +
+            "'primary: <number> <unit>'. A commented-out template block is not a configuration.",
+        );
+      }
+      console.log(JSON.stringify(cfg));
+    },
+  );
 
 program
   .command("evaluate")
   .argument("<root>", "project root")
   .argument("<run_id>", "run id (dashboard at .aris/runs/<run_id>/dashboard.json)")
-  .action((root: string, runId: string) => {
-    const decision = evaluateDashboard(path.resolve(root), runId);
-    const dashPath = path.join(path.resolve(root), ".aris", "runs", runId, "dashboard.json");
-    const dash = JSON.parse(fs.readFileSync(dashPath, "utf-8"));
-    const nextStop = decision.stop_reason;
-    const changed = dash.stop_reason !== nextStop;
-    if (changed) {
-      dash.stop_reason = nextStop;
-      dash.updated_at = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
-      const tmp = `${dashPath}.${process.pid}.${Date.now()}.tmp`;
-      fs.writeFileSync(tmp, `${JSON.stringify(dash, null, 2)}\n`, "utf-8");
-      fs.renameSync(tmp, dashPath);
-    }
-    console.log(JSON.stringify({ ...decision, persisted: changed }));
-  });
+  .argument("[module_metric]", "explicit module-metric.json path")
+  .option("--module-metric <path>", "explicit module-metric.json path")
+  .option("--metric-file <path>", "alias for --module-metric")
+  .action(
+    (
+      root: string,
+      runId: string,
+      positional: string | undefined,
+      options: { moduleMetric?: string; metricFile?: string },
+    ) => {
+      const rootPath = path.resolve(root);
+      const explicitPath = resolveMetricPath(
+        rootPath,
+        positional,
+        selectMetricOption(options.moduleMetric, options.metricFile),
+      );
+      const decision = evaluateDashboard(rootPath, runId, explicitPath);
+      const dashPath = dashboardPath(rootPath, runId);
+      const dash = JSON.parse(fs.readFileSync(dashPath, "utf-8"));
+      const nextStop = decision.stop_reason;
+      const changed = dash.stop_reason !== nextStop;
+      if (changed) {
+        dash.stop_reason = nextStop;
+        dash.updated_at = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+        const tmp = `${dashPath}.${process.pid}.${Date.now()}.tmp`;
+        fs.writeFileSync(tmp, `${JSON.stringify(dash, null, 2)}\n`, "utf-8");
+        fs.renameSync(tmp, dashPath);
+      }
+      console.log(JSON.stringify({ ...decision, persisted: changed }));
+    },
+  );
 
-runCli(program);
+if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+  runCli(program);
+}

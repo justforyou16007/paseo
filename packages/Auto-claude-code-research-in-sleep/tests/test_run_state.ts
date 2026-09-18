@@ -10,6 +10,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { ensureRun } from "../src/tools/run-contract.js";
+import { initializeRunBudget, reserveRunExecution } from "../src/tools/run-budget.js";
 
 const PHASES = ["W1", "W1.5", "W2", "W3"];
 
@@ -48,6 +50,39 @@ function cli(...args: string[]): { stdout: string; stderr: string; exitCode: num
   }
 }
 
+/**
+ * A run's phases are state layered on top of a run contract, so `start` refuses
+ * to create them until `.aris/runs/<id>/run.json` exists. Production gets that
+ * file from `root-setup` (root runs) or `run-open` (standalone runs); a test
+ * gets it here. `ensureRun` is idempotent, which is what the resume tests need
+ * when they call `start` twice for the same run id.
+ *
+ * This is called in-process rather than through the CLI because the contract is
+ * fixture, not the subject under test -- `run-state.ts` is.
+ */
+function openRun(root: string, runId: string): void {
+  // Each run gets its own scope. The scope is a mutex over the workflow
+  // position a run owns, so two runs under one project root cannot both claim
+  // `/` -- which is exactly what tests that open several runs in one temp dir
+  // would otherwise do.
+  ensureRun({
+    project_root: root,
+    run_id: runId,
+    parent_run_id: null,
+    scope_path: `/${runId}`,
+  });
+}
+
+/** `start`, with the run contract it requires already in place. */
+function startRun(
+  root: string,
+  runId: string,
+  phases: string,
+): { stdout: string; stderr: string; exitCode: number } {
+  openRun(root, runId);
+  return cli("start", root, runId, "--phases", phases);
+}
+
 function readState(root: string, runId: string): Record<string, unknown> {
   const p = path.join(root, ".aris", "runs", `${runId}.json`);
   return JSON.parse(fs.readFileSync(p, "utf-8"));
@@ -75,7 +110,7 @@ function test(name: string, fn: () => void): void {
 test("start creates pending phases", () => {
   const d = tmpDir();
   try {
-    const r = cli("start", d, "run-a", "--phases", "W1,W1.5,W2,W3");
+    const r = startRun(d, "run-a", "W1,W1.5,W2,W3");
     assert.equal(r.exitCode, 0, `start failed: ${r.stderr}`);
     const st = readState(d, "run-a");
     const phases = st.phases as Record<string, unknown>[];
@@ -87,9 +122,9 @@ test("start creates pending phases", () => {
 test("start is idempotent (does not clobber progress)", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "run-a", "--phases", "W1,W1.5,W2,W3");
+    startRun(d, "run-a", "W1,W1.5,W2,W3");
     cli("set", d, "run-a", "W1", "done");
-    cli("start", d, "run-a", "--phases", "W1,W1.5,W2,W3");
+    startRun(d, "run-a", "W1,W1.5,W2,W3");
     assert.equal(findPhase(readState(d, "run-a"), "W1").status, "done");
   } finally { cleanup(d); }
 });
@@ -97,7 +132,7 @@ test("start is idempotent (does not clobber progress)", () => {
 test("set_status transitions: pending→running→done", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "run-a", "--phases", "W1,W2");
+    startRun(d, "run-a", "W1,W2");
     cli("set", d, "run-a", "W1", "running");
     assert.equal(findPhase(readState(d, "run-a"), "W1").status, "running");
     cli("set", d, "run-a", "W1", "done", "--artifact", "output/result.md");
@@ -110,7 +145,7 @@ test("set_status transitions: pending→running→done", () => {
 test("set_status cannot write 'accepted'", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "run-a", "--phases", "W1,W2");
+    startRun(d, "run-a", "W1,W2");
     const r = cli("set", d, "run-a", "W1", "accepted");
     assert.notEqual(r.exitCode, 0);
   } finally { cleanup(d); }
@@ -119,7 +154,7 @@ test("set_status cannot write 'accepted'", () => {
 test("set_status cannot regress terminal phases", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "run-a", "--phases", "W1,W2");
+    startRun(d, "run-a", "W1,W2");
     cli("set", d, "run-a", "W1", "done");
     cli("accept", d, "run-a", "W1", "--verdict-id", "v:1", "--reviewer", "codex");
     assert.notEqual(cli("set", d, "run-a", "W1", "running").exitCode, 0);
@@ -135,7 +170,7 @@ test("set_status cannot regress terminal phases", () => {
 test("set_status can write skipped and failed", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "run-a", "--phases", "W1,W2");
+    startRun(d, "run-a", "W1,W2");
     assert.equal(cli("set", d, "run-a", "W1", "skipped").exitCode, 0);
     assert.equal(cli("set", d, "run-a", "W2", "failed").exitCode, 0);
     assert.equal(findPhase(readState(d, "run-a"), "W1").status, "skipped");
@@ -150,7 +185,7 @@ test("set_status can write skipped and failed", () => {
 test("accept requires verdict_id and reviewer", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "run-a", "--phases", "W1,W2");
+    startRun(d, "run-a", "W1,W2");
     cli("set", d, "run-a", "W1", "done");
     const r = cli("accept", d, "run-a", "W1", "--verdict-id", "", "--reviewer", "codex");
     assert.notEqual(r.exitCode, 0);
@@ -171,7 +206,7 @@ test("accept requires verdict_id and reviewer", () => {
 test("accept requires phase to be done (no force)", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "run-a", "--phases", "W1,W2");
+    startRun(d, "run-a", "W1,W2");
     const r = cli("accept", d, "run-a", "W1", "--verdict-id", "v:1", "--reviewer", "codex");
     assert.notEqual(r.exitCode, 0);
   } finally { cleanup(d); }
@@ -180,7 +215,7 @@ test("accept requires phase to be done (no force)", () => {
 test("accept with --force bypasses done check", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "run-a", "--phases", "W1,W2");
+    startRun(d, "run-a", "W1,W2");
     const r = cli("accept", d, "run-a", "W1", "--verdict-id", "v:1", "--reviewer", "deterministic:x", "--force");
     assert.equal(r.exitCode, 0);
     assert.equal(findPhase(readState(d, "run-a"), "W1").status, "accepted");
@@ -190,7 +225,7 @@ test("accept with --force bypasses done check", () => {
 test("accept records verdict_id and reviewer", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "run-a", "--phases", "W1,W2");
+    startRun(d, "run-a", "W1,W2");
     cli("set", d, "run-a", "W1", "done");
     cli("accept", d, "run-a", "W1", "--verdict-id", "codex:019e", "--reviewer", "codex-gpt-5.5");
     const ph = findPhase(readState(d, "run-a"), "W1");
@@ -203,7 +238,7 @@ test("accept records verdict_id and reviewer", () => {
 test("accept is idempotent for the same provenance and rejects conflicts", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "run-a", "--phases", "W1,W2");
+    startRun(d, "run-a", "W1,W2");
     cli("set", d, "run-a", "W1", "done");
     assert.equal(
       cli("accept", d, "run-a", "W1", "--verdict-id", "v:1", "--reviewer", "codex")
@@ -233,7 +268,7 @@ test("accept is idempotent for the same provenance and rejects conflicts", () =>
 test("resume of fresh run points at first phase", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "run-a", "--phases", "W1,W1.5,W2,W3");
+    startRun(d, "run-a", "W1,W1.5,W2,W3");
     const r = cli("resume", d, "run-a");
     assert.ok(r.stdout.trim().startsWith("W1"));
   } finally { cleanup(d); }
@@ -242,7 +277,7 @@ test("resume of fresh run points at first phase", () => {
 test("resume skips accepted+skipped, returns first non-terminal", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "run-a", "--phases", "W1,W1.5,W2,W3");
+    startRun(d, "run-a", "W1,W1.5,W2,W3");
     cli("set", d, "run-a", "W1", "done");
     cli("accept", d, "run-a", "W1", "--verdict-id", "v", "--reviewer", "codex");
     cli("set", d, "run-a", "W1.5", "skipped");
@@ -253,7 +288,7 @@ test("resume skips accepted+skipped, returns first non-terminal", () => {
 test("done-but-unaccepted is still a resume target", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "run-a", "--phases", "W1,W1.5,W2,W3");
+    startRun(d, "run-a", "W1,W1.5,W2,W3");
     cli("set", d, "run-a", "W1", "done");
     cli("accept", d, "run-a", "W1", "--verdict-id", "codex:1", "--reviewer", "codex");
     cli("set", d, "run-a", "W1.5", "done");
@@ -264,7 +299,7 @@ test("done-but-unaccepted is still a resume target", () => {
 test("resume COMPLETE when all accepted or skipped", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "run-a", "--phases", "W1,W2");
+    startRun(d, "run-a", "W1,W2");
     cli("set", d, "run-a", "W1", "done");
     cli("accept", d, "run-a", "W1", "--verdict-id", "v:1", "--reviewer", "deterministic:test");
     cli("set", d, "run-a", "W2", "skipped");
@@ -276,10 +311,22 @@ test("resume COMPLETE when all accepted or skipped", () => {
 // Validation (D2)
 // ============================================================================
 
+test("start refuses a run that has no contract", () => {
+  // Every other test reaches `start` through `startRun`, which opens the
+  // contract first. This is the one that checks the door is still locked: run
+  // phases are state on top of a contract, so there is no way to create them
+  // for a run that was never opened.
+  const d = tmpDir();
+  try {
+    const r = cli("start", d, "run-a", "--phases", "W1,W2");
+    assert.notEqual(r.exitCode, 0);
+  } finally { cleanup(d); }
+});
+
 test("start rejects empty phases", () => {
   const d = tmpDir();
   try {
-    const r = cli("start", d, "run-a", "--phases", "");
+    const r = startRun(d, "run-a", "");
     assert.notEqual(r.exitCode, 0);
   } finally { cleanup(d); }
 });
@@ -287,7 +334,7 @@ test("start rejects empty phases", () => {
 test("start rejects duplicate phases", () => {
   const d = tmpDir();
   try {
-    const r = cli("start", d, "run-a", "--phases", "W1,W2,W1");
+    const r = startRun(d, "run-a", "W1,W2,W1");
     assert.notEqual(r.exitCode, 0, "duplicate phases must be rejected");
   } finally { cleanup(d); }
 });
@@ -296,9 +343,9 @@ test("start rejects unsafe phase names", () => {
   const d = tmpDir();
   try {
     // ../escape fails the PHASE_NAME_RE (starts with .)
-    assert.notEqual(cli("start", d, "run-a", "--phases", "../escape").exitCode, 0);
+    assert.notEqual(startRun(d, "run-a", "../escape").exitCode, 0);
     // .hidden fails (starts with .)
-    assert.notEqual(cli("start", d, "run-b", "--phases", ".hidden").exitCode, 0);
+    assert.notEqual(startRun(d, "run-b", ".hidden").exitCode, 0);
     // Phase with spaces: CLI trims whitespace, but if the actual name has a space it fails run_id regex
     // (this is tested via the run_id validation above)
   } finally { cleanup(d); }
@@ -308,6 +355,8 @@ test("invalid run_id rejected", () => {
   const d = tmpDir();
   try {
     for (const bad of ["../escape", "a/b", "a b", "a;rm"]) {
+      // No openRun here: an unsafe run id cannot have a contract in the first
+      // place, so `start` must refuse it on the id alone.
       assert.notEqual(cli("start", d, bad, "--phases", "W1").exitCode, 0);
     }
   } finally { cleanup(d); }
@@ -316,7 +365,7 @@ test("invalid run_id rejected", () => {
 test("unknown phase raises error", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "run-a", "--phases", "W1,W2");
+    startRun(d, "run-a", "W1,W2");
     assert.notEqual(cli("set", d, "run-a", "W9", "done").exitCode, 0);
   } finally { cleanup(d); }
 });
@@ -324,7 +373,7 @@ test("unknown phase raises error", () => {
 test("load validates run_id consistency", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "run-a", "--phases", "W1");
+    startRun(d, "run-a", "W1");
     // Manually tamper the run_id inside the file
     const p = path.join(d, ".aris", "runs", "run-a.json");
     const st = JSON.parse(fs.readFileSync(p, "utf-8"));
@@ -339,7 +388,7 @@ test("load validates run_id consistency", () => {
 test("load validates duplicate phases in file", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "run-a", "--phases", "W1,W2");
+    startRun(d, "run-a", "W1,W2");
     const p = path.join(d, ".aris", "runs", "run-a.json");
     const st = JSON.parse(fs.readFileSync(p, "utf-8"));
     st.phases.push({ ...st.phases[0] }); // duplicate W1
@@ -352,7 +401,7 @@ test("load validates duplicate phases in file", () => {
 test("corrupt JSON on disk raises clear error", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "run-a", "--phases", "W1");
+    startRun(d, "run-a", "W1");
     fs.writeFileSync(path.join(d, ".aris", "runs", "run-a.json"), "NOT JSON{{{");
     const r = cli("set", d, "run-a", "W1", "done");
     assert.notEqual(r.exitCode, 0);
@@ -363,7 +412,7 @@ test("corrupt JSON on disk raises clear error", () => {
 test("corrupt state structure raises clear error", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "run-a", "--phases", "W1");
+    startRun(d, "run-a", "W1");
     fs.writeFileSync(
       path.join(d, ".aris", "runs", "run-a.json"),
       JSON.stringify({ run_id: "run-a" }),
@@ -375,7 +424,7 @@ test("corrupt state structure raises clear error", () => {
 test("load rejects accepted phases without verdict provenance", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "run-a", "--phases", "W1,W2");
+    startRun(d, "run-a", "W1,W2");
     const p = path.join(d, ".aris", "runs", "run-a.json");
     const st = readState(d, "run-a");
     const phase = findPhase(st, "W1");
@@ -396,8 +445,8 @@ test("load rejects accepted phases without verdict provenance", () => {
 test("list only shows valid run-state files, not config/receipt json", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "alpha", "--phases", "W1");
-    cli("start", d, "beta", "--phases", "W1");
+    startRun(d, "alpha", "W1");
+    startRun(d, "beta", "W1");
     // Write a paseo-config and a non-run-state JSON
     const runsDir = path.join(d, ".aris", "runs");
     fs.writeFileSync(path.join(runsDir, "alpha.paseo-config.json"), "{}");
@@ -418,7 +467,7 @@ test("list only shows valid run-state files, not config/receipt json", () => {
 test("state persists across separate CLI invocations", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "run-a", "--phases", "W1,W2,W3");
+    startRun(d, "run-a", "W1,W2,W3");
     cli("set", d, "run-a", "W1", "done", "--artifact", "output.md");
     cli("accept", d, "run-a", "W1", "--verdict-id", "v:1", "--reviewer", "codex");
     cli("set", d, "run-a", "W2", "skipped");
@@ -439,7 +488,7 @@ test("concurrent set operations do not lose updates (40 parallel writers)", () =
   try {
     const N = 40;
     const phaseNames = Array.from({ length: N }, (_, i) => `P${i}`);
-    cli("start", d, "run-concurrent", "--phases", phaseNames.join(","));
+    startRun(d, "run-concurrent", phaseNames.join(","));
 
     const driverScript = [
       `const { execFile } = require("child_process");`,
@@ -476,7 +525,7 @@ test("research-pipeline: fresh → all accepted → COMPLETE", () => {
   const d = tmpDir();
   try {
     const phases = "idea-discovery,experiment-bridge,auto-review-loop,summary,paper-writing";
-    cli("start", d, "rp-1", "--phases", phases);
+    startRun(d, "rp-1", phases);
 
     // Simulate a full run
     for (const ph of phases.split(",").slice(0, 4)) {
@@ -495,7 +544,7 @@ test("research-pipeline: done-unaccepted resume re-validates", () => {
   const d = tmpDir();
   try {
     const phases = "idea-discovery,experiment-bridge,auto-review-loop,summary,paper-writing";
-    cli("start", d, "rp-2", "--phases", phases);
+    startRun(d, "rp-2", phases);
 
     cli("set", d, "rp-2", "idea-discovery", "done");
     cli("accept", d, "rp-2", "idea-discovery", "--verdict-id", "v:1", "--reviewer", "codex");
@@ -509,7 +558,7 @@ test("auto-research-loop: outer lifecycle init→loop→summary→paper-writing"
   const d = tmpDir();
   try {
     const phases = "init,loop,summary,paper-writing";
-    cli("start", d, "arl-1", "--phases", phases);
+    startRun(d, "arl-1", phases);
 
     // Init
     cli("set", d, "arl-1", "init", "done", "--artifact", "dashboard.json");
@@ -538,7 +587,7 @@ test("auto-research-loop: outer lifecycle init→loop→summary→paper-writing"
 test("auto-research-loop: crash during loop resumes at loop (not summary)", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "arl-2", "--phases", "init,loop,summary,paper-writing");
+    startRun(d, "arl-2", "init,loop,summary,paper-writing");
     cli("set", d, "arl-2", "init", "done");
     cli("accept", d, "arl-2", "init", "--verdict-id", "d:p", "--reviewer", "deterministic:p");
     cli("set", d, "arl-2", "loop", "running");
@@ -550,7 +599,7 @@ test("auto-research-loop: crash during loop resumes at loop (not summary)", () =
 test("auto-research-loop: stop→finishing→summary not blocked", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "arl-3", "--phases", "init,loop,summary,paper-writing");
+    startRun(d, "arl-3", "init,loop,summary,paper-writing");
     cli("set", d, "arl-3", "init", "done");
     cli("accept", d, "arl-3", "init", "--verdict-id", "d:p", "--reviewer", "deterministic:p");
     // Loop done (stop gate fired, dashboard.status=finishing)
@@ -568,7 +617,7 @@ test("auto-research-loop: stop→finishing→summary not blocked", () => {
 test("auto-research-loop: AUTO_WRITE=false skips paper-writing → COMPLETE", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "arl-4", "--phases", "init,loop,summary,paper-writing");
+    startRun(d, "arl-4", "init,loop,summary,paper-writing");
     // Fast-forward all to terminal
     cli("set", d, "arl-4", "init", "done");
     cli("accept", d, "arl-4", "init", "--verdict-id", "d:p", "--reviewer", "deterministic:p");
@@ -584,7 +633,7 @@ test("auto-research-loop: AUTO_WRITE=false skips paper-writing → COMPLETE", ()
 test("auto-research-loop: AUTO_WRITE=true done+accept → COMPLETE", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "arl-5", "--phases", "init,loop,summary,paper-writing");
+    startRun(d, "arl-5", "init,loop,summary,paper-writing");
     cli("set", d, "arl-5", "init", "done");
     cli("accept", d, "arl-5", "init", "--verdict-id", "d:p", "--reviewer", "deterministic:p");
     cli("set", d, "arl-5", "loop", "done");
@@ -833,6 +882,12 @@ function makeDashboard(overrides: Record<string, unknown> = {}): Record<string, 
 }
 
 function writeDash(root: string, runId: string, dash: Record<string, unknown>): string {
+  // metric-gate reads the run contract and the budget ledger before it reads
+  // the dashboard: a run with no budget is already stopped, so there would be
+  // nothing to evaluate. The amount here is just "not exhausted" -- the one
+  // test that wants exhaustion spends it explicitly.
+  openRun(root, runId);
+  initializeRunBudget(root, runId, 10);
   const dir = path.join(root, ".aris", "runs", runId);
   fs.mkdirSync(dir, { recursive: true });
   const p = path.join(dir, "dashboard.json");
@@ -890,6 +945,10 @@ function writeWorkerReceipt(
   const outputDir = path.join(workerDir, "outputs");
   fs.mkdirSync(outputDir, { recursive: true });
 
+  // Both are idempotent, so a test that already called writeDash pays nothing.
+  openRun(root, runId);
+  initializeRunBudget(root, runId, 10);
+
   const complete = {
     worker: "analyze-results",
     iteration: 1,
@@ -904,6 +963,20 @@ function writeWorkerReceipt(
     error_count: 0,
     ...receipt,
   };
+  // An experiment-bridge receipt settles the budget its dispatch reserved, so
+  // the manifest has to name that execution and the reservation has to already
+  // exist. A bridge run that settles without a prior reservation is a dispatch
+  // that spent resources without booking them, and the ledger refuses it.
+  const isBridge = complete.worker === "experiment-bridge";
+  const executionId = `exec-${String(complete.iteration)}`;
+  if (isBridge)
+    reserveRunExecution({
+      project_root: root,
+      run_id: runId,
+      execution_id: executionId,
+      budget: 1,
+    });
+
   const primaryOutput = complete.primary_output;
   if (complete.status === "done" && typeof primaryOutput === "string") {
     const artifactPath = path.join(outputDir, primaryOutput);
@@ -923,6 +996,7 @@ function writeWorkerReceipt(
       inputs: {},
       context: {},
       output_dir: outputDir,
+      ...(isBridge ? { execution_id: executionId } : {}),
     }),
   );
   const receiptPath = path.join(workerDir, "receipt.json");
@@ -1044,12 +1118,93 @@ test("metric-gate evaluate: metric_met (lower_better)", () => {
 test("metric-gate evaluate: budget_exhausted", () => {
   const d = tmpDir();
   try {
-    const dash = makeDashboard({ iteration: 5, max_iterations: 5, metric: { name: "F1", target: 0.85, direction: "higher_better", tolerance: 0.01, current: 0.72, baseline: 0.65, history: [{ iter: 1, value: 0.65 }, { iter: 2, value: 0.68 }, { iter: 3, value: 0.70 }, { iter: 4, value: 0.71 }, { iter: 5, value: 0.72 }] } });
+    // The gate stops on cost, not on a round count: `max_iterations` is not an
+    // input to it. Exhaustion means the ledger has nothing left to reserve.
+    const dash = makeDashboard({ iteration: 5, metric: { name: "F1", target: 0.85, direction: "higher_better", tolerance: 0.01, current: 0.72, baseline: 0.65, history: [{ iter: 1, value: 0.65 }, { iter: 2, value: 0.68 }, { iter: 3, value: 0.70 }, { iter: 4, value: 0.71 }, { iter: 5, value: 0.72 }] } });
     writeDash(d, "run1", dash);
+    reserveRunExecution({ project_root: d, run_id: "run1", execution_id: "exec-1", budget: 10 });
     const r = metricGateCli("evaluate", d, "run1");
     assert.equal(r.exitCode, 0, r.stderr);
     const dec = JSON.parse(r.stdout.trim());
     assert.equal(dec.stop_reason, "budget_exhausted");
+  } finally { cleanup(d); }
+});
+
+test("metric-gate evaluate: no round limit unless config.max_iterations is set", () => {
+  const d = tmpDir();
+  try {
+    // 40 iterations of steady progress and no backstop configured. A round
+    // count is not a stop criterion on its own -- what bounds a run is its
+    // budget and its target -- so the gate keeps going.
+    const history = Array.from({ length: 40 }, (_, i) => ({ iter: i + 1, value: 0.5 + i * 0.001 }));
+    const dash = makeDashboard({
+      iteration: 40,
+      config: { patience: 2 },
+      metric: { name: "F1", target: 0.95, direction: "higher_better", tolerance: 0.01, current: 0.539, baseline: 0.5, history },
+    });
+    writeDash(d, "run1", dash);
+    const r = metricGateCli("evaluate", d, "run1");
+    assert.equal(r.exitCode, 0, r.stderr);
+    const dec = JSON.parse(r.stdout.trim());
+    assert.equal(dec.stop_reason, null);
+    assert.equal(dec.max_iterations, null);
+  } finally { cleanup(d); }
+});
+
+test("metric-gate evaluate: iteration_cap fires only as the last backstop", () => {
+  const d = tmpDir();
+  try {
+    // Same steadily-improving run, this time with a backstop. It has budget
+    // left, has not hit its target, and its patience streak is 0 -- every
+    // criterion that says something about the research is silent, which is
+    // exactly when the backstop is the only thing that can stop it.
+    const history = Array.from({ length: 6 }, (_, i) => ({ iter: i + 1, value: 0.5 + i * 0.001 }));
+    const dash = makeDashboard({
+      iteration: 6,
+      config: { patience: 2, max_iterations: 6 },
+      metric: { name: "F1", target: 0.95, direction: "higher_better", tolerance: 0.01, current: 0.505, baseline: 0.5, history },
+    });
+    writeDash(d, "run1", dash);
+    const r = metricGateCli("evaluate", d, "run1");
+    assert.equal(r.exitCode, 0, r.stderr);
+    const dec = JSON.parse(r.stdout.trim());
+    assert.equal(dec.stop_reason, "iteration_cap");
+    assert.equal(dec.max_iterations, 6);
+  } finally { cleanup(d); }
+});
+
+test("metric-gate evaluate: metric_met outranks a reached iteration_cap", () => {
+  const d = tmpDir();
+  try {
+    // A run that hits its target on the very round the backstop would fire
+    // has succeeded, not run out of rounds. The backstop is last in the
+    // priority order precisely so it never mislabels a success.
+    const dash = makeDashboard({
+      iteration: 3,
+      config: { patience: 2, max_iterations: 3 },
+      metric: { name: "F1", target: 0.85, direction: "higher_better", tolerance: 0.01, current: 0.9, baseline: 0.65, history: [{ iter: 1, value: 0.65 }, { iter: 2, value: 0.7 }, { iter: 3, value: 0.9 }] },
+    });
+    writeDash(d, "run1", dash);
+    const r = metricGateCli("evaluate", d, "run1");
+    assert.equal(r.exitCode, 0, r.stderr);
+    assert.equal(JSON.parse(r.stdout.trim()).stop_reason, "metric_met");
+  } finally { cleanup(d); }
+});
+
+test("metric-gate evaluate: a malformed max_iterations is invalid, not ignored", () => {
+  const d = tmpDir();
+  try {
+    // A backstop that silently does nothing is worse than no backstop: the
+    // run looks guarded and is not.
+    const dash = makeDashboard({
+      iteration: 2,
+      config: { patience: 2, max_iterations: 0 },
+      metric: { name: "F1", target: 0.85, direction: "higher_better", tolerance: 0.01, current: 0.72, baseline: 0.65, history: [{ iter: 1, value: 0.65 }, { iter: 2, value: 0.72 }] },
+    });
+    writeDash(d, "run1", dash);
+    const r = metricGateCli("evaluate", d, "run1");
+    assert.equal(r.exitCode, 0, r.stderr);
+    assert.equal(JSON.parse(r.stdout.trim()).stop_reason, "invalid_metric");
   } finally { cleanup(d); }
 });
 
@@ -1122,11 +1277,12 @@ test("metric-gate evaluate: resume idempotency — same stop_reason on re-evalua
   try {
     const dash = makeDashboard({
       iteration: 5,
-      max_iterations: 5,
       stop_reason: null, // will be set by first evaluate
       metric: { name: "F1", target: 0.85, direction: "higher_better", tolerance: 0.01, current: 0.72, baseline: 0.65, history: [{ iter: 5, value: 0.72 }] },
     });
     writeDash(d, "run1", dash);
+    // An exhausted ledger stays exhausted, so both evaluates see the same stop.
+    reserveRunExecution({ project_root: d, run_id: "run1", execution_id: "exec-1", budget: 10 });
     const r1 = metricGateCli("evaluate", d, "run1");
     assert.equal(r1.exitCode, 0, r1.stderr);
     const d1 = JSON.parse(r1.stdout.trim());
@@ -1737,7 +1893,7 @@ test("metric-gate config: rejects negative tolerance", () => {
 test("status command shows run info", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "run-a", "--phases", "W1,W2");
+    startRun(d, "run-a", "W1,W2");
     cli("set", d, "run-a", "W1", "done");
     const r = cli("status", d, "run-a");
     assert.equal(r.exitCode, 0);
@@ -1977,16 +2133,26 @@ test("dashboard-merge: final review metric replaces the bridge metric for the sa
 // experiment-bridge — the two verdicts in one receipt must not be conflated
 // ============================================================================
 
-test("dashboard-merge: a failed receipt records status=failed instead of vanishing", () => {
+test("dashboard-merge: a failed bridge receipt opens a repair instead of vanishing", () => {
   // The bug this guards: a failed receipt used to print {applied:false} and
   // leave status=running. Resume decides "stage completed" from dashboard
   // state, so the failure left no trace and the next stage started on top of
   // the failed one.
+  //
+  // A bridge failure means the experiment never ran, which is a different thing
+  // from an experiment that ran and came out bad. So it does not go straight to
+  // status=failed the way any other worker's failure does (covered by "failed
+  // receipt is not merged"); it opens a repair and parks the run there. The
+  // trace requirement is the same -- resume must still see that something went
+  // wrong -- it is just recorded as a pending repair.
   const d = tmpDir();
   try {
     writeDash(d, "run1", makeDashboard({ current_phase: "experiment-bridge" }));
     const receipt = writeWorkerReceipt(d, "run1", "1-experiment-bridge", {
       worker: "experiment-bridge",
+      // `failure.phase` is copied straight from the receipt, so a receipt that
+      // omits it leaves resume without the phase to restart from.
+      phase: "experiment-bridge",
       status: "failed",
       primary_output: null,
       error: { category: "code_error", message: "training diverged", recoverable: false },
@@ -1997,15 +2163,21 @@ test("dashboard-merge: a failed receipt records status=failed instead of vanishi
 
     const r = dashMergeCli("apply", "--root", d, "--run-id", "run1", "--receipt", receipt);
     assert.equal(r.exitCode, 0, r.stderr);
-    assert.ok(r.stdout.includes("failed-receipt"), r.stdout);
+    assert.ok(r.stdout.includes("bridge-repair-pending"), r.stdout);
 
     const dash = JSON.parse(fs.readFileSync(dashPath, "utf-8"));
-    assert.equal(dash.status, "failed", "a failed receipt must set dashboard.status=failed");
+    assert.equal(dash.status, "bridge_repair_pending",
+      "a failed bridge receipt must park the run in a pending repair");
+    assert.equal(dash.bridge_failure.status, "pending");
+    assert.equal(dash.bridge_failure.reason, "execution");
+    assert.equal(dash.bridge_failure.repair_attempts, 0);
     assert.equal(dash.failure.worker, "experiment-bridge");
     assert.equal(dash.failure.phase, "experiment-bridge");
     assert.equal(dash.failure.error.message, "training diverged");
-    assert.equal(dash.current_phase, "experiment-bridge",
-      "a failed stage must not advance current_phase");
+    // The phase moves, but it moves to the repair -- not past the bridge. The
+    // run is parked on the failure, which is what stops the next stage from
+    // starting on top of it.
+    assert.equal(dash.current_phase, "bridge-repair");
     assert.equal((dash.metric as { current: number }).current, 0.72,
       "no patch may be applied from a failed receipt");
 
@@ -3212,7 +3384,7 @@ test("metric-gate evaluate: rejects a run id that can escape the run directory",
   try {
     const r = metricGateCli("evaluate", d, "../../outside");
     assert.notEqual(r.exitCode, 0);
-    assert.ok(r.stderr.includes("invalid run id"), r.stderr);
+    assert.ok(r.stderr.includes("INVALID_RUN_ID"), r.stderr);
   } finally { cleanup(d); }
 });
 
@@ -3304,7 +3476,7 @@ test("contract: integration-contract helper policy table registers metric-gate, 
 test("run-state: pending→failed is valid (clean invalid_metric path)", () => {
   const d = tmpDir();
   try {
-    cli("start", d, "run-a", "--phases", "W1,W2,W3");
+    startRun(d, "run-a", "W1,W2,W3");
     cli("set", d, "run-a", "W1", "running");
     // direct pending/running → failed (the clean path for invalid_metric)
     const r = cli("set", d, "run-a", "W1", "failed");
@@ -3317,7 +3489,7 @@ test("run-state: done→failed is technically allowed but auto-research-loop avo
   const d = tmpDir();
   try {
     // Prove the transition is legal in run-state
-    cli("start", d, "run-a", "--phases", "W1,W2");
+    startRun(d, "run-a", "W1,W2");
     cli("set", d, "run-a", "W1", "done");
     const r = cli("set", d, "run-a", "W1", "failed");
     assert.equal(r.exitCode, 0, "done→failed is technically allowed by run-state");
@@ -3456,7 +3628,10 @@ test("contract: research-pipeline Gate 1 accept uses receipt provenance fields, 
 async function main(): Promise<void> {
   let passed = 0;
   let failed = 0;
+  // Substring filter for debugging one case without paying for all of them.
+  const only = process.env.ARIS_TEST_ONLY;
   for (const t of tests) {
+    if (only !== undefined && only !== "" && !t.name.includes(only)) continue;
     try {
       t.fn();
       console.log(`  PASS ${t.name}`);

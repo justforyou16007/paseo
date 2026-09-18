@@ -67,6 +67,29 @@ Here is the criteria I use to decide:
 - No tests
 - Clearly fully AI-generated PR
 
+### Commit messages
+
+Subjects follow Conventional Commits:
+
+```text
+type(scope): description
+```
+
+`type` is one of `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`,
+`build`, `ci`, `chore`, `revert`. The scope is optional. The description can be
+English or Chinese.
+
+Two limits on the subject:
+
+- 72 columns, counting CJK characters as two.
+- One change. A subject that reads `1. … 2. … 3. …` means the commit should have
+  been several commits, or the list belongs in the body.
+
+Everything else goes in the body, after a blank line, at any length.
+
+A `commit-msg` hook enforces this through `scripts/check-commit-msg.mjs`. Merge,
+revert and `fixup!` subjects are exempt because git writes them.
+
 ### What to expect
 
 - PRs that were explicitly approved in a discussion are preferred.

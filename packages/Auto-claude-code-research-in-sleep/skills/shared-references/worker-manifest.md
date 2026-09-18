@@ -69,6 +69,77 @@ never guess it — `WORKER_DIR=$(dirname "$MANIFEST_PATH")`.
 
 ### Worker behavior on startup
 
+For an assigned run, `project_root` is durable storage and `workspace_root`
+is the isolated checkout. Keep receipts under that run's directory. Do not
+copy parent state or `env.json` into a worktree.
+
+The dispatcher calls `research-wiki.js seal-worker-manifest --input <assignment>`
+before dispatch. The assignment contains `project_root`, `run_id`, `worker`,
+optional checked `scope`, and `input_snapshot` for a child.
+The helper writes the run-level `input-manifest.json`. All execution worker
+assignments name this file in `inputs.run_manifest`; they do not copy its Wiki binding. Every
+phase and parallel reader receives the same head. A changed input snapshot or
+role is an error. Worker-specific inputs and outputs stay in the existing
+`workers/<iteration>-<phase>/input-manifest.json` execution contract.
+
+`scope` comes from `run.json`: each ancestor contributes its run ID and the
+child's relative `scope_path`. `wiki_root` is that run's `wiki` directory;
+`wiki_head` is the sealed sequence, event ID and event hash. The child's
+`input_snapshot` contains only `{ref, sha256}` for a parent-owned file. Its
+hash must be registered in the parent's `run.json.output_hashes`, and its
+`input_snapshot_sha256` must match the child's contract. Read this sealed
+input, never the parent's live Wiki head. Parent links are checked in
+`run.json`; do not persist `parent_run_id` or `outer_run_id` in this manifest.
+
+<!-- WIKI-ACCESS:START -->
+```json
+{
+  "manifest_path": ".aris/runs/<run_id>/input-manifest.json",
+  "module_query_workers": ["idea-discovery", "idea-creator", "experiment-bridge", "analyze-results", "result-to-claim"],
+  "scorer_query_workers": ["scorer-loop"],
+  "tester_query_workers": []
+}
+```
+<!-- WIKI-ACCESS:END -->
+
+Use `research-wiki.js query --manifest <input-manifest.json>` with the manifest's
+scope and the requesting skill's identity. The public entry rejects another scope, another
+Wiki root, an unsealed head, and tester identities. A scorer gets only its
+`<run scope>/scorers/<run_id>` scope. Tester manifests contain no Wiki root,
+head, or parent input reference. Private tester cases, answers, per-case
+outputs/scores and private Artifact URIs cannot enter public records.
+
+## Independent review
+
+Three things are reviewed from outside the run that produced them: a validation
+comparison between candidates, a scorer revision, and a remote tester's signed
+public result. A research run accepts or rejects its own work inside its own
+`auto-review-loop`; nothing else reviews a research run.
+
+A reviewer reads only the evidence its assignment names, keeps the assigned
+reviewer identity for the whole wave, and returns `approved`, `rejected`, or
+`insufficient`. Approval lets a deterministic gate compare evidence; it does not
+select or adopt a candidate. A tester assignment carries no Wiki access, and its
+receipt holds only opaque binding hashes and coarse error categories -- never
+case content, per-case scores, prompts, answers, or private paths.
+
+Submit through `workflow-tools-cli.js review-submit` with a submission JSON
+carrying `project_root`, `manifest_run_id`, `command_run_id`, and `receipt`. The
+run IDs are the reviewed run's, not the reviewer session's. The helper reads the
+stored assignment and verifies identities and evidence hashes; on conflict,
+changed evidence, or a missing assignment, stop and report its error rather than
+adjusting the evidence until submission succeeds.
+
+A review has no `dashboard_patch`, selected candidate, score override,
+implementation patch, or Wiki delta. A review receipt never merges into a
+dashboard, and a dashboard patch never carries a verdict on someone else's
+run.
+
+`dashboard-merge.js` decides which worker may write from which phase, and every
+worker writes only into the run it belongs to. A research run accepts its own
+work through its own `auto-review-loop`, which is also what opens and closes the
+`bridge-repair` branch; nothing outside the run patches its dashboard.
+
 1. Read `input-manifest.json` from its working directory (path passed in prompt)
 2. Read files listed in `inputs` as needed
 3. Use `context` values for scalar parameters
@@ -242,7 +313,6 @@ The orchestrator's single state source. ~50 lines, ~300 tokens.
   "project": "...",
   "status": "running|finishing|completed|invalid",
   "iteration": 3,
-  "max_iterations": 5,
   "current_phase": "experiment-bridge",
   "config": {
     "auto_write": false,

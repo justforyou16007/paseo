@@ -129,6 +129,11 @@ as startup inputs; those paths are created only during termination after all
 review fixes and reruns finish.
 
 **Receipt (write last to `$WORKER_DIR/receipt.json`):**
+
+The shape below is for the ordinary quality-review purpose. A
+`bridge_repair` run uses the special termination branch described below: it
+writes a repair receipt with `summary.repair_status`, leaves
+`dashboard_patch` as `null`, and does not claim that an experiment ran.
 ```json
 {
   "worker": "auto-review-loop",
@@ -165,6 +170,53 @@ per `worker-manifest.md`. Append system errors to `$WORKER_DIR/progress_error.md
 **Worker mode is required.** The manifest supplies all inputs and
 `$OUTPUT_DIR`; the skill writes its receipt beside the manifest. There is no
 manifest-scoped output path.
+
+## `bridge_repair` purpose
+
+The loop can be invoked with `manifest.context.purpose = "bridge_repair"` for
+two reasons. `manifest.context.repair_reason` says which:
+
+- `execution` — `experiment-bridge` returned a failed receipt or an unusable
+  execution artifact. The experiment did not produce evidence.
+- `insufficient_evidence` — the bridge ran and this loop, reviewing that
+  evidence, could not rule on it: the evidence exists but does not settle
+  whether the idea works. The experiment fell short, not the idea — parameters
+  were off, the sample was too small, a control was not held.
+
+In either case the loop applies the smallest repair to the current experiment
+implementation or runtime environment and returns a repair receipt for the
+caller to retry `experiment-bridge`. Under `insufficient_evidence` the repair
+is a search over the experiment's own knobs, so dispatch `/dse-loop` to do the
+tuning: it runs the experiment, reads the result, adjusts parameters and
+repeats until the objective is met or the budget runs out. The hyperparameters
+it may move are the ones `EXPERIMENT_PLAN.md` already names and
+`experiment-bridge` exposed as runtime flags. Changing their values is a
+repair; changing which question the experiment asks is not.
+
+The repair manifest must include the bridge receipt and the loop's own review
+record that opened the repair, error logs, frozen experiment plan, current interface record
+and candidate workspace. It keeps the same candidate and node/run identity, and
+records the round number. A successful repair is not an experiment result and
+does not advance the metric gate; the caller must rerun the bridge and obtain a
+complete artifact first.
+
+In `bridge_repair` purpose the loop may not change the Workflow graph, node
+interface, connection decision, scoring policy, tester definition or tester
+private data. Such a change is a new research proposal for a later iteration.
+When the repair limit is reached, return a structured exhausted result so the
+caller can store failure evidence and stop downstream work. Do not dispatch
+`result-to-claim` as though the failed bridge were a measured result, and do
+not dispatch it for a retuned run that was never re-reviewed.
+
+The repair receipt reports `summary.repair_status` (`fixed` or `exhausted`),
+the repair round and the unchanged candidate/node identity. A bounded repair
+that reaches either outcome is a completed worker receipt; an inability to
+produce the receipt is a worker failure. The receipt has no metric patch and no
+claim output. The parent uses `fixed` to retry the bridge and `exhausted` to
+end the candidate. How the candidate ends depends on why the repair was opened:
+an exhausted `execution` repair leaves the module failed, while an exhausted
+`insufficient_evidence` repair completes it with no proposal — the experiment
+ran, it just never produced evidence anyone could rule on.
 
 ## Workflow
 
@@ -535,6 +587,19 @@ When loop ends (positive assessment or max rounds):
 2. Write final summary to `$OUTPUT_DIR/AUTO_REVIEW.md`
 3. Update project notes with conclusions
 4. **Write method/pipeline description** to `$OUTPUT_DIR/AUTO_REVIEW.md` under a `## Method Description` section — a concise 1-2 paragraph description of the final method, its architecture, and data flow. This serves as input for `/paper-illustration` in Workflow 3.
+
+If `manifest.context.purpose == "bridge_repair"`, stop after step 4 and write
+the repair receipt. Do not execute steps 5–9: there is no valid experiment
+result, so there is no metric, claim, Wiki signal, Feishu completion notice, or
+HTML result to publish. Steps 1–4 remain the repair log and may record the
+reviewer's reasoning; they are not an experiment result. The parent reads
+`summary.repair_status`: `fixed`
+means retry the same `experiment-bridge`; `exhausted` means record the failure
+evidence and stop this candidate. The repair receipt must retain the unchanged
+candidate and node identity and the repair round.
+
+For the ordinary quality-review purpose, continue with the following steps.
+
 5. **Publish the final metric in worker mode.** This step is mandatory before
    writing the outer receipt, even when no fix launched a new experiment:
    - Copy the latest result and tracker snapshots to
@@ -562,9 +627,13 @@ When loop ends (positive assessment or max rounds):
    experiment-bridge's initial analyzed value, then auto-review-loop's final
    value. `dashboard-merge` replaces that iteration's history entry instead of
    appending another one, so resume cannot double-count it.
-6. **Generate claims from results** — dispatch a paseo claude sub-agent for `/result-to-claim` per `shared-references/paseo-subagent-dispatch.md` to convert experiment results from `$OUTPUT_DIR/AUTO_REVIEW.md` into structured paper claims. Output: `CLAIMS_FROM_RESULTS.md`.
+6. **Generate claims from results** —
+   dispatch a paseo claude sub-agent for `/result-to-claim` per
+   `shared-references/paseo-subagent-dispatch.md` to convert experiment
+   results from `$OUTPUT_DIR/AUTO_REVIEW.md` into structured paper claims.
+   Output: `CLAIMS_FROM_RESULTS.md`.
 
-   **Worker mode: this step is MANDATORY, not optional.** `/auto-research-loop` relies
+   **Worker mode: this step is MANDATORY for ordinary quality-review runs.** `/auto-research-loop` relies
    on this dispatch as the ONLY path that writes the iteration's experiment node,
    supports/invalidates edges, idea outcome, failure-derived problems, and the rebuilt
    query pack into the research wiki. Skipping it silently starves the next iteration's
@@ -584,6 +653,13 @@ When loop ends (positive assessment or max rounds):
      iteration (`exp:iter-<iteration>`), so a re-judged iteration overwrites its own node
      instead of accumulating duplicates.
    - Intended claims: the outer manifest's `experiment_plan` input path.
+   - Comparability fields, so the iteration can be ranked against the others when
+     the run exports its result package: the outer `iteration` number, this
+     iteration's final gate metric value (the same number written to the
+     dashboard), and - only when this iteration was submitted to the tester - the
+     signed public receipt path plus the public key that verifies it. Step 5 of
+     `/result-to-claim` passes them straight through to `add_experiment`. An
+     iteration recorded without them is invisible to the export.
 
    The worker manifest is required for this dispatch. If `/result-to-claim`
    fails or its output is missing, the outer receipt is failed.

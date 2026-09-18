@@ -118,6 +118,17 @@ analyze-results dispatch below.
 On failure, write receipt with `"status": "failed"` and structured `error` object
 per `worker-manifest.md`. Append system errors to `$WORKER_DIR/progress_error.md`.
 
+A failed bridge receipt is the input to the caller's repair path. It is not a
+valid experiment result and must not be sent to a metric gate or promoted as a
+negative finding. A parent `auto-research-loop` or Workflow run passes this
+receipt, the error logs, the frozen experiment plan and the current candidate
+workspace to `/auto-review-loop` with `purpose: "bridge_repair"`. After a
+successful repair, the caller reruns this bridge with the same frozen inputs
+and records a new attempt under the same candidate identity. If the repair
+changes the experiment's research meaning, the node interface or the Workflow
+graph, the current candidate ends and the change must be proposed in a later
+iteration.
+
 The skill requires `— manifest:` and always writes a receipt. There is no second
 direct-call path with different input or output semantics.
 

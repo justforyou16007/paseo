@@ -27,7 +27,7 @@ ARIS is a research harness: composable Markdown skills that orchestrate the ML r
 | ------------------------------------------------------- | ------------------------------------- | --------------------------------------------------------------- |
 | Claude Code / Cursor / Trae / Antigravity / Copilot CLI | `skills/<name>/SKILL.md`              | Mainline skills; native `SKILL.md` invocation                   |
 
-**Full catalog**: [`docs/SKILLS_CATALOG.md`](docs/SKILLS_CATALOG.md) — **84 skills**, grouped by role.
+**Full catalog**: [`docs/SKILLS_CATALOG.md`](docs/SKILLS_CATALOG.md) — **87 skills**, grouped by role.
 
 Invocation syntax is identical across hosts:
 
@@ -154,7 +154,7 @@ Skills communicate through plain-text files in known locations:
 | `GAP_REPORT.md`                        | `/paper-plan` (when `--- style-ref:` set) | `/paper-write` (emits `<!-- DATA_NEEDED: ... -->` HTML comments for missing slots) |
 | `<artifact>.review.json`               | `/render-html` review gate                | manual triage                                                                      |
 | `.aris/edit_whitelist.yaml`            | human / `/resubmit-pipeline`              | `/auto-paper-improvement-loop --edit-whitelist`                                    |
-| `research-wiki/`                       | `/research-wiki`                          | `/idea-creator`, `/research-lit`, `/result-to-claim`                               |
+| `research-wiki/`                       | `/research-wiki`                          | `/idea-creator`, `/research-lit`, `/result-to-claim`, `export_result_package`      |
 | `.aris/meta/events.jsonl`              | hooks (passive logging)                   | `/meta-optimize`                                                                   |
 | `.aris/traces/<skill>/<date>_run<NN>/` | reviewer-class skills                     | audit / forensic replay                                                            |
 
@@ -221,5 +221,6 @@ If `research-wiki/` exists in the project:
 - `/idea-creator` reads wiki before ideation, writes ideas (both successful and failed) back after
 - `/result-to-claim` writes experiment nodes, `supports`/`invalidates` edges, idea outcomes, and failure-derived problems; claim `status` (the proof axis) is owned by `/proof-checker`
 - 3+ failed ideas → triggers re-ideation suggestion (failed ideas become anti-repetition memory)
+- when a run stops, `export_result_package` picks its best iteration out of the wiki and writes `.aris/runs/<run_id>/result-package.json` — the wiki is the only place that saw every iteration, and it is that file (never the wiki or dashboard) that a parent run reads
 
 Initialize with `/research-wiki init`. Spec: [`skills/research-wiki/SKILL.md`](skills/research-wiki/SKILL.md). The canonical helper is the compiled `research-wiki.js` under `.aris/dist/` or `dist/`; a missing helper blocks the write.

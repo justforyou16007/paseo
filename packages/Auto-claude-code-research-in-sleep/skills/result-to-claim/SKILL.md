@@ -1,6 +1,6 @@
 ---
 name: result-to-claim
-description: Use when experiments complete to judge what claims the results support, what they don't, and what evidence is still missing. The Paseo codex reviewer evaluates results against intended claims and records the required next action for an explicit user decision. Use after experiments finish — before writing the paper or running ablations.
+description: 'Judge whether experiment results support a claim, then write what survives into the run''s own Wiki scope as evidence-backed signals. Never runs the metric gate, adopts an incumbent, or reads tester-private results.'
 argument-hint: [experiment-description-or-wandb-run]
 allowed-tools: Bash(*), Read, Grep, Glob, Write, Edit, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent
 
@@ -10,7 +10,86 @@ allowed-tools: Bash(*), Read, Grep, Glob, Write, Edit, mcp__paseo__create_agent,
 
 > **Paseo substrate.** This skill runs inside a paseo claude sub-agent; its cross-model claim reviewer is a paseo codex sub-agent (fresh round 1, continued for follow-ups). See `shared-references/paseo-reviewer-dispatch.md`..
 
-# Result-to-Claim Gate
+# Result-to-Claim
+
+## Scope
+
+This skill judges whether results support a claim, and writes what survives that
+judgment into the Wiki. It runs either directly or as a dispatched worker whose
+manifest names the run, its Wiki scope, and the sealed head to read from.
+
+The verdict on the run's own evidence is not made here. A run accepts or rejects
+its own experimental evidence inside its own `auto-review-loop`; this skill turns
+evidence that already passed into knowledge. It never runs `metric-gate`, creates
+a promotion decision, adopts an incumbent, or reads tester-private results.
+
+## Scoped knowledge write
+
+A dispatched run writes only into its own Wiki scope. Read the sealed manifest
+and query entry described in
+[the shared read boundary](../shared-references/worker-manifest.md#worker-behavior-on-startup);
+the committer binds Signal writes to `--project-root` and `--run-id` and rejects
+a conflicting scope. Never read tester-private observations, tester logs,
+incumbent state, another run's files, or an unpinned Wiki tail. Do not use a
+worker-supplied aggregate when the per-case evidence behind it is absent.
+
+Verify every referenced evidence file before using it. Missing, stale,
+conflicting, or non-finite evidence blocks the write.
+
+### Produce the delta, not a new verdict
+
+Translate only facts the reviewed evidence supports into `knowledge-delta.json`
+under the manifest output directory. Keep each item bounded by its evidence
+references; unresolved limitations become `constraint` or `failure` entries
+rather than stronger claims. Use this shape:
+
+```json
+{
+  "schema_version": 1,
+  "phase": "knowledge-delta",
+  "run_id": "<run>",
+  "scope": "<scope>",
+  "input_snapshot_id": "<snapshot>",
+  "contract_versions": ["<version>"],
+  "evidence_bundle_id": "<bundle>",
+  "evidence_sha256": "<hash>",
+  "updates": [
+    {
+      "kind": "observation",
+      "signal_id": "<stable id>",
+      "summary": "<bounded observation>",
+      "observation": "<optional observed fact>",
+      "inference": "<optional qualified inference>",
+      "recommendation": "<optional next action>",
+      "evidence_refs": ["<stable evidence ref>"],
+      "supersedes": []
+    }
+  ]
+}
+```
+
+The artifact carries the run's own identity and nothing about whoever dispatched
+it. Hash it after it is complete.
+
+### Publishing signals
+
+Publish the generated signal files through the scoped command:
+
+```bash
+node "$WIKI_SCRIPT" signal publish \
+  --signal-file "$SIGNAL_FILE" \
+  --scope "$WIKI_SCOPE" \
+  --evidence-bundle-id "$EVIDENCE_BUNDLE_ID"
+```
+
+Each signal must identify its producer and experiment source, the frozen
+context it was produced under, and stable evidence references. Record returned
+event IDs and the resulting Wiki head in a knowledge-write receipt. Do not call
+a default unscoped write. If a page or entity update cannot be expressed as a
+scoped signal, stop with an explicit API-gap error and report it rather than
+reaching around the scope.
+
+## Claim judgment and Wiki integration
 
 > 🔒 **Do not wrap this skill in `/loop`, `/schedule`, or `CronCreate`.** It is
 > verdict-bearing — it judges whether results support a claim. Re-running that
@@ -22,15 +101,15 @@ allowed-tools: Bash(*), Read, Grep, Glob, Write, Edit, mcp__paseo__create_agent,
 
 Experiments produce numbers; this gate decides what those numbers _mean_. Collect results from available sources, get a Codex judgment, then auto-route based on the verdict.
 
-## Context: $ARGUMENTS
+### Context: $ARGUMENTS
 
-## When to Use
+### When to Use
 
 - After a set of experiments completes (main results, not just sanity checks)
 - Before committing to claims in a paper or review response
 - When results are ambiguous and you need an objective second opinion
 
-## Workflow
+### Workflow
 
 ### Step 1: Collect Results
 
@@ -255,7 +334,22 @@ if research-wiki/ exists:
       --verdict "<yes|partial|no>" --confidence "<high|medium|low>" \
       --date "<date>" --hardware "<hw>" --duration "<dur>" \
       --metrics "<key metrics>" --reasoning "<one-line why this verdict>" \
-      --provenance "<EXPERIMENT_AUDIT.md / run dir>" --update-on-exist || exit 1
+      --provenance "<EXPERIMENT_AUDIT.md / run dir>" \
+      --iteration "<outer iteration>" --gate-metric "<this iteration's gate reading>" \
+      [--tester-feedback "<signed public receipt>" --tester-public-key "<key>"] \
+      --update-on-exist || exit 1
+
+    # The last three flags are what makes this iteration comparable to the others
+    # at export time; --metrics is prose and is never parsed. Rules:
+    #   --iteration      the outer loop iteration. Omitting it leaves this round
+    #                    out of the run's result-package export entirely.
+    #   --gate-metric    the same number the dashboard received for this iteration.
+    #                    The export cross-checks the two and fails on a mismatch
+    #                    rather than picking a side.
+    #   --tester-*       both flags or neither. Tester numbers enter the wiki only
+    #                    through a signature-verified public receipt; there is no
+    #                    flag for typing them in. The receipt names the iteration
+    #                    it judged, so it must agree with --iteration.
 
     # 2. Record empirical support as EDGES ONLY. Never edit the
     #    claim page's `status`: that is the PROOF axis (verified / refuted / unproven /
@@ -321,7 +415,7 @@ if research-wiki/ exists:
     If >= 3: print "💡 3+ ideas tested since last ideation. Consider re-running /idea-creator — the wiki now knows what doesn't work."
 ```
 
-## Rules
+### Rules
 
 - **Codex is the judge, not CC.** CC collects evidence and routes; Codex evaluates. This prevents post-hoc rationalization.
 - Do not inflate claims beyond what the data supports. If Codex says "partial", do not round up to "yes".
@@ -331,7 +425,7 @@ if research-wiki/ exists:
   failed receipt. CC must not replace the independent judgment.
 - Always record the verdict and reasoning in findings.md, regardless of outcome.
 
-## Review Tracing
+### Review Tracing
 
 After each paseo codex reviewer sub-agent call (fresh `create_agent`,
 continuation `send_agent_prompt`), save the trace with the required

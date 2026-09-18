@@ -21,3 +21,8 @@ pre-commit:
       run: npm run lint -- {staged_files}
     - name: typecheck
       run: npm run typecheck
+
+commit-msg:
+  jobs:
+    - name: subject
+      run: node scripts/check-commit-msg.mjs {1}

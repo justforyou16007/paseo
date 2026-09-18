@@ -312,6 +312,51 @@ Problems: 8 (3 open, 4 solved, 1 deferred)
 Last updated: 2026-04-07T10:12:00Z
 ```
 
+### `/research-wiki export_result_package <project_root> --run <run_id>`
+
+Pick the run's best iteration out of the wiki and write it as
+`.aris/runs/<run_id>/result-package.json`. This is how a finished run hands its
+outcome to whoever asked for it — a parent run reads the package and never the
+child's wiki or dashboard.
+
+```bash
+node "$WIKI_SCRIPT" plan_result_package "$PROJECT_ROOT" \
+    --run "$RUN_ID" \
+    --tester-definition "<frozen tester definition>" --wiki-root "research-wiki/"
+
+node "$WIKI_SCRIPT" submit_result_review "$PROJECT_ROOT" \
+    --run "$RUN_ID" --review-id "<review id>" --reviewer "<worker id>" \
+    --package-sha256 "<package_sha256 from the plan>" --verdict approved
+
+node "$WIKI_SCRIPT" export_result_package "$PROJECT_ROOT" \
+    --run "$RUN_ID" --review-id "<review id>" \
+    --tester-definition "<frozen tester definition>" --wiki-root "research-wiki/"
+```
+
+The wiki is the only place that saw every iteration, which is why the pick
+happens here and not inside a loop: an iteration only knows whether it beat the
+previous one. Ranking is tester metrics first (all declared metrics together —
+an iteration loses only to one at least as good on every metric and strictly
+better on one), then the metric gate's reading for that iteration, then the
+later iteration. An iteration with no tester reading is out of the running as
+soon as any other iteration has one.
+
+The export also cross-checks the duplicated facts and fails instead of choosing
+a side: a page's `gate_metric` must equal the dashboard's history value for the
+same iteration (`GATE_METRIC_MISMATCH`), and every judged page must name the
+supplied tester definition and record exactly the metric names it declares
+(`TESTER_DEFINITION_MISMATCH`, `TESTER_METRIC_SET_MISMATCH`).
+
+The three steps exist because a package cannot be reviewed after it is
+published. `plan_result_package` prints the `package_sha256` the reviewer rules
+on; `export_result_package` refuses to write unless a stored review approves
+that same digest, so an approval cannot be reused for a package that changed
+underneath it. The package is immutable — an identical re-export is a no-op, a
+conflicting one fails with `IMMUTABLE_CONFLICT`. `--wiki-root` defaults to the
+run's own wiki at `.aris/runs/<run_id>/wiki`.
+
+Full stage documentation: [`auto-research-loop`](../auto-research-loop/SKILL.md).
+
 ## Integration with Existing Workflows
 
 All paper-reading skills follow the same **integration contract** (see
@@ -387,8 +432,15 @@ log "idea-creator wrote N ideas to wiki"
 # born (EXP_NODE_OK) — else they'd dangle off a missing exp node.
 EXP_NODE_OK = (node "$WIKI_SCRIPT" add_experiment research-wiki/ --slug <exp_id> \
   --idea idea:<active_idea> --verdict <yes|partial|no> --confidence <high|medium|low> \
-  --metrics <...> --reasoning <...> --provenance <run dir> --update-on-exist) succeeded
+  --metrics <...> --reasoning <...> --provenance <run dir> \
+  --iteration <outer iteration> --gate-metric <this iteration's gate reading> \
+  [--tester-feedback <signed public receipt> --tester-public-key <key>] \
+  --update-on-exist) succeeded
   # writes page + idea--tested_by-->exp edge + rebuilds index/query_pack
+  # --metrics is prose for a reader. --iteration / --gate-metric / --tester-* are the
+  # structured fields `export_result_package` ranks on; a page without --iteration is
+  # not a candidate there. The tester flags come as a pair and only through a
+  # signature-verified receipt.
 
 # Record empirical support as EDGES ONLY, and ONLY if EXP_NODE_OK — never overwrite the
 # claim's `status`. A claim's `status` is the PROOF axis (verified / sound-modulo-imports
@@ -486,6 +538,7 @@ The system suggests but does not auto-trigger. User decides.
 - **query_pack.md is hard-budgeted** at 8000 chars. Deterministic generation, not open-ended summarization.
 - **Append to log.md for every mutation.** The log is the audit trail.
 - **Reviewer independence applies.** When the wiki is read by cross-model review skills, pass file paths only — do not summarize wiki content for the reviewer.
+- **Tester values enter write-restricted, read-open.** They reach an experiment page solely through a signature-verified public receipt - there is no flag for typing them in - and once there they behave like any other measurement: the query path returns them and the markdown projection prints the numbers, the coarse conclusion, directions and advice next to the definition digest. The boundary the tester defends is test content, not readability: cases, prompts, answers, per-case scores and private URIs are rejected before the receipt is signed and again at the Wiki write, so a reader gets aggregates it cannot tune a single case against.
 
 ## Acknowledgements
 

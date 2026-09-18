@@ -81,8 +81,10 @@ accept(root, runId, phase, verdictId, reviewer)      // the ONLY path to `accept
 resumePoint(root, runId)  // -> first NON-TERMINAL phase, or null
 ```
 
-CLI (via built `dist/tools/run-state.js`):
+CLI (via built helpers): `startRun` opens an existing contract; it does not create one.
+For a standalone run, create or reuse the contract with `run-open` first.
 ```
+node dist/tools/workflow-tools-cli.js run-open --project <root> --run <run_id>
 node dist/tools/run-state.js start  <root> <run_id> --phases "W1,W1.5,W2,W3"
 node dist/tools/run-state.js set    <root> <run_id> W1 done --artifact idea-stage/IDEA_REPORT.md
 node dist/tools/run-state.js accept <root> <run_id> W1 --verdict-id codex:019e... --reviewer codex-gpt-5.5
@@ -93,7 +95,8 @@ node dist/tools/run-state.js status <root> <run_id>
 ## Integration pattern for a workflow skill
 
 1. **At run start** (or `— resume <run_id>`): if resuming, `resume_point` gives
-   the phase to start at; else `start_run` with the phase list.
+   the phase to start at; else create the standalone contract with `run-open`,
+   then call `start_run` with the phase list.
 2. **Per phase:** `set running` → do the work → `set done --artifact <path>`.
 3. **At the phase's gate:** run the phase's existing cross-model audit / jury (or
    deterministic verifier). **Only on a positive verdict** call
