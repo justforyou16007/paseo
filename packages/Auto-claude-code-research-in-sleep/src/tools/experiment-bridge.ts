@@ -7,6 +7,14 @@ import {
   type RunCharterInput,
 } from "./run-charter.js";
 import { runOwnedPath } from "./run-contract.js";
+import {
+  buildChildAcceptance,
+  saveChildAcceptance,
+  validateChildAcceptance,
+  validateChildAcceptanceMetric,
+  type ChildAcceptance,
+  type ChildAcceptanceMetric,
+} from "./child-acceptance.js";
 import { initializeRunBudget } from "./run-budget.js";
 import {
   createBudgetLedger,
@@ -64,7 +72,20 @@ import {
   requireRunContract,
   type RunRecord,
 } from "./run-contract.js";
-import { resultStatusPolicy, type ResultPackage, type ResultStatus } from "./result-package.js";
+import {
+  readResultPackage,
+  resultStatusPolicy,
+  type ResultPackage,
+  type ResultStatus,
+} from "./result-package.js";
+import {
+  childIndexPath,
+  entryGeneration,
+  readChildIndex,
+  type ChildPositionEntry,
+  type ChildPositionIndex,
+} from "./child-index.js";
+import { assertDispatchInDecomposition } from "./decomposition-graph.js";
 import {
   assertIdentifier,
   assertRunId,
@@ -102,10 +123,30 @@ export interface ExpansionEvidence {
 export interface BridgePositionInput {
   position_id: string;
   execution_plan?: Record<string, unknown>;
-  charter?: Omit<RunCharterInput, "run_id" | "charter_id" | "budget">;
+  charter?: Omit<RunCharterInput, "run_id" | "charter_id" | "budget" | "measurement"> & {
+    /**
+     * A child brings its own validator and nothing else. The tester reference
+     * is filled in by the bridge from `acceptance` below, so that a parent
+     * cannot hand a child the task tester by writing its id here.
+     */
+    measurement: { validator_ref: string };
+  };
+  /**
+   * What the parent will judge this child by. Required for every dispatched
+   * position: the parent has to say what "good" means before it spends budget
+   * on the question, and the child's charter names the resulting acceptance.
+   */
+  acceptance?: { metric: ChildAcceptanceMetric };
   mode?: ScopeMode;
 
   child_positions?: readonly string[];
+  /**
+   * Positions this one reads from. Naming an upstream makes the pair serial:
+   * the downstream is dispatched only once the upstream has published, and its
+   * input snapshot is the upstream's outputs instead of the baseline's. No
+   * entry means the position runs in parallel with everything else.
+   */
+  depends_on?: readonly string[];
   evidence?: ExpansionEvidence;
   resource_request?: ResourceRequest | unknown;
   candidate_id?: string | null;
@@ -121,6 +162,16 @@ export interface BridgePositionInput {
 
   /** An already materialized child can be associated without changing its id. */
   child_run_id?: string;
+  /**
+   * The run that held this same position in an earlier generation with an
+   * identical task hash. Filled in by the parent's position index, not by the
+   * caller: the successor starts from this run's Wiki, so naming an unrelated
+   * run here would hand a child knowledge it has no claim to. Child creation
+   * rejects a predecessor that is not the same position under the same parent.
+   */
+  predecessor_run_id?: string;
+  /** Assigned with the predecessor; true when the task is the one it was doing. */
+  inherits_wiki?: boolean;
   budget?: BridgeBudget | number;
 }
 
@@ -146,6 +197,8 @@ export interface BridgePositionResult {
 
 export interface ChildRunPlan {
   charter: RunCharter;
+  /** The parent-owned standard the charter's tester_ref names. */
+  acceptance: ChildAcceptance;
   position_id: string;
   run_id: string;
   parent_run_id: string;
@@ -163,6 +216,10 @@ export interface ChildRunPlan {
   code_baseline_sha256: string;
   policy_revision: string;
   expected_output: unknown;
+  /** The run this child takes the position over from; absent in generation 1. */
+  predecessor_run_id?: string;
+  /** Present with a predecessor: whether this child continues its task and Wiki. */
+  inherits_wiki?: boolean;
 
   result: BridgePositionResult;
 }
@@ -224,6 +281,28 @@ export interface ExperimentBridgeInput {
   project_root?: string;
   materialize_children?: boolean;
   stop_decision?: { decision: "continue" | "stop"; reason: string };
+  /**
+   * Which round of orchestration this expansion belongs to. A position whose
+   * task is unchanged gets a fresh child run in each generation, because a run
+   * spends its budget once; that new run inherits the previous one's Wiki.
+   * Absent means 1, which is every ordinary (non-orchestrating) ARL.
+   */
+  generation?: number;
+  /**
+   * How many generations, including this one, the parent still intends to run.
+   * The parent budget is split across them, so generation 1 cannot reserve all
+   * of it and leave later generations with nothing to spend. Absent means 1:
+   * split across this generation's positions only, as before.
+   */
+  remaining_generations?: number;
+  /**
+   * Whether this expansion is the run's optimization target rather than a way
+   * to run one. An orchestration run is judged on the decomposition itself, so
+   * it records the graph it dispatched each generation and may only change it
+   * through a tester-signalled wave. Absent means no: an ordinary ARL that
+   * dispatches children keeps deciding its positions freely.
+   */
+  orchestration?: boolean;
 }
 
 export interface ClassifiedBridgeResultInput {
@@ -304,6 +383,23 @@ function normalizeEvidence(value: unknown, location: string): ExpansionEvidence 
   };
 }
 
+/**
+ * Read the upstream list off a position.
+ *
+ * Callers hand raw input to the position index before the position has been
+ * normalized, so the check lives in its own function and both paths use it.
+ * The order is dropped: a dependency set is a set, and sorting it here keeps
+ * the same wiring from hashing two different ways.
+ */
+function normalizeDependsOn(value: unknown, location: string): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) failA1("INVALID_EXPANSION", "depends_on must be an array", location);
+  const ids = value.map((item, index) => assertIdentifier(item, `${location}[${index}]`));
+  if (new Set(ids).size !== ids.length)
+    failA1("DUPLICATE_ID", "depends_on must not repeat a position", location);
+  return [...ids].sort(compareIdentityStrings);
+}
+
 function normalizePosition(value: BridgePositionInput, index: number): BridgePositionInput {
   if (!isRecord(value))
     failA1("INVALID_EXPANSION", "bridge position must be an object", `positions[${index}]`);
@@ -313,9 +409,11 @@ function normalizePosition(value: BridgePositionInput, index: number): BridgePos
       "position_id",
       "execution_plan",
       "charter",
+      "acceptance",
       "mode",
 
       "child_positions",
+      "depends_on",
       "evidence",
       "resource_request",
       "candidate_id",
@@ -329,6 +427,8 @@ function normalizePosition(value: BridgePositionInput, index: number): BridgePos
       "output_artifact_sha256",
 
       "child_run_id",
+      "predecessor_run_id",
+      "inherits_wiki",
       "budget",
     ],
     `positions[${index}]`,
@@ -347,6 +447,13 @@ function normalizePosition(value: BridgePositionInput, index: number): BridgePos
   );
   if (childPositions !== undefined && new Set(childPositions).size !== childPositions.length)
     failA1("DUPLICATE_ID", "child positions must be unique", `positions[${index}].child_positions`);
+  const dependsOn = normalizeDependsOn(value.depends_on, `positions[${index}].depends_on`);
+  if (dependsOn?.includes(positionId) === true)
+    failA1(
+      "INVALID_EXPANSION",
+      `position '${positionId}' cannot depend on itself`,
+      `positions[${index}].depends_on`,
+    );
   const resultStatus =
     value.result_status === undefined
       ? undefined
@@ -389,6 +496,7 @@ function normalizePosition(value: BridgePositionInput, index: number): BridgePos
     ...value,
     position_id: positionId,
     ...(childPositions === undefined ? {} : { child_positions: childPositions }),
+    ...(dependsOn === undefined ? {} : { depends_on: dependsOn }),
     ...(value.evidence === undefined
       ? {}
       : { evidence: normalizeEvidence(value.evidence, `positions[${index}].evidence`)! }),
@@ -458,6 +566,9 @@ function validateBridgeInputs(input: ExperimentBridgeInput): {
       "project_root",
       "materialize_children",
       "stop_decision",
+      "generation",
+      "remaining_generations",
+      "orchestration",
     ],
     "bridge",
   );
@@ -497,6 +608,28 @@ function validateBridgeInputs(input: ExperimentBridgeInput): {
       failA1(
         "OPTIMIZABLE_SCOPE_ALIGNMENT_REQUIRED",
         `position '${position.position_id}' is outside the charter optimizable scope`,
+      );
+    // The position has to be inside the parent's scope, and so does everything
+    // the child is chartered to change. Checking only the position id would let
+    // a parent hand a child a charter that opens up code the parent itself is
+    // not allowed to touch, and the parent answers for what its children do.
+    if (position.charter?.optimizable_scope !== undefined)
+      assertOptimizableScopeSubset(charter.optimizable_scope, position.charter.optimizable_scope);
+    // A child is judged by an acceptance its parent writes, never by the task
+    // tester: tester exposures are counted against one task-wide limit, so a
+    // child that could name the tester would spend the whole task's remaining
+    // exposures on a local question. The bridge fills tester_ref in itself.
+    const measurement = position.charter?.measurement as Record<string, unknown> | undefined;
+    if (isRecord(measurement) && measurement.tester_ref !== undefined)
+      failA1(
+        "CHILD_TESTER_FORBIDDEN",
+        "a child charter does not name its own tester; its parent's acceptance is filled in",
+        `positions.${position.position_id}.charter.measurement.tester_ref`,
+      );
+    if (position.acceptance !== undefined)
+      validateChildAcceptanceMetric(
+        position.acceptance.metric,
+        `positions.${position.position_id}.acceptance.metric`,
       );
   }
   return { charter, baseline, resource, positions };
@@ -664,6 +797,7 @@ function positionBudget(
   position: BridgePositionInput,
   availableBudget: BridgeBudget,
   remainingPositions: number,
+  remainingGenerations: number,
 ): BridgeBudget {
   if (position.budget !== undefined) {
     const requested = normalizeBudgetForUnit(
@@ -675,8 +809,12 @@ function positionBudget(
       failA1("COMPUTE_UNIT_MISMATCH", "child budget uses a different unit", "position.budget");
     return requested;
   }
+  // Split across the generations still to come as well as this generation's
+  // positions. Dividing only by positions would hand everything to generation 1
+  // and leave a re-dispatched task nothing to spend. What an earlier generation
+  // refunds returns to `available`, so the shares stay even as they go.
   return {
-    amount: availableBudget.amount / remainingPositions,
+    amount: availableBudget.amount / (remainingPositions * remainingGenerations),
     unit: availableBudget.unit,
   };
 }
@@ -963,6 +1101,7 @@ const BRIDGE_PLAN_FIELDS = [
 
 const CHILD_PLAN_FIELDS = [
   "charter",
+  "acceptance",
   "position_id",
   "run_id",
   "parent_run_id",
@@ -983,6 +1122,9 @@ const CHILD_PLAN_FIELDS = [
 
   "result",
 ] as const;
+
+/** Optional in the stored plan: absent for every child that starts from scratch. */
+const CHILD_PLAN_OPTIONAL_FIELDS = ["predecessor_run_id", "inherits_wiki"] as const;
 
 function requirePlanFields(
   value: Record<string, unknown>,
@@ -1186,10 +1328,11 @@ function validateChildRunPlan(
 ): ChildRunPlan {
   if (!isRecord(value))
     failA1("INVALID_EXPANSION", "bridge child plan must be an object", location);
-  assertNoUnknownFields(value, CHILD_PLAN_FIELDS, location);
+  assertNoUnknownFields(value, [...CHILD_PLAN_FIELDS, ...CHILD_PLAN_OPTIONAL_FIELDS], location);
   requirePlanFields(value, CHILD_PLAN_FIELDS, location);
   const child = {
     charter: validateRunCharter(value.charter),
+    acceptance: validateChildAcceptance(value.acceptance, `${location}.acceptance`),
     position_id: assertIdentifier(value.position_id, `${location}.position_id`),
     run_id: assertIdentifier(value.run_id, `${location}.run_id`),
     parent_run_id: assertIdentifier(value.parent_run_id, `${location}.parent_run_id`),
@@ -1222,6 +1365,15 @@ function validateChildRunPlan(
     ),
     policy_revision: requireString(value.policy_revision, `${location}.policy_revision`),
     expected_output: value.expected_output,
+    ...(value.predecessor_run_id === undefined
+      ? {}
+      : {
+          predecessor_run_id: assertIdentifier(
+            value.predecessor_run_id,
+            `${location}.predecessor_run_id`,
+          ),
+          inherits_wiki: value.inherits_wiki === true,
+        }),
 
     result: validatePlanPositionResult(value.result, `${location}.result`),
   } as ChildRunPlan;
@@ -1231,8 +1383,31 @@ function validateChildRunPlan(
     failA1("INVALID_EXPANSION", "child expected_output is required", `${location}.expected_output`);
   if (child.result.position_id !== child.position_id)
     failA1("INVALID_EXPANSION", "child result position_id does not match the child", location);
+  if (child.predecessor_run_id === child.run_id)
+    failA1("IDENTITY_MISMATCH", "a child cannot succeed itself", `${location}.predecessor_run_id`);
+  if (value.inherits_wiki !== undefined && typeof value.inherits_wiki !== "boolean")
+    failA1("INVALID_VALUE", "inherits_wiki must be a boolean", `${location}.inherits_wiki`);
+  if (child.predecessor_run_id === undefined && value.inherits_wiki !== undefined)
+    failA1(
+      "INVALID_EXPANSION",
+      "a child with no predecessor has nothing to inherit",
+      `${location}.inherits_wiki`,
+    );
   if (validateRunCharter(child.charter).charter_sha256 !== child.charter_sha256)
     failA1("IDENTITY_MISMATCH", "child charter hash does not match its fields", location);
+  // The charter is what the child reads, the acceptance is what the parent
+  // stores; a plan that disagrees about which acceptance applies would let a
+  // child be judged by a standard written for another position.
+  if (
+    child.acceptance.owner_run_id !== child.parent_run_id ||
+    child.acceptance.position_id !== child.position_id ||
+    child.charter.measurement.tester_ref !== child.acceptance.acceptance_id
+  )
+    failA1(
+      "CHILD_TESTER_FORBIDDEN",
+      "child acceptance does not belong to this parent and position",
+      `${location}.acceptance`,
+    );
   if (
     child.charter.run_id !== child.run_id ||
     canonicalJsonSha256(child.charter.budget) !== canonicalJsonSha256(child.budget) ||
@@ -1444,41 +1619,181 @@ function resolveWaveMatrix(
   return frozen;
 }
 
-/**
- * Store dispatch ownership on the parent. Children receive only their frozen tasks.
- */
-interface ChildPositionIndex {
-  schema_version: 1;
-  positions: Array<{ position_id: string; task_sha256: string; child_run_id: string }>;
+function predecessorLink(entry: { predecessor_run_id?: string; inherits_wiki?: boolean }) {
+  if (entry.predecessor_run_id === undefined) return {};
+  return {
+    predecessor_run_id: entry.predecessor_run_id,
+    inherits_wiki: entry.inherits_wiki === true,
+  };
 }
+
+/**
+ * Turn a serial edge into the bytes that cross it.
+ *
+ * A downstream task does not start from the baseline snapshot — it starts from
+ * what its upstream produced. So its input snapshot is a hash over the upstream
+ * result packages' output hashes, which makes the downstream's identity change
+ * when the bytes it consumes change, and stay the same when identical bytes
+ * arrive from a different run. Upstream run ids stay out of the hash on
+ * purpose: a child must not be identified by which run happened to feed it.
+ *
+ * Requiring the upstream to have published is also what rules out a cycle.
+ * Nothing can publish before it is dispatched, so an edge can only point at
+ * work that is already finished, and a loop would need an edge pointing
+ * forward.
+ */
+function upstreamInputSnapshot(
+  projectRoot: string,
+  index: ChildPositionIndex,
+  generation: number,
+  positionId: string,
+  dependsOn: readonly string[],
+): string {
+  const upstream = dependsOn.map((dependency) => {
+    if (dependency === positionId)
+      failA1("INVALID_EXPANSION", `position '${positionId}' cannot depend on itself`);
+    const entry = index.positions.find(
+      (item) => item.position_id === dependency && entryGeneration(item) === generation,
+    );
+    if (entry === undefined)
+      failA1(
+        "BRIDGE_DEPENDENCY_UNRESOLVED",
+        `position '${dependency}' has not been dispatched in this generation`,
+      );
+    if (!fs.existsSync(runOwnedPath(projectRoot, entry.child_run_id, "result-package.json")))
+      failA1(
+        "BRIDGE_DEPENDENCY_UNRESOLVED",
+        `position '${dependency}' has not published a result yet`,
+      );
+    const published = readResultPackage(projectRoot, entry.child_run_id);
+    if (published.status !== "succeeded")
+      failA1(
+        "BRIDGE_DEPENDENCY_UNRESOLVED",
+        `position '${dependency}' has no succeeded result to hand on`,
+      );
+    if (Object.keys(published.output_hashes).length === 0)
+      failA1("BRIDGE_DEPENDENCY_UNRESOLVED", `position '${dependency}' published no outputs`);
+    return { position_id: dependency, output_hashes: published.output_hashes };
+  });
+  return canonicalJsonSha256(upstream, undefined, { schemaVersion: "bridge-serial-input-v1" });
+}
+
+/**
+ * Assign the child run that carries a position's task.
+ *
+ * Two different questions share this index. Within one generation, re-planning
+ * the same task has to land on the same child, or a retry would create a second
+ * run for work already dispatched. Across generations it must not: a run spends
+ * its budget once and publishes its result package once, so a second generation
+ * is always a new run.
+ *
+ * The new run takes the position over from whoever held it last, whether or not
+ * the task changed — a position is occupied by one run at a time. Whether it
+ * also starts from that run's Wiki is a separate question, and the task hash
+ * answers it: the same question continues with what was learned, a changed
+ * question starts empty.
+ *
+ * Serial edges are resolved here too, because this is the one place that knows
+ * which run currently holds an upstream position. The edge is recorded in this
+ * index and the child receives only the resulting input snapshot, so a sibling's
+ * run id never reaches it.
+ */
 function indexBridgePositions(input: ExperimentBridgeInput): ExperimentBridgeInput {
-  const file = runOwnedPath(input.project_root!, input.run.run_id, "children.json");
+  const projectRoot = input.project_root!;
+  const file = childIndexPath(projectRoot, input.run.run_id);
+  const generation = requireInteger(input.generation ?? 1, "generation", 1);
   return withStateFileLock(file, () => {
-    const index: ChildPositionIndex = fs.existsSync(file)
-      ? readStateFile(file)
-      : { schema_version: 1, positions: [] };
+    const index = readChildIndex(file);
     const positions = input.positions.map((position) => {
+      // The predecessor link decides which position a child takes over and
+      // which Wiki it starts from, so it is read out of this index and never
+      // accepted from the caller.
+      if (position.predecessor_run_id !== undefined || position.inherits_wiki !== undefined)
+        failA1("IDENTITY_MISMATCH", "the parent index assigns a predecessor, not the caller");
       const taskSha = canonicalJsonSha256({
         position_id: position.position_id,
         execution_plan: position.execution_plan,
         charter: position.charter,
       });
-      const prior = index.positions.find(
-        (entry) => entry.position_id === position.position_id && entry.task_sha256 === taskSha,
+      const dependsOn = normalizeDependsOn(
+        position.depends_on,
+        `positions.${position.position_id}.depends_on`,
+      );
+      const inputSnapshot =
+        dependsOn === undefined || dependsOn.length === 0
+          ? undefined
+          : upstreamInputSnapshot(projectRoot, index, generation, position.position_id, dependsOn);
+      if (inputSnapshot !== undefined && position.input_snapshot_sha256 !== undefined)
+        failA1(
+          "IDENTITY_MISMATCH",
+          "a downstream position reads its inputs from its upstream, not from the caller",
+          `positions.${position.position_id}.input_snapshot_sha256`,
+        );
+      const resolved = {
+        ...position,
+        ...(dependsOn === undefined ? {} : { depends_on: dependsOn }),
+        ...(inputSnapshot === undefined ? {} : { input_snapshot_sha256: inputSnapshot }),
+      };
+      const samePosition = index.positions.filter(
+        (entry) => entry.position_id === position.position_id,
+      );
+      const prior = samePosition.find(
+        (entry) => entryGeneration(entry) === generation && entry.task_sha256 === taskSha,
       );
       if (prior !== undefined) {
         if (position.child_run_id !== undefined && position.child_run_id !== prior.child_run_id)
           failA1("IDENTITY_MISMATCH", "position already assigned to another child");
-        return { ...position, child_run_id: prior.child_run_id };
+        return { ...resolved, child_run_id: prior.child_run_id, ...predecessorLink(prior) };
       }
-      const id = childRunId(position);
-      index.positions.push({
+      const predecessor = samePosition
+        .filter((entry) => entryGeneration(entry) < generation)
+        .sort((left, right) => entryGeneration(left) - entryGeneration(right))
+        .at(-1);
+      const id = childRunId(resolved);
+      if (index.positions.some((entry) => entry.child_run_id === id))
+        failA1("IDENTITY_MISMATCH", "a later generation needs its own child run");
+      const entry: ChildPositionEntry = {
         position_id: position.position_id,
         task_sha256: taskSha,
         child_run_id: id,
-      });
-      return { ...position, child_run_id: id };
+        generation,
+        ...(dependsOn === undefined || dependsOn.length === 0 ? {} : { depends_on: dependsOn }),
+        ...(predecessor === undefined
+          ? {}
+          : {
+              predecessor_run_id: predecessor.child_run_id,
+              inherits_wiki: predecessor.task_sha256 === taskSha,
+            }),
+      };
+      index.positions.push(entry);
+      return { ...resolved, child_run_id: id, ...predecessorLink(entry) };
     });
+    // An orchestration dispatch carries out a decomposition that was already
+    // recorded; it never decides one. The check runs before the index is
+    // written, so a dispatch the decomposition does not cover costs no child
+    // runs and leaves the index exactly as it was.
+    if (input.orchestration === true)
+      assertDispatchInDecomposition(
+        projectRoot,
+        input.run.run_id,
+        generation,
+        positions.map((position) => {
+          const charter = position.charter;
+          if (charter === undefined)
+            failA1(
+              "CORRUPT_CHARTER",
+              "an orchestrated position needs its own frozen charter",
+              `positions.${position.position_id}.charter`,
+            );
+          return {
+            position_id: position.position_id,
+            problem: charter.problem,
+            expected_output: charter.expected_output,
+            constraints: charter.constraints,
+            depends_on: position.depends_on === undefined ? [] : [...position.depends_on],
+          };
+        }),
+      );
     writeStateJsonAtomic(file, index);
     return { ...input, positions };
   });
@@ -1518,6 +1833,11 @@ function planWithBudget(
       "a graph bridge needs a parent budget before creating children",
       "charter.budget",
     );
+  const remainingGenerations = requireInteger(
+    input.remaining_generations ?? 1,
+    "remaining_generations",
+    1,
+  );
   const orderedPositions = [...validated.positions].sort((left, right) =>
     compareIdentityStrings(left.position_id, right.position_id),
   );
@@ -1549,7 +1869,12 @@ function planWithBudget(
     const existing = ledger.allocations.find((entry) => entry.execution_id === runId);
     const budget = consumes
       ? existing === undefined
-        ? positionBudget(position, { amount: ledger.available, unit: ledger.unit }, remaining)
+        ? positionBudget(
+            position,
+            { amount: ledger.available, unit: ledger.unit },
+            remaining,
+            remainingGenerations,
+          )
         : { amount: existing.amount, unit: ledger.unit }
       : { amount: 0, unit: ledger.unit };
     if (consumes) {
@@ -1568,15 +1893,34 @@ function planWithBudget(
     };
     if (position.charter === undefined)
       failA1("CORRUPT_CHARTER", "a dispatched task needs its own frozen charter");
+    if (position.acceptance === undefined)
+      failA1(
+        "CHILD_TESTER_REQUIRED",
+        "a dispatched task needs the acceptance its parent will judge it by",
+        `positions.${position.position_id}.acceptance`,
+      );
+    const acceptance = buildChildAcceptance({
+      owner_run_id: validated.charter.run_id,
+      position_id: position.position_id,
+      metric: position.acceptance.metric,
+    });
     const childCharter = createRunCharter({
       ...position.charter,
       schema_version: 1,
       charter_id: `charter:${canonicalJsonSha256(runId)}`,
       run_id: runId,
       budget,
+      measurement: {
+        validator_ref: requireString(
+          (position.charter.measurement as { validator_ref?: unknown } | undefined)?.validator_ref,
+          `positions.${position.position_id}.charter.measurement.validator_ref`,
+        ),
+        tester_ref: acceptance.acceptance_id,
+      },
     });
     const childBase = {
       charter: childCharter,
+      acceptance,
       position_id: position.position_id,
       run_id: runId,
       parent_run_id: validated.charter.run_id,
@@ -1594,6 +1938,7 @@ function planWithBudget(
       code_baseline_sha256: validated.baseline.code_baseline.sha256,
       policy_revision: validated.charter.policy_revision,
       expected_output: childCharter.expected_output,
+      ...predecessorLink(position),
 
       result: resultWithSnapshot,
     } satisfies Omit<ChildRunPlan, "charter_sha256" | "execution_plan_sha256"> & {
@@ -1722,6 +2067,13 @@ export function materializeBridgeChildren(
     }
     return { ledger: next, result: undefined };
   });
+  // The acceptance lands before the child does. A child that started without
+  // its standard on disk would have a charter pointing at nothing.
+  for (const child of orderedChildren) {
+    if (child.result.status === "not_executable" || child.result.status === "infra_unavailable")
+      continue;
+    saveChildAcceptance(projectRoot, child.acceptance);
+  }
   const created: RunRecord[] = [];
   for (const child of orderedChildren) {
     if (child.result.status === "not_executable" || child.result.status === "infra_unavailable")

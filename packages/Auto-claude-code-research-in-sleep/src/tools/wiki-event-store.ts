@@ -502,6 +502,28 @@ export function appendWikiEvent(
   });
 }
 
+/**
+ * Append several deltas under a single lock, with each delta seeing the ones
+ * before it. `build` receives the log as it stands so a caller can decide what
+ * to append (or refuse) from committed history rather than from a stale read.
+ */
+export function appendWikiEvents(
+  wikiRoot: string,
+  build: (existing: readonly WikiEvent[]) => readonly WikiDelta[],
+): WikiAppendResult[] {
+  return withWikiEventLock(wikiRoot, () => {
+    const root = path.resolve(wikiRoot);
+    let events = readEventsLocked(root);
+    const results: WikiAppendResult[] = [];
+    for (const delta of build(events)) {
+      const result = appendWikiEventLocked(root, delta, events);
+      if (result.status === "appended") events = [...events, result.event];
+      results.push(result);
+    }
+    return results;
+  });
+}
+
 export function commitWikiChange(
   wikiRoot: string,
   build: (events: readonly WikiEvent[]) => WikiDelta | null,

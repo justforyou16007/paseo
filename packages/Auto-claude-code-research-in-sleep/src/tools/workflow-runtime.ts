@@ -107,6 +107,7 @@ import {
   type RunScopeLease,
 } from "./run-contract.js";
 import { readScorerRunState, scorerRunStatePath } from "./scorer-state.js";
+import { acquireLineageHold, releaseLineageHold } from "./lineage-lock.js";
 import {
   readTesterRunState,
   readExposureLedger,
@@ -835,7 +836,20 @@ export function runAutoResearchBridge(input: AutoResearchBridgeInput): AutoResea
   const normalized = normalizedIdentity(input);
   const evidence = hashOuterEvidence(normalized.project_root, input.evidence_paths);
   const bridgeInput = validateAutomaticBridgeInput(input.bridge);
-  const plan = planExperimentBridge(bridgeInput);
+  // Whose expansion this is has to be settled before planning, because
+  // planning now reads and writes this run's budget and position index. A
+  // plan for another parent must not touch either.
+  if (!isRecord(bridgeInput.charter) || bridgeInput.charter.run_id !== normalized.outer_run_id)
+    failA1(
+      "IDENTITY_MISMATCH",
+      "bridge plan parent does not match the outer loop run",
+      "bridge.parent_run_id",
+    );
+  // The loop supplies the storage root, which is what makes the expansion a
+  // recorded one: the position index and, for an orchestration run, the
+  // decomposition of this generation are written from the same plan that
+  // materializes the children.
+  const plan = planExperimentBridge({ ...bridgeInput, project_root: normalized.project_root });
   if (plan.parent_run_id !== normalized.outer_run_id)
     failA1(
       "IDENTITY_MISMATCH",
@@ -2754,6 +2768,9 @@ export function beginOuterCycle(input: BeginOuterCycleInput): WorkflowRuntimeSta
         ? state.generation
         : requireInteger(input.generation, "generation", 1);
     const evidence = hashOuterEvidence(normalized.project_root, input.evidence_paths);
+    // Last check before the cycle exists: an ancestor restructuring this
+    // lineage means the task this run holds may be about to disappear.
+    acquireLineageHold(normalized.project_root, normalized.outer_run_id, "iteration");
     const cycle: ActiveOuterCycle = {
       outer_iteration: currentIteration,
       generation,
@@ -3462,211 +3479,217 @@ function validationResultFromSelection(
 
 export function completeOuterCycle(input: CompleteOuterCycleInput): WorkflowRuntimeState {
   return withRuntimeMutation(input, (state, normalized) => {
-    const cycle = currentCycle(state);
-    const bridgeFailure = bridgeFailureOf(cycle);
-    if (
-      state.current_phase === "workset" &&
-      bridgeFailure !== null &&
-      bridgeFailure.status === "fixed" &&
-      (cycle.bridge_success_receipt_ref === undefined || cycle.bridge_success_receipt_ref === null)
-    )
+    const closed = closeOuterCycle(input, state, normalized);
+    // Every path out of closeOuterCycle ends the active cycle, so the
+    // lineage is free again whether the cycle succeeded or failed.
+    releaseLineageHold(normalized.project_root, normalized.outer_run_id, "iteration");
+    return closed;
+  });
+}
+
+function closeOuterCycle(
+  input: CompleteOuterCycleInput,
+  state: WorkflowRuntimeState,
+  normalized: Required<OuterRunIdentity>,
+): { state: WorkflowRuntimeState; result: WorkflowRuntimeState } {
+  const cycle = currentCycle(state);
+  const bridgeFailure = bridgeFailureOf(cycle);
+  if (
+    state.current_phase === "workset" &&
+    bridgeFailure !== null &&
+    bridgeFailure.status === "fixed" &&
+    (cycle.bridge_success_receipt_ref === undefined || cycle.bridge_success_receipt_ref === null)
+  )
+    failA1("BRIDGE_SUCCESS_REQUIRED", "retry the repaired bridge before closing the cycle");
+  if (state.current_phase === "bridge-repair" || bridgeFailure?.status === "exhausted") {
+    if (bridgeFailure?.status === "pending")
+      failA1(
+        "BRIDGE_REPAIR_PENDING",
+        "complete the pending bridge repair before closing the cycle",
+      );
+    if (bridgeFailure?.status === "fixed")
       failA1("BRIDGE_SUCCESS_REQUIRED", "retry the repaired bridge before closing the cycle");
-    if (state.current_phase === "bridge-repair" || bridgeFailure?.status === "exhausted") {
-      if (bridgeFailure?.status === "pending")
-        failA1(
-          "BRIDGE_REPAIR_PENDING",
-          "complete the pending bridge repair before closing the cycle",
-        );
-      if (bridgeFailure?.status === "fixed")
-        failA1("BRIDGE_SUCCESS_REQUIRED", "retry the repaired bridge before closing the cycle");
-      const failedState = finishFailedBridgeCycle(normalized, state, cycle, input);
-      return { state: failedState, result: failedState };
-    }
-    let working = reconcileChildren(normalized, state);
-    const children = assertCycleChildrenComplete(working, cycle);
-    const childFailed = children.some((child) => child.status === "failed");
-    if (state.current_phase === "wave" && childFailed) {
-      const failedState = finishFailedWaveCycle(normalized, working, cycle, input);
-      return {
-        state: failedState,
-        result: failedState,
-      };
-    }
-    const validation = readValidationRecord(
+    const failedState = finishFailedBridgeCycle(normalized, state, cycle, input);
+    return { state: failedState, result: failedState };
+  }
+  let working = reconcileChildren(normalized, state);
+  const children = assertCycleChildrenComplete(working, cycle);
+  const childFailed = children.some((child) => child.status === "failed");
+  if (state.current_phase === "wave" && childFailed) {
+    const failedState = finishFailedWaveCycle(normalized, working, cycle, input);
+    return {
+      state: failedState,
+      result: failedState,
+    };
+  }
+  const validation = readValidationRecord(
+    normalized.project_root,
+    normalized.outer_run_id,
+    cycle.outer_iteration,
+  );
+  if (
+    input.candidate_ids !== undefined &&
+    !sameIdList(input.candidate_ids, validation.candidate_ids)
+  )
+    failA1(
+      "VALIDATION_GATE_CONFLICT",
+      "cycle candidate ids differ from the recorded validation gate",
+    );
+  if (input.finalist_id !== undefined && input.finalist_id !== validation.finalist_id)
+    failA1("VALIDATION_GATE_CONFLICT", "cycle finalist differs from the recorded validation gate");
+  if (
+    input.validation_result !== undefined &&
+    input.validation_result !== validation.validation_result
+  )
+    failA1("VALIDATION_GATE_CONFLICT", "cycle validation result differs from the recorded gate");
+
+  if (state.current_phase === "validation") {
+    if (validation.finalist_id !== null)
+      failA1(
+        "OUTER_PHASE_ORDER",
+        "a validation finalist must pass through the promotion phase before cycle completion",
+      );
+    const evidence = hashOuterEvidence(normalized.project_root, input.evidence_paths);
+    working = {
+      ...working,
+      current_phase: "summary",
+      phase_history: openPhase(closePhase(working, evidence), "summary", cycle),
+      updated_at: now(),
+    };
+  } else if (state.current_phase === "promotion") {
+    if (validation.finalist_id === null)
+      failA1(
+        "PROMOTION_NOT_ALLOWED",
+        "a cycle without a validation finalist cannot enter promotion",
+      );
+    const promotion = readPromotionRecord(
       normalized.project_root,
       normalized.outer_run_id,
       cycle.outer_iteration,
     );
     if (
-      input.candidate_ids !== undefined &&
-      !sameIdList(input.candidate_ids, validation.candidate_ids)
+      promotion.promotion_trial_id !== input.promotion_trial_id &&
+      input.promotion_trial_id !== null &&
+      input.promotion_trial_id !== undefined
     )
       failA1(
-        "VALIDATION_GATE_CONFLICT",
-        "cycle candidate ids differ from the recorded validation gate",
-      );
-    if (input.finalist_id !== undefined && input.finalist_id !== validation.finalist_id)
-      failA1(
-        "VALIDATION_GATE_CONFLICT",
-        "cycle finalist differs from the recorded validation gate",
-      );
-    if (
-      input.validation_result !== undefined &&
-      input.validation_result !== validation.validation_result
-    )
-      failA1("VALIDATION_GATE_CONFLICT", "cycle validation result differs from the recorded gate");
-
-    if (state.current_phase === "validation") {
-      if (validation.finalist_id !== null)
-        failA1(
-          "OUTER_PHASE_ORDER",
-          "a validation finalist must pass through the promotion phase before cycle completion",
-        );
-      const evidence = hashOuterEvidence(normalized.project_root, input.evidence_paths);
-      working = {
-        ...working,
-        current_phase: "summary",
-        phase_history: openPhase(closePhase(working, evidence), "summary", cycle),
-        updated_at: now(),
-      };
-    } else if (state.current_phase === "promotion") {
-      if (validation.finalist_id === null)
-        failA1(
-          "PROMOTION_NOT_ALLOWED",
-          "a cycle without a validation finalist cannot enter promotion",
-        );
-      const promotion = readPromotionRecord(
-        normalized.project_root,
-        normalized.outer_run_id,
-        cycle.outer_iteration,
-      );
-      if (
-        promotion.promotion_trial_id !== input.promotion_trial_id &&
-        input.promotion_trial_id !== null &&
-        input.promotion_trial_id !== undefined
-      )
-        failA1(
-          "PROMOTION_GATE_CONFLICT",
-          "cycle promotion trial does not match the recorded promotion gate",
-        );
-      const evidence = hashOuterEvidence(normalized.project_root, input.evidence_paths);
-      working = {
-        ...working,
-        current_phase: "summary",
-        phase_history: openPhase(closePhase(working, evidence), "summary", cycle),
-        updated_at: now(),
-      };
-    } else if (state.current_phase !== "summary") {
-      failA1(
-        "OUTER_PHASE_ORDER",
-        "cycle completion requires validation, promotion, or summary phase",
-      );
-    }
-
-    const testerChildren = children.filter((child) => child.kind === "tester");
-    let promotionResult: OuterCycleSummary["promotion_result"] = "not_run";
-    let promotionTrialId: string | null = null;
-    let testerImproved: boolean | null = null;
-    if (validation.finalist_id !== null) {
-      if (testerChildren.length !== 1)
-        failA1("TESTER_REQUIRED", "a validation finalist needs exactly one tester child");
-      const testerChild = testerChildren[0]!;
-      const tester = readTesterRunState(normalized.project_root, testerChild.child_run_id);
-      if (tester.status !== "passed" && tester.status !== "rejected")
-        failA1("PROMOTION_GATE_REQUIRED", "tester child is not in a terminal public state");
-      if (!tester.gate_consumed || tester.gate_status === null)
-        failA1("PROMOTION_GATE_REQUIRED", "tester terminal state is not backed by a consumed gate");
-      const mappingPath = testerMappingPath(
-        normalized.project_root,
-        normalized.outer_run_id,
-        cycle.outer_iteration,
-      );
-      if (!fs.existsSync(mappingPath))
-        failA1("TESTER_ARM_MAPPING_REQUIRED", "promotion cycle has no explicit tester arm mapping");
-      const mapping = validateTesterArmMapping(readStateFile(mappingPath), mappingPath);
-      assertTesterMappingMatchesState(mapping, tester);
-      const promotion = readPromotionRecord(
-        normalized.project_root,
-        normalized.outer_run_id,
-        cycle.outer_iteration,
-      );
-      if (
-        promotion.tester_run_id !== tester.tester_run_id ||
-        promotion.promotion_trial_id !== tester.promotion_trial_id ||
-        promotion.result !== tester.gate_status
-      )
-        failA1(
-          "PROMOTION_GATE_CONFLICT",
-          "promotion evidence does not match the public tester state",
-        );
-      assertPromotionCommitComplete(
-        normalized.project_root,
-        normalized.outer_run_id,
-        cycle,
-        promotion.result,
-      );
-      promotionResult = promotion.result;
-      promotionTrialId = tester.promotion_trial_id;
-      testerImproved = promotion.result === "passed";
-    } else if (testerChildren.length > 0) {
-      failA1("TESTER_NOT_ALLOWED", "a rejected validation gate cannot have a tester child");
-    }
-
-    if (input.promotion_result !== undefined && input.promotion_result !== promotionResult)
-      failA1(
         "PROMOTION_GATE_CONFLICT",
-        "cycle promotion result differs from public tester evidence",
+        "cycle promotion trial does not match the recorded promotion gate",
       );
-    if (input.tester_improved !== undefined && input.tester_improved !== testerImproved)
-      failA1(
-        "PROMOTION_GATE_CONFLICT",
-        "cycle tester improvement differs from public tester evidence",
-      );
-    const targetReached = input.target_reached ?? false;
-    requireBoolean(targetReached, "target_reached");
-    if (targetReached && validation.finalist_id === null)
-      failA1("TARGET_EVIDENCE_REQUIRED", "a reached target requires a validated finalist");
-    const requestedStatus = input.status;
-    if (requestedStatus === "completed" && childFailed)
-      failA1("CHILD_FAILED", "a cycle with a failed child cannot be marked completed");
-    const status: OuterCycleSummary["status"] =
-      requestedStatus ??
-      (childFailed ||
-      validation.validation_result === "incomplete" ||
-      validation.validation_result === "not_run"
-        ? "failed"
-        : "completed");
     const evidence = hashOuterEvidence(normalized.project_root, input.evidence_paths);
-    const summary: OuterCycleSummary = {
-      schema_version: 1,
-      outer_run_id: normalized.outer_run_id,
-      outer_iteration: cycle.outer_iteration,
-      generation: cycle.generation,
-      wave_id: cycle.wave_id,
-      wave_kind: cycle.wave_kind,
-      status,
-      candidate_ids: [...validation.candidate_ids],
-      finalist_id: validation.finalist_id,
-      promotion_trial_id: promotionTrialId,
-      validation_result: validation.validation_result,
-      promotion_result: promotionResult,
-      target_reached: targetReached,
-      valid_candidate: validation.validation_result === "passed",
-      tester_improved: testerImproved,
-      budget: cycleBudgetSummary(normalized.project_root, normalized.outer_run_id, working, cycle),
-      evidence_refs: evidence.evidence_refs,
-      evidence_sha256: evidence.evidence_sha256,
-      recorded_at: now(),
-    };
-    const persistedSummary = stableCycleSummary(normalized.project_root, summary);
-    const next: WorkflowRuntimeState = {
+    working = {
       ...working,
-      active_cycle: null,
-      cycle_history: [...working.cycle_history, persistedSummary],
+      current_phase: "summary",
+      phase_history: openPhase(closePhase(working, evidence), "summary", cycle),
       updated_at: now(),
     };
-    return { state: next, result: next };
-  });
+  } else if (state.current_phase !== "summary") {
+    failA1(
+      "OUTER_PHASE_ORDER",
+      "cycle completion requires validation, promotion, or summary phase",
+    );
+  }
+
+  const testerChildren = children.filter((child) => child.kind === "tester");
+  let promotionResult: OuterCycleSummary["promotion_result"] = "not_run";
+  let promotionTrialId: string | null = null;
+  let testerImproved: boolean | null = null;
+  if (validation.finalist_id !== null) {
+    if (testerChildren.length !== 1)
+      failA1("TESTER_REQUIRED", "a validation finalist needs exactly one tester child");
+    const testerChild = testerChildren[0]!;
+    const tester = readTesterRunState(normalized.project_root, testerChild.child_run_id);
+    if (tester.status !== "passed" && tester.status !== "rejected")
+      failA1("PROMOTION_GATE_REQUIRED", "tester child is not in a terminal public state");
+    if (!tester.gate_consumed || tester.gate_status === null)
+      failA1("PROMOTION_GATE_REQUIRED", "tester terminal state is not backed by a consumed gate");
+    const mappingPath = testerMappingPath(
+      normalized.project_root,
+      normalized.outer_run_id,
+      cycle.outer_iteration,
+    );
+    if (!fs.existsSync(mappingPath))
+      failA1("TESTER_ARM_MAPPING_REQUIRED", "promotion cycle has no explicit tester arm mapping");
+    const mapping = validateTesterArmMapping(readStateFile(mappingPath), mappingPath);
+    assertTesterMappingMatchesState(mapping, tester);
+    const promotion = readPromotionRecord(
+      normalized.project_root,
+      normalized.outer_run_id,
+      cycle.outer_iteration,
+    );
+    if (
+      promotion.tester_run_id !== tester.tester_run_id ||
+      promotion.promotion_trial_id !== tester.promotion_trial_id ||
+      promotion.result !== tester.gate_status
+    )
+      failA1(
+        "PROMOTION_GATE_CONFLICT",
+        "promotion evidence does not match the public tester state",
+      );
+    assertPromotionCommitComplete(
+      normalized.project_root,
+      normalized.outer_run_id,
+      cycle,
+      promotion.result,
+    );
+    promotionResult = promotion.result;
+    promotionTrialId = tester.promotion_trial_id;
+    testerImproved = promotion.result === "passed";
+  } else if (testerChildren.length > 0) {
+    failA1("TESTER_NOT_ALLOWED", "a rejected validation gate cannot have a tester child");
+  }
+
+  if (input.promotion_result !== undefined && input.promotion_result !== promotionResult)
+    failA1("PROMOTION_GATE_CONFLICT", "cycle promotion result differs from public tester evidence");
+  if (input.tester_improved !== undefined && input.tester_improved !== testerImproved)
+    failA1(
+      "PROMOTION_GATE_CONFLICT",
+      "cycle tester improvement differs from public tester evidence",
+    );
+  const targetReached = input.target_reached ?? false;
+  requireBoolean(targetReached, "target_reached");
+  if (targetReached && validation.finalist_id === null)
+    failA1("TARGET_EVIDENCE_REQUIRED", "a reached target requires a validated finalist");
+  const requestedStatus = input.status;
+  if (requestedStatus === "completed" && childFailed)
+    failA1("CHILD_FAILED", "a cycle with a failed child cannot be marked completed");
+  const status: OuterCycleSummary["status"] =
+    requestedStatus ??
+    (childFailed ||
+    validation.validation_result === "incomplete" ||
+    validation.validation_result === "not_run"
+      ? "failed"
+      : "completed");
+  const evidence = hashOuterEvidence(normalized.project_root, input.evidence_paths);
+  const summary: OuterCycleSummary = {
+    schema_version: 1,
+    outer_run_id: normalized.outer_run_id,
+    outer_iteration: cycle.outer_iteration,
+    generation: cycle.generation,
+    wave_id: cycle.wave_id,
+    wave_kind: cycle.wave_kind,
+    status,
+    candidate_ids: [...validation.candidate_ids],
+    finalist_id: validation.finalist_id,
+    promotion_trial_id: promotionTrialId,
+    validation_result: validation.validation_result,
+    promotion_result: promotionResult,
+    target_reached: targetReached,
+    valid_candidate: validation.validation_result === "passed",
+    tester_improved: testerImproved,
+    budget: cycleBudgetSummary(normalized.project_root, normalized.outer_run_id, working, cycle),
+    evidence_refs: evidence.evidence_refs,
+    evidence_sha256: evidence.evidence_sha256,
+    recorded_at: now(),
+  };
+  const persistedSummary = stableCycleSummary(normalized.project_root, summary);
+  const next: WorkflowRuntimeState = {
+    ...working,
+    active_cycle: null,
+    cycle_history: [...working.cycle_history, persistedSummary],
+    updated_at: now(),
+  };
+  return { state: next, result: next };
 }
 
 export const finishOuterCycle = completeOuterCycle;

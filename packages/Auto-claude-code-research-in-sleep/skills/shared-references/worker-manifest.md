@@ -95,7 +95,7 @@ input, never the parent's live Wiki head. Parent links are checked in
 ```json
 {
   "manifest_path": ".aris/runs/<run_id>/input-manifest.json",
-  "module_query_workers": ["idea-discovery", "idea-creator", "experiment-bridge", "analyze-results", "result-to-claim"],
+  "module_query_workers": ["idea-discovery", "idea-creator", "experiment-bridge", "orchestration-bridge", "analyze-results", "result-to-claim"],
   "scorer_query_workers": ["scorer-loop"],
   "tester_query_workers": []
 }

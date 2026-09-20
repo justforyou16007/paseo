@@ -11,6 +11,7 @@ import {
   type BridgeInputSources,
 } from "../src/tools/bridge-input.js";
 import { createBaselineScope, type BaselineScope } from "../src/tools/baseline-scope.js";
+import type { DecompositionGraph } from "../src/tools/decomposition-graph.js";
 import {
   createResourceInventory,
   type ResourceInventory,
@@ -320,6 +321,48 @@ test("manifest output_dir must be its worker outputs directory", () => {
 function fixtureOutputRootPlaceholder(): string {
   return path.join(os.tmpdir(), "aris-a2-5-bridge-input-not-worker-outputs");
 }
+
+/** A generation the parent already recorded, in the shape it is read back in. */
+function decomposition(positionIds: readonly string[]): DecompositionGraph {
+  return {
+    schema_version: 1,
+    parent_run_id: BRIDGE_RUN_ID,
+    generation: 2,
+    positions: positionIds.map((position_id) => ({
+      position_id,
+      problem: `decided question for ${position_id}`,
+      expected_output: "a report",
+      constraints: { deadline: "one day" },
+      depends_on: [],
+    })),
+    decomposition_sha256: HASH_C,
+    created_at: "2026-01-01T00:00:00Z",
+  };
+}
+
+test("an orchestration dispatch carries the task the decomposition froze, not the one the upstream restated", () => {
+  const input = sources();
+  const graph = decomposition(["main"]);
+  const result = buildBridgeInput({ ...input, decomposition: graph });
+  assert.equal(result.orchestration, true);
+  assert.equal(result.generation, 2);
+  // The upstream artifact said `problem: "local task"`; the recorded graph wins,
+  // and the edges come with it.
+  assert.deepEqual(result.positions[0]!.charter, {
+    problem: "decided question for main",
+    expected_output: "a report",
+    constraints: { deadline: "one day" },
+  });
+  assert.deepEqual(result.positions[0]!.depends_on, []);
+});
+
+test("an orchestration dispatch cannot invent a position the decomposition does not have", () => {
+  expectError(
+    () => buildBridgeInput({ ...sources(), decomposition: decomposition(["other"]) }),
+    "DECOMPOSITION_MISMATCH",
+    "position 'main' is not in generation 2 of this run's decomposition",
+  );
+});
 
 test("two child tasks cannot claim one position in the same plan", () => {
   expectError(()=>buildBridgeInput(sources(["main","main"])),"DUPLICATE_ID","candidate positions map to 'main' more than once");

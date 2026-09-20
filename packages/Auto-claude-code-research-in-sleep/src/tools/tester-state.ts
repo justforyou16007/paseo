@@ -1701,6 +1701,16 @@ export function readTesterFinalistStatus(
 }
 
 export function reservePromotionTrial(input: PromotionReservationInput): ExposureRecord {
+  // Exposures are counted against one task-wide limit, so only the run that
+  // owns the task may spend them. A dispatched run has a parent, is judged by
+  // the acceptance that parent wrote for it, and reports back through its
+  // result package; letting it reserve here would spend the task's remaining
+  // exposures on a question its parent never asked.
+  if (requireRunContract(input.project_root, input.outer_run_id).parent_run_id !== null)
+    failA1(
+      "CHILD_TESTER_FORBIDDEN",
+      "a dispatched run is judged by its parent's acceptance and cannot reserve tester exposure",
+    );
   const status = readTesterFinalistStatus(
     input.project_root,
     input.outer_run_id,

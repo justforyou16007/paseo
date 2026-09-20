@@ -66,6 +66,10 @@ export const WIKI_MODULE_WORKERS = [
   "idea-discovery",
   "idea-creator",
   "experiment-bridge",
+  // The orchestration form of the bridge decides a structure instead of an
+  // experiment, and that decision is made from what the run has learned so far,
+  // so it reads the Wiki on the same terms as the ordinary bridge.
+  "orchestration-bridge",
   "analyze-results",
   "result-to-claim",
 ] as const;

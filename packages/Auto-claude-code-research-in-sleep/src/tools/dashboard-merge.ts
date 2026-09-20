@@ -8,6 +8,9 @@ import { createCli, runCli } from "../lib/cli.js";
 import { canonicalJsonString } from "./canonical-json.js";
 import { readStateFile, withStateFileLock, writeStateJsonAtomic } from "./state-file.js";
 import { requireRunContract, runJsonPath, runOwnedPath } from "./run-contract.js";
+import { readDispatchStructure, type DispatchStructure } from "./child-index.js";
+import { hasDecomposition } from "./decomposition-graph.js";
+import { requireCompleteRound } from "./orchestration-round.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -131,6 +134,20 @@ const WORKER_RULES: Readonly<Record<string, WorkerRule>> = {
         isStringArray(value) && value.every((item) => SLUG_PATTERN.test(item)),
     },
     requiredPatchKeys: ["metric.current", "experiment_ids"],
+  },
+  // An orchestration bridge does not run an experiment, it dispatches the
+  // children that will. So it publishes no metric: at the moment its receipt is
+  // written nothing has been measured, and claiming a number here would put a
+  // value in metric history that no child produced. What it must publish is what
+  // it decided — which children it dispatched, and the hash of the structure it
+  // dispatched them in — because the next round compares against exactly that.
+  "orchestration-bridge": {
+    phases: ["experiment-bridge"],
+    patchKeys: {
+      child_run_ids: isStringArray,
+      structure_sha256: isSha256,
+    },
+    requiredPatchKeys: ["child_run_ids", "structure_sha256"],
   },
   "analyze-results": {
     phases: ["analyze-results"],
@@ -520,6 +537,41 @@ function validateOwnership(
     fail(
       `worker '${receipt.worker}' cannot write while dashboard.current_phase is '${String(dashboard.current_phase)}'`,
     );
+  }
+}
+
+/**
+ * Check an orchestration receipt against the dispatch it claims to describe.
+ *
+ * `validatePatch` can only see that the receipt is well shaped; whether it is
+ * true is a question about the parent's own children.json, which this process
+ * can read. Both facts are re-derived rather than trusted: the structure hash,
+ * so a receipt cannot record a structure that was never dispatched, and the
+ * child list, so it cannot omit a child whose result will later have to be
+ * collected or name a run belonging to someone else.
+ */
+function verifyOrchestrationReceipt(root: string, runId: string, receipt: Receipt): void {
+  let structure: DispatchStructure;
+  try {
+    structure = readDispatchStructure(root, runId);
+  } catch (error) {
+    fail(`cannot read the dispatched structure: ${String(error)}`);
+  }
+  if (receipt.dashboard_patch.structure_sha256 !== structure.structure_sha256) {
+    fail("orchestration receipt does not match the structure this run dispatched");
+  }
+  const claimed = receipt.dashboard_patch.child_run_ids as string[];
+  const dispatched = structure.child_run_ids;
+  if (
+    claimed.length !== dispatched.length ||
+    [...claimed].sort().join("\u0000") !== [...dispatched].sort().join("\u0000")
+  ) {
+    fail("orchestration receipt does not name the children this run dispatched");
+  }
+  for (const childRunId of dispatched) {
+    if (requireRunContract(root, childRunId).parent_run_id !== runId) {
+      fail(`child '${childRunId}' is not a child of run '${runId}'`);
+    }
   }
 }
 
@@ -986,6 +1038,31 @@ function apply(root: string, runId: string, receiptPath: string): void {
     }
 
     validatePatch(receipt, dashboard);
+    // A run that has recorded a decomposition is being judged on that
+    // decomposition, so its expansion phase can only be reported as an
+    // orchestration. An ordinary experiment-bridge receipt would write a
+    // metric.current here, before a single child has been collected, and that
+    // number would then be the one the next round compares against.
+    if (
+      receipt.worker !== "orchestration-bridge" &&
+      WORKER_RULES[receipt.worker].phases.includes("experiment-bridge") &&
+      hasDecomposition(root, runId)
+    ) {
+      fail(
+        `run '${runId}' dispatched a decomposition; its expansion must be reported by orchestration-bridge`,
+      );
+    }
+    if (receipt.worker === "orchestration-bridge") verifyOrchestrationReceipt(root, runId, receipt);
+    // `metric.current` on an orchestration run is the parent's measurement of
+    // the assembled whole. There is no whole while a child is still running,
+    // so the reading is refused until the generation has been collected back.
+    if (receipt.dashboard_patch["metric.current"] !== undefined && hasDecomposition(root, runId)) {
+      try {
+        requireCompleteRound(root, runId);
+      } catch (error) {
+        fail(`this run cannot be measured yet: ${String(error)}`);
+      }
+    }
     for (const [key, value] of Object.entries(receipt.dashboard_patch)) {
       setDotPath(dashboard, key, value);
     }

@@ -29,7 +29,25 @@ import {
   createResourceInventory,
   type ResourceInventory,
 } from "../src/tools/resource-inventory.js";
-import { resultStatusPolicy } from "../src/tools/result-package.js";
+import {
+  buildResultPackageForRun,
+  resultStatusPolicy,
+  saveResultPackage,
+} from "../src/tools/result-package.js";
+import { saveResultReview } from "../src/tools/result-review.js";
+import { readChildIndex, childIndexPath } from "../src/tools/child-index.js";
+import { publishEvolutionSignal } from "./helpers/evolution-signal.js";
+import {
+  prepareDecompositionWave,
+  readDecompositionGraph,
+  recordDecompositionGraph,
+} from "../src/tools/decomposition-graph.js";
+import {
+  buildChildAcceptance,
+  childAcceptancePath,
+  readChildAcceptances,
+  saveChildAcceptance,
+} from "../src/tools/child-acceptance.js";
 import { selectUniqueFinalist } from "../src/tools/validation-gate.js";
 import { evaluateWorkflowStopGate, type StopPolicy } from "../src/tools/workflow-stop-gate.js";
 import {
@@ -39,10 +57,15 @@ import {
   startOuterRunForTest,
 } from "../src/tools/workflow-runtime.js";
 import { createTaskSetup } from "../src/tools/task-setup.js";
-import { buildTesterDefinition } from "../src/tools/tester-state.js";
+import { buildTesterDefinition, reservePromotionTrial } from "../src/tools/tester-state.js";
 import { validateWorkflowSpec, type WorkflowSpec } from "../src/tools/workflow-spec.js";
 import type { FreezeOuterRunInput, OuterCycleSummary } from "../src/tools/workflow-state.js";
-import { createBridgeChildRun, createRootRun, createRun } from "../src/tools/run-contract.js";
+import { createBridgeChildRun, createRootRun, createRun, readRun } from "../src/tools/run-contract.js";
+import {
+  appendWikiEvent,
+  initializeWikiSchema,
+  readWikiEvents,
+} from "../src/tools/wiki-event-store.js";
 
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
@@ -767,7 +790,11 @@ test("children use their own frozen measurement and hash actual experiment conte
  const base=baselineFor(), resource=resources();
  const input=bridgeFixture({charter:charter(base,resource),baseline:base,resource_inventory:resource,positions:[position("main",{child_run_id:"child-local"})]});
  const first=planExperimentBridge(input).children[0]!;
- assert.deepEqual(first.charter.measurement,{validator_ref:"validator:main",tester_ref:"tester:main"});
+ // The child's tester reference is the acceptance its parent wrote, not a name
+ // the caller chose: that is what keeps a child away from the task tester.
+ assert.deepEqual(first.charter.measurement,{validator_ref:"validator:main",tester_ref:first.acceptance.acceptance_id});
+ assert.equal(first.acceptance.owner_run_id,input.charter.run_id);
+ assert.equal(first.acceptance.position_id,"main");
  const second=planExperimentBridge({...input,positions:[{...input.positions[0]!,execution_plan:{method:"a different experiment"}}]}).children[0]!;
  assert.notEqual(first.execution_plan_sha256,second.execution_plan_sha256);
  assert.equal(first.execution_plan_sha256,canonicalJsonSha256(first.execution_plan));
@@ -1061,4 +1088,600 @@ test("zero balance still records resource-free positions without allocating fund
  const result=planExperimentBridge({...input,positions:[{...input.positions[0]!,resource_request:{...request(),accelerator_count:99}}]});
  assert.equal(result.children[0]!.result.status,"not_executable");
  assert.deepEqual(result.budget.allocations,[]);
+});
+
+function generationFixture(projectRoot: string, generation: number, changes: Record<string, unknown> = {}) {
+  const baseline = baselineFor();
+  const resource = resources();
+  return bridgeFixture({
+    charter: charter(baseline, resource, { budget: { amount: 12, unit: "gpu_hours" } }),
+    baseline,
+    resource_inventory: resource,
+    project_root: projectRoot,
+    generation,
+    remaining_generations: 4 - generation,
+    positions: [position("main", changes)],
+  });
+}
+
+/**
+ * End a child the way a real one ends: with a reviewed result package. Both the
+ * position handover and a serial edge read this file — one to see that the
+ * position is free, the other to see what crossed the edge — so the fixture
+ * goes through the real publishing path rather than dropping a marker.
+ */
+function publishPositionResult(
+  projectRoot: string,
+  runId: string,
+  outputs: Record<string, string> = {},
+) {
+  const contract = readRun(projectRoot, runId);
+  const succeeded = Object.keys(outputs).length > 0;
+  const input = {
+    run_id: runId,
+    parent_run_id: contract.parent_run_id,
+    scope_path: contract.scope_path,
+    status: succeeded ? ("succeeded" as const) : ("failed" as const),
+    input_snapshot_sha256: HASH_C,
+    output_hashes: outputs,
+    ...(succeeded
+      ? {}
+      : { failure: { reason: "stopped", failure_code: "EXECUTION_FAILED", evidence_refs: [] } }),
+  };
+  const built = buildResultPackageForRun(projectRoot, runId, input);
+  const reviewId = `review:${runId}`;
+  saveResultReview(projectRoot, {
+    schema_version: 1,
+    review_id: reviewId,
+    run_id: runId,
+    reviewer_worker_id: "reviewer-expansion",
+    package_sha256: built.package.package_sha256,
+    verdict: "approved",
+    evidence_refs: [],
+    reason_codes: [],
+  });
+  saveResultPackage(projectRoot, runId, input, { review_id: reviewId });
+}
+
+function wikiEventsOf(projectRoot: string, runId: string) {
+  const root = path.join(projectRoot, ".aris", "runs", runId, "wiki");
+  if (!fs.existsSync(path.join(root, "schema.json"))) return [];
+  return readWikiEvents(root);
+}
+
+test("an unchanged task gets its own run and budget in each generation, starting from the last one's Wiki", () => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aris-a2-3-generation-"));
+  try {
+    createRun({
+      project_root: projectRoot,
+      run_id: "root-a2-3",
+      charter_sha256: HASH_A,
+      input_snapshot_sha256: HASH_C,
+      execution_plan_sha256: HASH_B,
+      code_baseline_sha256: HASH_A,
+      policy_revision: "policy:a2-3",
+    });
+    initializeRunBudget(projectRoot, "root-a2-3", { amount: 12, unit: "gpu_hours" });
+
+    const first = planExperimentBridge(generationFixture(projectRoot, 1));
+    // Three generations left to pay for, one position: a quarter each, not all of it.
+    assert.equal(first.children[0]!.budget.amount, 4);
+    assert.equal(first.children[0]!.predecessor_run_id, undefined);
+    materializeBridgeChildren(projectRoot, first);
+    const firstChildId = first.children[0]!.run_id;
+
+    // Re-planning the same generation is a retry, not a second dispatch.
+    const retry = planExperimentBridge(generationFixture(projectRoot, 1));
+    assert.equal(retry.children[0]!.run_id, firstChildId);
+
+    initializeWikiSchema(path.join(projectRoot, ".aris", "runs", firstChildId, "wiki"));
+    appendWikiEvent(path.join(projectRoot, ".aris", "runs", firstChildId, "wiki"), {
+      producer_kind: "idea-discovery",
+      scope: `runs/${firstChildId}`,
+      subject_id: "idea:first-generation",
+      evidence_bundle_id: "evidence:first-generation",
+      payload: { operations: [{ op: "append_log", message: "generation one tried the obvious thing" }] },
+    });
+
+    const second = planExperimentBridge(generationFixture(projectRoot, 2));
+    const secondChildId = second.children[0]!.run_id;
+    assert.notEqual(secondChildId, firstChildId);
+    assert.equal(second.children[0]!.predecessor_run_id, firstChildId);
+    assert.equal(second.children[0]!.inherits_wiki, true);
+    // 8 left over two remaining generations.
+    assert.equal(second.children[0]!.budget.amount, 4);
+
+    // The position is still occupied until the generation holding it says it
+    // is done, so a re-dispatch that races the current one is refused.
+    expectCode(() => materializeBridgeChildren(projectRoot, second), "RUN_SCOPE_ACTIVE");
+    publishPositionResult(projectRoot, firstChildId);
+    materializeBridgeChildren(projectRoot, second);
+
+    const inherited = wikiEventsOf(projectRoot, secondChildId);
+    assert.equal(inherited.length, 1);
+    assert.equal(inherited[0]!.producer.scope, `runs/${secondChildId}`);
+    assert.equal(inherited[0]!.producer.subject_id, "idea:first-generation");
+    assert.equal(
+      inherited[0]!.payload_sha256,
+      wikiEventsOf(projectRoot, firstChildId)[0]!.payload_sha256,
+    );
+    // Re-materializing must not duplicate the inherited history.
+    materializeBridgeChildren(projectRoot, second);
+    assert.equal(wikiEventsOf(projectRoot, secondChildId).length, 1);
+  } finally {
+    fs.rmSync(projectRoot, { recursive: true, force: true });
+  }
+});
+
+/**
+ * An orchestration run's optimization target is the decomposition itself, so
+ * the bridge that dispatches its children also records what was decided:
+ * which positions exist, what each was asked for, and who waits for whom.
+ */
+function orchestrationFixture(projectRoot: string, generation: number) {
+  const baseline = baselineFor(["main", "other"]);
+  const resource = resources();
+  return bridgeFixture({
+    charter: charter(baseline, resource, { budget: { amount: 12, unit: "gpu_hours" } }),
+    baseline,
+    resource_inventory: resource,
+    project_root: projectRoot,
+    orchestration: true,
+    generation,
+    remaining_generations: 3 - generation,
+    positions: [position("main"), position("other")],
+  });
+}
+
+/** The decomposition a fixture's positions spell out, as the parent declares it. */
+function declared(input: ReturnType<typeof orchestrationFixture>) {
+  return input.positions.map((entry) => ({
+    position_id: entry.position_id,
+    problem: entry.charter!.problem as string,
+    expected_output: entry.charter!.expected_output,
+    constraints: entry.charter!.constraints as Record<string, unknown>,
+    depends_on: [],
+  }));
+}
+
+test("an orchestration run records each generation's decomposition and can only change it through a wave", () => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aris-a2-3-orchestration-"));
+  try {
+    createRun({
+      project_root: projectRoot,
+      run_id: "root-a2-3",
+      charter_sha256: HASH_A,
+      input_snapshot_sha256: HASH_C,
+      execution_plan_sha256: HASH_B,
+      code_baseline_sha256: HASH_A,
+      policy_revision: "policy:a2-3",
+    });
+    initializeRunBudget(projectRoot, "root-a2-3", { amount: 12, unit: "gpu_hours" });
+
+    // The decomposition is decided before it is dispatched, and a dispatch
+    // that does not carry it out is refused before any child is created.
+    expectCode(
+      () => planExperimentBridge(orchestrationFixture(projectRoot, 1)),
+      "DECOMPOSITION_NOT_FOUND",
+    );
+    recordDecompositionGraph(
+      projectRoot,
+      "root-a2-3",
+      1,
+      declared(orchestrationFixture(projectRoot, 1)),
+    );
+    const first = planExperimentBridge(orchestrationFixture(projectRoot, 1));
+    materializeBridgeChildren(projectRoot, first);
+    const baselineGraph = readDecompositionGraph(projectRoot, "root-a2-3", 1);
+    assert.deepEqual(
+      baselineGraph.positions.map((entry) => [entry.position_id, entry.problem, entry.depends_on]),
+      [
+        ["main", "Improve main", []],
+        ["other", "Improve other", []],
+      ],
+    );
+    // The creation is the baseline: it needed no wave, and replanning it is a
+    // retry of the same decision rather than a second decomposition.
+    planExperimentBridge(orchestrationFixture(projectRoot, 1));
+
+    // Retasking a position in the next generation is a structure change, and
+    // no structure changes without a frozen wave behind it.
+    const retask = (input: ReturnType<typeof orchestrationFixture>) => ({
+      ...input,
+      positions: input.positions.map((entry) =>
+        entry.position_id === "main"
+          ? { ...entry, charter: { ...entry.charter!, problem: "Improve main from the other end" } }
+          : entry,
+      ),
+    });
+    const before = JSON.stringify(readChildIndex(childIndexPath(projectRoot, "root-a2-3")));
+    expectCode(
+      () =>
+        recordDecompositionGraph(
+          projectRoot,
+          "root-a2-3",
+          2,
+          declared(retask(orchestrationFixture(projectRoot, 2))),
+        ),
+      "DECOMPOSITION_WAVE_REQUIRED",
+    );
+    // Nothing was decided for generation 2, so nothing can be dispatched into
+    // it either, and the refusal costs no child runs.
+    expectCode(
+      () => planExperimentBridge(retask(orchestrationFixture(projectRoot, 2))),
+      "DECOMPOSITION_NOT_FOUND",
+    );
+    assert.equal(
+      JSON.stringify(readChildIndex(childIndexPath(projectRoot, "root-a2-3"))),
+      before,
+    );
+
+    publishEvolutionSignal(projectRoot, "root-a2-3", 1);
+    const wave = prepareDecompositionWave({
+      project_root: projectRoot,
+      parent_run_id: "root-a2-3",
+      generation: 2,
+      proposal_id: "proposal:orchestration-2",
+      baseline_sha256: baselineGraph.decomposition_sha256,
+      actions: [
+        {
+          op: "retask_position",
+          position_id: "main",
+          problem: "Improve main from the other end",
+        },
+      ],
+    });
+    for (const child of first.children) publishPositionResult(projectRoot, child.run_id, {});
+    recordDecompositionGraph(
+      projectRoot,
+      "root-a2-3",
+      2,
+      declared(retask(orchestrationFixture(projectRoot, 2))),
+    );
+    // A dispatch still has to match what was decided: the untouched position
+    // cannot quietly be given the retasked one's question.
+    expectCode(
+      () =>
+        planExperimentBridge({
+          ...orchestrationFixture(projectRoot, 2),
+          positions: retask(orchestrationFixture(projectRoot, 2)).positions.map((entry) =>
+            entry.position_id === "other"
+              ? { ...entry, charter: { ...entry.charter!, problem: "Improve something else" } }
+              : entry,
+          ),
+        }),
+      "DECOMPOSITION_MISMATCH",
+    );
+    const second = planExperimentBridge(retask(orchestrationFixture(projectRoot, 2)));
+    assert.equal(
+      readDecompositionGraph(projectRoot, "root-a2-3", 2).decomposition_sha256,
+      wave.s1.decomposition_sha256,
+    );
+    // The retasked position is a new question, so it is a new child; the one
+    // the wave left alone is a new run continuing the same question.
+    const changed = second.children.find((child) => child.position_id === "main")!;
+    const kept = second.children.find((child) => child.position_id === "other")!;
+    assert.equal(changed.inherits_wiki, false);
+    assert.equal(kept.inherits_wiki, true);
+    assert.notEqual(changed.run_id, first.children.find((child) => child.position_id === "main")!.run_id);
+  } finally {
+    fs.rmSync(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("a changed task is a new question and starts from an empty Wiki", () => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aris-a2-3-generation-retask-"));
+  try {
+    createRun({
+      project_root: projectRoot,
+      run_id: "root-a2-3",
+      charter_sha256: HASH_A,
+      input_snapshot_sha256: HASH_C,
+      execution_plan_sha256: HASH_B,
+      code_baseline_sha256: HASH_A,
+      policy_revision: "policy:a2-3",
+    });
+    initializeRunBudget(projectRoot, "root-a2-3", { amount: 12, unit: "gpu_hours" });
+
+    const first = planExperimentBridge(generationFixture(projectRoot, 1));
+    materializeBridgeChildren(projectRoot, first);
+    const firstChildId = first.children[0]!.run_id;
+    initializeWikiSchema(path.join(projectRoot, ".aris", "runs", firstChildId, "wiki"));
+    appendWikiEvent(path.join(projectRoot, ".aris", "runs", firstChildId, "wiki"), {
+      producer_kind: "idea-discovery",
+      scope: `runs/${firstChildId}`,
+      subject_id: "idea:first-generation",
+      evidence_bundle_id: "evidence:first-generation",
+      payload: { operations: [{ op: "append_log", message: "generation one tried the obvious thing" }] },
+    });
+
+    publishPositionResult(projectRoot, firstChildId);
+    const retasked = planExperimentBridge(
+      generationFixture(projectRoot, 2, {
+        execution_plan: { method: "implement main differently", parameters: { seed: 2 } },
+      }),
+    );
+    assert.notEqual(retasked.children[0]!.run_id, firstChildId);
+    // The position still changes hands — one run holds it at a time — but the
+    // question is a different one, so nothing carries over.
+    assert.equal(retasked.children[0]!.predecessor_run_id, firstChildId);
+    assert.equal(retasked.children[0]!.inherits_wiki, false);
+    materializeBridgeChildren(projectRoot, retasked);
+    assert.deepEqual(wikiEventsOf(projectRoot, retasked.children[0]!.run_id), []);
+  } finally {
+    fs.rmSync(projectRoot, { recursive: true, force: true });
+  }
+});
+
+/**
+ * A parent with two positions where the second reads the first. Everything a
+ * serial edge needs lives on the parent: the charter covers both positions, and
+ * the edge is declared on the downstream one.
+ */
+function serialFixture(projectRoot: string, positions: readonly BridgePositionInput[]) {
+  const baseline = baselineFor(["upstream", "downstream"]);
+  const resource = resources();
+  return bridgeFixture({
+    charter: charter(baseline, resource, { budget: { amount: 12, unit: "gpu_hours" } }),
+    baseline,
+    resource_inventory: resource,
+    project_root: projectRoot,
+    // Fixed shares. An even split would hand the whole balance to whichever
+    // position was dispatched first, and these tests dispatch one at a time.
+    positions: positions.map((entry) => ({
+      budget: { amount: 4, unit: "gpu_hours" },
+      ...entry,
+    })),
+  });
+}
+
+function serialRoot(name: string): string {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), `aris-a2-3-serial-${name}-`));
+  createRun({
+    project_root: projectRoot,
+    run_id: "root-a2-3",
+    charter_sha256: HASH_A,
+    input_snapshot_sha256: HASH_C,
+    execution_plan_sha256: HASH_B,
+    code_baseline_sha256: HASH_A,
+    policy_revision: "policy:a2-3",
+  });
+  initializeRunBudget(projectRoot, "root-a2-3", { amount: 12, unit: "gpu_hours" });
+  return projectRoot;
+}
+
+test("a serial edge dispatches only after its upstream published, and carries those outputs", () => {
+  const projectRoot = serialRoot("edge");
+  try {
+    const first = planExperimentBridge(serialFixture(projectRoot, [position("upstream")]));
+    materializeBridgeChildren(projectRoot, first);
+    const upstreamRunId = first.children[0]!.run_id;
+
+    const both = [position("upstream"), position("downstream", { depends_on: ["upstream"] })];
+    // Nothing has crossed the edge yet, so there is no downstream task to state.
+    expectCode(
+      () => planExperimentBridge(serialFixture(projectRoot, both)),
+      "BRIDGE_DEPENDENCY_UNRESOLVED",
+    );
+
+    publishPositionResult(projectRoot, upstreamRunId, { "outputs/model.json": HASH_B });
+    const plan = planExperimentBridge(serialFixture(projectRoot, both));
+    const downstream = plan.children.find((child) => child.position_id === "downstream")!;
+    // The downstream reads its upstream's outputs, not the run's baseline input.
+    assert.notEqual(downstream.input_snapshot_sha256, HASH_C);
+    assert.match(downstream.input_snapshot_sha256, /^[0-9a-f]{64}$/);
+    // Re-planning the same edge is a retry and has to land on the same task.
+    const replan = planExperimentBridge(serialFixture(projectRoot, both));
+    assert.equal(replan.children.find((child) => child.position_id === "downstream")!.run_id, downstream.run_id);
+    assert.equal(
+      replan.children.find((child) => child.position_id === "downstream")!.input_snapshot_sha256,
+      downstream.input_snapshot_sha256,
+    );
+
+    materializeBridgeChildren(projectRoot, plan);
+    assert.equal(
+      readRun(projectRoot, downstream.run_id).identity_material.input_snapshot_sha256,
+      downstream.input_snapshot_sha256,
+    );
+    // The edge is the parent's record. The child is told what to read, never
+    // which sibling produced it.
+    const index = readChildIndex(childIndexPath(projectRoot, "root-a2-3"));
+    assert.deepEqual(
+      index.positions.find((entry) => entry.position_id === "downstream")!.depends_on,
+      ["upstream"],
+    );
+    assert.equal(JSON.stringify(downstream).includes(upstreamRunId), false);
+  } finally {
+    fs.rmSync(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("a serial edge rejects a dependency that cannot have produced anything", () => {
+  const projectRoot = serialRoot("reject");
+  try {
+    expectCode(
+      () =>
+        planExperimentBridge(
+          serialFixture(projectRoot, [position("upstream", { depends_on: ["upstream"] })]),
+        ),
+      "INVALID_EXPANSION",
+    );
+    expectCode(
+      () =>
+        planExperimentBridge(
+          serialFixture(projectRoot, [position("downstream", { depends_on: ["absent"] })]),
+        ),
+      "BRIDGE_DEPENDENCY_UNRESOLVED",
+    );
+    // The downstream's inputs are whatever the upstream produced. A caller that
+    // could also name them could point the child at something else.
+    const first = planExperimentBridge(serialFixture(projectRoot, [position("upstream")]));
+    materializeBridgeChildren(projectRoot, first);
+    publishPositionResult(projectRoot, first.children[0]!.run_id, { "outputs/model.json": HASH_B });
+    expectCode(
+      () =>
+        planExperimentBridge(
+          serialFixture(projectRoot, [
+            position("upstream"),
+            position("downstream", { depends_on: ["upstream"], input_snapshot_sha256: HASH_A }),
+          ]),
+        ),
+      "IDENTITY_MISMATCH",
+    );
+  } finally {
+    fs.rmSync(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("a child charter cannot open up code the parent is not allowed to change", () => {
+  const baseline = baselineFor(["main"]);
+  const resource = resources();
+  const outside = [{ position_id: "elsewhere", mode: "independent" as const }];
+  const input = bridgeFixture({
+    charter: charter(baseline, resource),
+    baseline,
+    resource_inventory: resource,
+    positions: [position("main")],
+  });
+  const child = { ...input.positions[0]! };
+  child.charter = { ...child.charter!, optimizable_scope: outside };
+  expectCode(
+    () => planExperimentBridge({ ...input, positions: [child] }),
+    "OPTIMIZABLE_SCOPE_ALIGNMENT_REQUIRED",
+  );
+});
+
+test("a child is judged by its parent's acceptance and never by the task tester", () => {
+  const projectRoot = serialRoot("acceptance");
+  try {
+    const base = serialFixture(projectRoot, [position("upstream")]);
+    const parentRunId = base.charter.run_id;
+
+    // Naming a tester in the child charter is the whole thing this forbids.
+    expectCode(
+      () =>
+        planExperimentBridge({
+          ...base,
+          positions: [
+            {
+              ...base.positions[0]!,
+              charter: {
+                ...base.positions[0]!.charter!,
+                measurement: { validator_ref: "validator:upstream", tester_ref: "tester:root" },
+              } as (typeof base.positions)[number]["charter"],
+            },
+          ],
+        }),
+      "CHILD_TESTER_FORBIDDEN",
+    );
+
+    // A dispatch with no stated standard is a dispatch nobody can score.
+    const { acceptance: _dropped, ...noAcceptance } = base.positions[0]! as Record<string, unknown>;
+    expectCode(
+      () =>
+        planExperimentBridge({
+          ...base,
+          positions: [noAcceptance as (typeof base.positions)[number]],
+        }),
+      "CHILD_TESTER_REQUIRED",
+    );
+
+    const plan = planExperimentBridge(base);
+    const child = plan.children[0]!;
+    materializeBridgeChildren(projectRoot, plan);
+
+    // The acceptance lives in the parent's run directory, and the child's
+    // frozen charter points at it.
+    const stored = readChildAcceptances(projectRoot, parentRunId);
+    assert.equal(childAcceptancePath(projectRoot, parentRunId).includes(parentRunId), true);
+    assert.deepEqual(stored.acceptances, [child.acceptance]);
+    assert.equal(child.charter.measurement.tester_ref, child.acceptance.acceptance_id);
+    assert.equal(stored.acceptances[0]!.metric.name, "score");
+    // Nothing about the child reached the tester store or an exposure ledger.
+    assert.equal(fs.existsSync(path.join(projectRoot, ".aris", "testers")), false);
+
+    // Re-materializing the same plan stores the same single acceptance.
+    materializeBridgeChildren(projectRoot, plan);
+    assert.deepEqual(readChildAcceptances(projectRoot, parentRunId).acceptances, [
+      child.acceptance,
+    ]);
+
+    // A plan that swaps in another position's acceptance is not materializable.
+    const foreign = buildChildAcceptance({
+      owner_run_id: parentRunId,
+      position_id: "downstream",
+      metric: { name: "score", direction: "higher_better", threshold: 0.5 },
+    });
+    expectCode(
+      () =>
+        materializeBridgeChildren(projectRoot, {
+          ...plan,
+          children: [{ ...child, acceptance: foreign }],
+        }),
+      "CHILD_TESTER_FORBIDDEN",
+    );
+
+    // The exposure budget belongs to the run that owns the task. A dispatched
+    // run is refused before any of its reservation details are even read.
+    expectCode(
+      () =>
+        reservePromotionTrial({
+          project_root: projectRoot,
+          outer_run_id: child.run_id,
+        } as unknown as Parameters<typeof reservePromotionTrial>[0]),
+      "CHILD_TESTER_FORBIDDEN",
+    );
+
+    // And an acceptance cannot borrow a tester's id, which is how a local
+    // verdict would otherwise be passed off as a tester result.
+    const disguised = buildChildAcceptance({
+      owner_run_id: parentRunId,
+      position_id: "upstream",
+      metric: { name: "score", direction: "higher_better", threshold: 0.25 },
+    });
+    fs.mkdirSync(path.join(projectRoot, ".aris", "testers", disguised.acceptance_id), {
+      recursive: true,
+    });
+    expectCode(() => saveChildAcceptance(projectRoot, disguised), "CHILD_TESTER_FORBIDDEN");
+  } finally {
+    fs.rmSync(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("a predecessor the caller invents cannot hand a child another run's Wiki", () => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aris-a2-3-generation-graft-"));
+  try {
+    createRun({
+      project_root: projectRoot,
+      run_id: "root-a2-3",
+      charter_sha256: HASH_A,
+      input_snapshot_sha256: HASH_C,
+      execution_plan_sha256: HASH_B,
+      code_baseline_sha256: HASH_A,
+      policy_revision: "policy:a2-3",
+    });
+    initializeRunBudget(projectRoot, "root-a2-3", { amount: 12, unit: "gpu_hours" });
+
+    const plan = planExperimentBridge(generationFixture(projectRoot, 1));
+    const grafted = {
+      ...plan,
+      children: [{ ...plan.children[0]!, predecessor_run_id: "root-a2-3" }],
+    };
+    expectCode(() => materializeBridgeChildren(projectRoot, grafted), "IDENTITY_MISMATCH");
+
+    // The parent index owns the link; a caller cannot put one in the input.
+    expectCode(
+      () =>
+        planExperimentBridge(
+          generationFixture(projectRoot, 2, { predecessor_run_id: plan.children[0]!.run_id }),
+        ),
+      "IDENTITY_MISMATCH",
+    );
+    expectCode(
+      () => planExperimentBridge(generationFixture(projectRoot, 2, { inherits_wiki: true })),
+      "IDENTITY_MISMATCH",
+    );
+  } finally {
+    fs.rmSync(projectRoot, { recursive: true, force: true });
+  }
 });

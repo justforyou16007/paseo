@@ -23,11 +23,12 @@ export function bridgeFixture(value: Record<string, unknown>): ExperimentBridgeI
   const base = value.baseline as BaselineScope;
   const resource = value.resource_inventory as ResourceInventory;
   const frozen = charterFixture({ ...charter, baseline_sha256: charter.baseline_sha256 ?? base.baseline_sha256, resource_inventory_sha256: charter.resource_inventory_sha256 ?? resource.inventory_sha256 });
-  const { run_id: _id, charter_id: _charterId, budget: _budget, charter_sha256: _sha, ...content } = frozen;
+  const { run_id: _id, charter_id: _charterId, budget: _budget, charter_sha256: _sha, measurement: _measurement, ...content } = frozen;
   const positions = (value.positions as BridgePositionInput[]).map(position => ({
     ...position,
     execution_plan: position.execution_plan ?? { method: `implement ${position.position_id}`, parameters: { seed: 1 } },
-    charter: position.charter ?? { ...content, problem: `Improve ${position.position_id}`, measurement: { validator_ref: `validator:${position.position_id}`, tester_ref: `tester:${position.position_id}` } },
+    charter: position.charter ?? { ...content, problem: `Improve ${position.position_id}`, measurement: { validator_ref: `validator:${position.position_id}` } },
+    acceptance: position.acceptance ?? { metric: { name: "score", direction: "higher_better", threshold: 0.5 } },
   }));
   return {
     ...value,

@@ -25,6 +25,7 @@ import {
   type StructureAction,
 } from "./workflow-compiler.js";
 import { beginOrdinaryWave, finishOrdinaryWave } from "./scorer-state.js";
+import { acquireLineageHold, releaseLineageHold } from "./lineage-lock.js";
 import { readFrozenPolicy, workflowCycleDirectory } from "./workflow-state.js";
 import { readOuterRunState, type OuterRunIdentity } from "./workflow-runtime.js";
 import { readStoredReviewReceipt, type ReviewReceipt } from "./review-submit.js";
@@ -140,6 +141,10 @@ function immutableJson(filePath: string, value: unknown, schemaVersion: string):
 }
 
 function ensureStructureWaveMarker(projectRoot: string, outerRunId: string): void {
+  // The lineage comes first: a descendant that is mid-iteration must refuse
+  // this wave before the global slot is taken, or the slot would be held by a
+  // wave that cannot proceed.
+  acquireLineageHold(projectRoot, outerRunId, "structure");
   const markerPath = path.join(path.resolve(projectRoot), ".aris", "active-wave.json");
   if (fs.existsSync(markerPath)) {
     const marker = readStateFile(markerPath);
@@ -497,8 +502,10 @@ export function recordStructureReview(input: RecordStructureReviewInput): Struct
     review,
     "review-receipt-v1",
   );
-  if (nextStatus === "rejected")
+  if (nextStatus === "rejected") {
     finishOrdinaryWave(input.project_root, "structure", input.outer_run_id, "failed");
+    releaseLineageHold(input.project_root, input.outer_run_id, "structure");
+  }
   return next;
 }
 
@@ -512,5 +519,6 @@ export function finishStructureWave(
   if (record.status === "prepared")
     failA1("STRUCTURE_REVIEW_REQUIRED", "structure wave cannot finish before review");
   finishOrdinaryWave(projectRoot, "structure", outerRunId, status);
+  releaseLineageHold(projectRoot, outerRunId, "structure");
   return record;
 }

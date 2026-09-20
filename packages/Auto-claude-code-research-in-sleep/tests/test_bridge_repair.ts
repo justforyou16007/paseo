@@ -8,6 +8,8 @@ import { execFileSync } from "node:child_process";
 import { createRootRun } from "../src/tools/run-contract.js";
 import { createChildContract } from "./helpers/child-contract.js";
 import { resolveRunWikiScope } from "../src/tools/wiki-scope.js";
+import { childIndexPath, readDispatchStructure } from "../src/tools/child-index.js";
+import { recordDecompositionGraph } from "../src/tools/decomposition-graph.js";
 
 const TSX_CLI = "/home/liu/paseo/node_modules/tsx/dist/cli.mjs";
 const MERGE_TS = path.resolve("src/tools/dashboard-merge.ts");
@@ -412,8 +414,128 @@ function testExhaustedTuningCompletesWithoutAProposal(): void {
   }
 }
 
+/**
+ * An orchestration bridge reports the structure it dispatched, and the merge
+ * re-derives that structure from the parent's own index before believing it.
+ * The patch carries no metric on purpose: nothing has been measured at the
+ * moment the children are handed out.
+ */
+function testOrchestrationReceiptMustMatchTheDispatch(): void {
+  const root = tempDir("aris-orchestration-receipt-");
+  try {
+    const runId = "train-5";
+    makeRun(root, runId);
+    createChildContract(root, runId, "kid-a", "alpha", false, 2);
+    createChildContract(root, runId, "kid-b", "beta", false, 2);
+    // The index is the parent's record of what it dispatched. These tests do
+    // not run a bridge, so the fixture writes what a bridge would have written.
+    writeJson(childIndexPath(root, runId), {
+      schema_version: 1,
+      positions: [
+        { position_id: "alpha", task_sha256: "a".repeat(64), child_run_id: "kid-a", generation: 1 },
+        {
+          position_id: "beta",
+          task_sha256: "b".repeat(64),
+          child_run_id: "kid-b",
+          generation: 1,
+          depends_on: ["alpha"],
+        },
+      ],
+    });
+    const structure = readDispatchStructure(root, runId);
+    const orchestration = (patch: Record<string, unknown>, slot: string) =>
+      makeReceipt(root, runId, slot, {}, "structure", "done", {
+        worker: "orchestration-bridge",
+        phase: "experiment-bridge",
+        reserve: false,
+        dashboard_patch: patch,
+      });
+
+    expectMergeFails(
+      root,
+      runId,
+      orchestration(
+        { child_run_ids: structure.child_run_ids, structure_sha256: "c".repeat(64) },
+        "orchestration-wrong-hash",
+      ),
+      /does not match the structure this run dispatched/,
+    );
+    expectMergeFails(
+      root,
+      runId,
+      orchestration(
+        { child_run_ids: ["kid-a"], structure_sha256: structure.structure_sha256 },
+        "orchestration-missing-child",
+      ),
+      /does not name the children this run dispatched/,
+    );
+    // A bridge that dispatched children has measured nothing, so the metric
+    // keys are not its to write.
+    expectMergeFails(
+      root,
+      runId,
+      orchestration(
+        {
+          child_run_ids: structure.child_run_ids,
+          structure_sha256: structure.structure_sha256,
+          "metric.current": 0.7,
+        },
+        "orchestration-with-metric",
+      ),
+      /is not allowed to patch 'metric.current'/,
+    );
+
+    const accepted = orchestration(
+      { child_run_ids: structure.child_run_ids, structure_sha256: structure.structure_sha256 },
+      "orchestration-ok",
+    );
+    assert.match(merge(root, runId, accepted), /"applied":true/);
+    const dashboard = JSON.parse(fs.readFileSync(dashboardPath(root, runId), "utf8")) as Record<
+      string,
+      unknown
+    >;
+    assert.deepEqual(dashboard.child_run_ids, structure.child_run_ids);
+    assert.equal(dashboard.structure_sha256, structure.structure_sha256);
+    // Nothing was measured, so metric history stays where the fixture left it.
+    assert.deepEqual(readDashboard(root, runId).metric.history, [{ iter: 1, value: 0.6 }]);
+
+    // Once this run has recorded a decomposition, it is being judged on that
+    // decomposition, so the ordinary experiment bridge receipt is closed to
+    // it: that receipt would publish a metric before any child ran.
+    recordDecompositionGraph(root, runId, 1, [
+      { position_id: "alpha", problem: "survey alpha", expected_output: "notes", constraints: {}, depends_on: [] },
+      { position_id: "beta", problem: "survey beta", expected_output: "notes", constraints: {}, depends_on: ["alpha"] },
+    ]);
+    expectMergeFails(
+      root,
+      runId,
+      makeReceipt(root, runId, "decomposed-as-experiment", {}, "structure", "done", {
+        worker: "experiment-bridge",
+        dashboard_patch: { "metric.current": 0.7, experiment_ids: ["exp-a"] },
+      }),
+      /must be reported by orchestration-bridge/,
+    );
+    // And the analysis that is allowed to publish a number cannot publish one
+    // either, because the children it would be a number about are still out.
+    setPhase(root, runId, "analyze-results");
+    expectMergeFails(
+      root,
+      runId,
+      makeReceipt(root, runId, "analysis-before-collection", {}, "analysis", "done", {
+        worker: "analyze-results",
+        phase: "analyze-results",
+        dashboard_patch: { "metric.current": 0.7, "metric.delta": 0.1 },
+      }),
+      /cannot be measured yet[\s\S]*ROUND_INCOMPLETE/,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 testRepairAndRetry();
 testInsufficientEvidenceReturnsToTheBridge();
 testExhaustedTuningCompletesWithoutAProposal();
 testRepairBoundaries();
+testOrchestrationReceiptMustMatchTheDispatch();
 console.log("bridge repair tests passed");

@@ -21,6 +21,7 @@ import {
   writeStateJsonAtomic,
 } from "./state-file.js";
 import { validateBridgeExpansionPlan } from "./experiment-bridge.js";
+import { inheritRunWiki } from "./wiki-inherit.js";
 
 export interface RunIdentityMaterial {
   charter_sha256: string;
@@ -1030,6 +1031,75 @@ export function createRootRun(input: CreateRootRunInput): RunRecord {
   });
 }
 
+/**
+ * Free a position so the next generation can take it over.
+ *
+ * A child's `scope_path` is the position it occupies under its parent, and a
+ * scope is owned exclusively, so the predecessor's lease has to go before
+ * `createRun` can lease the same path for the successor. Two separate facts
+ * have to hold, and neither implies the other:
+ *
+ *  - The predecessor published a `result-package.json`. That is the only
+ *    on-disk proof that its work is over. The scope lock cannot stand in for
+ *    it: a child agent runs in its own process and never takes a lease of its
+ *    own, so an unfinished child leaves no trace in the lock file.
+ *  - No other live process holds a lease on the position. Leases are taken by
+ *    whoever created the run, which for a bridge child is always the parent,
+ *    so in the ordinary case the token being retired belongs to this very
+ *    process and would otherwise never expire.
+ */
+function retirePositionPredecessor(
+  projectRoot: string,
+  child: { run_id: string; parent_run_id: string; scope_path: string },
+  predecessorRunId: string,
+): void {
+  // Knowledge and a position only travel along one position under one parent.
+  // Without this check a plan could name any run in the project and give a
+  // child a past that was never about its task.
+  const predecessor = requireRunContract(projectRoot, predecessorRunId);
+  if (
+    predecessor.parent_run_id !== child.parent_run_id ||
+    predecessor.scope_path !== child.scope_path ||
+    predecessor.run_id === child.run_id
+  )
+    failA1(
+      "IDENTITY_MISMATCH",
+      "a position is handed over only within the same position under the same parent",
+      "bridge_child_run.plan.predecessor_run_id",
+    );
+  // Built from runOwnedPath rather than imported from result-package.ts, which
+  // already depends on this module for the run contract.
+  if (!fs.existsSync(runOwnedPath(projectRoot, predecessor.run_id, "result-package.json")))
+    failA1(
+      "RUN_SCOPE_ACTIVE",
+      "the previous generation of this position has not published a result package",
+      "bridge_child_run.plan.predecessor_run_id",
+    );
+  const root = projectRootPath(projectRoot);
+  const filePath = scopeLockPath(root);
+  withStateFileLock(filePath, () => {
+    const records = scopeRecords(root);
+    const record = records.find(
+      (item) => item.run_id === predecessor.run_id && item.scope_path === predecessor.scope_path,
+    );
+    if (record === undefined) return;
+    if (
+      record.lease_tokens.some((token) => {
+        const owner = record.lease_owners[token];
+        return owner !== undefined && owner !== process.pid && processAlive(owner);
+      })
+    )
+      failA1(
+        "RUN_SCOPE_ACTIVE",
+        `scope '${predecessor.scope_path}' is still held by run '${predecessor.run_id}'`,
+      );
+    writeScopeRecords(
+      filePath,
+      records.filter((item) => item !== record),
+    );
+  });
+}
+
 const BRIDGE_CHILD_RUN_INPUT_FIELDS = ["project_root", "plan", "child_run_id"] as const;
 
 /**
@@ -1068,6 +1138,8 @@ export function createBridgeChildRun(input: unknown): RunRecord {
     depth: child.depth,
     scope_path: child.scope_path,
   });
+  if (child.predecessor_run_id !== undefined)
+    retirePositionPredecessor(projectRoot, child, child.predecessor_run_id);
   reserveRunExecution({
     project_root: projectRoot,
     run_id: child.parent_run_id,
@@ -1110,6 +1182,8 @@ export function createBridgeChildRun(input: unknown): RunRecord {
     writeStateJsonAtomic(snapshotPath, snapshot);
   });
   initializeRunBudget(projectRoot, run.run_id, child.budget);
+  if (child.predecessor_run_id !== undefined && child.inherits_wiki === true)
+    inheritRunWiki(projectRoot, child.predecessor_run_id, run.run_id);
   return updateRun(projectRoot, run.run_id, {
     output_hashes: {
       ...run.output_hashes,

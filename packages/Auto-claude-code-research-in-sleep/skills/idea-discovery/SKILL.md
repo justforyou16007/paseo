@@ -85,6 +85,14 @@ policy). The bridge checks the frozen scope and reserves this run's budget.
 Declare `strategy` (`bfs` or `dfs`) and `strategy_reason` in the plan; these are
 research decisions made here.
 
+On a run whose own target is its decomposition, the graph was recorded before
+this worker ran. Name only positions that generation already has, and leave
+their `problem`, `expected_output`, `constraints` and edges to `bridge-input`,
+which fills them in from the recorded graph; everything else about a child
+(resources, budget, validator) is still decided here. Add
+`remaining_generations` when more rounds are intended, counting this one, so
+the bridge splits the run budget across them instead of spending it all now.
+
 <!-- A2-5-BRIDGE-CONTRACT:START -->
 ```json
 {
@@ -92,7 +100,8 @@ research decisions made here.
   "fields": {
     "children": {"required": true, "type": "array<object>", "required_item_fields": ["position_id", "execution_plan", "charter", "resource_request"], "example": []},
     "strategy": {"required": true, "enum": ["bfs", "dfs"]},
-    "strategy_reason": {"required": true, "type": "string"}
+    "strategy_reason": {"required": true, "type": "string"},
+    "remaining_generations": {"required": false, "type": "integer>=1"}
   }
 }
 ```

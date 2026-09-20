@@ -9,6 +9,7 @@ import { createBaselineScope } from "../../src/tools/baseline-scope.js";
 import { createResourceInventory } from "../../src/tools/resource-inventory.js";
 import { planExperimentBridge } from "../../src/tools/experiment-bridge.js";
 import { createBridgeChildRun, readRun, type RunRecord } from "../../src/tools/run-contract.js";
+import { saveChildAcceptance } from "../../src/tools/child-acceptance.js";
 
 // State tests prepare children (module or tester) through B; their outer root must exist.
 export function createChildContract(
@@ -128,5 +129,8 @@ export function createChildContract(
       },
     ],
   }));
+  // Same order a real dispatch uses: the standard the child will be judged by
+  // lands before the child, so its charter never points at a missing file.
+  saveChildAcceptance(root, plan.children.find((child) => child.run_id === runId)!.acceptance);
   return createBridgeChildRun({ project_root: root, plan, child_run_id: runId });
 }

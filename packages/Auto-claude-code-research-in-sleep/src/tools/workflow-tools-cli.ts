@@ -57,6 +57,13 @@ import {
   readStructureWave,
   recordStructureReview,
 } from "./structure-wave.js";
+import {
+  latestDecompositionGeneration,
+  prepareDecompositionWave,
+  readDecompositionGraph,
+  recordDecompositionGraph,
+  validateDecompositionPositions,
+} from "./decomposition-graph.js";
 import { registerScorerWaveForOuter } from "./scorer-wave-runtime.js";
 import {
   publishTesterFeedbackSignals,
@@ -226,6 +233,53 @@ program
       }),
     );
   });
+
+// A decomposition is decided once per generation and dispatched in as many
+// rounds as its serial edges require, so recording it is its own step rather
+// than a side effect of the first dispatch.
+program
+  .command("decomposition-record")
+  .requiredOption("--project <path>", "Project root")
+  .requiredOption("--run <id>", "Parent run")
+  .requiredOption("--generation <number>", "Generation being decomposed")
+  .requiredOption("--input <path>", "the generation's positions")
+  .action((options: RunInputOption & { generation: string }) => {
+    const input = document(options.input);
+    print(
+      recordDecompositionGraph(
+        options.project,
+        options.run,
+        requireInteger(Number(options.generation), "generation", 1),
+        validateDecompositionPositions(input.positions),
+      ),
+    );
+  });
+program
+  .command("decomposition-prepare")
+  .requiredOption("--input <path>", "single frozen decomposition proposal")
+  .action((options: InputOption) =>
+    print(
+      prepareDecompositionWave(
+        readStateFile<Parameters<typeof prepareDecompositionWave>[0]>(options.input),
+      ),
+    ),
+  );
+program
+  .command("decomposition-status")
+  .requiredOption("--project <path>", "Project root")
+  .requiredOption("--run <id>", "Parent run")
+  .option("--generation <number>", "Generation, defaults to the newest recorded one")
+  .action((options: RunOption & { generation?: string }) =>
+    print(
+      readDecompositionGraph(
+        options.project,
+        options.run,
+        options.generation === undefined
+          ? latestDecompositionGeneration(options.project, options.run)
+          : requireInteger(Number(options.generation), "generation", 1),
+      ),
+    ),
+  );
 
 program
   .command("structure-prepare")

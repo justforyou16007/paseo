@@ -24,7 +24,9 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { hasDecomposition } from "./decomposition-graph.js";
 import { readDashboardMetric } from "./metric-gate.js";
+import { collectOrchestrationRound, roundChildSummaries } from "./orchestration-round.js";
 import {
   buildResultPackageForRun,
   saveResultPackage,
@@ -309,6 +311,17 @@ export function planResultExport(input: Omit<ResultExportInput, "review">): Resu
   if (winner.gate_metric !== null) localMetrics.metric_gate = winner.gate_metric;
   localMetrics.winning_iteration = winner.iteration;
 
+  // An orchestration run's result stands on the children it dispatched, so the
+  // package names them. The list is read back from the current generation
+  // rather than accumulated as the children finish: a position that was
+  // re-dispatched in a later generation is represented by the run that
+  // actually holds it now.
+  const childSummaries = hasDecomposition(projectRoot, input.run_id)
+    ? roundChildSummaries(
+        collectOrchestrationRound({ project_root: projectRoot, parent_run_id: input.run_id }),
+      )
+    : [];
+
   const head = eventLogHead(readWikiEvents(wikiRoot));
   const resultInput: ResultPackageInput = {
     run_id: input.run_id,
@@ -321,6 +334,7 @@ export function planResultExport(input: Omit<ResultExportInput, "review">): Resu
     local_metrics: localMetrics,
     wiki_head_ref: head.event_id,
     ...(input.summary === undefined ? {} : { summary: input.summary }),
+    ...(childSummaries.length === 0 ? {} : { child_summaries: childSummaries }),
   };
   const built = buildResultPackageForRun(projectRoot, input.run_id, resultInput);
   return { candidate: built.package, result_input: resultInput, winner, ranked };

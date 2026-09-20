@@ -34,6 +34,7 @@ import {
 import { createTaskSetup } from "../src/tools/task-setup.js";
 import { buildTesterDefinition } from "../src/tools/tester-state.js";
 import { createRootRun, runJsonPath, runOwnedPath } from "../src/tools/run-contract.js";
+import { acquireLineageHold, releaseLineageHold } from "../src/tools/lineage-lock.js";
 import { createRootCharter, saveRootCharter } from "../src/tools/root-charter.js";
 import {
   createBaselineScope,
@@ -879,6 +880,52 @@ function createRecursiveRuntimeBridgeFixture(
     ...worker,
   };
 }
+
+test("a parent cannot restructure while a dispatched child is mid-cycle, and a child cannot start a cycle under a restructuring parent", () => {
+  const root = createRootRuntimeBridgeFixture();
+  try {
+    const rootResult = runBridgeHandoff(root, "root-for-lineage-lock");
+    const child = rootResult.plan.children[0]!;
+    // The root is mid-cycle itself (that is what dispatched the child), and a
+    // parent iteration never blocks a child: this only fails once the root
+    // starts restructuring.
+    acquireLineageHold(root.projectRoot, ROOT_RUN_ID, "structure");
+    const blocked = expectError(
+      () => createRecursiveRuntimeBridgeFixture(root, child),
+      "LINEAGE_LOCKED",
+      "child cycle must not begin under a restructuring parent",
+    );
+    assert.equal(blocked.code, "LINEAGE_LOCKED");
+    // The child's run was started before its cycle was refused; once the
+    // parent is done restructuring the same cycle begins normally.
+    releaseLineageHold(root.projectRoot, ROOT_RUN_ID, "structure");
+    const started = beginOuterCycle({
+      execution_root: root.executionRoot,
+      project_root: root.projectRoot,
+      outer_run_id: child.run_id,
+      parent_run_id: child.parent_run_id,
+      depth: child.depth,
+      scope_path: child.scope_path,
+      task_id: TASK_ID,
+      workflow_id: WORKFLOW_ID,
+      wave_id: "wave:a2-5-phase3-lineage",
+      wave_kind: "module",
+      evidence_paths: [path.join(root.projectRoot, "recursive-cycle-evidence.txt")],
+    });
+    assert.notEqual(started.active_cycle, null);
+    const locked = expectError(
+      () => acquireLineageHold(root.projectRoot, ROOT_RUN_ID, "structure"),
+      "LINEAGE_LOCKED",
+      "parent restructuring must wait for the child's cycle",
+    );
+    assert.equal(locked.code, "LINEAGE_LOCKED");
+    for (const secret of [child.run_id, child.scope_path, String(child.depth)])
+      assert.equal(locked.message.includes(secret), false, `LINEAGE_LOCKED leaks ${secret}`);
+  } finally {
+    fs.rmSync(root.projectRoot, { recursive: true, force: true });
+    fs.rmSync(root.executionRoot, { recursive: true, force: true });
+  }
+});
 
 function expectError(
   action: () => unknown,

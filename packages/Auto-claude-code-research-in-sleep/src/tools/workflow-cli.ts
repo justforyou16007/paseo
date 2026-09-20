@@ -3,6 +3,7 @@ import type { Command } from "commander";
 import { createCli, runCli } from "../lib/cli.js";
 import { createArtifactRegistry } from "./artifact-registry.js";
 import { prepareBridgeInput } from "./bridge-input.js";
+import { collectOrchestrationRound, requireCompleteRound } from "./orchestration-round.js";
 import { readStateFile } from "./state-file.js";
 import {
   commitPromotion,
@@ -14,6 +15,7 @@ import {
   failA1,
   isRecord,
   requireFiniteNumber,
+  requireInteger,
   requireString,
   type JsonObject,
 } from "./workflow-spec.js";
@@ -216,6 +218,41 @@ runOptions(
   };
   print(runAutoResearchBridge(input));
 });
+
+// Collecting reads the children back; it owns no execution root, so it asks
+// for nothing it does not use. `--require-complete` is the form the parent
+// uses before it assembles: it refuses while any position is still open.
+program
+  .command("bridge-collect")
+  .requiredOption("--project <path>", "research project root")
+  .requiredOption("--run <id>", "parent run id")
+  .option("--generation <n>", "decomposition generation, defaults to the newest")
+  .option("--require-complete", "fail unless every position has a terminal child")
+  .action(
+    (options: { project: string; run: string; generation?: string; requireComplete?: boolean }) => {
+      const projectRoot = requireString(options.project, "project_root");
+      const runId = assertIdentifier(options.run, "run_id");
+      if (options.requireComplete === true) {
+        if (options.generation !== undefined)
+          failA1(
+            "INVALID_VALUE",
+            "a completeness check is always about the newest generation",
+            "generation",
+          );
+        print(requireCompleteRound(projectRoot, runId));
+        return;
+      }
+      print(
+        collectOrchestrationRound({
+          project_root: projectRoot,
+          parent_run_id: runId,
+          ...(options.generation === undefined
+            ? {}
+            : { generation: requireInteger(Number(options.generation), "generation", 1) }),
+        }),
+      );
+    },
+  );
 
 const resume = testerAgentOption(
   runOptions(program.command("resume")).option(

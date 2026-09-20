@@ -702,6 +702,89 @@ missing helper, bridge input, evidence file or non-zero command exit stops the
 current phase and produces a report; there is no second expansion
 implementation to try.
 
+## When the decomposition is the thing being optimized
+
+A run can be asked to optimize how a question is split up rather than to answer
+one: its positions are whole sub-ARLs, and what improves between iterations is
+which positions exist, what each is asked, and which of them are serial. Such a
+run walks the same phases. Four things happen around the bridge hand-off that an
+ordinary run does not do.
+
+`WORKFLOW_TOOLS_CLI` is the one `workflow-tools-cli.js` resolved by
+[`shared-references/integration-contract.md`](../shared-references/integration-contract.md),
+the same way `WORKFLOW_CLI` is resolved above.
+
+**1. Record the generation before dispatching it.** The graph is decided first
+and carried out second; a dispatch never decides one.
+
+```bash
+node "$WORKFLOW_TOOLS_CLI" decomposition-record \
+  --project "$PROJECT_ROOT" \
+  --run "$OUTER_RUN_ID" \
+  --generation "$GENERATION" \
+  --input "$DECOMPOSITION_JSON"
+```
+
+`$DECOMPOSITION_JSON` is `{"positions": [...]}`, each position carrying
+`position_id`, `problem`, `expected_output`, `constraints` and `depends_on`
+(empty means it runs in parallel with everything else). Generation 1 is the
+run's baseline: creating it is all the justification it needs. A later
+generation exists only after the tester has spoken - freeze the change with
+`decomposition-prepare` first, which takes the previous generation as its
+baseline and one tester-feedback signal as its reason, and `decomposition-record`
+is what releases the structure hold that wave took. Each generation is recorded
+once; re-recording different positions is refused, and changing what a position
+asks makes new children with new Wikis rather than reusing the old ones.
+
+**2. Dispatch, possibly in stages.** Run the same `bridge-input` and
+`bridge-expand` commands; both pick the recorded graph up from disk, fill each
+position's task in from it, and check the dispatch against it. A position whose
+upstream has not published yet cannot be planned, so a graph with a serial edge
+reaches the bridge more than once - dispatch what step 4 reports as
+`dispatchable`, and come back for the rest when the edge is crossable. A
+dispatch may be a subset of the generation; it may not contain a position the
+generation does not have.
+
+**3. Start one agent per child run.** The bridge writes child contracts and
+starts nothing. For each `run_id` in the `bridge-expand` result, spawn one agent
+under [`shared-references/paseo-subagent-dispatch.md`](../shared-references/paseo-subagent-dispatch.md)
+Rule 2, bound to this same skill, and hand it exactly two values: the project
+root and its own run id. No parent run id, no position, no generation - a child
+is told what to do, not who dispatched it, and everything it needs is already in
+its own charter. The child's tester is the acceptance its parent froze for it;
+a sub-ARL never reaches the task tester and never spends tester exposure.
+
+**4. Collect the generation back.**
+
+```bash
+node "$WORKFLOW_CLI" bridge-collect \
+  --project "$PROJECT_ROOT" \
+  --run "$OUTER_RUN_ID" \
+  [--require-complete]
+```
+
+Without the flag this reports where the round stands: which positions are
+`dispatchable`, `waiting`, `running`, and which came back `accepted`, plus each
+child's verdict against the acceptance its parent gave it. With
+`--require-complete` it fails `ROUND_INCOMPLETE` until every position the
+generation declared has a terminal child. Nothing is written either way - the
+answer is read from the recorded graph, the child index and each child's
+published result package, and the scoring is `collectOrchestrationRound` in
+`src/tools/orchestration-round.ts`. Do not re-derive a child's verdict here.
+
+**5. Assemble, then measure.** Only once the round is complete does this run
+measure the assembled whole with its own validator and publish `metric.current`
+through the ordinary `analyze-results` receipt. `dashboard-merge` refuses that
+key while any child is still out, so there is no round whose number describes
+half a structure. The metric gate then runs unchanged: what it compares is this
+generation's assembly against the last one's, which is what makes the
+decomposition the thing being optimized.
+
+If more generations are intended, say so once in the upstream artifact's
+`remaining_generations` (see `/idea-discovery`'s bridge contract). The bridge
+splits this run's budget across the generations still to come, so the first one
+cannot spend all of it.
+
 ## Result status routing
 
 The bridge applies the priority below before interpreting execution outcome.

@@ -6,6 +6,12 @@ import {
   type BaselineScope,
   type OptimizablePosition,
 } from "./baseline-scope.js";
+import {
+  hasDecomposition,
+  latestDecompositionGeneration,
+  readDecompositionGraph,
+  type DecompositionGraph,
+} from "./decomposition-graph.js";
 import { readResourceInventory, type ResourceInventory } from "./resource-inventory.js";
 import { readRootCharter } from "./root-charter.js";
 import { requireRunContract, runOwnedPath, type RunRecord } from "./run-contract.js";
@@ -47,6 +53,14 @@ export interface BridgeInputSources {
   baseline: BaselineScope;
   resource_inventory: ResourceInventory;
   idea_discovery: unknown;
+  /**
+   * The decomposition this run already recorded for the generation it is about
+   * to dispatch, if it is an orchestration run. The tasks come from here and
+   * not from the upstream artifact: the graph was decided and frozen before
+   * this command ran, so an artifact that restated a task differently would be
+   * a second writer of the same fact.
+   */
+  decomposition?: DecompositionGraph;
 }
 
 const IDEA_DISCOVERY_CANDIDATE_IDS_FIELD = "candidate_ids";
@@ -272,17 +286,78 @@ export function buildBridgeInput(sources: BridgeInputSources): ExperimentBridgeI
       );
     seen.add(position.position_id);
   }
+  // How many generations the parent still intends to run, itself included. The
+  // bridge splits the parent budget across them, so a first generation that
+  // claimed all of it would leave the later ones unable to dispatch anything.
+  const remaining = sources.idea_discovery.remaining_generations;
+  const decomposition = sources.decomposition;
   return {
     run: sources.run,
     charter: sources.charter,
     baseline: sources.baseline,
     resource_inventory: sources.resource_inventory,
-    positions,
+    positions:
+      decomposition === undefined
+        ? positions
+        : positions.map((position) => decomposedPosition(decomposition, position)),
     strategy: sources.idea_discovery.strategy as ExperimentBridgeInput["strategy"],
     strategy_reason: requireString(
       isRecord(sources.idea_discovery) ? sources.idea_discovery.strategy_reason : undefined,
       "idea_discovery.strategy_reason",
     ),
+    ...(decomposition === undefined
+      ? {}
+      : { orchestration: true, generation: decomposition.generation }),
+    ...(remaining === undefined
+      ? {}
+      : {
+          remaining_generations: requireInteger(
+            remaining,
+            "idea_discovery.remaining_generations",
+            1,
+          ),
+        }),
+  };
+}
+
+/**
+ * Put the frozen task back on a dispatched position.
+ *
+ * The upstream artifact decides which positions this dispatch covers and how
+ * each one is run - its resources, its budget, its validator. What the child
+ * is being asked is not its decision: that is the decomposition, and a
+ * dispatch may only be a subset of it. Filling the task in here means the
+ * bridge's own check against the recorded graph can only fail on a document
+ * that was edited after this command wrote it.
+ */
+function decomposedPosition(
+  decomposition: DecompositionGraph,
+  position: BridgePositionInput,
+): BridgePositionInput {
+  const declared = decomposition.positions.find(
+    (entry) => entry.position_id === position.position_id,
+  );
+  if (declared === undefined)
+    failA1(
+      "DECOMPOSITION_MISMATCH",
+      `position '${position.position_id}' is not in generation ${decomposition.generation} of this run's decomposition`,
+      "positions",
+    );
+  if (position.charter === undefined)
+    failA1(
+      "INVALID_VALUE",
+      `position '${position.position_id}' needs a charter to carry its task and validator`,
+      `positions.${position.position_id}.charter`,
+    );
+  return {
+    ...position,
+    charter: {
+      ...position.charter,
+      problem: declared.problem,
+      expected_output: declared.expected_output,
+      constraints: declared.constraints,
+    },
+    depends_on: [...declared.depends_on],
   };
 }
 
@@ -379,12 +454,22 @@ export function prepareBridgeInput(input: BridgeInputRequest): PreparedBridgeInp
       `idea-discovery receipt is missing at ${paths.receipt_path}`,
       paths.receipt_path,
     );
+  const orchestrating = hasDecomposition(input.project_root, run.run_id);
   const bridge = buildBridgeInput({
     run,
     charter: readCurrentCharter(input.project_root, run),
     baseline: readBaselineScope(input.project_root, run.run_id),
     resource_inventory: readResourceInventory(input.project_root, run.run_id),
     idea_discovery: readStateFile<unknown>(paths.idea_discovery_path),
+    ...(orchestrating
+      ? {
+          decomposition: readDecompositionGraph(
+            input.project_root,
+            run.run_id,
+            latestDecompositionGeneration(input.project_root, run.run_id),
+          ),
+        }
+      : {}),
   });
   // The stored document names no storage root. bridge-expand receives the
   // project through its own --project locator and rejects a document that
