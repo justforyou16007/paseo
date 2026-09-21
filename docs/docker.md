@@ -6,6 +6,9 @@ container gives you both the daemon API and a self-hosted UI.
 
 The image source lives in [`docker/`](../docker/).
 
+On a Debian or Ubuntu host you can install the same daemon outside a
+container instead — see [docs/debian.md](debian.md).
+
 ## How it works
 
 The official image:

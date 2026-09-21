@@ -1,0 +1,20 @@
+Package: paseo
+Version: @VERSION@
+Architecture: @ARCH@
+Maintainer: @MAINTAINER@
+Section: devel
+Priority: optional
+Homepage: https://paseo.sh
+Depends: nodejs (>= 22), git, openssh-client, ca-certificates, procps
+Installed-Size: @INSTALLED_SIZE@
+Description: Monitor and control local AI coding agents from anywhere
+ Paseo runs a daemon that manages AI coding agent sessions and serves a
+ browser UI on the same port, so you can drive your development environment
+ from any device on your network.
+ .
+ This package installs the daemon, the paseo CLI and the bundled web UI,
+ plus systemd units for running the daemon either as your own login user
+ or as a dedicated system service.
+ .
+ Agent CLIs (Claude Code, Codex, Copilot, OpenCode, Pi) are not bundled and
+ must be installed separately.

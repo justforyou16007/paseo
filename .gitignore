@@ -99,3 +99,6 @@ app.json
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+
+# Debian packaging staging tree and built .deb
+dist-deb/

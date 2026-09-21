@@ -1,0 +1,57 @@
+#!/bin/sh
+set -e
+
+ENV_DIR=/etc/paseo
+ENV_FILE="$ENV_DIR/paseo.env"
+TEMPLATE=/usr/share/paseo/paseo.env.example
+SYSTEM_HOME=/var/lib/paseo
+
+case "$1" in
+  configure)
+    if ! getent group paseo >/dev/null; then
+      addgroup --system paseo
+    fi
+    if ! getent passwd paseo >/dev/null; then
+      adduser --system --ingroup paseo --home "$SYSTEM_HOME" \
+              --shell /usr/sbin/nologin --disabled-password \
+              --gecos "Paseo daemon" paseo
+    fi
+    mkdir -p "$SYSTEM_HOME/.paseo"
+    chown -R paseo:paseo "$SYSTEM_HOME"
+
+    # The env file is generated rather than shipped as a conffile: it carries a
+    # per-machine password, so there is no sensible packaged default for dpkg
+    # to diff against on upgrade.
+    if [ ! -e "$ENV_FILE" ]; then
+      mkdir -p "$ENV_DIR"
+      password="$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | cut -c1-24)"
+      sed "s|@GENERATED_PASSWORD@|$password|" "$TEMPLATE" > "$ENV_FILE"
+      chown root:paseo "$ENV_FILE"
+      chmod 640 "$ENV_FILE"
+      echo "paseo: generated $ENV_FILE with a random PASEO_PASSWORD."
+    fi
+
+    if [ -d /run/systemd/system ]; then
+      systemctl daemon-reload || true
+    fi
+
+    cat <<'MSG'
+
+Paseo is installed but not started. Pick one:
+
+  Your own user (sees your code and your agent logins, the usual choice):
+      mkdir -p ~/.config/paseo && cp /usr/share/paseo/paseo.env.example ~/.config/paseo/paseo.env
+      $EDITOR ~/.config/paseo/paseo.env     # set PASEO_PASSWORD
+      systemctl --user enable --now paseo
+      sudo loginctl enable-linger "$USER"   # keep it running when logged out
+
+  Dedicated system service (isolated /var/lib/paseo, will not see your home):
+      sudo systemctl enable --now paseo
+
+Then open http://<this-host>:6767 and enter the password from the env file.
+
+MSG
+    ;;
+esac
+
+exit 0

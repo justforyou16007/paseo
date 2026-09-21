@@ -1,0 +1,22 @@
+[Unit]
+Description=Paseo daemon (system-wide)
+Documentation=https://paseo.sh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=paseo
+Group=paseo
+# Agents launched by the daemon read their credentials out of this home and
+# write to the workspaces mounted under it. Do not add ProtectHome= or
+# ReadOnlyPaths= here: it would leave the agent CLIs unable to log in.
+Environment=HOME=/var/lib/paseo
+Environment=PASEO_HOME=/var/lib/paseo/.paseo
+EnvironmentFile=-/etc/paseo/paseo.env
+ExecStart=/usr/bin/node /usr/lib/paseo/lib/node_modules/@getpaseo/server/dist/scripts/supervisor-entrypoint.js
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
