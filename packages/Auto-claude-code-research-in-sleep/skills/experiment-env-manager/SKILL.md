@@ -2,7 +2,7 @@
 name: experiment-env-manager
 description: 'Sole entry point for experiment environment lifecycle: baseline creation, runtime error handling, and on-demand audit. Dispatches /experiment-env-configuration for script generation and /experiment-env-audit for validation. Manages repair loops until the environment passes or requires human intervention. Use when user says "set up experiment environment", "fix experiment env", "env error", "环境管理", "环境出错", "configure environment", or when experiment agents report environment failures.'
 argument-hint: "[— project: <name>] [— mode: setup|error-report|audit] [— error-report: <path>] [— run-id: <id>] [— paseo-config: <path>]"
-allowed-tools: Bash(*), Read, Write, Grep, Glob, AskUserQuestion, WebSearch, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission
+allowed-tools: Bash(*), Read, Write, Grep, Glob, AskUserQuestion, WebSearch, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__create_heartbeat, mcp__paseo__delete_heartbeat
 ---
 
 > **Paseo dispatch contract (Rules 1-5).** This skill is a thin orchestrator.
@@ -20,6 +20,12 @@ allowed-tools: Bash(*), Read, Write, Grep, Glob, AskUserQuestion, WebSearch, mcp
 > **Sole entry point.** All environment initialization, repair, and audit
 > requests go through this skill. No downstream skill dispatches
 > `/experiment-env-configuration` or `/experiment-env-audit` directly.
+
+> **Dispatch watchdog (mandatory).** Every `mcp__paseo__create_agent` in this
+> skill is covered by `shared-references/paseo-subagent-dispatch.md`
+> §"The dispatch watchdog": arm a self-target watchdog before ending the turn
+> to wait, disarm once no awaited child turn remains. The procedure lives
+> there, not here.
 
 # Experiment Environment Manager
 
@@ -65,23 +71,37 @@ specifies what differs (inputs, dispatch prompt, post-processing).
 ```
 1. Write state to .aris/env-config/<project>/env-manager-state.json
 
-2. Dispatch via mcp__paseo__create_agent using the resolved run config:
+2. Dispatch via mcp__paseo__create_agent using the resolved run config.
+   env-configuration runs on the executor leg, env-audit on the reviewer leg:
    title:          "env-<mode>: <project> round <N>"
-   provider:       $ENV_EXECUTOR_PROVIDER
+   provider:       $ENV_EXECUTOR_PROVIDER   (audit: $ENV_REVIEWER_PROVIDER)
    settings:       { modeId: $ENV_EXECUTOR_MODE,
                      thinkingOptionId: $ENV_EXECUTOR_THINKING }
+                   (audit: $ENV_REVIEWER_MODE / $ENV_REVIEWER_THINKING)
    initialPrompt:  "/<skill-name> <arguments>"
    notifyOnFinish: $ENV_NOTIFY_ON_FINISH
 
-3. Wait for completion notification.
+3. Arm the dispatch watchdog on yourself, then end the turn.
 
-4. Read receipt file (file path only -- never the agent's prose).
+4. Resume on the completion notification -- or on a watchdog tick, if the
+   notification was lost.
 
-5. Archive the worker: mcp__paseo__archive_agent
+5. Read receipt file (file path only -- never the agent's prose).
+
+6. Archive the worker: mcp__paseo__archive_agent
    (用完即 archive -- Rule 1)
 
-6. Update env-manager-state.json with results.
+7. Update env-manager-state.json with results, and disarm the watchdog once
+   no dispatched child is outstanding.
 ```
+
+Steps 3 and 7 are the shared watchdog protocol, not a local invention: both the
+arm/disarm shape and the tick behaviour come from
+`shared-references/paseo-subagent-dispatch.md` §"The dispatch watchdog". This
+skill adds one fact of its own — a tick that finds a child's output already on
+disk (`ENV_CONFIG_AUDIT_STRUCTURED.json` for audit, the receipt for
+env-configuration) treats the notification as lost and runs the normal
+post-dispatch branch from step 5.
 
 ---
 
@@ -106,11 +126,27 @@ fi
 ENV_EXECUTOR_PROVIDER=$(jq -er '.executor_provider' "$PASEO_CONFIG") || exit 1
 ENV_EXECUTOR_MODE=$(jq -er '.executor_mode' "$PASEO_CONFIG") || exit 1
 ENV_EXECUTOR_THINKING=$(jq -r '.executor_thinking // empty' "$PASEO_CONFIG")
+ENV_REVIEWER_PROVIDER=$(jq -er '.reviewer_provider' "$PASEO_CONFIG") || exit 1
+ENV_REVIEWER_MODE=$(jq -er '.reviewer_mode' "$PASEO_CONFIG") || exit 1
+ENV_REVIEWER_THINKING=$(jq -r '.reviewer_thinking // empty' "$PASEO_CONFIG")
 ENV_NOTIFY_ON_FINISH=$(jq -er '.notify_on_finish' "$PASEO_CONFIG") || exit 1
+
+# Cross-family guard — the audit leg must not be the same model family as the
+# leg that generated the bundle, or the bundle is graded by its own author.
+if [ "${ENV_REVIEWER_PROVIDER%%/*}" = "${ENV_EXECUTOR_PROVIDER%%/*}" ]; then
+  echo "ERROR: reviewer_provider ($ENV_REVIEWER_PROVIDER) is the same model family"
+  echo "as executor_provider ($ENV_EXECUTOR_PROVIDER). Fix CLAUDE.md ## ARIS Paseo"
+  echo "-> reviewer_provider (e.g. codex/gpt-5.5) and re-run."
+  exit 1
+fi
 ```
 
-Every create-agent call in every mode uses these values. Omit
-`thinkingOptionId` when `ENV_EXECUTOR_THINKING` is empty. Never hardcode a
+**Two legs, two providers.** `/experiment-env-configuration` generates the
+bundle and runs on the **executor** leg. `/experiment-env-audit` grades that
+bundle and runs on the **reviewer** leg — it is the agent that authors
+`overall_verdict`, so dispatching it on the executor provider would let the
+bundle's own model family grade it (`acceptance-gate.md`, Type-B). Omit
+`thinkingOptionId` when the matching thinking value is empty. Never hardcode a
 provider in this skill. When called by auto-research-loop, preserve its
 `run-id` so the completion receipt path is known before dispatch.
 
@@ -489,14 +525,14 @@ rm -f "$CONFIG_DIR/ENV_CONFIG_AUDIT.md" \
 ```
 mcp__paseo__create_agent
   title:          "env-audit: <project> round <current_round>"
-  provider:       $ENV_EXECUTOR_PROVIDER
-  settings:       { modeId: $ENV_EXECUTOR_MODE, thinkingOptionId: $ENV_EXECUTOR_THINKING }
+  provider:       $ENV_REVIEWER_PROVIDER
+  settings:       { modeId: $ENV_REVIEWER_MODE, thinkingOptionId: $ENV_REVIEWER_THINKING }
   initialPrompt:  |
     /experiment-env-audit — project: <project> — target: promoted — report-format: structured — paseo-config: <PASEO_CONFIG>
 
     <PASEO_CONFIG> is the resolved paseo-config path from Phase 0: hand it
-    over so the audit's reviewer dispatch (provider / mode / thinking) reads
-    the same CLAUDE.md ## ARIS Paseo values this run was configured with.
+    over so the audit reads the same CLAUDE.md ## ARIS Paseo values this run
+    was configured with, and can confirm it was dispatched on the reviewer leg.
 
     Audit the experiment environment configuration at:
       Bundle:  .claude/skills/run-<project>-experiment/
@@ -629,8 +665,8 @@ WHILE TRUE:
 
             mcp__paseo__create_agent
               title:          "env-audit: <project> round <N>"
-              provider:       $ENV_EXECUTOR_PROVIDER
-              settings:       { modeId: $ENV_EXECUTOR_MODE, thinkingOptionId: $ENV_EXECUTOR_THINKING }
+              provider:       $ENV_REVIEWER_PROVIDER
+              settings:       { modeId: $ENV_REVIEWER_MODE, thinkingOptionId: $ENV_REVIEWER_THINKING }
               initialPrompt:  |
                 /experiment-env-audit — project: <project> — target: promoted — report-format: structured — patch-id: <CURRENT_PATCH_ID> — paseo-config: <PASEO_CONFIG>
               notifyOnFinish: $ENV_NOTIFY_ON_FINISH
@@ -681,8 +717,8 @@ WHILE TRUE:
 
              mcp__paseo__create_agent
                title:          "env-audit: <project> re-audit after user fix"
-               provider:       $ENV_EXECUTOR_PROVIDER
-               settings:       { modeId: $ENV_EXECUTOR_MODE, thinkingOptionId: $ENV_EXECUTOR_THINKING }
+               provider:       $ENV_REVIEWER_PROVIDER
+               settings:       { modeId: $ENV_REVIEWER_MODE, thinkingOptionId: $ENV_REVIEWER_THINKING }
                initialPrompt:  |
                  /experiment-env-audit — project: <project> — target: promoted — report-format: structured — patch-id: <CURRENT_PATCH_ID> — paseo-config: <PASEO_CONFIG>
                notifyOnFinish: $ENV_NOTIFY_ON_FINISH
@@ -932,8 +968,8 @@ done
 
    mcp__paseo__create_agent
      title:          "env-audit: <project> post-error-repair"
-     provider:       $ENV_EXECUTOR_PROVIDER
-     settings:       { modeId: $ENV_EXECUTOR_MODE, thinkingOptionId: $ENV_EXECUTOR_THINKING }
+     provider:       $ENV_REVIEWER_PROVIDER
+     settings:       { modeId: $ENV_REVIEWER_MODE, thinkingOptionId: $ENV_REVIEWER_THINKING }
      initialPrompt:  |
        /experiment-env-audit — project: <project> — target: promoted — report-format: structured — patch-id: <CURRENT_PATCH_ID> — paseo-config: <PASEO_CONFIG>
      notifyOnFinish: $ENV_NOTIFY_ON_FINISH
@@ -964,8 +1000,8 @@ AUDIT_DISPATCH_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 mcp__paseo__create_agent
   title:          "env-audit-diagnosis: <project>"
-  provider:       $ENV_EXECUTOR_PROVIDER
-  settings:       { modeId: $ENV_EXECUTOR_MODE, thinkingOptionId: $ENV_EXECUTOR_THINKING }
+  provider:       $ENV_REVIEWER_PROVIDER
+  settings:       { modeId: $ENV_REVIEWER_MODE, thinkingOptionId: $ENV_REVIEWER_THINKING }
   initialPrompt:  |
     /experiment-env-audit — project: <project> — target: promoted — report-format: structured — paseo-config: <PASEO_CONFIG>
 
@@ -1105,8 +1141,8 @@ AUDIT_DISPATCH_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 mcp__paseo__create_agent
   title:          "env-audit: <project> (on-demand)"
-  provider:       $ENV_EXECUTOR_PROVIDER
-  settings:       { modeId: $ENV_EXECUTOR_MODE, thinkingOptionId: $ENV_EXECUTOR_THINKING }
+  provider:       $ENV_REVIEWER_PROVIDER
+  settings:       { modeId: $ENV_REVIEWER_MODE, thinkingOptionId: $ENV_REVIEWER_THINKING }
   initialPrompt:  |
     /experiment-env-audit — project: <project> — target: promoted — report-format: structured — paseo-config: <PASEO_CONFIG>
 
@@ -1269,8 +1305,10 @@ Rule 3, file-paths-only receipts).
 4. **Repair until resolved.** No fixed upper limit on repair rounds. Stop
    only when: (a) audit passes or warns, (b) user chooses force-deploy or
    abort, (c) auto-fix is impossible AND user escalation is needed.
-5. **Fresh reviewer per audit.** Each `/experiment-env-audit` dispatch
-   creates a new sub-agent. Never continue a prior audit thread -- the
+5. **Fresh reviewer per audit, on the reviewer leg.** Each
+   `/experiment-env-audit` dispatch creates a new sub-agent on
+   `$ENV_REVIEWER_PROVIDER` -- never `$ENV_EXECUTOR_PROVIDER`, which is the
+   leg that generated the bundle. Never continue a prior audit thread -- the
    reviewer must not be anchored on a previously seen draft.
 6. **File-paths-only receipts.** Receipt carries paths, not summaries. The
    dispatching parent reads the files themselves.
@@ -1289,6 +1327,12 @@ Rule 3, file-paths-only receipts).
     read `patch_targets` from each failing check (not from a top-level array).
     Each check owns its targets — the manager constructs one patch with
     `changes[]` entries drawn from all failing checks' targets.
+11. **Never end a waiting turn without a watchdog.** Every dispatch in this
+    skill ends the turn to wait for a finish notification that a daemon
+    restart can erase. Arm the self-target watchdog first (Step W) and disarm
+    it when the last child is handled. Without it, a lost notification stalls
+    env-manager and every caller above it with no signal that anything is
+    wrong.
 
 ## External Dependencies
 

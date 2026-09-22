@@ -2,11 +2,17 @@
 name: idea-discovery
 description: 'Discover ideas: survey literature, generate and filter candidates, verify novelty, and produce a refined proposal with an experiment plan. Runs directly or as a dispatched worker, where it reads only the manifest inputs and the sealed Wiki head.'
 argument-hint: [research-direction]
-allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, WebSearch, WebFetch, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent
+allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, WebSearch, WebFetch, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent, mcp__paseo__create_heartbeat, mcp__paseo__delete_heartbeat
 # Cross-model review uses paseo codex sub-agent exclusively (paseo-reviewer-dispatch.md)
 ---
 
 > **Paseo substrate.** This workflow runs as a paseo claude sub-agent; its sub-skills dispatch as paseo sub-agents and its cross-model reviewer as a paseo codex sub-agent. See `shared-references/paseo-subagent-dispatch.md` + `paseo-reviewer-dispatch.md`.. **Strict mode**: Paseo MCP is required; if unavailable, the run BLOCKS (per `paseo-subagent-dispatch.md`).
+
+> **Dispatch watchdog (mandatory).** Every `mcp__paseo__create_agent` in this
+> skill is covered by `shared-references/paseo-subagent-dispatch.md`
+> §"The dispatch watchdog": arm a self-target watchdog before ending the turn
+> to wait, disarm once no awaited child turn remains. The procedure lives
+> there, not here.
 
 # Idea Discovery
 

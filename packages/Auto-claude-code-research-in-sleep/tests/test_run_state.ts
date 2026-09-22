@@ -2479,30 +2479,162 @@ test("contract: analyze-results verifier is cross-model (not claude)", () => {
 });
 
 // ============================================================================
+// Contract: the dispatch watchdog is defined once and cited, never copied
+// ============================================================================
+
+// A skill is dispatch-capable when its frontmatter lets it call create_agent.
+// experiment-env-audit mentions the tool only to say it deliberately lacks it
+// (it IS the cross-model jury and must not nest a second one), so its prose
+// mentions are expected and it is not dispatch-capable.
+const NON_DISPATCHING_MENTIONS = new Set([
+  "experiment-env-audit", // jury host: create_agent withheld on purpose
+  "meta-optimize", // mentions the tool name inside a trace-log schema
+]);
+
+function skillFiles(): { name: string; relativePath: string; text: string; allowed: string }[] {
+  const dir = path.resolve("skills");
+  return fs
+    .readdirSync(dir)
+    .filter((name) => fs.existsSync(path.join(dir, name, "SKILL.md")))
+    .map((name) => {
+      const relativePath = `skills/${name}/SKILL.md`;
+      const text = fs.readFileSync(path.join(dir, name, "SKILL.md"), "utf-8");
+      const allowed = text.split("\n").find((line) => line.startsWith("allowed-tools:")) ?? "";
+      return { name, relativePath, text, allowed };
+    });
+}
+
+test("contract: every dispatch-capable skill cites the shared watchdog protocol", () => {
+  // A finish notification is an in-memory subscription on the waiting agent's
+  // side. A daemon restart erases it and nothing times out, so an agent that
+  // dispatches and ends its turn without a self-target watchdog waits forever,
+  // and so does every caller above it. create_heartbeat is self-target-only,
+  // so every level must arm its own — which means every dispatching skill
+  // needs the tools and the instruction.
+  const dispatching = skillFiles().filter((s) => s.allowed.includes("mcp__paseo__create_agent"));
+  assert.ok(dispatching.length > 20, "expected the dispatch-capable set to be most of the skills");
+
+  for (const skill of dispatching) {
+    assert.ok(skill.allowed.includes("mcp__paseo__create_heartbeat"),
+      `${skill.relativePath} dispatches children — it must be able to arm its own watchdog`);
+    assert.ok(skill.allowed.includes("mcp__paseo__delete_heartbeat"),
+      `${skill.relativePath} must be able to disarm; an abandoned watchdog keeps waking a dead pipeline`);
+    assert.ok(skill.text.includes("**Dispatch watchdog (mandatory).**"),
+      `${skill.relativePath} must carry the verbatim watchdog citation line`);
+    assert.ok(/§"The dispatch watchdog"/.test(skill.text),
+      `${skill.relativePath} must name the section of paseo-subagent-dispatch.md that owns the procedure`);
+  }
+});
+
+test("contract: no skill restates the watchdog procedure locally", () => {
+  // The procedure lives in one place so a change to it lands in one place.
+  // These two strings are watchdog internals with no other meaning: the
+  // per-agent schedule/handle name, and the config key holding its cadence.
+  // Either appearing in a SKILL.md means the procedure was copied back in.
+  for (const skill of skillFiles()) {
+    assert.ok(!skill.text.includes("dispatch-watch"),
+      `${skill.relativePath} names the watchdog handle/schedule directly — cite the protocol instead`);
+    assert.ok(!skill.text.includes("dispatch_heartbeat_cron"),
+      `${skill.relativePath} reads the watchdog cadence itself — the protocol does that`);
+  }
+});
+
+test("contract: paseo-subagent-dispatch.md owns the watchdog procedure", () => {
+  // The citation lines are only worth anything if the section they point at
+  // is actually there and actually complete.
+  const doc = fs.readFileSync(path.resolve("skills/shared-references/paseo-subagent-dispatch.md"), "utf-8");
+  assert.ok(doc.includes("## The dispatch watchdog"),
+    "the cited section heading must exist");
+  assert.ok(doc.includes("**Dispatch watchdog (mandatory).**"),
+    "the section must define the verbatim citation line skills copy");
+  for (const owned of ["dispatch_heartbeat_cron", "dispatch-watch-<run_id>-$PASEO_AGENT_ID", "expiresIn"]) {
+    assert.ok(doc.includes(owned), `the protocol must specify ${owned}`);
+  }
+  const cadence = fs.readFileSync(path.resolve("skills/shared-references/external-cadence.md"), "utf-8");
+  assert.ok(cadence.includes("dispatch-watch-<run_id>-<own_agent_id>"),
+    "external-cadence.md still owns the heartbeat bounds convention the protocol defers to");
+});
+
+test("contract: a skill that dispatches in prose declares the tool", () => {
+  // claims-drafting, render-html and slides-polish each told their agent to
+  // spawn a reviewer via create_agent while omitting it from allowed-tools —
+  // an instruction the agent cannot carry out. Catch that shape directly.
+  for (const skill of skillFiles()) {
+    if (NON_DISPATCHING_MENTIONS.has(skill.name)) continue;
+    if (!skill.text.includes("mcp__paseo__create_agent")) continue;
+    assert.ok(skill.allowed.includes("mcp__paseo__create_agent"),
+      `${skill.relativePath} instructs a create_agent call but does not allow the tool`);
+  }
+});
+
+// ============================================================================
+// Contract: the watchdog cadence reaches agents through the paseo config
+// ============================================================================
+
+test("contract: render_w_agent_prompt.sh emits the watchdog keys", () => {
+  // CLAUDE.md ## ARIS Paseo documents these two, and the skills dispatch from
+  // the emitted JSON. If the emitter drops them, every caller silently falls
+  // back to a default no user can change.
+  const render = fs.readFileSync(path.resolve("tools/render_w_agent_prompt.sh"), "utf-8");
+  for (const key of ["dispatch_heartbeat_cron", "dispatch_heartbeat_expires"]) {
+    assert.ok(render.includes(`v=$(read_var ${key})`),
+      `emitter must read ${key} from CLAUDE.md ## ARIS Paseo`);
+    assert.ok(render.includes(`"${key}": "$${key}"`),
+      `emitter must write ${key} into the paseo config`);
+  }
+  const template = fs.readFileSync(path.resolve("templates/CLAUDE_MD_PASEO_SECTION.md"), "utf-8");
+  for (const key of ["dispatch_heartbeat_cron", "dispatch_heartbeat_expires"]) {
+    assert.ok(template.includes(key),
+      `${key} must stay documented in the CLAUDE.md template the emitter reads`);
+  }
+});
+
+// ============================================================================
 // Contract: experiment-env-audit verdict agent is cross-model
 // ============================================================================
 
 test("contract: experiment-env-audit verdict agent is cross-model and config-resolved", () => {
+  const em = fs.readFileSync(path.resolve("skills/experiment-env-manager/SKILL.md"), "utf-8");
   const ea = fs.readFileSync(path.resolve("skills/experiment-env-audit/SKILL.md"), "utf-8");
-  const p1Start = ea.indexOf("## Phase 1:");
-  const p15Start = ea.indexOf("## Phase 1.5:");
-  assert.ok(p1Start >= 0 && p15Start > p1Start, "must find Phase 1 dispatch section");
-  const phase1 = ea.slice(p1Start, p15Start);
 
-  // The verdict agent in the dispatch block must not be claude: the env config
-  // bundle is generated by a claude executor, so a claude auditor is same-family.
-  assert.ok(!phase1.includes("provider: claude\n"),
-    "Phase 1 audit agent must not use provider: claude (same family as the env-config executor)");
-  // The provider must be resolved from the paseo config, not hardcoded.
-  assert.ok(phase1.includes("provider: $ENV_REVIEWER_PROVIDER"),
-    "Phase 1 audit agent provider must come from $ENV_REVIEWER_PROVIDER (CLAUDE.md ## ARIS Paseo)");
-  assert.ok(!phase1.includes("provider: codex/gpt-5.5\n"),
-    "Phase 1 audit agent provider must not be hardcoded to codex/gpt-5.5");
-  // Phase 0 must render the paseo config from CLAUDE.md and guard the family.
-  assert.ok(ea.includes(".reviewer_provider"),
-    "Phase 0 must read reviewer_provider from the rendered paseo config");
-  assert.ok(ea.includes("Cross-family guard"),
-    "Phase 0 must refuse a claude-family reviewer_provider");
+  // env-audit authors overall_verdict, so the agent running it IS the jury.
+  // env-manager must dispatch it on the reviewer leg — dispatching it on the
+  // executor leg puts the bundle's own model family in the jury box.
+  const emLines = em.split("\n");
+  const auditDispatches = emLines.flatMap((line, index) =>
+    line.includes("title:") && line.includes("env-audit") ? [index] : []);
+  assert.ok(auditDispatches.length > 0, "env-manager must dispatch /experiment-env-audit");
+  for (const index of auditDispatches) {
+    const block = emLines.slice(index, index + 3).join("\n");
+    assert.ok(block.includes("provider:") && block.includes("$ENV_REVIEWER_PROVIDER"),
+      `env-audit dispatch at line ${index + 1} must use $ENV_REVIEWER_PROVIDER, not the executor leg`);
+    assert.ok(!block.includes("$ENV_EXECUTOR_PROVIDER"),
+      `env-audit dispatch at line ${index + 1} must not use $ENV_EXECUTOR_PROVIDER`);
+  }
+  // env-configuration generates the bundle and stays on the executor leg.
+  const configDispatches = emLines.flatMap((line, index) =>
+    line.includes("title:") && line.includes("env-config") ? [index] : []);
+  assert.ok(configDispatches.length > 0, "env-manager must dispatch /experiment-env-configuration");
+  for (const index of configDispatches) {
+    const block = emLines.slice(index, index + 3).join("\n");
+    assert.ok(block.includes("$ENV_EXECUTOR_PROVIDER"),
+      `env-config dispatch at line ${index + 1} must use $ENV_EXECUTOR_PROVIDER`);
+  }
+  // Neither leg may be hardcoded, and the two must be proven different families.
+  assert.ok(em.includes(".reviewer_provider") && em.includes(".executor_provider"),
+    "env-manager must read both legs from the rendered paseo config");
+  assert.ok(em.includes("Cross-family guard"),
+    "env-manager must refuse a reviewer_provider in the executor's family");
+
+  // env-audit must not nest a reviewer: a child on either leg shares a family
+  // with this host or with the bundle's author.
+  const eaAllowed = ea.split("\n").find((line) => line.startsWith("allowed-tools:")) ?? "";
+  assert.ok(!eaAllowed.includes("mcp__paseo__create_agent"),
+    "env-audit must not hold create_agent — it is itself the cross-model reviewer, not a dispatcher");
+  assert.ok(!/^\s*mcp__paseo__create_agent\s*$/m.test(ea),
+    "env-audit must contain no create_agent dispatch block");
+  assert.ok(ea.includes("$PASEO_AGENT_ID"),
+    "env-audit must verify its own provider via get_agent_status on $PASEO_AGENT_ID");
 });
 
 // ============================================================================

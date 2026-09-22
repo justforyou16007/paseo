@@ -2,12 +2,18 @@
 name: experiment-audit
 description: 'Audit experiment integrity before claiming results. Uses cross-model review (external reviewer backend) to check for fake ground truth, score normalization fraud, phantom results, and insufficient scope. Use when user says "审计实验", "check experiment integrity", "audit results", "实验诚实度", or after experiments complete before writing claims.'
 argument-hint: [experiment-dir-or-results-path]
-allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent, mcp__manual_review__review, mcp__manual_review__review_reply
+allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent, mcp__manual_review__review, mcp__manual_review__review_reply, mcp__paseo__create_heartbeat, mcp__paseo__delete_heartbeat
 ---
 
 > **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in [](shared-references/paseo-subagent-dispatch.md) (Rule 1: One Agent = One Skill; Rule 4: Paseo MCP Only, Strict). Spawn any sub-skill or sub-phase via `mcp__paseo__create_agent` — do **not** use the host `Skill` / `Agent` / `Task` tools.
 
 > **Paseo substrate.** This skill runs inside a paseo claude sub-agent; its cross-model integrity reviewer is a paseo codex sub-agent (fresh round 1, continued for follow-ups). See `shared-references/paseo-reviewer-dispatch.md`..
+
+> **Dispatch watchdog (mandatory).** Every `mcp__paseo__create_agent` in this
+> skill is covered by `shared-references/paseo-subagent-dispatch.md`
+> §"The dispatch watchdog": arm a self-target watchdog before ending the turn
+> to wait, disarm once no awaited child turn remains. The procedure lives
+> there, not here.
 
 # Experiment Audit: Cross-Model Integrity Verification
 

@@ -2,11 +2,17 @@
 name: paper-writing
 description: 'Workflow 3: Full paper writing pipeline that goes from a narrative report to a polished, submission-ready PDF. Use when user says "写论文全流程", "write paper pipeline", "从报告到PDF", "paper writing", or wants the complete paper generation workflow.'
 argument-hint: "[narrative-report-path-or-topic] [— style-ref: <source>]"
-allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent
+allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent, mcp__paseo__create_heartbeat, mcp__paseo__delete_heartbeat
 
 ---
 
 > **Paseo substrate.** This workflow (W3) runs as a paseo claude sub-agent; its sub-skills dispatch as paseo sub-agents and each audit's cross-model reviewer as a paseo codex sub-agent (fresh). `auto-paper-improvement-loop` spawns a FRESH codex reviewer each round (REVIEWER_BIAS_GUARD). See `shared-references/paseo-subagent-dispatch.md` + `paseo-reviewer-dispatch.md`.. **Strict mode**: Paseo MCP is required; if unavailable, the run BLOCKS (per `paseo-subagent-dispatch.md`).
+
+> **Dispatch watchdog (mandatory).** Every `mcp__paseo__create_agent` in this
+> skill is covered by `shared-references/paseo-subagent-dispatch.md`
+> §"The dispatch watchdog": arm a self-target watchdog before ending the turn
+> to wait, disarm once no awaited child turn remains. The procedure lives
+> there, not here.
 
 # Workflow 3: Paper Writing Pipeline
 

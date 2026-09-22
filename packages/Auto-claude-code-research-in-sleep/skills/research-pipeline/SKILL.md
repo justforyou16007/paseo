@@ -2,10 +2,16 @@
 name: research-pipeline
 description: 'Full end-to-end research pipeline: from a broad research direction through idea discovery, experiments, and review all the way to a polished paper PDF. Use when user says "全流程", "full pipeline", "从找idea到投稿", "end-to-end research", or wants the complete autonomous research lifecycle.'
 argument-hint: "[research-direction] [— resume <run_id>]"
-allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, WebSearch, WebFetch, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent, mcp__paseo__create_heartbeat
+allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, WebSearch, WebFetch, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent, mcp__paseo__create_heartbeat, mcp__paseo__delete_heartbeat
 
 # See "Paseo substrate setup" — the orchestrator probes once and selects the path.
 ---
+
+> **Dispatch watchdog (mandatory).** Every `mcp__paseo__create_agent` in this
+> skill is covered by `shared-references/paseo-subagent-dispatch.md`
+> §"The dispatch watchdog": arm a self-target watchdog before ending the turn
+> to wait, disarm once no awaited child turn remains. The procedure lives
+> there, not here.
 
 # Full Research Pipeline: Idea → Experiments → Submission (paseo orchestrator)
 

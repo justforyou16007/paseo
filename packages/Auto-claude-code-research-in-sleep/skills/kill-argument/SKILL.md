@@ -2,12 +2,18 @@
 name: kill-argument
 description: 'Two-thread adversarial review: a fresh reviewer constructs the strongest 200-word rejection memo, then a second fresh reviewer defends the paper point-by-point and surfaces still-unresolved critical issues. Optionally files unresolved findings as research-wiki open problems and emits a diagnostic experiment plan (`— problem-output` / `— plan-output`). Use when user says "kill argument", "adversarial review", "hostile review", "rebuttal preparation", "reviewer-2 simulation", or before submitting a theory paper that has already passed standard review rounds.'
 argument-hint: "[paper-or-results-directory] [— problem-output: <research-wiki/>] [— plan-output: <plan.md>] [— render html: false]"
-allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent
+allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent, mcp__paseo__create_heartbeat, mcp__paseo__delete_heartbeat
 ---
 
 > **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in [](shared-references/paseo-subagent-dispatch.md) (Rule 1: One Agent = One Skill; Rule 4: Paseo MCP Only, Strict). Spawn any sub-skill or sub-phase via `mcp__paseo__create_agent` — do **not** use the host `Skill` / `Agent` / `Task` tools.
 
 > **Paseo substrate.** This skill runs inside a paseo claude sub-agent; its 2-thread Attack-Adjudication uses two FRESH paseo codex reviewer sub-agents (no continuation between them). See `shared-references/paseo-reviewer-dispatch.md` + `fan-out-pattern.md`..
+
+> **Dispatch watchdog (mandatory).** Every `mcp__paseo__create_agent` in this
+> skill is covered by `shared-references/paseo-subagent-dispatch.md`
+> §"The dispatch watchdog": arm a self-target watchdog before ending the turn
+> to wait, disarm once no awaited child turn remains. The procedure lives
+> there, not here.
 
 # Kill Argument Exercise: Adversarial Attack-Defense Review
 

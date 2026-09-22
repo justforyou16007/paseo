@@ -2,8 +2,14 @@
 name: claims-drafting
 description: 'Draft patent claims for an invention. Use when user says "撰写权利要求", "draft claims", "写权利要求书", "claim drafting", or wants to create patent claims. The core skill of the patent pipeline.'
 argument-hint: [invention-disclosure-path]
-allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, WebSearch, WebFetch
+allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, WebSearch, WebFetch, mcp__paseo__create_agent, mcp__paseo__create_heartbeat, mcp__paseo__delete_heartbeat
 ---
+
+> **Dispatch watchdog (mandatory).** Every `mcp__paseo__create_agent` in this
+> skill is covered by `shared-references/paseo-subagent-dispatch.md`
+> §"The dispatch watchdog": arm a self-target watchdog before ending the turn
+> to wait, disarm once no awaited child turn remains. The procedure lives
+> there, not here.
 
 # Claims Drafting: The Core Patent Skill
 

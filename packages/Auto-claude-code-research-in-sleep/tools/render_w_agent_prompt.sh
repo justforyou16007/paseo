@@ -12,11 +12,11 @@
 #     .aris/runs/<run_id>.paseo-config.json — the orchestrator reads this to
 #     fill create_agent's provider/settings/workspace/heartbeat params
 #     deterministically (script-guaranteed, not prose-driven — closes the
-#     integration-contract.md §2 gap where 9 of 12 vars were prose-only).
+#     integration-contract.md §2 gap where 9 of 14 vars were prose-only).
 #
 # Why a script (not inline prose): the initialPrompt binds a workflow
 # definition (a SKILL.md path) to a run's context deterministically, AND the
-# 12 paseo variables must reach create_agent without depending on the
+# 14 paseo variables must reach create_agent without depending on the
 # orchestrator Agent re-reading CLAUDE.md prose (which drifts under context
 # pressure). Prose can describe the integration; a script guarantees it.
 #
@@ -51,7 +51,7 @@ usage() {
 Usage: render_w_agent_prompt.sh --run-id <run_id> --root <root>
               [--phase <phase>] [--skill <skill-path>] [--extra "..."]
               [--role executor|reviewer] [--emit-config]
-  --emit-config : write .aris/runs/<run_id>.paseo-config.json (12 vars) and exit.
+  --emit-config : write .aris/runs/<run_id>.paseo-config.json (14 vars) and exit.
                   Requires only --run-id + --root. --phase/--skill ignored.
   Default mode : emit the W-agent initialPrompt to stdout.
                   Requires --phase --run-id --root --skill.
@@ -101,6 +101,8 @@ reviewer_provider="codex/gpt-5.5"
 reviewer_mode="full-access"
 reviewer_thinking="xhigh"
 notify_on_finish="true"
+dispatch_heartbeat_cron="*/30 * * * *"
+dispatch_heartbeat_expires="24h"
 heartbeat_cron="off"
 heartbeat_max_runs=""
 subagent_workspace="current"
@@ -137,6 +139,8 @@ if [ -f "$claude_md" ]; then
     v=$(read_var reviewer_mode);         [ -n "$v" ] && reviewer_mode="$v"
     v=$(read_var reviewer_thinking);     [ -n "$v" ] && reviewer_thinking="$v"
     v=$(read_var notify_on_finish);      [ -n "$v" ] && notify_on_finish="$v"
+    v=$(read_var dispatch_heartbeat_cron);    [ -n "$v" ] && dispatch_heartbeat_cron="$v"
+    v=$(read_var dispatch_heartbeat_expires); [ -n "$v" ] && dispatch_heartbeat_expires="$v"
     v=$(read_var heartbeat_cron);        [ -n "$v" ] && heartbeat_cron="$v"
     v=$(read_var heartbeat_max_runs);   [ -n "$v" ] && heartbeat_max_runs="$v"
     v=$(read_var subagent_workspace);    [ -n "$v" ] && subagent_workspace="$v"
@@ -172,6 +176,8 @@ if [ "$emit_config" -eq 1 ]; then
   "reviewer_mode": "$reviewer_mode",
   "reviewer_thinking": "$reviewer_thinking",
   "notify_on_finish": $notify_on_finish,
+  "dispatch_heartbeat_cron": "$dispatch_heartbeat_cron",
+  "dispatch_heartbeat_expires": "$dispatch_heartbeat_expires",
   "subagent_workspace": "$subagent_workspace",
   "max_phase_idle": $max_phase_idle,
   "heartbeat_cron": "$heartbeat_cron",

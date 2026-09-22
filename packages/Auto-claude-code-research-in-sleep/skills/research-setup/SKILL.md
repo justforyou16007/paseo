@@ -2,13 +2,19 @@
 name: research-setup
 description: 'Interactive Q&A setup wizard for new ARIS research projects. Bootstraps CLAUDE.md, RESEARCH_BRIEF.md, and research-wiki from user answers; experiment environment configuration is delegated to /experiment-env-manager, and baseline info (method, code location, expected metric) is written into RESEARCH_BRIEF so /auto-research-loop iteration 1 reproduces it through the normal pipeline. Resumable, bilingual (en/zh). Quick mode (default) applies defaults for budget, timeline, early stop, and Paseo config, then shows a review checklist before finishing. Use when user says "研究项目初始化", "setup project", "初始化研究项目", "research setup", "new project", "配置项目", or wants to configure a new ARIS research workspace.'
 argument-hint: "[project-name] [— language: en|zh] [— mode: quick|full]"
-allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, AskUserQuestion, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission
+allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, AskUserQuestion, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__create_heartbeat, mcp__paseo__delete_heartbeat
 ---
 
 > **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in
 > [](shared-references/paseo-subagent-dispatch.md) (Rule 1: One Agent = One Skill;
 > Rule 4: Paseo MCP Only, Strict). Phase 7.5 dispatches
 > `/experiment-env-manager` via `mcp__paseo__create_agent`.
+
+> **Dispatch watchdog (mandatory).** Every `mcp__paseo__create_agent` in this
+> skill is covered by `shared-references/paseo-subagent-dispatch.md`
+> §"The dispatch watchdog": arm a self-target watchdog before ending the turn
+> to wait, disarm once no awaited child turn remains. The procedure lives
+> there, not here.
 
 # Research Project Setup Wizard
 
@@ -729,17 +735,55 @@ PROJECT_SLUG=$(basename "$ROOT" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\
 SKILL_DIR=".claude/skills/run-${PROJECT_SLUG}-experiment"
 ```
 
+Render the run's paseo-config from the `## ARIS Paseo` block Phase 7 just
+wrote, and dispatch from it. Hardcoding a provider here would ignore the
+values the user confirmed in the Phase 7.4 checklist, and would leave
+env-manager to render a second config of its own:
+
+```bash
+SETUP_RUN_ID="setup-$(date +%Y%m%d-%H%M%S)-${PROJECT_SLUG}"
+RENDER=".aris/tools/render_w_agent_prompt.sh"
+[ -f "$RENDER" ] || RENDER="tools/render_w_agent_prompt.sh"
+[ -f "$RENDER" ] || { echo "ERROR: paseo config emitter is missing"; exit 1; }
+PASEO_CONFIG=$(bash "$RENDER" --emit-config --run-id "$SETUP_RUN_ID" --root "$ROOT")
+
+SETUP_EXECUTOR_PROVIDER=$(jq -er '.executor_provider' "$PASEO_CONFIG") || exit 1
+SETUP_EXECUTOR_MODE=$(jq -er '.executor_mode' "$PASEO_CONFIG") || exit 1
+SETUP_EXECUTOR_THINKING=$(jq -r '.executor_thinking // empty' "$PASEO_CONFIG")
+```
+
 ```
 mcp__paseo__create_agent
   title:    "env-manager: setup $PROJECT_SLUG"
-  provider: claude
-  initialPrompt: "/experiment-env-manager — project: $PROJECT_SLUG — mode: setup"
+  provider: $SETUP_EXECUTOR_PROVIDER
+  settings: { modeId: $SETUP_EXECUTOR_MODE, thinkingOptionId: $SETUP_EXECUTOR_THINKING }
+  initialPrompt: |
+    /experiment-env-manager — project: $PROJECT_SLUG — mode: setup — run-id: $SETUP_RUN_ID — paseo-config: $PASEO_CONFIG
   notifyOnFinish: true
 ```
 
+Omit `thinkingOptionId` when `SETUP_EXECUTOR_THINKING` is empty. Passing
+`— paseo-config` keeps env-manager (and the env-audit it dispatches on the
+reviewer leg) on the same resolved values this setup confirmed.
+
 The sub-agent handles all user interaction (AskUserQuestion) via paseo's
 permission forwarding — the user sees the questions in their terminal/app
-as normal. Wait for `notifyOnFinish`, then `mcp__paseo__archive_agent`.
+as normal.
+
+**Arm the dispatch watchdog before ending the turn**, per
+`shared-references/paseo-subagent-dispatch.md` §"The dispatch watchdog" — arm
+shape, handle path, name and disarm condition are all defined there. The reason
+it matters most here: env-manager setup is the longest wait in this wizard (the
+whole PRD → configure → audit → repair loop), so a lost finish notification
+leaves setup sitting at Phase 7.5 forever, looking exactly like a slow
+environment build.
+
+Two facts this phase contributes to the handle file: `phase` is
+`"7.5-env-manager"`, and the child's expected receipt is
+`.aris/runs/${SETUP_RUN_ID}.experiment-env-manager.${PROJECT_SLUG}.done.json` —
+a tick that finds that file treats the notification as lost and resumes. Phase
+7.5 dispatches one child, so the first handled child is also the last: archive
+it, disarm, delete the handle, continue.
 
 After it completes, transcribe results (do NOT judge them):
 

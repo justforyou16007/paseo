@@ -1,8 +1,14 @@
 ---
 name: scorer-loop
 description: Revise a module scorer in a dedicated outer wave using a sealed parent comparison, fixed coverage and an independent evidence review. Use when workflow diagnosis selects scorer revision rather than an ordinary model experiment.
-allowed-tools: Read, Write, Bash(*), mcp__paseo__create_agent, mcp__paseo__send_agent_prompt
+allowed-tools: Read, Write, Bash(*), mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__create_heartbeat, mcp__paseo__delete_heartbeat
 ---
+
+> **Dispatch watchdog (mandatory).** Every `mcp__paseo__create_agent` in this
+> skill is covered by `shared-references/paseo-subagent-dispatch.md`
+> §"The dispatch watchdog": arm a self-target watchdog before ending the turn
+> to wait, disarm once no awaited child turn remains. The procedure lives
+> there, not here.
 
 # Scorer revision loop
 

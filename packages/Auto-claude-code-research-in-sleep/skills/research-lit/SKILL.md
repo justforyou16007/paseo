@@ -2,13 +2,19 @@
 name: research-lit
 description: Search and analyze research papers, find related work, summarize key ideas. Use when user says "find papers", "related work", "literature review", "what does this paper say", or needs to understand academic papers.
 argument-hint: [paper-topic-or-url]
-allowed-tools: Bash(*), Read, Glob, Grep, WebSearch, WebFetch, Write, mcp__zotero__*, mcp__obsidian-vault__*, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent
+allowed-tools: Bash(*), Read, Glob, Grep, WebSearch, WebFetch, Write, mcp__zotero__*, mcp__obsidian-vault__*, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent, mcp__paseo__create_heartbeat, mcp__paseo__delete_heartbeat
 ---
 
 > **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in
 > `shared-references/paseo-subagent-dispatch.md`. Every child is created only
 > through Paseo MCP, and each create or continuation prompt is immediately
 > that child turn's finish notification re-invokes this agent.
+
+> **Dispatch watchdog (mandatory).** Every `mcp__paseo__create_agent` in this
+> skill is covered by `shared-references/paseo-subagent-dispatch.md`
+> §"The dispatch watchdog": arm a self-target watchdog before ending the turn
+> to wait, disarm once no awaited child turn remains. The procedure lives
+> there, not here.
 
 # Research Literature Review
 

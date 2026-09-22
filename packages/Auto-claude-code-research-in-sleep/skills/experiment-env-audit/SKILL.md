@@ -1,21 +1,29 @@
 ---
 name: experiment-env-audit
 description: 'Cross-model audit of a project''s experiment environment configuration with real execution verification. Static checks (G-K): command provenance, metric key agreement, failure detectability, environment reachability, analysis honesty. Execution checks (L-N): actually run the ops (sync-code, build-env, launch-job, collect-outputs, env-info) and verify real results are produced. Dynamic checks (O): simulate agent workflow with source modifications. Patch regression (P): verify patch did not break existing functionality. Dispatched exclusively by /experiment-env-manager.'
-argument-hint: "[— project: <name>] [— reviewer: codex|oracle-pro|manual] [— target: draft|promoted] [— report-format: standard|structured] [— patch-id: <id>] [— paseo-config: <path>]"
-allowed-tools: Bash(*), Read, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission
+argument-hint: "[— project: <name>] [— target: draft|promoted] [— report-format: standard|structured] [— patch-id: <id>] [— paseo-config: <path>]"
+allowed-tools: Bash(*), Read, Grep, Glob, mcp__paseo__get_agent_status
 ---
 
 > **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in
 > [](shared-references/paseo-subagent-dispatch.md) (Rule 1: One Agent = One Skill;
-> Rule 4: Paseo MCP Only, Strict). The audit is dispatched via
-> `mcp__paseo__create_agent` — not the host `Skill` / `Agent` / `Task` tools.
+> Rule 4: Paseo MCP Only, Strict). `/experiment-env-manager` dispatches this
+> skill via `mcp__paseo__create_agent` **on the reviewer leg**
+> (`reviewer_provider`, default `codex/gpt-5.5`).
+
+> **This agent IS the cross-model reviewer.** It does not spawn one. The
+> bundle under audit was generated on the executor leg
+> (`/experiment-env-configuration`, `executor_provider`, default a claude
+> model); this agent runs on the reviewer leg and applies the checklist
+> itself. A nested reviewer would be the same model family as this host —
+> a second opinion from the same jury is not a second opinion.
 
 > **Gate provenance** (`shared-references/acceptance-gate.md` step 5).
 > This skill produces a **Type-B verdict** — *is the frozen environment
-> configuration trustworthy?* The verdict is produced by `/experiment-audit`
-> on a **codex** sub-agent — a different model family from the claude
-> executor that generated the configuration — and is **read verbatim**. This
-> skill never forms its own opinion of the result.
+> configuration trustworthy?* The agent that applies the static checklist,
+> runs the execution checks, and authors `overall_verdict` is one and the
+> same, and it is cross-model relative to the configuration's author. Phase 0
+> step 5 verifies that before any check runs.
 
 # Experiment Environment Audit
 
@@ -33,10 +41,10 @@ This skill is dispatched exclusively by `/experiment-env-manager`. It is never
 dispatched directly by `/experiment-env-configuration` or other workflow skills.
 
 ```
-Phase 0    Resolve target bundle, parse patch-id, clear stale output
-Phase 1    Dispatch cross-model audit (/experiment-audit + checks G-K) — static analysis
+Phase 0    Resolve target bundle, parse patch-id, clear stale output, verify cross-model host
+Phase 1    Apply the static checklist (/experiment-audit A-F + checks G-K) — static analysis
 Phase 1.5  Execution verification — actually run prepare/run/collect and verify results (checks L-N-O-P)
-Phase 2    Read verdict (Type-B — verbatim, never self-judged)
+Phase 2    Settle the verdict (static half + execution half, no softening)
 Phase 3    Output report and machine-readable verdict
 ```
 
@@ -56,7 +64,6 @@ Phase 3    Output report and machine-readable verdict
    - `— project: <name>` — explicit project slug. If absent, derive from
      `basename "$ROOT"` (same logic as `/experiment-env-configuration` Phase 0).
    - `— target: draft|promoted` — which bundle to audit. Default: `draft`.
-   - `— reviewer: codex|oracle-pro|manual` — reviewer backend. Default: `codex`.
    - `— patch-id: <id>` — when present, this is a patch re-audit. Record the
      value for Check P and receipt output.
    - `- paseo-config: <path>` - a rendered `.aris/runs/<run_id>.paseo-config.json`
@@ -94,8 +101,9 @@ Phase 3    Output report and machine-readable verdict
    If prerequisites fail, report `{ "verdict": "error", "reason": "bundle not found" }`
    and stop.
 
-5. **Resolve the reviewer dispatch config from CLAUDE.md** (paseo-reviewer-dispatch.md
-   "Provider resolution: direct from config, never list_providers").
+5. **Verify this host is the cross-model leg.** This agent authors the
+   verdict, so the check is on **its own** provider — not on a value it is
+   about to dispatch with.
    ```bash
    AUDIT_RUN_ID="env-audit-$(date +%Y%m%d-%H%M%S)"
    PASEO_CONFIG="${ARG_PASEO_CONFIG:-.aris/runs/${AUDIT_RUN_ID}.paseo-config.json}"
@@ -105,57 +113,45 @@ Phase 3    Output report and machine-readable verdict
      [ -f "$RENDER" ] || { echo "ERROR: paseo config and config emitter are missing"; exit 1; }
      PASEO_CONFIG=$(bash "$RENDER" --emit-config --run-id "$AUDIT_RUN_ID" --root "$ROOT")
    fi
+   ENV_EXECUTOR_PROVIDER=$(jq -er '.executor_provider' "$PASEO_CONFIG") || exit 1
    ENV_REVIEWER_PROVIDER=$(jq -er '.reviewer_provider' "$PASEO_CONFIG") || exit 1
-   ENV_REVIEWER_MODE=$(jq -er '.reviewer_mode' "$PASEO_CONFIG") || exit 1
-   ENV_REVIEWER_THINKING=$(jq -r '.reviewer_thinking // empty' "$PASEO_CONFIG")
+   echo "executor family: ${ENV_EXECUTOR_PROVIDER%%/*}"
    ```
 
-   The provider is whatever CLAUDE.md `## ARIS Paseo` -> `reviewer_provider`
-   says (default `codex/gpt-5.5`) — never a value hardcoded in this skill.
+   Read your own provider with `mcp__paseo__get_agent_status` on
+   `$PASEO_AGENT_ID` (paseo injects it into every agent's environment) and
+   compare `snapshot.provider` with the executor family printed above.
 
-   **Cross-family guard:** the audited bundle was generated by a claude
-   executor, so a claude-family `reviewer_provider` would make the audit
-   same-family. If `$ENV_REVIEWER_PROVIDER` starts with `claude`, stop:
+   **Hard stop when they match.** A host in the executor's family is grading
+   work its own family produced:
    ```
-   ERROR: reviewer_provider "<value>" is same-family as the env-config
-   executor. Fix CLAUDE.md ## ARIS Paseo -> reviewer_provider to a
-   cross-model provider (e.g. codex/gpt-5.5) and re-run the audit.
+   ERROR: this audit is running on <host provider>, the same model family as
+   executor_provider (<value>). /experiment-env-manager must dispatch
+   /experiment-env-audit on reviewer_provider (<value>, e.g. codex/gpt-5.5).
+   Re-dispatch on the reviewer leg.
    ```
    No fallback, no silent substitution — a same-family jury is not a jury.
+   If `get_agent_status` is unavailable (not an agent-scoped session), stop
+   the same way: an unverifiable host is not a verified one.
 
 ---
 
-## Phase 1: Dispatch Cross-Model Audit
+## Phase 1: Static Checklist (applied by this agent)
 
-Dispatch a **paseo sub-agent** per Rule 1 / Rule 4 — never the host `Skill` tool.
-The audit agent MUST be cross-model (Type-B gate per `acceptance-gate.md`):
-the bundle under audit was generated by a claude executor
-(/experiment-env-configuration), so the verdict agent is the reviewer
-resolved in Phase 0 step 5 from CLAUDE.md `## ARIS Paseo` ->
-`reviewer_provider` (default `codex/gpt-5.5`) - never hardcoded in this
-skill. Per `paseo-reviewer-dispatch.md`, pass explicit `settings.modeId`
-for cross-provider dispatch.
+This agent is the cross-model reviewer (Phase 0 step 5 proved it). It reads the
+target files directly and applies the checklist itself. **Do not spawn a
+reviewer sub-agent** — a child on the reviewer leg is the same family as this
+host, and a child on the executor leg is the family that wrote the bundle.
+Neither is a second opinion.
+
+Apply `/experiment-audit`'s checklist A–F (read them from
+`skills/experiment-audit/SKILL.md` §"Step 2: Send to Reviewer" — the audit
+checklist inside that prompt block) scoped to the experiment-environment
+configuration, not to results. Then apply checks G–K below. Read every target
+file yourself; nothing here is a summary of it.
 
 ```
-mcp__paseo__create_agent
-  title:    "env-config audit: <project>"
-  provider: $ENV_REVIEWER_PROVIDER
-  settings:
-    modeId: $ENV_REVIEWER_MODE                # MANDATORY for cross-provider dispatch
-    thinkingOptionId: $ENV_REVIEWER_THINKING  # omit this line when empty
-  cwd:      $ROOT
-  initialPrompt: |
-    Run the skill /experiment-audit — reviewer: <REVIEWER_BACKEND>
-    scoped to the experiment-environment configuration, not to results.
-
-    You are the cross-model reviewer: the configuration bundle was generated
-    by a claude executor (/experiment-env-configuration). With the default
-    `- reviewer: codex`, apply the checklist below yourself — read the
-    target files directly and do NOT spawn another reviewer sub-agent. Only
-    `- reviewer: oracle-pro` / `- reviewer: manual` routes to those backends
-    per /experiment-audit's convention.
-
-    Audit target (paths only — read them yourself, they are not summarized here):
+    Audit target:
       Bundle directory:    <BUNDLE_DIR>/
       Frozen config:       <BUNDLE_DIR>/env.json
       Generated scripts:   <BUNDLE_DIR>/scripts/lib/env.sh, <BUNDLE_DIR>/scripts/ops/*.sh
@@ -164,8 +160,7 @@ mcp__paseo__create_agent
       Metric contract:     CLAUDE.md  (## Metric Target)
       Prior env answers:   <BUNDLE_DIR>/env.json (the bundle's own frozen config), .aris/setup-state.json
 
-    Apply checklist A–F as written, PLUS these configuration-specific checks.
-    Report each as PASS | WARN | FAIL with file:line evidence:
+    Report each check as PASS | WARN | FAIL with file:line evidence:
 
     G. Command provenance — does run.template correspond to a command that
        demonstrably ran during baseline reproduction (cite the EXPERIMENT_TRACKER
@@ -196,16 +191,12 @@ mcp__paseo__create_agent
     Write the report to .aris/env-config/<project>/ENV_CONFIG_AUDIT.md and the
     machine-readable verdict to .aris/env-config/<project>/ENV_CONFIG_AUDIT.json
     (same schema as EXPERIMENT_AUDIT.json, with checks G–K added).
-
-    Reply with the two file paths only.
 ```
 
-Then end the turn, resume on the finish notification, read the receipt file, and
-`mcp__paseo__archive_agent` (用完即 archive). **Never poll `get_agent_status`.**
+Write both files before Phase 1.5 starts. The execution checks append to
+`ENV_CONFIG_AUDIT.json`, so it must already hold the static half.
 
-### Type-A self-check: did the audit produce a verdict?
-
-This half is machine-checkable — this skill may judge it:
+### Type-A self-check: did the static half land?
 
 ```bash
 AUDIT_JSON=".aris/env-config/<project>/ENV_CONFIG_AUDIT.json"
@@ -553,9 +544,11 @@ Field semantics:
 
 ---
 
-## Phase 2: Read Verdict (Type-B — MUST NOT form own opinion)
+## Phase 2: Settle the Verdict
 
-Transcribe, do not evaluate:
+By this point both halves are written into `ENV_CONFIG_AUDIT.json`: the static
+checks from Phase 1 and the execution checks from Phase 1.5. Read the settled
+value back:
 
 ```bash
 VERDICT=$(jq -r '.overall_verdict' "$AUDIT_JSON" | tr 'A-Z' 'a-z')
@@ -568,9 +561,15 @@ VERDICT=$(jq -r '.overall_verdict' "$AUDIT_JSON" | tr 'A-Z' 'a-z')
 | `fail` | Configuration is not trustworthy — specific checks failed. |
 | missing / unparseable | Audit did not complete. |
 
-**The verdict is copied verbatim.** This skill does not reinterpret a FAIL as
-"a warning really", does not average A–K into an overall of its own, and does
-not re-run the audit hoping for a better answer.
+**Worst check wins.** Any FAIL among A–P makes the overall FAIL; any WARN with
+no FAIL makes it WARN. There is no averaging and no discretion here — the
+aggregation rule is arithmetic, which is why the same agent that formed the
+per-check judgments is allowed to apply it.
+
+**The verdict is settled once.** Do not revisit a FAIL as "really a warning"
+after seeing the consequence, and do not re-run a check hoping for a better
+answer. The bundle's author is a different model family from this agent
+(Phase 0 step 5); that independence is spent if the verdict is negotiable.
 
 ---
 
@@ -630,21 +629,22 @@ file-paths-only receipts).
 ## Constants
 
 - **AUDIT_DIR_TEMPLATE** = `.aris/env-config/<project>`
-- **REVIEWER_BACKEND** = `codex` (override with `— reviewer: oracle-pro|manual`)
 
 ## Critical Rules
 
-1. **Never self-judge the audit result.** This skill verifies that the audit
-   *ran* (Type-A: file exists and parses) and reads `overall_verdict` verbatim
-   (Type-B). It must not reinterpret, average, override, or discount a verdict.
+1. **Cross-model host, verified before any check.** Phase 0 step 5 compares
+   this agent's own provider against `executor_provider` and hard-stops on a
+   family match. Every claim this skill makes rests on that check having run.
 2. **Dispatched only by /experiment-env-manager.** This skill is never called
    directly by users, `/experiment-env-configuration`, or other workflow skills.
    Repair cycles are owned by `/experiment-env-manager`.
 3. **No repair or retry.** This skill produces a verdict and stops. Repair
    is the caller's (env-manager's) responsibility.
-4. **Fresh reviewer per audit.** Each audit dispatches a new sub-agent so the
-   reviewer is not anchored on a previously seen draft. Never continue a prior
-   audit thread.
+4. **Never spawn a reviewer sub-agent.** This agent is the reviewer. A child
+   on the reviewer leg shares this host's family; a child on the executor leg
+   shares the bundle author's. `mcp__paseo__create_agent` is deliberately
+   absent from `allowed-tools` — freshness comes from env-manager dispatching
+   a new instance of this skill per audit, not from a nested child.
 5. **File-paths-only receipts.** The receipt file carries paths, not summaries.
    The dispatching parent reads the files themselves.
 6. **Clear stale output first.** Phase 0 removes prior audit files before any
@@ -660,8 +660,8 @@ file-paths-only receipts).
 
 ## External dependencies (reused, not modified)
 
-- `skills/experiment-audit/SKILL.md` — the base auditor. Dispatched as a paseo
-  sub-agent; provides checks A-F; this skill adds G-K in the dispatch prompt.
+- `skills/experiment-audit/SKILL.md` — source of checks A-F. Read as a
+  checklist reference, not dispatched; this skill adds G-K and L-P.
 - `shared-references/acceptance-gate.md` — DRIVE/ACQUIT; the Type-A / Type-B
   split that this skill implements.
 - `shared-references/reviewer-independence.md` — why the auditor reads the

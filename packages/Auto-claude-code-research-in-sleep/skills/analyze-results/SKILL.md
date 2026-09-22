@@ -2,7 +2,7 @@
 name: analyze-results
 description: 'Iterative experiment analysis HUB (总分结构): routes each analysis dimension to a focused sub-skill (analysis-wandb / analysis-convergence / analysis-training-dynamics / analysis-comparison under skills/analyze-results-tools/), assembles their artifacts, dispatches a cross-model verifier to evaluate completeness, and iterates until the verifier passes. Use when user says "analyze results", "分析结果", "compare experiments", "结果分析", or after experiments complete and results need interpretation.'
 argument-hint: "[— project: <name>] [— max-rounds: N] [— method: <existing-analysis-script-or-command>]"
-allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, AskUserQuestion, WebSearch, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission
+allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, AskUserQuestion, WebSearch, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__create_heartbeat, mcp__paseo__delete_heartbeat
 ---
 
 > **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in
@@ -16,6 +16,12 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, AskUserQuestion, WebSearc
 > - **Type-B** (never self-judged): *is the analysis thorough enough to support
 >   claims?* This verdict is produced by a fresh cross-model verifier and read
 >   verbatim. This skill never forms its own opinion of completeness.
+
+> **Dispatch watchdog (mandatory).** Every `mcp__paseo__create_agent` in this
+> skill is covered by `shared-references/paseo-subagent-dispatch.md`
+> §"The dispatch watchdog": arm a self-target watchdog before ending the turn
+> to wait, disarm once no awaited child turn remains. The procedure lives
+> there, not here.
 
 # Analyze Results
 

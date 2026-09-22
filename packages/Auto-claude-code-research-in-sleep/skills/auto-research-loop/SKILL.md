@@ -2,8 +2,14 @@
 name: auto-research-loop
 description: 'Metric-target-driven iterative research loop. Each iteration runs the research-pipeline main flow - full idea-discovery (reads the research wiki for prior outcomes and open problems), experiment-bridge, auto-review-loop (whose /result-to-claim termination absorbs results into the wiki) - followed by a deterministic metric stop gate. Iteration 1 reproduces the baseline described in RESEARCH_BRIEF; every later iteration is an improvement attempt. Use when the user asks for an auto research loop or autonomous quantitative improvement toward a configured Metric Target.'
 argument-hint: "[- resume <run_id>] [- max-iterations: N]"
-allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent, mcp__paseo__create_heartbeat
+allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent, mcp__paseo__create_heartbeat, mcp__paseo__delete_heartbeat
 ---
+
+> **Dispatch watchdog (mandatory).** Every `mcp__paseo__create_agent` in this
+> skill is covered by `shared-references/paseo-subagent-dispatch.md`
+> §"The dispatch watchdog": arm a self-target watchdog before ending the turn
+> to wait, disarm once no awaited child turn remains. The procedure lives
+> there, not here.
 
 # Auto Research Loop - Dashboard + Manifest Architecture
 

@@ -580,6 +580,65 @@ assume**. The core principle:
   grandchild agents would be orphaned (unless cascade-archive handles
   them — but the loss of state may be expensive).
 
+## The dispatch watchdog
+
+**Skills cite this section; they do not copy it.** A dispatching skill owns
+exactly two things locally: the `mcp__paseo__create_heartbeat` /
+`mcp__paseo__delete_heartbeat` entries in its own `allowed-tools` (a tool
+absent from frontmatter cannot be called, so that part cannot be delegated to
+a reference), and its own `run_id`. When to arm, what to name it, where the
+handle lives, what a tick may do, when to disarm — all of that is defined here
+and in [`external-cadence.md`](external-cadence.md), once. If you are editing a
+SKILL.md and about to write watchdog pseudocode, you are duplicating this
+section: write the citation line below instead.
+
+### The mandate
+
+Any agent that calls `mcp__paseo__create_agent` (or a background
+`mcp__paseo__send_agent_prompt`) and then ends its turn to wait MUST arm a
+self-target watchdog before ending that turn, and MUST disarm it once no
+awaited child turn remains.
+
+The reason is a property of the notification, not of any one skill.
+`notifyOnFinish` is an **in-memory subscription on the waiting agent's side**,
+armed at dispatch. A daemon restart erases it and nothing times out, so a lost
+notification looks exactly like a child that is still working and the wait
+never ends. A paseo heartbeat is a persisted schedule, so it survives the
+restart that erased the subscription. That is the whole job.
+
+**Every level arms its own.** `create_heartbeat` is self-target-only — a
+heartbeat can only wake the agent that created it. So a watchdog at the top of
+a dispatch chain does not cover the middle of it. A parent may rely on its
+child having armed one, but only because that child armed it; skip any single
+level and that level's wait is uncovered.
+
+This is not polling. On a healthy run a tick reads the handle file, sees the
+child still `running`, and ends the turn. The watchdog does work only when the
+notification never arrived.
+
+### Where the rest of it is
+
+| What you need | Where it is defined |
+| --- | --- |
+| Arm / disarm shape, in order, with the handle file | §"Parent dispatch flow (pseudocode)" below |
+| What a woken tick may and may not do | §"What the watchdog tick does" below |
+| Name, `expiresIn`, why no `maxRuns`, handle path, disarm condition | [`external-cadence.md`](external-cadence.md) §"Paseo heartbeat bounds convention" |
+| The `dispatch_heartbeat_cron` / `dispatch_heartbeat_expires` values | the run's `.aris/runs/<run_id>.paseo-config.json`, emitted by `tools/render_w_agent_prompt.sh --emit-config` |
+
+`cron: "off"` means the operator disabled the watchdog: skip arming, and record
+that in the skill's own state file so a later stall stays diagnosable.
+
+### The citation line
+
+Every dispatching SKILL.md carries this blockquote verbatim, directly after its
+paseo dispatch contract, and nothing else about the watchdog:
+
+> **Dispatch watchdog (mandatory).** Every `mcp__paseo__create_agent` in this
+> skill is covered by `shared-references/paseo-subagent-dispatch.md`
+> §"The dispatch watchdog": arm a self-target watchdog before ending the turn
+> to wait, disarm once no awaited child turn remains. The procedure lives
+> there, not here.
+
 ## Notification-driven feedback loop (notifyOnFinish)
 
 The parent-child communication model is **notification-driven**: the
@@ -666,8 +725,8 @@ write_json(HANDLE, handle)                    # record the child before arming, 
 WATCH_NAME = "dispatch-watch-<run_id>-$PASEO_AGENT_ID"
 handle.heartbeat_id = create_heartbeat(
     name=WATCH_NAME,                                  # per-agent: re-arm = refresh
-    cron=<dispatch_heartbeat_cron>,                   # default "*/30 * * * *"
-    expiresIn=<dispatch_heartbeat_expires>,           # no maxRuns — see external-cadence.md
+    cron=$CFG.dispatch_heartbeat_cron,                # paseo-config.json; default "*/30 * * * *"
+    expiresIn=$CFG.dispatch_heartbeat_expires,        # no maxRuns — see external-cadence.md
     prompt="Check whether your dispatched sub-agents have finished: read "
            "$HANDLE, then follow §\"What the watchdog tick does\" in "
            "paseo-subagent-dispatch.md.")

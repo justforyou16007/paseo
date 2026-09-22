@@ -1,8 +1,14 @@
 ---
 name: aris-setup
 description: 'The single human entry point for configuring an ARIS project end to end. Reports which of the six setup stages are done, routes each unfinished one to the skill or command that finishes it, infers the root setup items that existing files already answer, asks for the ones no file contains, and seals the root charter. Use when the user says "配置项目", "setup my project", "aris setup", "全局设置", "初始化整个项目", or when /auto-research-loop stopped because the root charter is missing.'
-allowed-tools: Read, Write, Bash(*), AskUserQuestion, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__archive_agent
+allowed-tools: Read, Write, Bash(*), AskUserQuestion, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__archive_agent, mcp__paseo__create_heartbeat, mcp__paseo__delete_heartbeat
 ---
+
+> **Dispatch watchdog (mandatory).** Every `mcp__paseo__create_agent` in this
+> skill is covered by `shared-references/paseo-subagent-dispatch.md`
+> §"The dispatch watchdog": arm a self-target watchdog before ending the turn
+> to wait, disarm once no awaited child turn remains. The procedure lives
+> there, not here.
 
 # ARIS Setup
 
