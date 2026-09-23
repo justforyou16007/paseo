@@ -338,7 +338,32 @@ When all jobs in `manifest.json` are `completed` or `stuck`:
 
 - The remote scheduler (`queue-manager.js`) exits cleanly with `All jobs done` to its own stdout (captured in `$REMOTE_RUN_DIR/queue_mgr.log`). It does NOT write the local summary.
 - The **local** skill agent then aggregates state into `$LOCAL_RUN_DIR/summary.md` (read `$REMOTE_RUN_DIR/queue_state.json`, group by status, optionally pull per-job logs).
-- Local skill agent invokes `/analyze-results — project: <project>` if `analyze_on_complete: true`.
+- **Analysis belongs to whoever dispatched this skill, not to this skill.**
+  When the invocation carries `run_id=` (that is, `/experiment-bridge`
+  launched this queue as its child — see its Phase 4), stop after the
+  summary and end the turn. The parent reads the receipt and runs its own
+  Phase 5.6 analysis over the whole milestone. A launcher that analyzes on
+  its own duplicates that work, and once analysis can run probe jobs the
+  duplicate costs GPU.
+
+  Standalone invocation (no `run_id=`) is the only case where this skill
+  analyzes. Write a minimal manifest, then dispatch it:
+
+  ```json
+  {
+    "inputs": {
+      "results": ["<paths to the result files this queue produced>"],
+      "tracker": "refine-logs/EXPERIMENT_TRACKER.md"
+    }
+  }
+  ```
+
+  ```
+  /analyze-results — manifest: <path to that file>
+  ```
+
+  `/analyze-results` has no project-root discovery mode; `— project:` is
+  not a form it accepts.
 
 ## Grid Spec Syntax
 
@@ -446,7 +471,8 @@ If scheduler crashes / is killed:
 
 ## Next Steps
 
-- Run `/analyze-results — project: <project>` on output JSONs
+- Run `/analyze-results — manifest: <manifest path>` on the output JSONs
+  (standalone runs only — under `/experiment-bridge` the parent analyzes)
 - Figures auto-regen via `artifact-sync` (if configured)
 ```
 
@@ -499,7 +525,8 @@ Then user can check anytime or wait for summary report.
 
 - `/run-experiment` — single experiment deployment
 - monitoring heartbeat (Step 3f) — terminal-state detection over `queue_state.json`
-- `/analyze-results — project: <project>` — post-hoc analysis
+- `/analyze-results — manifest: <path>` — post-hoc analysis, standalone
+  invocations only
 - `.aris/dist/skills/experiment-queue/queue-manager.js` — the installed scheduler implementation; development checkouts use `dist/skills/experiment-queue/queue-manager.js`.
 - `.aris/dist/skills/experiment-queue/build-manifest.js` — build manifest from grid spec; development checkouts use the matching `dist/` path.
 

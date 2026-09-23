@@ -31,7 +31,13 @@ Read from the input manifest (worker mode) or arguments (direct):
    - LR schedule: warmup spikes, decay milestones visible in the loss
    - Gradient norm: spikes, vanishing, explosion
    - Speed: steps/sec drift (throttling, thermal, contention)
-3. **Write the artifact** to `$OUTPUT_DIR/analysis-training-dynamics.md` with
+3. **Record the mechanisms the curves only hint at.** Step 2 ends each
+   observation with "next step that would test it". Whenever that next step
+   needs a quantity the run never logged — per-layer activations, per-sample
+   losses, attention statistics — promote it to an `open_questions[]` entry
+   naming the observable and why the logged series cannot settle it.
+   `/analysis-probe` executes these. An empty list is a valid answer.
+4. **Write the artifact** to `$OUTPUT_DIR/analysis-training-dynamics.md` with
    each observation as: Observation (numbers) → Interpretation → Implication
    for the research question → Next step that would test it.
 
@@ -43,6 +49,9 @@ Read from the input manifest (worker mode) or arguments (direct):
   "exp": "<exp>",
   "observations": <count>,
   "flags": ["overfitting_suspected", "lr_spike", "..."],
+  "open_questions": [
+    { "question": "...", "observable": "...", "why_logs_insufficient": "..." }
+  ],
   "artifact": "<OUTPUT_DIR>/analysis-training-dynamics.md"
 }
 ```

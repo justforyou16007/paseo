@@ -182,12 +182,19 @@ sh "$OPS/release-resources.sh"
 After a foreground experiment completes successfully, suggest structured analysis:
 
 ```
-Experiment complete. For structured comparison and statistical analysis:
-/analyze-results — project: <project>
+Experiment complete. For structured comparison and statistical analysis,
+write a manifest naming the result files and the tracker, then run:
+/analyze-results — manifest: <path to that manifest>
 ```
 
-For background runs dispatched by `/experiment-bridge` or `/auto-research-loop`,
-analysis is handled automatically by the caller's Phase 5.6 / Phase 2.5.
+`/analyze-results` takes `— manifest:` only; it has no project-root
+discovery mode.
+
+This is a printed suggestion, never an automatic dispatch. For background
+runs dispatched by `/experiment-bridge` or `/auto-research-loop`, analysis
+belongs to the caller (its Phase 5.6 / Phase 2.5) — a launcher that
+analyzes its own slice duplicates the parent's work over the same
+evidence.
 
 ## Key Rules
 

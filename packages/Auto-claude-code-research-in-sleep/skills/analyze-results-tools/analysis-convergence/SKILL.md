@@ -36,7 +36,14 @@ Read from the input manifest (worker mode) or arguments (direct):
    - Divergence: current loss > `threshold_multiplier` × best loss so far
    - Entropy collapse: entropy < threshold
 3. **Scan for NaN/Inf** in the series.
-4. **Write the artifact** to `$OUTPUT_DIR/analysis-convergence.md`:
+4. **Record what the series cannot answer.** When a check fires but the logged
+   series does not say *why* — a divergence with no gradient norm logged, an
+   entropy collapse with no per-layer breakdown — write it as an
+   `open_questions[]` entry naming the quantity that would settle it and why
+   the existing logs cannot. `/analysis-probe` picks these up and goes and
+   measures them. Leave the list empty when the series is sufficient; do not
+   invent questions to fill it.
+5. **Write the artifact** to `$OUTPUT_DIR/analysis-convergence.md`:
    - the extracted series (table or sparkline summary)
    - each check's PASS/FLAG with numbers
    - a `verdict_proposal: converged|diverged|collapsed|plateaued|inconclusive`
@@ -56,6 +63,9 @@ Read from the input manifest (worker mode) or arguments (direct):
     "nan_inf": "none|found"
   },
   "verdict_proposal": "converged|diverged|collapsed|plateaued|inconclusive",
+  "open_questions": [
+    { "question": "...", "observable": "...", "why_logs_insufficient": "..." }
+  ],
   "artifact": "<OUTPUT_DIR>/analysis-convergence.md"
 }
 ```

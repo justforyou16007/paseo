@@ -1,6 +1,6 @@
 ---
 name: analyze-results
-description: 'Iterative experiment analysis HUB (总分结构): routes each analysis dimension to a focused sub-skill (analysis-wandb / analysis-convergence / analysis-training-dynamics / analysis-comparison under skills/analyze-results-tools/), assembles their artifacts, dispatches a cross-model verifier to evaluate completeness, and iterates until the verifier passes. Use when user says "analyze results", "分析结果", "compare experiments", "结果分析", or after experiments complete and results need interpretation.'
+description: 'Iterative experiment analysis HUB (总分结构): routes each analysis dimension to a focused sub-skill (analysis-wandb / analysis-convergence / analysis-training-dynamics / analysis-comparison / analysis-probe under skills/analyze-results-tools/), sends the questions the logs cannot answer to analysis-probe for instrumented deep analysis, assembles their artifacts, dispatches a cross-model verifier to evaluate completeness, and iterates until the verifier passes. Use when user says "analyze results", "分析结果", "compare experiments", "结果分析", or after experiments complete and results need interpretation.'
 argument-hint: "[— project: <name>] [— max-rounds: N] [— method: <existing-analysis-script-or-command>]"
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, AskUserQuestion, WebSearch, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__create_heartbeat, mcp__paseo__delete_heartbeat
 ---
@@ -70,18 +70,33 @@ if "$ARGUMENTS" contains "— manifest:"; then
 fi
 ```
 
-**Worker input authority:** require `manifest.inputs.results` and
-`manifest.inputs.tracker`. Accept optional `experiment_plan`,
-`experiment_skill`, and `error_report` paths. In worker mode:
+**Worker input authority.** The manifest names two kinds of input and they
+carry different rights. Conflating them is what kept this skill to log-reading.
 
-- analyze exactly the supplied results and tracker, plus any supplemental files
-  created during this invocation;
+**Metric authority — `results` + `tracker` (required).** Worker mode continues
+to require `manifest.inputs.results` and `manifest.inputs.tracker`. These, and
+only these, are where reported numbers come from.
+
+- analyze exactly the supplied results and tracker, plus supplemental
+  calculations derived from them during this invocation;
 - write the analysis only to `$OUTPUT_DIR/EXPERIMENT_RESULTS.md`;
-- use the supplied plan for coverage checks when present; when absent, mark
-  plan-coverage as not applicable;
-- do not replace these inputs with project-root `results/`, `logs/`,
-  `refine-logs/`, or any analysis file outside the manifest. A project-wide scan is forbidden
-  in worker mode — the manifest snapshot is the whole input set.
+- never substitute project-root `results/`, `logs/`, `refine-logs/`, or any
+  other result file found outside the manifest. A project-wide scan is forbidden
+  in worker mode — the manifest snapshot is the whole input set for metrics.
+
+**Probe surface — `experiment_skill`, `code_root`, `artifacts_dir` (optional).**
+The experiment's source tree, its checkpoints and saved intermediates, and the
+generated skill's ops. `/analysis-probe` reads and instruments these to measure
+things the run never logged.
+
+- reachable and writable, but **only through `/analysis-probe`** and only under
+  the constraints in its SKILL.md (patch a copy, never `code_root` in place);
+- carries no metric authority. A number measured by a probe explains a
+  mechanism; it never becomes, adjusts, or reinterprets the primary metric.
+
+Also accept optional `experiment_plan` and `error_report` paths; use the plan
+for coverage checks when present, and mark plan-coverage not applicable when
+absent.
 
 There is no project-root discovery mode. The manifest is the complete input
 set for every invocation.
@@ -132,7 +147,9 @@ paths directly.
 Resolve `PROJECT` from manifest context or the repository name.
 If `inputs.experiment_skill` names an `env.json`, derive `SKILL_DIR` from its
 parent and read that exact file. Do not search for another generated experiment
-skill. Then continue with the worker input authority above.
+skill. `SKILL_DIR/scripts/ops/` is the only way any probe launches anything —
+pass it through to `/analysis-probe` rather than letting it rediscover the path.
+Then continue with the worker input authority above.
 
 ---
 
@@ -149,8 +166,12 @@ collected it; this skill never re-scans logs itself.
 pointed at those exact inputs and must not substitute files found under
 project-root result directories. Keep supplemental outputs under `$OUTPUT_DIR`.
 
-The manifest's result receipt list is authoritative. Do not scan project-root
-`results/` or `logs/` when the manifest is missing or incomplete.
+The manifest's result receipt list is authoritative for metrics. Do not scan
+project-root `results/` or `logs/` when the manifest is missing or incomplete.
+An incomplete result manifest is a gap to report, never a licence to go
+looking — but it *is* a legitimate question to hand `/analysis-probe`, which
+can measure the missing quantity directly instead of hunting for a file that
+might contain it.
 
 **If `— method: <path-or-command>` is provided:** execute the user's method,
 capture its output, and seed the first round with it — what it already covers
@@ -174,6 +195,7 @@ only the artifacts' output contracts (file paths + machine-checkable fields)
 | `analysis-convergence` | Training runs exist and the question is converged / diverged / collapsed (applies the frozen `monitor.early_stop` thresholds) | Partially (thresholds are mechanical; the verdict is a *proposal*) |
 | `analysis-training-dynamics` | The question is HOW training behaved — loss-curve shape, train/eval gap, LR schedule, gradient norms | No (interpretive report; verifier adjudicates) |
 | `analysis-comparison` | Two or more runs exist and the question is which is better, by how much, with what significance | Yes (tables parse; stats recompute) |
+| `analysis-probe` | The other sub-skills left a mechanistic question the logged data cannot answer — it recomputes from saved artifacts, instruments a copy of the code and runs a short job, replays a checkpoint window, or runs a controlled variant | Partially (the ledger gate and patch audit are mechanical; findings are evidence) |
 
 ### Routing rules (deterministic)
 
@@ -185,9 +207,26 @@ only the artifacts' output contracts (file paths + machine-checkable fields)
 3. Multiple runs → dispatch `analysis-comparison`.
 4. Train/eval series exist (W&B export or logs) → dispatch
    `analysis-training-dynamics`.
-5. A `— method` user script covers a dimension → skip that dimension's
+5. **Always dispatch `analysis-probe`, and always last.** Its input is the
+   `open_questions[]` collected from every sub-skill above, so it cannot run
+   until they have returned. Pass it `experiment_skill`, `code_root`,
+   `artifacts_dir`, `run_id`, and `iteration` alongside the questions.
+
+   "Always" means *always consult the probe ledger*, not *always spend GPU*.
+   `/analysis-probe` computes an evidence key over the result manifest and
+   looks it up in `.aris/runs/<run_id>.probes.json` first: a question already
+   probed against this exact evidence is reused at zero cost, and no new
+   hypothesis may be opened against evidence that has already been probed.
+   This is what keeps the several analyses of one experiment — bridge Phase
+   5.6, each bridge-repair round, auto-review-loop's termination analysis —
+   from each paying full price to re-derive the same mechanism.
+
+   When every question is reused or dropped, `/analysis-probe` still returns
+   an artifact recording which worker and round originated each answer. Fold
+   those conclusions into the report exactly as you would a fresh probe's.
+6. A `— method` user script covers a dimension → skip that dimension's
    sub-skill; record the skip in the final report.
-6. Dispatch one sub-agent per sub-skill, sequentially (create → end turn →
+7. Dispatch one sub-agent per sub-skill, sequentially (create → end turn →
    notification → read output contract → archive → next). Each sub-agent's
    input manifest carries: metric/result paths, the relevant `env.json`
    blocks, `exp` names, and its `$OUTPUT_DIR`.
@@ -197,6 +236,11 @@ only the artifacts' output contracts (file paths + machine-checkable fields)
 Merge the sub-skills' output contracts (NOT their full artifacts) into
 `$OUTPUT_DIR/EXPERIMENT_RESULTS.md`. The
 assembled report links each sub-skill's artifact; it does not duplicate them.
+
+`/analysis-probe`'s contract carries `metric_authority: "none"`. Honor it: its
+findings go in the report's mechanism and findings sections, and never into the
+metric tables or `dashboard_patch`. The primary metric is whatever the result
+files say, before and after any probe.
 
 ---
 
@@ -229,6 +273,8 @@ mcp__paseo__create_agent
       Experiment tracker:  <manifest input path in worker mode; direct path otherwise>
       Result files:        <manifest input path in worker mode; direct paths otherwise>
       Sub-skill artifacts: <OUTPUT_DIR>/analysis-*.md and wandb/ (from Phase 2)
+      Probe patches:       <OUTPUT_DIR>/probe/*.patch (from analysis-probe)
+      Probe ledger:        .aris/runs/<run_id>.probes.json
       env.json:            <manifest experiment_skill path, if supplied>
 
     Evaluate against these criteria — report each as PASS | WARN | FAIL:
@@ -246,6 +292,19 @@ mcp__paseo__create_agent
        WARN if insights lack interpretation or next-step reasoning.
     F. Reproducibility — could someone replicate from this report?
        WARN if key hyperparameters or configs are omitted.
+    G. Mechanistic depth — where the report asserts a mechanism (why a
+       method works, why a run collapsed, why one config beats another), is
+       that claim backed by a probe that measured it, or only by a curve
+       that correlates with it? A reused probe conclusion from the ledger
+       counts as backing. FAIL when a headline causal claim rests on
+       correlation alone and analysis-probe recorded no attempt to test it.
+       WARN when probes were attempted and came back inconclusive.
+    H. Probe integrity — read every .patch file yourself. Instrumentation
+       may observe; it may not change what is being measured. FAIL if any
+       patch touches metric computation, evaluation data, or the loss that
+       gets reported. FAIL if any probe number appears in the report's
+       metric tables or dashboard patch — probes carry no metric authority.
+       Mark not applicable when no probes ran.
 
     Output:
       .aris/env-config/<project>/ANALYSIS_AUDIT.md (human-readable report)
@@ -255,7 +314,7 @@ mcp__paseo__create_agent
         "checks": { "A": "pass|warn|fail", "B": "...", ... },
         "gaps": [
           { "check": "A", "description": "...",
-            "suggested_action": "run_experiment|re_dispatch_subskill|add_analysis" }
+            "suggested_action": "run_probe|run_experiment|re_dispatch_subskill|add_analysis" }
         ]
       }
 
@@ -282,7 +341,15 @@ are resolved.
 
 **If `overall_verdict == "fail"`:** present gaps to the user, then iterate.
 
-1. `AskUserQuestion`:
+1. Split the gaps by what they cost.
+
+   **`run_probe` gaps execute without asking.** A probe is bounded by the
+   ledger gate and the falsifiability filter, and in worker mode there is
+   nobody at the keyboard — stopping to ask would hang an unattended
+   `auto-research-loop` on a question that has one sensible answer. Execute
+   them, then continue to the remaining gaps.
+
+   **Everything else goes to the user** via `AskUserQuestion`:
    - header: "分析审计未通过"
    - question: "Verifier 发现以下不足：\n<gaps with descriptions and suggested actions>\n\n请选择："
    - options:
@@ -290,7 +357,19 @@ are resolved.
      - `"选择性补充"` — user picks which gaps to address
      - `"分析已足够，跳过"` — accept current analysis, set `user_override`
 
+   When every gap was a `run_probe` gap, skip the question entirely.
+
 2. For each gap to address:
+
+   **`suggested_action: run_probe`**
+   - The gap is missing *mechanism*, not missing data coverage: re-dispatch
+     `/analysis-probe` with the verifier's question added to its queue
+   - Cheaper than `run_experiment` — prefer it whenever the gap can be
+     settled by measuring something inside the runs that already happened
+   - The ledger gate still applies. A gap the verifier raises against
+     already-probed evidence comes back reused or dropped, and that
+     answer goes in the report
+   - Re-run Phase 2 (step 2z) → 3
 
    **`suggested_action: run_experiment`**
    - Dispatch `run-<project>-experiment` via paseo sub-agent with the
@@ -390,7 +469,9 @@ Update `refine-logs/EXPERIMENT_TRACKER.md` with analysis status column.
 2. **Fresh verifier per round.** Each verification dispatches a new sub-agent.
    Never continue a prior verification thread.
 3. **User controls iteration.** On verifier FAIL, the user chooses what to
-   supplement. The skill never autonomously decides to stop iterating.
+   supplement. The skill never autonomously decides to stop iterating. The
+   one carve-out is `run_probe`: it is bounded by the ledger gate and runs
+   without asking, because an unattended loop has nobody to ask.
 4. **`— method` seeds, doesn't replace.** An existing analysis method becomes
    the starting point; the iterative process may extend beyond it.
 5. **Analysis logic lives in sub-skills, not one-offs.** When adding
@@ -399,19 +480,37 @@ Update `refine-logs/EXPERIMENT_TRACKER.md` with analysis status column.
    don't run one-off commands that aren't captured.
 6. **File-paths-only receipts.** The receipt carries paths; the dispatching
    parent reads the files themselves.
+7. **The probe surface never becomes a metric source.** `code_root`,
+   `artifacts_dir`, and everything `/analysis-probe` produces from them are
+   evidence about *mechanism*. Reported numbers still come only from
+   `manifest.inputs.results` + `tracker`. `/analysis-probe` returns
+   `metric_authority: "none"` and this hub honors it in step 2z.
+8. **Probing is gated by evidence, not by intent.** Every invocation
+   consults the ledger at `.aris/runs/<run_id>.probes.json`. Identical
+   evidence means reuse, not a second round of GPU. This is what keeps the
+   repeated call sites (bridge Phase 5.6, each repair round,
+   auto-review-loop Step 5) from paying for the same measurement three
+   times.
 
 ## External dependencies (reused, not modified)
 
 - `.claude/skills/run-<project>-experiment/` — the generated experiment skill
   (ops + env.json). Its `collect-outputs.sh` receipts are the result manifest.
-- `skills/analyze-results-tools/*` — the four analysis sub-skills this hub
-  dispatches (analysis-wandb, analysis-convergence,
-  analysis-training-dynamics, analysis-comparison).
+- `skills/analyze-results-tools/*` — the five analysis sub-skills this hub
+  dispatches: four read-only parsers (analysis-wandb, analysis-convergence,
+  analysis-training-dynamics, analysis-comparison) plus `analysis-probe`,
+  the one arm that measures something new. The parsers hand it their
+  `open_questions[]`; it owns the ledger and the probe jobs.
 - `shared-references/acceptance-gate.md` — DRIVE/ACQUIT; the Type-A / Type-B
   split that Phase 3 implements.
 - `shared-references/reviewer-independence.md` — why the verifier reads files
   itself.
 - `shared-references/paseo-subagent-dispatch.md` — Rule 1, Rule 3, Rule 4.
+- `shared-references/experiment-integrity.md` — the fraud patterns Phase 3
+  criterion H audits probe patches against, and the evaluation-type labels
+  probe findings carry.
+- `.aris/runs/<run_id>.probes.json` — the probe ledger. Run-scoped, written
+  by `/analysis-probe`, read by every later invocation in the same run.
 - `refine-logs/EXPERIMENT_PLAN.md` — the experiment roadmap (read by verifier
   to check coverage).
 - `refine-logs/EXPERIMENT_TRACKER.md` — run-by-run status (updated at end).

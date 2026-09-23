@@ -33,7 +33,13 @@ Read from the input manifest (worker mode) or arguments (direct):
 4. **Sweep trends** — for parameter sweeps, identify monotonic / U-shaped /
    plateau relationships with the turning point.
 5. **Outliers** — flag any run > 3σ from its configuration's mean.
-6. **Write the artifact** to `$OUTPUT_DIR/analysis-comparison.md`.
+6. **Record what the tables cannot explain.** A delta, a sweep turning point,
+   or an outlier tells you *that* configurations differ, never *why*. When the
+   difference matters to the research question and the result files cannot
+   account for it, write an `open_questions[]` entry naming the observable that
+   would — a controlled variant, a per-sample breakdown. `/analysis-probe`
+   measures it. Empty is fine when the tables already settle the question.
+7. **Write the artifact** to `$OUTPUT_DIR/analysis-comparison.md`.
 
 ## Output contract
 
@@ -47,6 +53,9 @@ Read from the input manifest (worker mode) or arguments (direct):
   ],
   "insufficient_seeds": ["<run ids>"],
   "outliers": ["<run ids>"],
+  "open_questions": [
+    { "question": "...", "observable": "...", "why_logs_insufficient": "..." }
+  ],
   "artifact": "<OUTPUT_DIR>/analysis-comparison.md"
 }
 ```

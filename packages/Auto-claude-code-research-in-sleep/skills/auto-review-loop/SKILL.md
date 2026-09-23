@@ -616,7 +616,9 @@ For the ordinary quality-review purpose, continue with the following steps.
      `/analyze-results`, using the same run id and iteration, the final-inputs
      paths, the outer manifest's `experiment_plan` and `experiment_skill`
      inputs, prior metric history, and output_dir `$OUTPUT_DIR/final-analysis`.
-     Pass a final error report path too when one exists.
+     Pass a final error report path too when one exists. Pass `code_root`
+     and `artifacts_dir` as well — the probe surface, same as
+     experiment-bridge Phase 5.6 passes them.
    - Read executor provider/mode/thinking from the run's
      `.paseo-config.json`, dispatch `/analyze-results — manifest: <path>`, wait,
      read its receipt, and archive it. Do not merge this nested receipt.
@@ -626,8 +628,22 @@ For the ordinary quality-review purpose, continue with the following steps.
    - Require a done receipt with matching run/iteration and finite
      `metric.current`. Copy metric current/delta/significance verbatim into the
      auto-review receipt. A failed or missing final analysis makes this worker
-     fail. Reject an analysis that used project-root result files instead of the
-     final-inputs paths in its manifest.
+     fail. Reject an analysis whose *metrics* came from project-root result
+     files instead of the final-inputs paths in its manifest. Scope that
+     check to the metric source: reading `code_root` or `artifacts_dir` is
+     what the probe surface is for and must not trip it. Also reject the
+     analysis if any probe number reached the metric fields —
+     `/analysis-probe` declares `metric_authority: "none"`.
+   - **Expect this step's probe cost to be zero** unless a fix round
+     actually produced new experiment evidence. `/analysis-probe` keys its
+     ledger on a hash of the result + tracker files, so when the
+     final-inputs are byte-identical to what experiment-bridge already
+     analyzed, every probe resolves to `reused` and no job launches. The
+     mechanism conclusions still appear in the final report, carried over
+     from the ledger. This is not a rule anyone enforces here — it falls
+     out of the ledger — but it is the expected behavior, so a final
+     analysis that suddenly launches probe jobs over unchanged evidence is
+     a bug worth chasing.
 
    The outer dashboard therefore receives two same-iteration metric writes:
    experiment-bridge's initial analyzed value, then auto-review-loop's final

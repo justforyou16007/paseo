@@ -485,7 +485,17 @@ After results are collected, always run structured analysis.
 outer manifest's `experiment_plan` and `experiment_skill` paths, plus this
 worker's `error_report.md` when it exists. Use metric history from the outer
 manifest context and output_dir
-`$OUTPUT_DIR/analysis`. Dispatch exactly:
+`$OUTPUT_DIR/analysis`.
+
+Also pass `code_root` (the experiment source directory synced by the ops)
+and `artifacts_dir` (where checkpoints and dumps landed). These are the
+**probe surface**: `/analysis-probe` reads and instruments them to answer
+mechanism questions the logs cannot. They are not a metric source — see the
+acceptance conditions below. Omit them only when the project genuinely has
+neither, in which case the probe falls back to offline recompute or drops
+its probes.
+
+Dispatch exactly:
 
 ```
 /analyze-results — manifest: <internal-manifest-path>
@@ -499,9 +509,21 @@ whether to accept, keep waiting for that choice; do not answer on the user's
 behalf or turn the failure into an automatic override.
 Require `status=done`, matching run/iteration, an existing
 `analysis/EXPERIMENT_RESULTS.md`, and finite `dashboard_patch.metric.current`.
-The analyzer must use those manifest-bound tracker/results paths; reject an
-analysis that substituted project-root `results/`, `logs/`, or stale
-`refine-logs/` files.
+
+Two acceptance conditions, both about where numbers come from:
+
+1. **The metric source is the manifest.** Every reported number must trace
+   to the manifest-bound tracker/results paths. Reject an analysis whose
+   *metrics* came from project-root `results/`, `logs/`, or stale
+   `refine-logs/` files instead. This check targets the metric source only
+   — a probe reading `code_root` or `artifacts_dir` is doing exactly what
+   those inputs are for, and must not trip it.
+2. **Probe output has no metric authority.** `/analysis-probe` returns
+   `metric_authority: "none"`. Reject the analysis if any probe number
+   appears in `dashboard_patch` — probe findings belong in the mechanism
+   and findings sections of `EXPERIMENT_RESULTS.md`, never in the metric
+   tables. The headline metric stays sourced from the original result
+   files even when a probe measured something more interesting.
 Propagate the analyzer's metric current/delta/significance into
 `dashboard_patch`, and the analyzer's verdict into `summary.analysis_verdict`
 verbatim (`pass` / `warn` / `user_override`) - the dashboard patch carries no
