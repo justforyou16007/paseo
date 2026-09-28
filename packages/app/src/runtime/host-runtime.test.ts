@@ -1,10 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AppStateStatus } from "react-native";
+import {
+  bindHostRuntimeAppState,
+  startHostRuntimeBootstrap,
+} from "@/navigation/host-runtime-bootstrap";
 import type {
   DaemonClient,
   ConnectionState,
   FetchAgentsEntry,
   FetchAgentsOptions,
 } from "@getpaseo/client/internal/daemon-client";
+import { DaemonAuthenticationError } from "@getpaseo/client/internal/daemon-client";
 import type { ConnectionOffer } from "@getpaseo/protocol/connection-offer";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
@@ -23,14 +29,39 @@ import {
 } from "./host-runtime";
 import type { ReplicaRow, ReplicaRowStore } from "./replica-cache/row-store";
 
+import { subscriptionFixture } from "./subscription-fixture";
+import { readDesktopManagedLocalCredential } from "@/desktop/daemon/local-credential";
+
+it("requests the managed connection credential through desktop main without a web hint", async () => {
+  const requests: string[] = [];
+  const connection: HostConnection = {
+    id: "direct:localhost:6767",
+    type: "directTcp",
+    endpoint: "localhost:6767",
+  };
+  let token = "local-token";
+  const invoke = async (listen: string) => {
+    requests.push(listen);
+    return token;
+  };
+  expect(await readDesktopManagedLocalCredential(connection, invoke)).toBe("local-token");
+  token = "rotated-token";
+  expect(await readDesktopManagedLocalCredential(connection, invoke)).toBe("rotated-token");
+  expect(requests).toEqual(["localhost:6767", "localhost:6767"]);
+});
+
 class FakeDaemonClient {
   private state: ConnectionState = { status: "idle" };
   private listeners = new Set<(status: ConnectionState) => void>();
   private error: string | null = null;
+  authFailureReason: "password_required" | "incorrect_password" | null = null;
   private heartbeatRttMs: number | null = null;
   private latencyMeasurementFailure: Error | null = null;
   private latencyMeasurementsRequested: Array<{ timeoutMs?: number }> = [];
   public connectCalls = 0;
+  public ensureConnectedCalls = 0;
+  public connectionVerifications = 0;
+  public reconnectEnabledChanges: boolean[] = [];
   public fetchAgentsCalls: FetchAgentsOptions[] = [];
   public fetchAgentsResponses: Array<
     Awaited<ReturnType<DaemonClient["fetchAgents"]>> | ReturnType<DaemonClient["fetchAgents"]>
@@ -52,6 +83,16 @@ class FakeDaemonClient {
     if (type === "agent_update") this.agentUpdateListeners.add(listener);
     for (const waiter of this.agentListenerWaiters) waiter();
     return () => this.agentUpdateListeners.delete(listener);
+  }
+
+  observeAgents(options: Parameters<DaemonClient["observeAgents"]>[0]) {
+    return subscriptionFixture(this.fetchAgents({ ...options, subscribe: {} }), (receive) =>
+      this.on("agent_update", receive),
+    );
+  }
+
+  observeEvents() {
+    return subscriptionFixture(Promise.resolve({}), () => () => {});
   }
 
   async waitForAgentUpdates(): Promise<void> {
@@ -104,7 +145,9 @@ class FakeDaemonClient {
     });
   }
 
-  ensureConnected(): void {
+  ensureConnected(options?: { verify?: boolean }): void {
+    this.ensureConnectedCalls += 1;
+    if (options?.verify) this.connectionVerifications += 1;
     if (this.state.status !== "connected") {
       this.setConnectionState({ status: "connected" });
     }
@@ -114,8 +157,16 @@ class FakeDaemonClient {
     return this.state;
   }
 
-  getLastServerInfoMessage(): null {
-    return null;
+  public ownedSubscriptions = true;
+
+  getLastServerInfoMessage(): ReturnType<DaemonClient["getLastServerInfoMessage"]> {
+    return {
+      status: "server_info",
+      serverId: "srv_test",
+      hostname: "test",
+      version: "0.8.0",
+      features: { ownedSubscriptions: this.ownedSubscriptions },
+    };
   }
 
   subscribeConnectionStatus(listener: (status: ConnectionState) => void): () => void {
@@ -170,7 +221,9 @@ class FakeDaemonClient {
     return result.rttMs;
   }
 
-  setReconnectEnabled(_enabled: boolean): void {}
+  setReconnectEnabled(enabled: boolean): void {
+    this.reconnectEnabledChanges.push(enabled);
+  }
 
   getLastLivenessRttMs(): number | null {
     return this.heartbeatRttMs;
@@ -352,6 +405,7 @@ function makeHost(input?: Partial<HostProfile>): HostProfile {
 
   return {
     serverId: input?.serverId ?? "srv_test",
+    ...(input?.password ? { password: input.password } : {}),
     label: input?.label ?? "test host",
     appearance: input?.appearance ?? defaultHostAppearance(),
     lifecycle: input?.lifecycle ?? {},
@@ -530,6 +584,21 @@ function onceHostListMatches(store: HostRuntimeStore, predicate: () => boolean):
   });
 }
 
+function onceHostSnapshotMatches(
+  store: HostRuntimeStore,
+  serverId: string,
+  predicate: (snapshot: ReturnType<HostRuntimeStore["getSnapshot"]>) => boolean,
+): Promise<void> {
+  if (predicate(store.getSnapshot(serverId))) return Promise.resolve();
+  return new Promise((resolve) => {
+    const unsubscribe = store.subscribe(serverId, () => {
+      if (!predicate(store.getSnapshot(serverId))) return;
+      unsubscribe();
+      resolve();
+    });
+  });
+}
+
 class BrowserClientLifecycle {
   public active: Array<{ serverId: string; connectionId: string }> = [];
 
@@ -543,6 +612,42 @@ class BrowserClientLifecycle {
 }
 
 describe("HostRuntimeController", () => {
+  it("publishes an old host and mounts observations through the client interface", async () => {
+    const host = makeHost();
+    const client = new FakeDaemonClient();
+    client.ownedSubscriptions = false;
+    let mounts = 0;
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        createClient: () => client as unknown as DaemonClient,
+        connectToDaemon: async () => ({
+          client: client as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: null,
+        }),
+        getClientId: async () => "app-version-gate",
+        mountClientHandlers: () => {
+          mounts++;
+          return () => {};
+        },
+      },
+    });
+    const publishedClients: Array<DaemonClient | null> = [];
+    const stop = controller.subscribe(() => publishedClients.push(controller.getSnapshot().client));
+    await controller.activateConnection({ connectionId: host.connections[0]!.id });
+    expect(controller.getSnapshot()).toMatchObject({
+      connectionStatus: "online",
+      client,
+      lastError: null,
+    });
+    expect(mounts).toBe(1);
+    expect(publishedClients).toContain(client);
+    expect(client.fetchAgentsCalls).toEqual([]);
+    stop();
+    await controller.stop();
+  });
+
   it("replaces the active relay client when re-pairing changes the daemon public key", async () => {
     const oldRelay: HostConnection = {
       id: "relay:wss:relay.paseo.sh:443",
@@ -813,6 +918,52 @@ describe("HostRuntimeController", () => {
       latencyMs: 42,
     });
     expect(activeClient.latencyMeasurements()).toEqual([]);
+  });
+
+  it("does not create a probe client for the selected connection while it reconnects", async () => {
+    useHostRuntimeClock();
+    const relay: HostConnection = {
+      id: "relay:relay.paseo.sh:443",
+      type: "relay",
+      relayEndpoint: "relay.paseo.sh:443",
+      daemonPublicKeyB64: "pk_test",
+    };
+    const host = makeHost({ connections: [relay], preferredConnectionId: relay.id });
+    const activeClient = new FakeDaemonClient();
+    activeClient.setConnectionState({ status: "connected" });
+    const probeAttempts: string[] = [];
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        createClient: () => {
+          throw new Error("the existing client owns the selected connection");
+        },
+        connectToDaemon: async ({ connection }) => {
+          probeAttempts.push(connection.id);
+          return {
+            client: makeConnectedProbeClient(10) as unknown as DaemonClient,
+            serverId: host.serverId,
+            hostname: host.label ?? null,
+          };
+        },
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    await controller.start({
+      autoProbe: false,
+      initialConnection: {
+        connectionId: relay.id,
+        existingClient: activeClient as unknown as DaemonClient,
+      },
+    });
+    activeClient.setConnectionState({ status: "disconnected", reason: "network lost" });
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await controller.runProbeCycleNow();
+
+    expect(probeAttempts).toEqual([]);
+    expect(controller.getSnapshot().client).toBe(activeClient as unknown as DaemonClient);
   });
 
   it("rejects probes that resolve to a different server id", async () => {
@@ -1435,6 +1586,104 @@ describe("HostRuntimeController", () => {
 });
 
 describe("HostRuntimeStore", () => {
+  it.each(["active", "inactive", "background"] as const)(
+    "keeps reconnect enabled through inactive/background and resumes immediately (mounted %s)",
+    async (currentState) => {
+      const relay = (suffix: string): HostConnection => ({
+        id: `relay:relay-${suffix}.paseo.sh:443`,
+        type: "relay",
+        relayEndpoint: `relay-${suffix}.paseo.sh:443`,
+        daemonPublicKeyB64: `pk_${suffix}`,
+      });
+      const hostAConnection = relay("a");
+      const hostBConnection = relay("b");
+      const hostA = makeHost({
+        serverId: "srv_a",
+        connections: [hostAConnection],
+        preferredConnectionId: hostAConnection.id,
+      });
+      const hostB = makeHost({
+        serverId: "srv_b",
+        connections: [hostBConnection],
+        preferredConnectionId: hostBConnection.id,
+      });
+      const clientA = new FakeDaemonClient();
+      const clientB = new FakeDaemonClient();
+      clientA.setConnectionState({ status: "connected" });
+      clientB.setConnectionState({ status: "connected" });
+      const store = new HostRuntimeStore({
+        storage: createMemoryHostRuntimeStorage(),
+        deps: {
+          createClient: () => {
+            throw new Error("initial clients are supplied");
+          },
+          connectToDaemon: async () => {
+            throw new Error("single-connection hosts reuse their active clients");
+          },
+          getClientId: async () => "cid_test_runtime",
+        },
+      });
+
+      let changeAppState: (state: AppStateStatus) => void = () => {
+        throw new Error("AppState listener not registered");
+      };
+      const unbind = bindHostRuntimeAppState(store, {
+        currentState,
+        addEventListener: (_event, listener) => {
+          changeAppState = listener;
+          return { remove: () => {} };
+        },
+      });
+      store.syncHosts([hostA, hostB], {
+        initialConnectionByServerId: new Map([
+          [
+            hostA.serverId,
+            {
+              connectionId: hostAConnection.id,
+              existingClient: clientA as unknown as DaemonClient,
+            },
+          ],
+          [
+            hostB.serverId,
+            {
+              connectionId: hostBConnection.id,
+              existingClient: clientB as unknown as DaemonClient,
+            },
+          ],
+        ]),
+      });
+      await waitForHostOnline(store, hostA.serverId);
+      await waitForHostOnline(store, hostB.serverId);
+      expect(clientA.reconnectEnabledChanges.at(-1)).toBe(true);
+      expect(clientB.reconnectEnabledChanges.at(-1)).toBe(true);
+      changeAppState("inactive");
+      expect(clientA.reconnectEnabledChanges.at(-1)).toBe(true);
+      expect(clientB.reconnectEnabledChanges.at(-1)).toBe(true);
+      changeAppState("background");
+      expect(clientA.reconnectEnabledChanges.at(-1)).toBe(true);
+      expect(clientB.reconnectEnabledChanges.at(-1)).toBe(true);
+      expect(clientA.getConnectionState()).toEqual({ status: "connected" });
+      expect(clientB.getConnectionState()).toEqual({ status: "connected" });
+      expect(clientA.ensureConnectedCalls).toBe(0);
+      expect(clientB.ensureConnectedCalls).toBe(0);
+      clientA.setConnectionState({ status: "disconnected", reason: "backgrounded" });
+      clientB.setConnectionState({ status: "disconnected", reason: "backgrounded" });
+
+      changeAppState("active");
+      expect(clientA.reconnectEnabledChanges.at(-1)).toBe(true);
+      expect(clientB.reconnectEnabledChanges.at(-1)).toBe(true);
+      expect(clientA.ensureConnectedCalls).toBe(1);
+      expect(clientA.connectionVerifications).toBe(1);
+      expect(clientB.connectionVerifications).toBe(1);
+      expect(clientB.ensureConnectedCalls).toBe(1);
+      expect(store.getSnapshot(hostA.serverId)?.connectionStatus).toBe("online");
+      expect(store.getSnapshot(hostB.serverId)?.connectionStatus).toBe("online");
+
+      unbind();
+      store.syncHosts([]);
+    },
+  );
+
   it("revokes push notifications before removing a host", async () => {
     const host = makeHost({ connections: [makeHost().connections[0]!] });
     const revocation = createDeferred<void>();
@@ -1483,16 +1732,16 @@ describe("HostRuntimeStore", () => {
     expect(store.getHosts()).toEqual([]);
   });
 
-  it("loads the host registry without scanning or installing replica rows", async () => {
+  it("loads the host registry and restores its cached directory", async () => {
     const host = makeHost();
     const storage = createMemoryHostRuntimeStorage();
-    const backingStore = createMemoryReplicaRowStore();
     let fullScans = 0;
+    const backingStore = createMemoryReplicaRowStore();
     const replicaRowStore: ReplicaRowStore = {
       ...backingStore,
-      readAll: async () => {
+      read: async (...args) => {
         fullScans += 1;
-        return backingStore.readAll();
+        return backingStore.read(...args);
       },
     };
     await storage.setItem("@paseo:daemon-registry", JSON.stringify([host]));
@@ -1516,7 +1765,7 @@ describe("HostRuntimeStore", () => {
     store.boot();
     await registryLoaded;
 
-    expect(fullScans).toBe(0);
+    await vi.waitFor(() => expect(fullScans).toBe(1));
     expect(useSessionStore.getState().sessions[host.serverId]).toMatchObject({
       client: null,
       hasHydratedAgents: false,
@@ -1803,6 +2052,7 @@ describe("HostRuntimeStore", () => {
 
     expect(fakeClient.fetchAgentsCalls).toHaveLength(1);
     expect(fakeClient.fetchAgentsCalls[0]).toEqual({
+      scope: "active",
       sort: [{ key: "updated_at", direction: "desc" }],
       subscribe: {},
       page: { limit: 200 },
@@ -1819,6 +2069,7 @@ describe("HostRuntimeStore", () => {
 
     await store.refreshAgentDirectory({ serverId: host.serverId });
     expect(fakeClient.fetchAgentsCalls[2]).toEqual({
+      scope: "active",
       sort: [{ key: "updated_at", direction: "desc" }],
       page: { limit: 200 },
     });
@@ -1857,7 +2108,7 @@ describe("HostRuntimeStore", () => {
     await waitForHostOnline(store, host.serverId);
     const load = store.refreshAgentDirectory({
       serverId: host.serverId,
-      subscribe: { subscriptionId: "app:srv_no_session" },
+      subscribe: {},
       page: { limit: 200 },
     });
     await fakeClient.waitForFetches(1);
@@ -1870,7 +2121,7 @@ describe("HostRuntimeStore", () => {
     expect(fakeClient.fetchAgentsCalls[0]).toEqual({
       scope: "active",
       sort: [{ key: "updated_at", direction: "desc" }],
-      subscribe: { subscriptionId: "app:srv_no_session" },
+      subscribe: {},
       page: { limit: 200 },
     });
 
@@ -1878,83 +2129,7 @@ describe("HostRuntimeStore", () => {
     expect(useSessionStore.getState().sessions[host.serverId]).toBeUndefined();
   });
 
-  it("bootstraps legacy daemons from unscoped agents and creates path-backed workspaces", async () => {
-    const host = makeHost({
-      serverId: "srv_legacy_workspace_daemon",
-      connections: [
-        {
-          id: "direct:lan:6767",
-          type: "directTcp",
-          endpoint: "lan:6767",
-        },
-      ],
-    });
-    const fakeClient = new FakeDaemonClient();
-    fakeClient.setConnectionState({ status: "connected" });
-    fakeClient.fetchAgentsResponses.push(
-      makeFetchAgentsPayload({
-        entries: [
-          makeFetchAgentsEntry({
-            id: "agent-legacy",
-            cwd: "/repo/legacy-app",
-            updatedAt: "2026-06-18T12:00:00.000Z",
-            title: "Legacy daemon agent",
-          }),
-        ],
-        subscriptionId: "app:srv_legacy_workspace_daemon",
-      }),
-    );
-    const store = new HostRuntimeStore({
-      deps: {
-        createClient: () => fakeClient as unknown as DaemonClient,
-        connectToDaemon: async ({ host: hostProfile }) => ({
-          client: fakeClient as unknown as DaemonClient,
-          serverId: hostProfile.serverId,
-          hostname: hostProfile.label ?? null,
-        }),
-        getClientId: async () => "cid_test_runtime",
-      },
-    });
-
-    const sessionStore = useSessionStore.getState();
-    sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
-    sessionStore.updateSessionServerInfo(host.serverId, {
-      serverId: host.serverId,
-      hostname: null,
-      version: "0.1.96",
-    });
-    store.syncHosts([host]);
-    await waitForHostOnline(store, host.serverId);
-    const load = store.refreshAgentDirectory({
-      serverId: host.serverId,
-      subscribe: { subscriptionId: "app:srv_legacy_workspace_daemon" },
-      page: { limit: 200 },
-    });
-    await fakeClient.waitForFetches(1);
-    await load;
-
-    expect(fakeClient.fetchAgentsCalls).toEqual([
-      {
-        sort: [{ key: "updated_at", direction: "desc" }],
-        subscribe: { subscriptionId: "app:srv_legacy_workspace_daemon" },
-        page: { limit: 200 },
-      },
-    ]);
-    const session = useSessionStore.getState().sessions[host.serverId];
-    expect(session?.agents.get("agent-legacy")?.workspaceId).toBe("/repo/legacy-app");
-    expect(Array.from(session?.workspaces.values() ?? [])).toEqual([
-      expect.objectContaining({
-        id: "/repo/legacy-app",
-        workspaceDirectory: "/repo/legacy-app",
-        name: "legacy-app",
-      }),
-    ]);
-
-    store.syncHosts([]);
-    useSessionStore.getState().clearSession(host.serverId);
-  });
-
-  it("drains legacy snapshot and buffered running transitions exactly once", async () => {
+  it("drains snapshot and buffered running transitions exactly once", async () => {
     const host = makeHost({
       serverId: "srv_legacy_transitions",
       connections: [{ id: "direct:lan:6767", type: "directTcp", endpoint: "lan:6767" }],
@@ -2006,11 +2181,27 @@ describe("HostRuntimeStore", () => {
       new Map([
         [
           "legacy-snapshot",
-          { ...replicaAgent(snapshotAgent.agent, host.serverId), status: "running" },
+          {
+            ...replicaAgent(snapshotAgent.agent, host.serverId),
+            turn: {
+              phase: "open",
+              turnId: null,
+              startedAt: null,
+              cancellationRequestId: null,
+            },
+          },
         ],
         [
           "legacy-buffered",
-          { ...replicaAgent(bufferedAgent.agent, host.serverId), status: "running" },
+          {
+            ...replicaAgent(bufferedAgent.agent, host.serverId),
+            turn: {
+              phase: "open",
+              turnId: null,
+              startedAt: null,
+              cancellationRequestId: null,
+            },
+          },
         ],
       ]),
     );
@@ -2025,7 +2216,7 @@ describe("HostRuntimeStore", () => {
     await waitForHostOnline(store, host.serverId);
     const load = store.refreshAgentDirectory({
       serverId: host.serverId,
-      subscribe: { subscriptionId: `app:${host.serverId}` },
+      subscribe: {},
       page: { limit: 200 },
     });
     await fakeClient.waitForFetches(2);
@@ -2047,8 +2238,8 @@ describe("HostRuntimeStore", () => {
         ({ id, status, workspaceId }) => [id, status, workspaceId],
       ),
     ).toEqual([
-      ["legacy-snapshot", "idle", "/legacy/repo"],
-      ["legacy-buffered", "idle", "/legacy/repo"],
+      ["legacy-snapshot", "idle", snapshotAgent.agent.workspaceId],
+      ["legacy-buffered", "idle", bufferedAgent.agent.workspaceId],
     ]);
 
     store.syncHosts([]);
@@ -2115,7 +2306,7 @@ describe("HostRuntimeStore", () => {
     await waitForHostOnline(store, host.serverId);
     const load = store.refreshAgentDirectory({
       serverId: host.serverId,
-      subscribe: { subscriptionId: "app:srv_paged" },
+      subscribe: {},
       page: { limit: 200 },
     });
     await fakeClient.waitForFetches(2);
@@ -2125,7 +2316,7 @@ describe("HostRuntimeStore", () => {
     expect(fakeClient.fetchAgentsCalls[0]).toEqual({
       scope: "active",
       sort: [{ key: "updated_at", direction: "desc" }],
-      subscribe: { subscriptionId: "app:srv_paged" },
+      subscribe: {},
       page: { limit: 200 },
     });
     expect(fakeClient.fetchAgentsCalls[1]).toEqual({
@@ -2205,7 +2396,7 @@ describe("HostRuntimeStore", () => {
     await waitForHostOnline(store, host.serverId);
     const load = store.refreshAgentDirectory({
       serverId: host.serverId,
-      subscribe: { subscriptionId: "app:srv_paged_delta" },
+      subscribe: {},
       page: { limit: 200 },
     });
     await fakeClient.waitForFetches(2);
@@ -2292,12 +2483,13 @@ describe("HostRuntimeStore", () => {
     });
 
     store.syncHosts([host]);
-    await fakeClient.waitForAgentUpdates();
+    await waitForHostOnline(store, host.serverId);
     const load = store.refreshAgentDirectory({
       serverId: host.serverId,
-      subscribe: { subscriptionId: `app:${host.serverId}` },
+      subscribe: {},
       page: { limit: 200 },
     });
+    await fakeClient.waitForAgentUpdates();
     fakeClient.agentUpdate({
       kind: "upsert",
       agent: { ...snapshotEntry.agent, title: "before-session" },
@@ -2343,7 +2535,7 @@ describe("HostRuntimeStore", () => {
       .initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
     store.syncHosts([host]);
     await waitForHostOnline(store, host.serverId);
-    await store.refreshAgentDirectory({ serverId: host.serverId });
+    await store.refreshAgentDirectory({ serverId: host.serverId, subscribe: {} });
     const olderPage = new Deferred<Awaited<ReturnType<DaemonClient["fetchAgents"]>>>();
     fakeClient.fetchAgentsResponses.push(olderPage.promise);
     const olderRefresh = store.refreshAgentDirectory({ serverId: host.serverId });
@@ -2411,7 +2603,7 @@ describe("HostRuntimeStore", () => {
       .initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
     store.syncHosts([host]);
     await waitForHostOnline(store, host.serverId);
-    await store.refreshAgentDirectory({ serverId: host.serverId });
+    await store.refreshAgentDirectory({ serverId: host.serverId, subscribe: {} });
 
     const olderPage = new Deferred<Awaited<ReturnType<DaemonClient["fetchAgents"]>>>();
     fakeClient.fetchAgentsResponses.push(olderPage.promise);
@@ -2545,11 +2737,27 @@ describe("HostRuntimeStore", () => {
       new Map([
         [
           "snapshot-transition",
-          { ...replicaAgent(snapshotAgent.agent, host.serverId), status: "running" },
+          {
+            ...replicaAgent(snapshotAgent.agent, host.serverId),
+            turn: {
+              phase: "open",
+              turnId: null,
+              startedAt: null,
+              cancellationRequestId: null,
+            },
+          },
         ],
         [
           "buffered-transition",
-          { ...replicaAgent(bufferedAgent.agent, host.serverId), status: "running" },
+          {
+            ...replicaAgent(bufferedAgent.agent, host.serverId),
+            turn: {
+              phase: "open",
+              turnId: null,
+              startedAt: null,
+              cancellationRequestId: null,
+            },
+          },
         ],
       ]),
     );
@@ -2568,7 +2776,7 @@ describe("HostRuntimeStore", () => {
     );
     store.syncHosts([host]);
     await waitForHostOnline(store, host.serverId);
-    const load = store.refreshAgentDirectory({ serverId: host.serverId });
+    const load = store.refreshAgentDirectory({ serverId: host.serverId, subscribe: {} });
     await fakeClient.waitForFetches(2);
     fakeClient.agentUpdate({
       kind: "upsert",
@@ -2870,7 +3078,7 @@ describe("HostRuntimeStore", () => {
     });
     store.syncHosts([host]);
     await waitForHostOnline(store, host.serverId);
-    const load = store.refreshAgentDirectory({ serverId: host.serverId });
+    const load = store.refreshAgentDirectory({ serverId: host.serverId, subscribe: {} });
     await fakeClient.waitForFetches(2);
     fakeClient.agentUpdate({
       kind: "upsert",
@@ -2951,7 +3159,7 @@ describe("HostRuntimeStore", () => {
     await waitForHostOnline(store, host.serverId);
     await store.refreshAgentDirectory({
       serverId: host.serverId,
-      subscribe: { subscriptionId: "app:srv_resubscribe" },
+      subscribe: {},
       page: { limit: 200 },
     });
     await fakeClient.waitForFetches(1);
@@ -2969,7 +3177,7 @@ describe("HostRuntimeStore", () => {
     await waitForHostOnline(store, host.serverId);
     await store.refreshAgentDirectory({
       serverId: host.serverId,
-      subscribe: { subscriptionId: "app:srv_resubscribe" },
+      subscribe: {},
       page: { limit: 200 },
     });
     await fakeClient.waitForFetches(2);
@@ -2978,13 +3186,13 @@ describe("HostRuntimeStore", () => {
       {
         scope: "active",
         sort: [{ key: "updated_at", direction: "desc" }],
-        subscribe: { subscriptionId: "app:srv_resubscribe" },
+        subscribe: {},
         page: { limit: 200 },
       },
       {
         scope: "active",
         sort: [{ key: "updated_at", direction: "desc" }],
-        subscribe: { subscriptionId: "app:srv_resubscribe" },
+        subscribe: {},
         page: { limit: 200 },
       },
     ]);
@@ -3037,12 +3245,14 @@ describe("HostRuntimeStore", () => {
       }).agent;
       const staleAgent: Agent = {
         ...stale,
-        activeTurn: stale.activeTurn
+        turn: stale.activeTurn
           ? {
+              phase: "open",
               turnId: stale.activeTurn.turnId,
               startedAt: stale.activeTurn.startedAt ? new Date(stale.activeTurn.startedAt) : null,
+              cancellationRequestId: null,
             }
-          : null,
+          : { phase: "idle", cancellationRequestId: null },
         serverId: host.serverId,
         createdAt: new Date(stale.createdAt),
         updatedAt: new Date(stale.updatedAt),
@@ -3059,7 +3269,7 @@ describe("HostRuntimeStore", () => {
     await waitForHostOnline(store, host.serverId);
     await store.refreshAgentDirectory({
       serverId: host.serverId,
-      subscribe: { subscriptionId: "app:srv_archived_rehydrate" },
+      subscribe: {},
       page: { limit: 200 },
     });
     await fakeClient.waitForFetches(1);
@@ -3180,7 +3390,7 @@ describe("HostRuntimeStore", () => {
     }
   });
 
-  it("upsertDirectConnection stores SSL and password settings", async () => {
+  it("upsertDirectConnection stores SSL on the connection and password on the host", async () => {
     const store = new HostRuntimeStore({
       deps: {
         createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
@@ -3208,9 +3418,9 @@ describe("HostRuntimeStore", () => {
         type: "directTcp",
         endpoint: "example.paseo.test:7443",
         useTls: true,
-        password: "shared-secret",
       },
     ]);
+    expect(host?.password).toBe("shared-secret");
 
     store.syncHosts([]);
   });
@@ -3387,6 +3597,33 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([]);
   });
 
+  it("probes a pairing link immediately and saves only after admission", async () => {
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ host }) => {
+          if (host.password !== "correct-password")
+            throw new DaemonAuthenticationError("password_required");
+          return {
+            client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+            serverId: host.serverId,
+            hostname: "paired host",
+          };
+        },
+        getClientId: async () => "cid_pairing",
+      },
+    });
+    const offerUrl = encodeOfferUrl(makeOffer());
+    await expect(store.probeAndUpsertConnectionFromOfferUrl(offerUrl)).rejects.toThrow(
+      "Password required",
+    );
+    expect(store.getHosts()).toHaveLength(0);
+    const result = await store.probeAndUpsertConnectionFromOfferUrl(offerUrl, "correct-password");
+    expect(result.serverId).toBe("srv_offer");
+    expect(store.getHosts()[0]?.password).toBe("correct-password");
+    store.syncHosts([]);
+  });
+
   it("preserves the existing host label when re-pairing an existing relay host", async () => {
     const store = new HostRuntimeStore({
       deps: {
@@ -3455,6 +3692,322 @@ describe("readInitialDaemonConnectionHint", () => {
 });
 
 describe("HostRuntimeStore initial connection hint bootstrap", () => {
+  it("starts saved remote-host probes while desktop daemon startup is still pending", async () => {
+    const host = makeHost({
+      serverId: "srv_remote_saved",
+      connections: [
+        { id: "direct:remote.example:6799", type: "directTcp", endpoint: "remote.example:6799" },
+      ],
+    });
+    const storage = createMemoryHostRuntimeStorage();
+    await storage.setItem("@paseo:daemon-registry", JSON.stringify([host]));
+    let remoteProbeStarted = false;
+    let finishDesktopStart: (() => void) | undefined;
+    const desktopStartPending = new Promise<void>((resolve) => {
+      finishDesktopStart = resolve;
+    });
+    const store = new HostRuntimeStore({
+      storage,
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async () => {
+          remoteProbeStarted = true;
+          return {
+            client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+            serverId: host.serverId,
+            hostname: host.label,
+          };
+        },
+        getClientId: async () => "cid_remote_saved",
+      },
+    });
+    startHostRuntimeBootstrap({
+      store,
+      shouldStartDaemon: true,
+      daemonStartService: {
+        startIfEnabled: async () => {
+          await desktopStartPending;
+          return { ok: true };
+        },
+      },
+    });
+    try {
+      await vi.waitFor(() => expect(remoteProbeStarted).toBe(true), { timeout: 400 });
+      expect(store.isHostRegistryLoaded()).toBe(true);
+    } finally {
+      finishDesktopStart?.();
+      await store.boot();
+      store.syncHosts([]);
+    }
+  });
+  it("resolves a local credential for a reopened saved desktop host connection", async () => {
+    const host = makeHost({
+      serverId: "srv_desktop_reopened",
+      connections: [{ id: "direct:localhost:6799", type: "directTcp", endpoint: "localhost:6799" }],
+    });
+    const storage = createMemoryHostRuntimeStorage();
+    await storage.setItem("@paseo:daemon-registry", JSON.stringify([host]));
+    const credentialRequests: string[] = [];
+    const store = new HostRuntimeStore({
+      storage,
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ host: probeHost, connection }) => {
+          expect(probeHost.password).toBeUndefined();
+          const credential = await readDesktopManagedLocalCredential(connection, async (listen) => {
+            credentialRequests.push(listen);
+            return listen === "localhost:6799" ? "local-token" : null;
+          });
+          expect(credential).toBe("local-token");
+          return {
+            client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+            serverId: host.serverId,
+            hostname: host.label,
+          };
+        },
+        getClientId: async () => "cid_desktop_reopened",
+      },
+    });
+    startHostRuntimeBootstrap({
+      store,
+      shouldStartDaemon: true,
+      daemonStartService: {
+        startIfEnabled: async () => ({ ok: true }),
+      },
+    });
+    await waitForHostOnline(store, host.serverId);
+    expect(credentialRequests).toContain("localhost:6799");
+    store.syncHosts([]);
+  });
+  it("requires a new password and stops reconnecting after a previously connected client is rejected", async () => {
+    const client = makeConnectedProbeClient(5);
+    const host = makeHost({
+      serverId: "srv_changed_password",
+      password: "old-password",
+      connections: [{ id: "direct:lan:6767", type: "directTcp", endpoint: "lan:6767" }],
+    });
+    const store = new HostRuntimeStore({
+      storage: createMemoryHostRuntimeStorage(),
+      deps: {
+        createClient: () => client as unknown as DaemonClient,
+        connectToDaemon: async () => ({
+          client: client as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: host.label,
+        }),
+        getClientId: async () => "cid_changed_password",
+      },
+    });
+    store.syncHosts([host], {
+      initialConnectionByServerId: new Map([
+        [
+          host.serverId,
+          {
+            connectionId: host.connections[0]!.id,
+            existingClient: client as unknown as DaemonClient,
+          },
+        ],
+      ]),
+    });
+    await waitForHostOnline(store, host.serverId);
+    client.authFailureReason = "incorrect_password";
+    client.setConnectionState({ status: "disconnected", reason: "Incorrect password" });
+    await onceHostSnapshotMatches(
+      store,
+      host.serverId,
+      (snapshot) => snapshot?.authFailureReason === "incorrect_password",
+    );
+    expect(store.getSnapshot(host.serverId)?.lastError).toBe("Incorrect password");
+    expect(client.reconnectEnabledChanges.at(-1)).toBe(false);
+    store.syncHosts([]);
+  });
+
+  it("tries another connection after the active connection rejects its password", async () => {
+    const relayClient = makeConnectedProbeClient(5);
+    const directClient = makeConnectedProbeClient(5);
+    const host = makeHost({
+      serverId: "srv_rejected_relay_with_local_direct",
+      password: "stale-password",
+      preferredConnectionId: "relay:remote:443",
+      connections: [
+        {
+          id: "relay:remote:443",
+          type: "relay",
+          relayEndpoint: "remote:443",
+          daemonPublicKeyB64: "pk_test_offer",
+        },
+        { id: "direct:localhost:6799", type: "directTcp", endpoint: "localhost:6799" },
+      ],
+    });
+    const probeAttempts: string[] = [];
+    const store = new HostRuntimeStore({
+      storage: createMemoryHostRuntimeStorage(),
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ connection }) => {
+          probeAttempts.push(connection.id);
+          if (connection.type === "relay")
+            throw new DaemonAuthenticationError("incorrect_password");
+          return {
+            client: directClient as unknown as DaemonClient,
+            serverId: host.serverId,
+            hostname: host.label,
+          };
+        },
+        getClientId: async () => "cid_rejected_relay_with_local_direct",
+      },
+    });
+    store.syncHosts([host], {
+      initialConnectionByServerId: new Map([
+        [
+          host.serverId,
+          {
+            connectionId: "relay:remote:443",
+            existingClient: relayClient as unknown as DaemonClient,
+          },
+        ],
+      ]),
+    });
+    await waitForHostOnline(store, host.serverId);
+    relayClient.authFailureReason = "incorrect_password";
+    relayClient.setConnectionState({ status: "disconnected", reason: "Incorrect password" });
+    await onceHostSnapshotMatches(
+      store,
+      host.serverId,
+      (snapshot) => snapshot?.authFailureReason === "incorrect_password",
+    );
+    await store.runProbeCycleNow(host.serverId);
+    await onceHostSnapshotMatches(
+      store,
+      host.serverId,
+      (snapshot) =>
+        snapshot?.connectionStatus === "online" &&
+        snapshot.activeConnectionId === "direct:localhost:6799",
+    );
+    expect(probeAttempts).toContain("direct:localhost:6799");
+    expect(probeAttempts).not.toContain("relay:remote:443");
+    store.syncHosts([]);
+  });
+
+  it("keeps five rejected hosts red with independent password errors", async () => {
+    let probeAttempts = 0;
+    const store = new HostRuntimeStore({
+      storage: createMemoryHostRuntimeStorage(),
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async () => {
+          probeAttempts += 1;
+          throw new DaemonAuthenticationError("password_required");
+        },
+        getClientId: async () => "cid_five_rejected_hosts",
+      },
+    });
+    for (let index = 1; index <= 5; index += 1) {
+      const serverId = `srv_rejected_${index}`;
+      await store.upsertDirectConnection({ serverId, endpoint: `host-${index}:6767` });
+      await onceHostSnapshotMatches(
+        store,
+        serverId,
+        (snapshot) => snapshot?.authFailureReason === "password_required",
+      );
+    }
+    for (let index = 1; index <= 5; index += 1) {
+      const snapshot = store.getSnapshot(`srv_rejected_${index}`);
+      expect(snapshot?.connectionStatus).toBe("error");
+      expect(snapshot?.lastError).toBe("Password required");
+    }
+    const attemptsBeforeRetry = probeAttempts;
+    await store.runProbeCycleNow("srv_rejected_1");
+    expect(probeAttempts).toBe(attemptsBeforeRetry);
+    store.syncHosts([]);
+  });
+  it("imports a pairing link after a password retry in the add flow", async () => {
+    const store = new HostRuntimeStore({
+      storage: createMemoryHostRuntimeStorage(),
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ host }) => {
+          if (host.password !== "correct-password")
+            throw new DaemonAuthenticationError("password_required");
+          return {
+            client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+            serverId: host.serverId,
+            hostname: "paired",
+          };
+        },
+        getClientId: async () => "cid_link_import",
+      },
+    });
+    const link = "relay://relay.example:443/srv_pair?key=AAAA&ssl=true";
+    await expect(store.importConnectionLink(link, "hostRoot")).resolves.toEqual({
+      status: "password_required",
+    });
+    expect(store.getHosts()).toHaveLength(0);
+    await store.probeAndUpsertConnectionFromOfferUrl(link, "correct-password");
+    expect(store.getHosts()[0]).toMatchObject({
+      serverId: "srv_pair",
+      password: "correct-password",
+    });
+    store.syncHosts([]);
+  });
+  it("imports a deep link without waiting for admission, then leaves a rejected saved host red", async () => {
+    const store = new HostRuntimeStore({
+      storage: createMemoryHostRuntimeStorage(),
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async () => {
+          throw new DaemonAuthenticationError("password_required");
+        },
+        getClientId: async () => "cid_deep_link",
+      },
+    });
+    const link = "relay://relay.example:443/srv_deep?key=AAAA&ssl=true";
+    await expect(store.importConnectionLink(link, "openProject")).resolves.toEqual({
+      status: "connected",
+      serverId: "srv_deep",
+    });
+    expect(store.getHosts()).toHaveLength(1);
+    await onceHostSnapshotMatches(
+      store,
+      "srv_deep",
+      (snapshot) => snapshot?.authFailureReason === "password_required",
+    );
+    expect(store.getSnapshot("srv_deep")?.connectionStatus).toBe("error");
+    store.syncHosts([]);
+  });
+  it("saves and reconnects a rejected saved host after changing its password", async () => {
+    const store = new HostRuntimeStore({
+      storage: createMemoryHostRuntimeStorage(),
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ host }) => {
+          if (host.password !== "correct-password")
+            throw new DaemonAuthenticationError("password_required");
+          return {
+            client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+            serverId: host.serverId,
+            hostname: host.label,
+          };
+        },
+        getClientId: async () => "cid_test_password_setting",
+      },
+    });
+    await store.upsertDirectConnection({ serverId: "srv_test", endpoint: "lan:6767" });
+    await onceHostSnapshotMatches(
+      store,
+      "srv_test",
+      (snapshot) => snapshot?.authFailureReason === "password_required",
+    );
+    expect(store.getSnapshot("srv_test")?.connectionStatus).toBe("error");
+    await store.setHostPassword("srv_test", "correct-password");
+    await waitForHostOnline(store, "srv_test");
+    expect(store.getHosts()[0]?.password).toBe("correct-password");
+    expect(store.getSnapshot("srv_test")?.authFailureReason).toBeNull();
+    await store.setHostPassword("srv_test", "");
+    expect(store.getHosts()[0]?.password).toBeUndefined();
+    store.syncHosts([]);
+  });
+
   it("attempts the explicit initial connection hint before default localhost bootstrap", async () => {
     const seenProbes: { endpoint: string; useTls?: boolean }[] = [];
     const store = new HostRuntimeStore({

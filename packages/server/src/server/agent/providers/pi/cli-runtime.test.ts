@@ -62,6 +62,15 @@ function onPiCommand(child: PiChild, handler: (command: Record<string, unknown>)
   });
 }
 
+/** Kill the child the moment it receives `type`, so the request is in flight when it dies. */
+function exitOnCommand(child: PiChild, type: string): void {
+  onPiCommand(child, (command) => {
+    if (command.type === type) {
+      child.emit("exit", 1, null);
+    }
+  });
+}
+
 function replyToCommands(
   child: PiChild,
   handler: (command: Record<string, unknown>) => unknown,
@@ -368,6 +377,47 @@ describe("PiCliRuntime", () => {
     expect(child.killedSignals).toContain("SIGTERM");
   });
 
+  test("sends the steer RPC frame", async () => {
+    const child = createPiChild();
+    replyToCommands(child, () => ({}));
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    const steerCommand = capturePendingCommand(child, "steer");
+    await session.steer("focus on error handling", [
+      { type: "image", data: "aW1hZ2U=", mimeType: "image/png" },
+    ]);
+
+    expect(await steerCommand).toMatchObject({
+      type: "steer",
+      message: "focus on error handling",
+      images: [{ type: "image", data: "aW1hZ2U=", mimeType: "image/png" }],
+    });
+  });
+
+  test("sends the steer RPC frame without images", async () => {
+    const child = createPiChild();
+    replyToCommands(child, () => ({}));
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    const steerCommand = capturePendingCommand(child, "steer");
+    await session.steer("focus on error handling");
+
+    const command = await steerCommand;
+    expect(command).toMatchObject({ type: "steer", message: "focus on error handling" });
+    expect(command.images).toBeUndefined();
+  });
+
+  test("sends the clear_queue RPC frame", async () => {
+    const child = createPiChild();
+    replyToCommands(child, () => ({}));
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    const clearQueueCommand = capturePendingCommand(child, "clear_queue");
+    await session.clearQueue();
+
+    expect(await clearQueueCommand).toMatchObject({ type: "clear_queue" });
+  });
+
   test("falls back to get_state when get_session_stats is unsupported", async () => {
     const child = createPiChild();
     let commandSequence: string[] = [];
@@ -464,5 +514,26 @@ describe("PiCliRuntime", () => {
 
     // Neither RPC returned usable data — should resolve with empty object
     expect(stats).toEqual({});
+  });
+
+  // A dead runtime owns no turn, so interrupting it is already satisfied. Rejecting here
+  // makes AgentManager treat the interrupt as unacknowledged and refuse the stop, which
+  // pins the agent at `running` until the daemon restarts. See issue #3749.
+  test("abort and clearQueue resolve once the Pi process has exited", async () => {
+    const child = createPiChild();
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    child.emit("exit", 1, null);
+
+    await expect(session.clearQueue()).resolves.toBeUndefined();
+    await expect(session.abort()).resolves.toBeUndefined();
+  });
+
+  test("abort resolves when the Pi process exits while the abort is in flight", async () => {
+    const child = createPiChild();
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    exitOnCommand(child, "abort");
+
+    await expect(session.abort()).resolves.toBeUndefined();
   });
 });

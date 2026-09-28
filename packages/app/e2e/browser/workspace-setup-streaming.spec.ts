@@ -22,7 +22,7 @@ import {
   expectSetupPanel,
   openHomeWithProject,
   navigateToWorkspaceViaSidebar,
-  returnHomeFromWorkspace,
+  leaveWorkspaceViaHistory,
   openWorkspaceScriptsMenu,
   startWorkspaceScriptFromMenu,
   closeWorkspaceScriptsMenu,
@@ -87,8 +87,7 @@ test.describe("Workspace setup streaming", () => {
     try {
       await seedProjectForWorkspaceSetup(client, repo.path);
 
-      // Wait for setup completion via daemon (setup snapshots are per-session,
-      // so the browser session won't receive progress events).
+      // The setup client owns progress before creating the workspace.
       const completed = waitForWorkspaceSetupProgress(
         client,
         (payload) =>
@@ -195,7 +194,7 @@ test.describe("Workspace setup streaming", () => {
       await expectFailedSetupTabSeededInMainPane(page, workspace.id);
 
       await closeSetupTab(page, workspace.id);
-      await returnHomeFromWorkspace(page);
+      await leaveWorkspaceViaHistory(page);
       await navigateToWorkspaceViaSidebar(page, workspace.id);
       await expectSetupTabNotSeeded(page, workspace.id);
     } finally {

@@ -58,7 +58,10 @@ Android touches sailed straight through to the chat scroll view behind it.
 Two escape hatches in the codebase:
 
 - **`Modal`** (combobox, dropdown menu and tooltip on native) — opens a new Android window, so
-  hit-testing starts fresh in that window. Side effect: a Modal opening on
+  hit-testing starts fresh in that window. If its children use gesture-handler,
+  the Modal owner must wrap its content in a full-height `GestureHandlerRootView`:
+  the app's root does not span Android windows. React context alone does not
+  establish a native gesture root. Side effect: a Modal opening on
   Android can detach the IME from an underlying TextInput. Fine for combobox
   (it has its own input) and tooltip (no input). **Not** fine for autocomplete
   (the composer's input must stay focused so the user keeps typing).
@@ -134,19 +137,90 @@ The fix for transforms is Gotcha 3. The fix for context is Gotcha 7.
 
 ## Gotcha 3 — Keyboard layout and portal anchors
 
-Move the chat surface with worklet-driven bottom padding from
-`KeyboardShiftProvider`. Padding keeps the stream, composer, visual position,
-and native hit testing in the same layout. Do not translate the stream and
-composer independently.
+`composer/dock` owns the stationary viewport, bottom-anchored surface, composer
+capacity, and keyboard motion for chat, workspace draft tabs, and New workspace.
+Render `<ComposerDock>{contentAbove}{composer}</ComposerDock>` below the header.
+The optional third child is an overlay that moves with the surface. New workspace
+uses `centered` for its existing desktop/tablet form. Hosts never reserve keyboard
+space or translate the composer themselves. Put the dismiss surface behind content
+as a sibling, with `pointerEvents="box-none"` on its content wrapper. A Pressable
+ancestor takes the JS responder on idle Android Fabric and intercepts the stream's
+MOVE events before its native scroll view reaches touch slop. Streaming can hide
+this failure by delaying the responder grant. Native scroll views retain their own
+tap-to-dismiss behavior; unclaimed empty-space taps reach the dismiss sibling.
+On iOS, decorative form containers also need `box-none` (and inert titles/spacers
+need `none`); otherwise their empty padding blocks hit testing of that sibling.
+The shared screen header uses the same dismiss surface. Keep the
+header escape available when a capped draft clips all content above it, since
+iPhone has no system keyboard-dismiss button. Child controls keep their touches,
+and the stream keeps its existing flick-to-dismiss gesture.
 
-Do not use the controller's raw keyboard progress for the padding. It can retain
-a nonzero value after the keyboard closes. The shared provider normalizes that
-state and reconciles native animation-end events.
+The dock's private viewport and capacity model are extracted from chat. The
+app-wide `@/keyboard/shift` module owns shared motion for the dock, portals, streams,
+terminal, explorer, and dialogs. Import only its public entry point: the provider,
+shift hooks, shift style, translate view, settled stream inset, and explorer padding
+policy. Its contexts and reconciliation stay private. Keep `KeyboardShiftProvider`
+at its root mount point outside the portal host when changing dock hosts.
 
-`measureInWindow` already includes the dock's current padding layout. When a
-portal opens, snapshot the current shift and apply only the subsequent shift
-delta to its animated `bottom`. Adding the full shift moves the portal twice and
-can place it over the composer controls.
+`KeyboardTranslateView` owns visual keyboard motion inside `@/keyboard/shift`. Android uses the
+controller's Reanimated signal. iOS uses its native-driver `Animated.event`
+signal because the stock iOS Reanimated value changes at move start, while
+writing a replacement Reanimated value every frame interrupts UIKit's hide
+animation. Keep this platform choice inside the keyboard module's private platform-specific translate files.
+
+`ComposerDock` always keeps the surface at full height and wraps it in
+`KeyboardTranslateView`. The panel root clips it at the header edge, so rows
+slide under the header on open and out from under it on close. Do not swap the
+dock to keyboard padding at rest. Changing its height creates either a blank
+band or a paused transition when the inverted list updates its viewport.
+
+Do not animate a layout prop through the keyboard transition. On Android
+Fabric, each animated layout update clones the shadow tree and runs Yoga over
+the dock subtree. This measured about 10 ms per frame on the emulator and the
+mounted layouts arrived in bursts every 2–4 frames. A transform does not dirty
+layout. Preserve the translated dock's history scroll range with a far-end
+content inset on the inverted stream list. Update that inset only when keyboard
+motion settles; never drive it per frame.
+
+The translated dock's height is not the composer's available height. Bound the
+composer against the stationary space below the header inside
+`composer/dock`, including its controls and attachments. Reserve the
+keyboard destination at move start on the UI thread. Waiting for a settled JS
+update lets a long draft disappear behind the header during opening. This is a
+boundary-time layout change, not an animated layout prop. Keep the input's
+native intrinsic sizing and internal scrolling. Keep the editing input's
+`defaultValue` current on every edit: Fabric re-measures the Android input from
+the JS text whenever its frame changed, so a stale prop inflates or collapses
+the input (see `packages/app/src/components/ui/text-input/text-input.native.tsx`).
+
+Closing the keyboard moves the composer; it does not enlarge its capacity. The
+viewport keeps the last keyboard reservation until the next opening replaces
+it, so a capped draft keeps one height through every keyboard transition
+instead of expanding on close and shrinking again on open.
+
+Keep setup fields out of the composer's shrink chain. New workspace supplies its
+setup fields as the first dock child so they move up under the header as the draft
+grows. Putting the fields and composer in one bounded, shrinkable column made
+Yoga split the shortage between them: rows vanished behind the composer while
+the input lost lines at the same time. Keep that separation inside the dock,
+shared by every phone host. The centered tablet form caps the complete block
+for header clearance, but reserves the composer's own capped height before
+shrinking the setup scroll view. The form must not take editing space from the
+composer.
+
+Move the stream and composer together through `ComposerDock`. Do not translate
+them independently.
+
+`KeyboardShiftProvider` owns the normalized shift used for settled insets and
+portal geometry, plus the `isMoving` worklet value. It reconciles native
+animation-end events because the controller can retain a nonzero value after
+the keyboard closes.
+
+Measure portal anchors while the dock is at rest. If a popover opens during
+motion, re-measure when `isMoving` settles. `measureInWindow` includes the
+dock's current layout and transform. Snapshot the shift at measurement time and
+apply only the subsequent shift delta to the animated `bottom`. Adding the full
+shift moves the portal twice and can place it over the composer controls.
 
 The provider also reconciles iOS from the controller's native `onEnd` event.
 The controller's stock iOS shared values update at move start and during an
@@ -154,10 +228,6 @@ interactive move, but not at the terminal event, so JS contention can otherwise
 leave the last height/progress pair stuck in either the open or closed state.
 Keep that terminal reconciliation on the UI thread; a later focus or blur must
 not be required to repair the offset.
-
-Re-measure on `Keyboard.addListener('keyboardDidShow'|'keyboardDidHide')` only
-to refresh the snapshot if the keyboard was mid-transition when the popover
-opened.
 
 ## Gotcha 4 — Host-relative positioning before platform offsets
 

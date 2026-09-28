@@ -26,6 +26,11 @@ function inboundMessage(type: SessionInboundMessage["type"]): SessionInboundMess
 }
 
 function outboundMessage(type: SessionOutboundMessage["type"]): SessionOutboundMessage {
+  if (type === "status")
+    return {
+      type,
+      payload: { status: "agent_create_failed", error: "test", requestId: "test" },
+    } as SessionOutboundMessage;
   return { type } as SessionOutboundMessage;
 }
 
@@ -48,10 +53,77 @@ describe("SessionAuthorization", () => {
       true,
     );
     expect(authorization.allowsOutbound(outboundMessage("hub.execution.agent.update"))).toBe(true);
+    expect(authorization.allowsInbound(inboundMessage("get_providers_snapshot_request"))).toBe(
+      true,
+    );
+    expect(authorization.allowsInbound(inboundMessage("refresh_providers_snapshot_request"))).toBe(
+      true,
+    );
+    expect(authorization.allowsOutbound(outboundMessage("get_providers_snapshot_response"))).toBe(
+      true,
+    );
+    expect(authorization.allowsOutbound(outboundMessage("providers_snapshot_update"))).toBe(true);
+    expect(
+      authorization.allowsOutbound(outboundMessage("refresh_providers_snapshot_response")),
+    ).toBe(true);
+    expect(authorization.allowsInbound(inboundMessage("get_daemon_config_request"))).toBe(false);
+    expect(authorization.allowsInbound(inboundMessage("provider_diagnostic_request"))).toBe(false);
     expect(authorization.allowsInbound(inboundMessage("ping"))).toBe(false);
     expect(
       authorization.allowsInbound(inboundMessage("hub.management.daemon.get_status.request")),
     ).toBe(false);
+  });
+
+  test("Hub can operate ordinary agents and recover workspaces without daemon administration", () => {
+    const authorization = new SessionAuthorization(["hub.execute"]);
+    for (const type of [
+      "create_agent_request",
+      "workspace.title.set.request",
+      "fetch_agents_request",
+      "fetch_agent_request",
+      "agent.timeline.set_subscription.request",
+      "send_agent_message_request",
+      "workspace.recovery.inspect.request",
+      "workspace.recovery.restore.request",
+      "archive_workspace_request",
+      "cancel_agent_request",
+    ] as const) {
+      expect(authorization.allowsInbound(inboundMessage(type))).toBe(true);
+    }
+    for (const type of [
+      "status",
+      "agent_update",
+      "agent_stream",
+      "workspace_update",
+      "rpc_error",
+      "workspace.title.set.response",
+      "fetch_agents_response",
+      "fetch_agent_response",
+      "agent.timeline.set_subscription.response",
+      "send_agent_message_response",
+      "workspace.recovery.inspect.response",
+      "workspace.recovery.restore.response",
+      "archive_workspace_response",
+      "cancel_agent_response",
+    ] as const) {
+      expect(authorization.allowsOutbound(outboundMessage(type))).toBe(true);
+    }
+    for (const type of [
+      "restart_server_request",
+      "terminal_input",
+      "hub.management.daemon.permissions.update.request",
+    ] as const) {
+      expect(authorization.allowsInbound(inboundMessage(type))).toBe(false);
+    }
+    expect(
+      authorization.allowsOutbound({
+        type: "status",
+        payload: { status: "shutdown_requested", clientId: "owner", requestId: "shutdown" },
+      }),
+    ).toBe(false);
+    authorization.replacePermissions([]);
+    expect(authorization.allowsInbound(inboundMessage("send_agent_message_request"))).toBe(false);
+    expect(authorization.allowsOutbound(outboundMessage("agent_update"))).toBe(false);
   });
 
   test("correlated authorization errors can always be emitted", () => {

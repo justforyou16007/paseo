@@ -47,6 +47,7 @@ export interface OmpCliRuntimeOptions {
   runtimeSettings?: ProviderRuntimeSettings;
   command?: [string, ...string[]];
   commandsRpcName?: "get_available_commands";
+  readyTimeoutMs?: number;
   requestTimeoutMs?: number;
   spawnProcess?: (launch: OmpRuntimeLaunch) => ChildProcessWithoutNullStreams;
 }
@@ -87,7 +88,10 @@ export class OmpCliRuntime implements OmpRuntime {
     const handleAbort = () => void process.close(input.signal?.reason).catch(() => undefined);
     input.signal?.addEventListener("abort", handleAbort, { once: true });
     try {
-      await establishOmpProtocol(process, this.options.logger, this.options.requestTimeoutMs);
+      await establishOmpProtocol(process, this.options.logger, {
+        readyTimeoutMs: this.options.readyTimeoutMs,
+        requestTimeoutMs: this.options.requestTimeoutMs,
+      });
       input.signal?.throwIfAborted();
       return new OmpCliRuntimeSession(process, this.commandsRpcName);
     } catch (error) {
@@ -151,7 +155,7 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   }
 
   async abort(): Promise<void> {
-    await this.request({ type: "abort" });
+    await this.requestStopWork({ type: "abort" });
   }
 
   async getState(): Promise<OmpSessionState> {
@@ -286,6 +290,10 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
 
   private request(command: OmpRpcCommand, timeoutMs?: number | null): Promise<unknown> {
     return this.process.request(OmpRpcCommandSchema.parse(command), timeoutMs);
+  }
+
+  private requestStopWork(command: OmpRpcCommand): Promise<void> {
+    return this.process.requestStopWork(OmpRpcCommandSchema.parse(command));
   }
 
   private emit(event: OmpRuntimeEvent): void {

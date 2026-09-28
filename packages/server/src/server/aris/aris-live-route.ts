@@ -1,6 +1,6 @@
 import type express from "express";
 import type { Logger } from "pino";
-import { extractHttpBearerToken, isBearerTokenValidSync } from "../auth.js";
+import { extractHttpBearerToken, isBearerTokenValidAsync } from "../auth.js";
 import type { ArisDataService } from "./aris-data-service.js";
 import { ArisStateWatcher } from "../session/aris/aris-watcher.js";
 import type { WorkspaceRegistry } from "../workspace-registry.js";
@@ -70,13 +70,13 @@ export function createArisLiveRouteHandler(options: ArisLiveRouteOptions): expre
     const token =
       extractHttpBearerToken(req.header("authorization")) ??
       (typeof req.query.token === "string" ? req.query.token : null);
-    if (!isBearerTokenValidSync({ password, token })) {
-      res.status(401).json({ error: "Unauthorized" });
-      return;
-    }
-
     void (async () => {
       try {
+        if (!(await isBearerTokenValidAsync({ password, token }))) {
+          res.status(401).json({ error: "Unauthorized" });
+          return;
+        }
+
         const runs = await arisDataService.listRuns(workspaceId);
         if (runs.length === 0 && lastEventId === undefined) {
           // Workspace may exist with no runs; still open stream so future runs can stream.

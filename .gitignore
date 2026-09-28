@@ -102,3 +102,5 @@ app.json
 
 # Debian packaging staging tree and built .deb
 dist-deb/
+# Heap snapshots dumped by --heapsnapshot-near-heap-limit; keep them for debugging.
+*.heapsnapshot

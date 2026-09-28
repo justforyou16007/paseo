@@ -121,6 +121,21 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     return { requestId };
   }
 
+  async steer(
+    message: string,
+    images?: Array<{ type: "image"; data: string; mimeType: string }>,
+  ): Promise<void> {
+    await this.request({
+      type: "steer",
+      message,
+      ...(images?.length ? { images } : {}),
+    });
+  }
+
+  async clearQueue(): Promise<void> {
+    await this.requestStopWork({ type: "clear_queue" });
+  }
+
   async compact(customInstructions?: string): Promise<void> {
     await this.waitForCompletion({
       type: "compact",
@@ -133,7 +148,7 @@ class PiCliRuntimeSession implements PiRuntimeSession {
   }
 
   async abort(): Promise<void> {
-    await this.request({ type: "abort" });
+    await this.requestStopWork({ type: "abort" });
   }
 
   async getState(): Promise<PiSessionState> {
@@ -220,6 +235,10 @@ class PiCliRuntimeSession implements PiRuntimeSession {
 
   request(command: PiRpcCommand, timeoutMs?: number | null): Promise<unknown> {
     return this.process.request(command, timeoutMs);
+  }
+
+  private requestStopWork(command: PiRpcCommand): Promise<void> {
+    return this.process.requestStopWork(command);
   }
 
   private async waitForCompletion(command: PiRpcCommand): Promise<void> {

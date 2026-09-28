@@ -4,7 +4,7 @@ import { Gesture } from "react-native-gesture-handler";
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { formatPrTabLabel, PullRequestTabIcon } from "@/git/pull-request-panel";
@@ -14,17 +14,19 @@ import {
   type ExplorerTab,
 } from "@/stores/panel-store";
 import { useCloseFileExplorerGesture } from "@/mobile-panels/gestures";
+import { useIsMobilePanelActive } from "@/mobile-panels/provider";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
 import {
   HEADER_INNER_HEIGHT,
   HEADER_INNER_HEIGHT_MOBILE,
   HEADER_TOP_PADDING_MOBILE,
+  useIsCompactFormFactor,
 } from "@/constants/layout";
 import { ChangesSurface } from "@/git/diff-pane";
 import { changesStateSchema, defaultChangesState, type ChangesState } from "@/panels/changes/state";
 import { FileExplorerPane } from "./file-explorer-pane";
-import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
-import { shouldUseCompactExplorerKeyboardPadding } from "@/hooks/keyboard-shift-policy";
+import { useKeyboardShiftStyle } from "@/keyboard/shift";
+import { shouldUseCompactExplorerKeyboardPadding } from "@/keyboard/shift";
 import { WindowChromeSafeArea } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { RetainedPanel, RetainedPanelActivity } from "@/components/retained-panel";
@@ -37,8 +39,16 @@ import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
   SIDEBAR_RESIZE_FAIL_OFFSET,
 } from "@/components/sidebar-resize-handle-layout";
-import { resolveExplorerSidebarWidth } from "@/components/explorer-sidebar-layout";
+import {
+  EXPLORER_TAB_RAIL_INSET,
+  explorerSidebarCloseButtonLayout,
+  resolveExplorerSidebarWidth,
+} from "@/components/explorer-sidebar-layout";
+import { ToolbarButton } from "@/components/ui/pane-content-toolbar";
+import { mutedIconColorMapping } from "@/components/ui/icon-button-chrome";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+
+const ThemedX = withUnistyles(X);
 
 function logExplorerSidebar(_event: string, _details: Record<string, unknown>): void {}
 
@@ -81,7 +91,7 @@ export function CompactExplorerSidebar({
 }: ExplorerSidebarProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
-  const isOpen = usePanelStore(selectIsCompactFileExplorerOpen);
+  const isActive = useIsMobilePanelActive("file-explorer");
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
   const { explorerTab, handleTabPress } = useExplorerSidebarSharedState({
     serverId,
@@ -99,11 +109,11 @@ export function CompactExplorerSidebar({
     (reason: string) => {
       logExplorerSidebar("handleClose", {
         reason,
-        isOpen,
+        isOpen: isActive,
       });
       showMobileAgent();
     },
-    [isOpen, showMobileAgent],
+    [isActive, showMobileAgent],
   );
 
   const handleHeaderClose = useCallback(() => handleClose("header-close-button"), [handleClose]);
@@ -127,7 +137,7 @@ export function CompactExplorerSidebar({
   );
 
   return (
-    <RetainedPanelActivity active={isOpen}>
+    <RetainedPanelActivity active={isActive}>
       <MobilePanelOverlay
         panel="file-explorer"
         closeGesture={closeGesture}
@@ -141,7 +151,7 @@ export function CompactExplorerSidebar({
           workspaceId={workspaceId}
           workspaceRoot={workspaceRoot}
           isGit={isGit}
-          isOpen={isOpen}
+          isOpen={isActive}
           onOpenFile={onOpenFile}
         />
       </MobilePanelOverlay>
@@ -278,8 +288,12 @@ function ExplorerTabButton({
   testID,
   children,
 }: ExplorerTabButtonProps) {
+  const isCompact = useIsCompactFormFactor();
   const handlePress = useCallback(() => onTabPress(tab), [onTabPress, tab]);
-  const tabStyle = useMemo(() => [styles.tab, active && styles.tabActive], [active]);
+  const tabStyle = useMemo(
+    () => [styles.tab(isCompact), active && styles.tabActive],
+    [active, isCompact],
+  );
   const tabTextStyle = useMemo(() => [styles.tabText, active && styles.tabTextActive], [active]);
   return (
     <Pressable testID={testID} style={tabStyle} onPress={handlePress}>
@@ -314,6 +328,17 @@ function ExplorerSidebarContent({
 }: SidebarContentProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
+  const closeButtonLayout = explorerSidebarCloseButtonLayout(isCompact);
+  const closeButtonStyle = useMemo(
+    () => ({ width: closeButtonLayout.size, height: closeButtonLayout.size }),
+    [closeButtonLayout.size],
+  );
+  // The close glyph shares the trailing rail with the toolbar rows below it.
+  const headerRightSectionStyle = useMemo(
+    () => [styles.headerRightSection, { paddingRight: closeButtonLayout.trailingPadding }],
+    [closeButtonLayout.trailingPadding],
+  );
   const { prPane, showPullRequest: showPrTab } = usePullRequestPanelAvailability({
     serverId,
     cwd: workspaceRoot,
@@ -340,14 +365,9 @@ function ExplorerSidebarContent({
   return (
     <View style={styles.sidebarContent} pointerEvents="auto">
       {/* Header with tabs and close button */}
-      <WindowChromeSafeArea
-        placement="inline"
-        horizontalPadding={theme.spacing[2]}
-        style={styles.header}
-        testID="explorer-header"
-      >
+      <WindowChromeSafeArea placement="inline" style={styles.header} testID="explorer-header">
         <TitlebarDragRegion />
-        <View style={styles.tabsContainer}>
+        <View style={styles.tabsContainer(isCompact)}>
           {isGit && (
             <ExplorerTabButton
               tab="changes"
@@ -382,24 +402,18 @@ function ExplorerSidebarContent({
             </ExplorerTabButton>
           )}
         </View>
-        <View style={styles.headerRightSection}>
-          <Pressable
+        <View style={headerRightSectionStyle}>
+          <ToolbarButton
+            compact={isCompact}
+            style={closeButtonStyle}
+            hitSlop={closeButtonLayout.hitSlop}
+            label={t("workspace.tabs.explorerSidebar.close")}
             onPress={onClose}
-            style={styles.closeButton}
             testID="explorer-close"
             nativeID="explorer-close"
-            accessible
-            accessibilityRole="button"
-            accessibilityLabel={t("workspace.tabs.explorerSidebar.close")}
-            hitSlop={8}
           >
-            {({ hovered, pressed }) => (
-              <X
-                size={18}
-                color={hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted}
-              />
-            )}
-          </Pressable>
+            <ThemedX size={closeButtonLayout.iconSize} uniProps={mutedIconColorMapping} />
+          </ToolbarButton>
         </View>
       </WindowChromeSafeArea>
 
@@ -461,7 +475,6 @@ function ChangedFilesPane({
       workspaceId={workspaceId}
       cwd={workspaceRoot}
       enabled={isOpen}
-      modeScope="compact-explorer"
       onOpenFile={onOpenFile}
       onAddToChat={canAddToChat ? addFile : undefined}
       state={changesState}
@@ -520,18 +533,21 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
-  tabsContainer: {
+  tabsContainer: (isCompact: boolean) => ({
     flexDirection: "row",
     gap: theme.spacing[1],
-  },
-  tab: {
+    // With the tab's own horizontal padding this puts the label on the pane's
+    // leading rail, the same way the desktop tab rail does.
+    paddingLeft: isCompact ? EXPLORER_TAB_RAIL_INSET : theme.spacing[2],
+  }),
+  tab: (isCompact: boolean) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
     paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
+    paddingHorizontal: isCompact ? theme.spacing[2] : theme.spacing[3],
     borderRadius: theme.borderRadius.md,
-  },
+  }),
   tabActive: {
     backgroundColor: theme.colors.surfaceSidebarHover,
   },
@@ -550,10 +566,6 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-  },
-  closeButton: {
-    padding: theme.spacing[2],
-    borderRadius: theme.borderRadius.md,
   },
   contentArea: {
     flex: 1,

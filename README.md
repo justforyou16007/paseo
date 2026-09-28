@@ -47,6 +47,14 @@ Run agents in parallel on your own machines. Ship from your phone or your desk.
 - **Cross-device:** iOS, Android, desktop, web, and CLI. Start work at your desk, check in from your phone, script it from the terminal.
 - **Privacy-first:** Paseo doesn't have any telemetry, tracking, or forced log-ins.
 
+## Plugins
+
+Add themes, workspace panels, commands, settings screens, and coding-agent providers with trusted
+TypeScript plugins. Install from npm, Git, or a local directory with `paseo plugin install <source>`.
+
+Start with the [plugin quickstart](https://paseo.sh/docs/plugins). Plugins run with access to your daemon
+machine and inside connected clients; install only code you trust.
+
 ## Getting Started
 
 Paseo runs a local server called the daemon that manages your coding agents. Clients like the desktop app, mobile app, web app, and CLI connect to it.
@@ -184,6 +192,12 @@ npm run build:server
 # repo-wide checks
 npm run typecheck
 ```
+
+## Sponsors
+
+Paseo is built by one person and funded by the people who use it. Support the work on [GitHub Sponsors](https://github.com/sponsors/boudra). Companies can [sponsor Paseo](https://paseo.sh/sponsor#spot) monthly and have their logo shown here and on the paseo.sh homepage.
+
+<!-- Sponsor logos go here, in the same order as packages/website/src/data/sponsors.ts -->
 
 ## Related projects
 

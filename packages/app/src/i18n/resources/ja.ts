@@ -2,6 +2,30 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
+  paneFind: {
+    connectionFailure:
+      "このチャットを検索できませんでした。ホストへの接続を確認して再試行してください。",
+    historyChangedFailure: "検索中にチャットが変更されました。もう一度検索してください。",
+    revealFailure: "この一致を表示できませんでした。再試行してください。",
+    searching: "検索中…",
+    loading: "読み込み中…",
+    failed: "失敗",
+    retry: "再試行",
+
+    title: "検索",
+    placeholder: "ペイン内を検索",
+    close: "検索を閉じる",
+    matches: "検索結果",
+    previous: "前の一致",
+    next: "次の一致",
+    toggleReplace: "置換を切り替え",
+    replaceWith: "置換後の文字列",
+    replace: "置換",
+    replaceAll: "すべて置換",
+    noMatches: "一致なし",
+    position: "{{current}} / {{total}}",
+    total: "{{total}} 件の一致",
+  },
   common: {
     back: "戻る",
     loading: "読み込み中...",
@@ -10,10 +34,13 @@ export const ja: TranslationResources = {
       cancel: "キャンセル",
       close: "閉じる",
       copy: "コピー",
+      copyLine: "行をコピー",
       dismiss: "閉じる",
+      reload: "再読み込み",
       retry: "再試行",
       search: "検索",
       select: "選択",
+      selectAll: "すべて選択",
     },
     placeholders: {
       search: "検索...",
@@ -33,6 +60,7 @@ export const ja: TranslationResources = {
     errors: {
       error: "エラー",
       unableToSave: "保存できません",
+      unableToCopy: "コピーできません",
       nameRequired: "名前は必須です",
       daemonUnavailable: "デーモンが利用できません",
       daemonClientUnavailable: "デーモンクライアントが利用できません",
@@ -150,7 +178,8 @@ export const ja: TranslationResources = {
       initialPromptRequired: "初期プロンプトが必要です",
       alreadyLoading: "すでに読み込み中です",
       uploadFailed: "ファイルのアップロードに失敗しました",
-      noClipboardImage: "クリップボードに画像がありません",
+      noClipboardImage:
+        "現在のクリップボードに画像がありません。キーボードから貼り付けてみてください。",
       pasteImageFailed: "画像を貼り付けられませんでした",
       fileTooLarge: "{{fileName}}が大きすぎます（最大{{size}}）",
     },
@@ -203,7 +232,12 @@ export const ja: TranslationResources = {
     empty: "このエージェントとチャットを始めましょう...",
     scrollToBottom: "下にスクロール",
     historyLoadFailed: "エージェントの履歴を読み込めませんでした",
+    messageCapped: "このメッセージは上限で切り詰められました（{{bytes}}バイト）。",
     permission: {
+      rejectedPlan: "却下されたプラン",
+      approvedPlan: "承認されたプラン",
+      canceledPlan: "キャンセルされたプラン",
+
       plan: "プラン",
       required: "権限が必要です",
       deny: "拒否",
@@ -217,7 +251,8 @@ export const ja: TranslationResources = {
     states: {
       notFound: "エージェントが見つかりません",
       failedToLoad: "エージェントの読み込みに失敗しました",
-      reconnecting: "再接続中",
+      reconnecting: "ホストに再接続中",
+      updating: "メッセージを更新中",
       timelineSyncFailed: "エージェントの履歴を更新できませんでした。",
       timelineSyncRetrying: "再試行しています…",
       archivingTitle: "エージェントをアーカイブ中...",
@@ -288,6 +323,7 @@ export const ja: TranslationResources = {
       zoomIn: "拡大",
       zoomOut: "縮小",
       resetZoom: "表示をリセット",
+      fullscreen: "全画面表示",
       viewSource: "ソースを表示",
       viewDiagram: "図を表示",
     },
@@ -359,7 +395,13 @@ export const ja: TranslationResources = {
     },
   },
   importSession: {
+    chooseHostTitle: en.importSession.chooseHostTitle,
     title: "セッションをインポート",
+    searchPlaceholder: "セッションを検索...",
+    scope: {
+      host: "{{host}} のセッション",
+      workspace: "このワークスペース",
+    },
     filters: {
       all: "すべて",
     },
@@ -368,12 +410,13 @@ export const ja: TranslationResources = {
       updateHost: "セッションをインポートするにはホストを更新してください。",
       noProviders: "インポート可能なプロバイダーが有効になっていません。",
       loading: "最近のセッションを読み込み中...",
-      failedAll: "最近のセッションを読み込めませんでした。",
-      failedProviders: "{{providers}}のセッションを読み込めませんでした。",
+      failedProvider: "{{provider}} のセッションを読み込めませんでした",
       failedImport: "選択したセッションをインポートできませんでした。",
     },
     actions: {
       refresh: "セッションを更新",
+      showAll: "すべて表示",
+      loadMore: "さらに読み込む",
     },
     preview: {
       untitledSession: "無題のセッション",
@@ -381,6 +424,7 @@ export const ja: TranslationResources = {
     },
     empty: {
       noRecent: "インポートする最近のセッションがありません。",
+      noMatches: "検索に一致するセッションがありません。",
       alreadyImported: "最近のセッションはすでにすべてインポートされています。",
       noProviderSessions: "{{provider}}のセッションが見つかりません。",
     },
@@ -494,14 +538,23 @@ export const ja: TranslationResources = {
         completed: "セットアップ完了",
         failed: "セットアップ失敗",
         workspace: "ワークスペースセットアップ",
+        blocked: "セットアップはブロックされました",
       },
       status: {
         running: "実行中",
         completed: "完了",
         failed: "失敗",
         waiting: "セットアップ出力を待機中",
+        blocked: "ブロック済み",
       },
       waiting: "ワークスペースをセットアップ中...",
+      blocked: {
+        title: "セットアップは実行されませんでした",
+        description:
+          "このPRは別のリポジトリ {{repository}} からのものです。セットアップとスクリプトは未確認のコードを実行する可能性があります。",
+        run: "セットアップを実行",
+        runFailed: "ワークスペースのセットアップに失敗しました",
+      },
       empty: {
         noCommands: "このワークスペースでセットアップコマンドは実行されませんでした。",
       },
@@ -871,6 +924,9 @@ export const ja: TranslationResources = {
         openChangesTab: "変更タブを開く",
         openDiffTab: "差分タブを開く",
         closeChangesTab: "変更タブを閉じる",
+        jumpToFile: {
+          title: "ファイルへ移動",
+        },
         binaryFile: "バイナリファイル",
         tooLarge: "差分が大きすぎて表示できません",
         previewTooLargeTitle: "この差分は大きすぎるためプレビューできません",
@@ -893,11 +949,8 @@ export const ja: TranslationResources = {
         refresh: "更新",
         refreshState: "gitと{{brand}}の状態を更新",
         failedRefresh: "gitの状態の更新に失敗しました。",
-        emptyHiddenWhitespace: "空白を非表示にすると変更は表示されません",
-        emptyUncommitted: "未コミットの変更なし",
         seeUncommittedChanges: "未コミットの変更を表示",
         seeCommittedChanges: "コミット済みの変更を表示",
-        emptyAgainstBase: "{{baseRef}}との差分なし",
         checkingRepository: "リポジトリを確認中...",
         notRepository: "gitリポジトリではありません",
         diffMode: "差分モード",
@@ -1037,6 +1090,16 @@ export const ja: TranslationResources = {
       updateHost: "ラベルを管理するにはホストを更新してください。",
     },
   },
+  changelog: {
+    title: "新着情報",
+    installed: "インストール済み",
+    showMore: "もっと見る",
+    openWebsite: "変更履歴をすべて表示",
+    error: {
+      title: "変更履歴を読み込めません",
+      description: "接続を確認してもう一度お試しください。",
+    },
+  },
   sidebar: {
     display: {
       trigger: "表示設定",
@@ -1096,7 +1159,6 @@ export const ja: TranslationResources = {
       addProject: "プロジェクトを追加",
       newWorkspace: "新しいワークスペース",
       hosts: "ホスト",
-      home: "ホーム",
       settings: "設定",
       closeSidebar: "サイドバーを閉じる",
     },
@@ -1113,6 +1175,7 @@ export const ja: TranslationResources = {
     },
     sections: {
       sessions: "履歴",
+      search: "検索",
       schedules: "スケジュール",
     },
     worktreeSetup: {
@@ -1259,6 +1322,7 @@ export const ja: TranslationResources = {
       detail: "ローカルデーモンを停止中。",
     },
     daemon: {
+      lifecycle: en.desktop.daemon.lifecycle,
       title: "デーモン",
       status: {
         title: "ステータス",
@@ -1569,6 +1633,10 @@ export const ja: TranslationResources = {
     },
   },
   pairing: {
+    hostPassword: {
+      title: "{{host}} のパスワード",
+      label: "ホストのパスワード",
+    },
     connectionMethods: {
       title: "接続を追加",
       direct: {
@@ -1908,8 +1976,11 @@ export const ja: TranslationResources = {
     groupInfo: "{{title}}について",
     sections: {
       general: "一般",
+      chat: "チャット",
       appearance: "外観",
-      layout: en.settings.sections.layout,
+      sidebar: "サイドバー",
+      terminal: "ターミナル",
+      browser: "ブラウザ",
       editor: "エディター",
       shortcuts: "ショートカット",
       integrations: "連携",
@@ -1968,6 +2039,7 @@ export const ja: TranslationResources = {
     },
     general: {
       title: "一般",
+      sending: "送信",
       browserData: {
         title: "ブラウザーデータ",
         siteData: "Cookie とサイトデータ",
@@ -1994,8 +2066,6 @@ export const ja: TranslationResources = {
         },
       },
       serviceUrls: {
-        label: "サービスURL",
-        description: "実行中のスクリプトからURLを開く場所",
         options: {
           ask: "確認する",
           inApp: "Paseoで",
@@ -2014,7 +2084,6 @@ export const ja: TranslationResources = {
       toolCallDetail: {
         label: "ツール呼び出しの表示",
         description: "タイムラインでのツール呼び出しの表示方法",
-        accessibilityLabel: "ツール呼び出しの表示を選択（{{value}}）",
         options: {
           overview: "要約",
           detailed: "すべての詳細",
@@ -2068,6 +2137,7 @@ export const ja: TranslationResources = {
     about: {
       title: "アプリ情報",
       appVersion: "アプリバージョン",
+      whatsNewHint: "各バージョンのリリースノート",
       thisDevice: "このデバイス",
       connectedHosts: "接続されているホスト",
       offline: "オフライン",
@@ -2114,6 +2184,12 @@ export const ja: TranslationResources = {
       chatOutline: {
         title: "チャットのアウトライン",
         description: "プロンプト間を移動するためのアウトラインを表示します",
+      },
+      sidebar: {
+        title: "サイドバー",
+        description: "サイドバー上部に表示する項目とその順序を選択します",
+        moveUp: "上に移動",
+        moveDown: "下に移動",
       },
       fonts: {
         title: "フォント",
@@ -2247,6 +2323,10 @@ export const ja: TranslationResources = {
       },
     },
     host: {
+      password: {
+        guidance:
+          "このホストを削除し、このデーモンが求めるパスワードを入力して追加し直してください。",
+      },
       appearance: {
         title: "外観",
         name: {
