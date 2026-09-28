@@ -212,6 +212,7 @@ Read these before invoking review-related or audit-class skills:
 | [`effort-contract.md`](skills/shared-references/effort-contract.md)                 | Effort level specifications                                                                                                        |
 | [`writing-principles.md`](skills/shared-references/writing-principles.md)           | Writing standards                                                                                                                  |
 | [`venue-checklists.md`](skills/shared-references/venue-checklists.md)               | Venue formatting                                                                                                                   |
+| [`browser-act.md`](skills/shared-references/browser-act.md)                         | An experiment environment that needs a browser — the only browser stack, and what stays interactive                                |
 
 ## Research Wiki (Optional)
 

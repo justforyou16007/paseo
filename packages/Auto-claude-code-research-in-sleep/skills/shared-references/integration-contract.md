@@ -103,6 +103,7 @@ when it is missing or fails. A new helper must be added before a skill invokes i
 | `metric-gate.js` | A (gate) | The loop needs a validated stop decision. |
 | `dashboard-merge.js` | A (gate) | State advancement requires a validated receipt. |
 | `render_w_agent_prompt.sh` | A (gate) | Sub-agent dispatch requires the run configuration. |
+| `ensure_browser_act.sh` | A (gate) when `browser.required` | Browser work goes through the browser-act CLI and nothing else. When an experiment environment declares it needs a browser, a missing CLI stops the phase; the alternative is a skill improvising a second browser stack or reading a JS-rendered page with `curl` and reporting the empty shell as a result. Not called when no browser is needed. See [browser-act.md](browser-act.md). |
 | `experiment-env/env-helper.js` | A (gate) | Environment operations use the experiment repair contract. |
 | `feishu-notify` | C (notification) | Notification failure may continue as defined by its own contract. |
 

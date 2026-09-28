@@ -34,7 +34,24 @@ The host must expose `mcp__paseo__list_agents`,
 these are unavailable, the workflow is blocked; do not install a second
 reviewer transport or run the skill in-process.
 
-### 1.3 LaTeX Environment (Optional)
+### 1.3 browser-act (needed when an experiment reads web pages)
+
+ARIS reaches a browser through one CLI and nothing else: `browser-act`. An
+experiment environment that extracts data from a rendered page, drives a web
+app, or reads a dashboard with no API declares `browser.required` in its
+`env.json`, and from then on the CLI is required.
+
+```bash
+uv tool install browser-act-cli --python 3.12
+browser-act --version
+```
+
+`/aris-setup` runs this for you (Phase 0.5), and
+`/experiment-env-manager` installs it while you answer the browser question, so
+installing it by hand is optional. An API key is only needed for `stealth`
+browsers and `stealth-extract`; `chrome` and `chrome-direct` need none.
+
+### 1.4 LaTeX Environment (Optional)
 
 Required for Workflow 3 (paper writing), providing `latexmk` and `pdfinfo`:
 

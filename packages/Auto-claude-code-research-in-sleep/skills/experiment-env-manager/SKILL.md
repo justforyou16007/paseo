@@ -192,6 +192,23 @@ provider in this skill. When called by auto-research-loop, preserve its
    fi
    ```
 
+6. **Browser preflight.** Only when an existing bundle says it needs one —
+   a project with no browser in scope never runs this:
+   ```bash
+   if [ -f "$SKILL_DIR/env.json" ] &&
+      [ "$(jq -r '.browser.required // false' "$SKILL_DIR/env.json")" = "true" ]; then
+       BROWSER_ACT_ENSURE=".aris/tools/ensure_browser_act.sh"
+       [ -f "$BROWSER_ACT_ENSURE" ] || BROWSER_ACT_ENSURE="tools/ensure_browser_act.sh"
+       sh "$BROWSER_ACT_ENSURE" || {
+           echo "ERROR: browser-act is required by this environment but is not usable."
+           exit 1
+       }
+   fi
+   ```
+   Mode A collects the answer in Phase 1 Step 1.3b and ensures it there; this
+   step covers the modes that start from an already-configured bundle.
+   See `shared-references/browser-act.md`.
+
 ---
 
 ## Mode A: Setup
@@ -269,6 +286,64 @@ Seed: `python -c "import torch; print(torch.__version__, torch.cuda.is_available
 `AskUserQuestion` — header: "Build"
 question: "What build/install steps are needed after code is synced? (Leave blank if code runs directly)"
 options: `["无需构建"]` / Other
+
+#### Step 1.3b — Browser
+
+`AskUserQuestion` — header: "Browser"
+question (zh): "实验过程需要浏览器吗？（只有网页上才有的数据、驱动 Web 应用、只有看板没有 API 的指标、登录后才能下载的资源）"
+question (en): "Does the experiment need a browser? (data that only exists on a rendered page, driving a web app, a dashboard with no API, a download behind a login)"
+options: `["不需要 (no browser)"]` / `["需要 (browser required)"]`
+
+Seed from the Step 1.1 overview and the entry point. A run that reads local
+files or an HTTP API needs no browser. On "no", record
+`browser: { "required": false }` and skip the rest of this step — nothing else
+in the pipeline touches the browser contract.
+
+On "yes", every browser interaction goes through the browser-act CLI
+([shared-references/browser-act.md](../shared-references/browser-act.md)). This step is the only place a person is
+present, and browser-act requires explicit approval to create a browser or log
+in, so both happen here rather than inside a later op.
+
+`AskUserQuestion` — header: "Browser use" (multi-select)
+question: "浏览器在这次实验里做什么？" / "What does the browser do in the run?"
+options: `["取页面数据 (extract rendered content)"]` / `["驱动 Web 应用 (click/input/upload)"]` / `["读看板指标 (read a dashboard)"]` / `["登录后下载 (download behind a login)"]`
+
+If the only answer is "取页面数据", the run needs no session: record
+`mode: "extract"` and the ops use `browser-act stealth-extract <url>`, which
+opens and closes nothing. Any other answer is `mode: "session"`.
+
+`AskUserQuestion` — header: "Browser type"
+question: "Which browser-act browser type?"
+options:
+- `["chrome"]` — managed Chrome profile, no API key. The default.
+- `["chrome-direct"]` — CDP into the user's own Chrome; reuses their existing
+  logins, and needs their confirmation to attach.
+- `["stealth"]` — anti-detection fingerprints; requires a browser-act API key
+  (`browser-act auth set <key>`). Also required for `stealth-extract`.
+
+Then, with the user present:
+
+1. Run the ensure helper; on non-zero exit, print its `hint` and stop — a
+   browser-dependent PRD written against a missing CLI fails at generation
+   time instead:
+   ```bash
+   BROWSER_ACT_ENSURE=".aris/tools/ensure_browser_act.sh"
+   [ -f "$BROWSER_ACT_ENSURE" ] || BROWSER_ACT_ENSURE="tools/ensure_browser_act.sh"
+   sh "$BROWSER_ACT_ENSURE" || exit 1
+   ```
+2. When `mode` is `session`, freeze one browser. `browser-act browser list`
+   first: if this project already has one, confirm its id with the user rather
+   than creating a second. Otherwise create it now —
+   `browser-act browser create --type <type> --name "aris-<project>" --desc "<project> experiments"`
+   — and record the id as `browser.browser_id`.
+3. When the use includes a login, have the user complete it now against that
+   browser, so later runs inherit the profile. Credentials never enter the PRD,
+   `env.json`, or a generated script.
+
+`AskUserQuestion` — header: "Browser check"
+question: "一个能证明浏览器通道可用的 URL（实验真正会读的页面）？" / "One URL that proves the browser channel works — a page the run actually reads?"
+Record as `browser.smoke_url`. `/experiment-env-audit` Check Q reads exactly
+this page, so a URL nobody's run visits proves nothing.
 
 #### Step 1.4 — Compute Resources
 
@@ -437,6 +512,14 @@ Assemble the complete PRD JSON (full schema, all fields filled):
       "ssh_alias": "<collected in Step 1.2, or null for local>"
     },
     "environment": { "type": "...", "name": "...", "activation": "...", "build_cmd": "...", "verify_cmd": "..." }
+  },
+  "browser": {
+    "required": false,
+    "mode": "extract|session",
+    "uses": ["extract", "interact", "dashboard", "download"],
+    "browser_type": "chrome|chrome-direct|stealth",
+    "browser_id": "<from Step 1.3b, null when mode is extract>",
+    "smoke_url": "..."
   },
   "resources": {
     "type": "...", "ids": ["..."], "label": "...",
@@ -873,7 +956,7 @@ The category mapping:
 ### Phase 1B: Classify Error
 
 Read the `stderr_tail`, `error_type`, and `script` fields. Classify into one
-of five categories. Classification is deterministic pattern matching -- not
+of seven categories. Classification is deterministic pattern matching -- not
 judgment.
 
 **Pre-classification shortcut from adapter:** if the adapter already produced
@@ -889,20 +972,30 @@ An error can match multiple patterns — the first match wins.
 |---|----------|----------|--------|
 | 1 | **signal-kill** | `exit_code` is 137 (OOM kill) or 139 (segfault) | Escalate immediately — do not retry |
 | 2 | **transient** | `Connection refused`, `Connection timed out`, `ssh_exchange_identification`, `rate limit`, `Too many requests`, `temporary failure` | Retry the failing op (`$SCRIPT`, the op named in the report) up to 3 times, 30s delay between |
-| 3 | **env-recoverable** | `conda: command not found`, `ModuleNotFoundError`, `No module named`, `CondaError`, `activate: No such file`, `pip: command not found` | Construct patch PRD --> dispatch env-configuration |
-| 4 | **build-related** | `ImportError: .*.so`, `undefined symbol`, `version .* mismatch`, `pip install -e .` failure, `make: ***` | Re-run `build-env.sh` (build + verify are one closed loop) |
-| 5 | **code-bug** | `Traceback` AND `AssertionError\|TypeError\|ValueError\|KeyError\|AttributeError\|SyntaxError` WITHOUT any env patterns from priorities 2-4 | Return receipt: `{ "result": "not_env_issue" }` |
-| 6 | **unknown** | None of the above match | Dispatch env-audit for diagnosis |
+| 3 | **browser-recoverable** | `browser-act: command not found`, `browser-act: not found`, `No browser with id`, `session .* not found`, `net::ERR_`, `ERR_CONNECTION`, `captcha`, `CAPTCHA`, `verification required`, `login required`, `Not authenticated` | Repair the browser channel (see Phase 2B) |
+| 4 | **env-recoverable** | `conda: command not found`, `ModuleNotFoundError`, `No module named`, `CondaError`, `activate: No such file`, `pip: command not found` | Construct patch PRD --> dispatch env-configuration |
+| 5 | **build-related** | `ImportError: .*.so`, `undefined symbol`, `version .* mismatch`, `pip install -e .` failure, `make: ***` | Re-run `build-env.sh` (build + verify are one closed loop) |
+| 6 | **code-bug** | `Traceback` AND `AssertionError\|TypeError\|ValueError\|KeyError\|AttributeError\|SyntaxError` WITHOUT any env patterns from priorities 2-5 | Return receipt: `{ "result": "not_env_issue" }` |
+| 7 | **unknown** | None of the above match | Dispatch env-audit for diagnosis |
 
 Note on priority: `ModuleNotFoundError` includes "Traceback" in its output
-but is an environment issue (priority 3), not a code bug (priority 5). The
+but is an environment issue (priority 4), not a code bug (priority 6). The
 ordered evaluation ensures env patterns win over generic traceback matching.
+
+Browser patterns sit below **transient** on purpose: a browser hitting a
+refused connection is the same transient network fault as any other op, and a
+retry is the right first answer. Skip priority 3 entirely when
+`.browser.required` is false in `env.json` — those strings can appear in an
+unrelated log line, and a project with no browser has no browser to repair.
 
 Additionally use `error_type` for routing context (op mapped via `script`):
 - `sync-code.sh` / `build-env.sh` failures → likely env-recoverable or build-related
 - `launch-job.sh` failures → check `stderr_tail` and `failure_patterns_matched`
 - `collect-outputs.sh` failures → likely code-bug or transient
 - `env-info.sh` / `query-resources.sh` failures → likely env-recoverable
+- any op failure in a project with `.browser.required == true` → check the
+  browser patterns before the env patterns; a page that never rendered often
+  surfaces as a missing output rather than a browser message
 
 Check `failure_patterns_matched` first — if the worker already matched known
 patterns, use those directly instead of re-scanning `stderr_tail`.
@@ -924,6 +1017,41 @@ for ATTEMPT in 1 2 3; do
     sleep 30
 done
 ```
+
+**Browser-recoverable:**
+
+Read `.browser` from `env.json` first; the repair depends on which part of the
+channel broke.
+
+1. **CLI missing** (`browser-act: command not found`) — reinstall, then retry
+   the failing op once:
+   ```bash
+   BROWSER_ACT_ENSURE=".aris/tools/ensure_browser_act.sh"
+   [ -f "$BROWSER_ACT_ENSURE" ] || BROWSER_ACT_ENSURE="tools/ensure_browser_act.sh"
+   sh "$BROWSER_ACT_ENSURE" || exit 1
+   sh "$SKILL_DIR/scripts/ops/$SCRIPT" $SCRIPT_ARGS
+   ```
+
+2. **Session gone** (`session .* not found`) — a session is disposable state,
+   so close any remnant and retry the op once; the op opens its own session:
+   ```bash
+   browser-act session close "$(jq -r '.browser.session_prefix' "$SKILL_DIR/env.json")-$EXP_ID" 2>/dev/null
+   sh "$SKILL_DIR/scripts/ops/$SCRIPT" $SCRIPT_ARGS
+   ```
+
+3. **Browser id gone** (`No browser with id`), **captcha**, or **expired
+   login** — escalate to the user. Write the receipt with
+   `result: "escalated"` and name which of the three it is. Do not attempt a
+   repair: creating a browser, logging in, and solving a challenge all need
+   explicit user approval, so an unattended retry either stalls on an approval
+   prompt or silently produces a login page instead of data. Point the user at
+   `browser-act remote-assist --objective "<what is stuck>"`, which hands the
+   live session to them, and at Step 1.3b of Mode A to re-record
+   `browser.browser_id`.
+
+Retry once, not three times. Transient already owns the retry loop for network
+faults; a second loop here would repeat a structural failure three times
+before escalating it.
 
 **Env-recoverable:**
 
@@ -1108,7 +1236,7 @@ When user chooses "强制标记已修复":
   "project": "<project>",
   "mode": "error-report",
   "result": "fixed|not_env_issue|escalated|aborted|user_override",
-  "error_category": "signal-kill|transient|env-recoverable|build-related|code-bug|unknown",
+  "error_category": "signal-kill|transient|browser-recoverable|env-recoverable|build-related|code-bug|unknown",
   "repair_action": "<description of what was done>",
   "repair_rounds": 0,
   "error_report_path": "<original error report path>",
@@ -1327,7 +1455,15 @@ Rule 3, file-paths-only receipts).
     read `patch_targets` from each failing check (not from a top-level array).
     Each check owns its targets — the manager constructs one patch with
     `changes[]` entries drawn from all failing checks' targets.
-11. **Never end a waiting turn without a watchdog.** Every dispatch in this
+11. **Browser work goes through browser-act.** When `browser.required` is
+    true, the only browser channel is the `browser-act` CLI. Never accept a
+    bundle that drives a browser with Playwright, Selenium, Puppeteer, or
+    chromedriver, and never accept `curl` or `wget` standing in for a page
+    read — a JS-rendered page returns an empty shell and the shell looks like
+    a result. Browser creation and login happen once during Step 1.3b with the
+    user present, never inside an op. See
+    [shared-references/browser-act.md](../shared-references/browser-act.md).
+12. **Never end a waiting turn without a watchdog.** Every dispatch in this
     skill ends the turn to wait for a finish notification that a daemon
     restart can erase. Arm the self-target watchdog first (Step W) and disarm
     it when the last child is handled. Without it, a lost notification stalls
@@ -1345,3 +1481,7 @@ Rule 3, file-paths-only receipts).
   Rule 4: Paseo MCP only, Rule 5: bounded context).
 - `shared-references/worker-manifest.md` -- receipt schema (including
   error field conventions).
+- `shared-references/browser-act.md` -- the browser channel: activation
+  condition, the `browser` block in `env.json`, what stays interactive.
+- `tools/ensure_browser_act.sh` -- Policy A gate when `browser.required`.
+  Run in Step 1.3b (Mode A) and in Phase 0 step 6 (Modes B and C).

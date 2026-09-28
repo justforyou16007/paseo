@@ -33,7 +33,22 @@ paseo daemon status
 不可用时，工作流都必须阻断；不要安装第二套审阅传输，也不要在进程内执行
 技能。
 
-### 1.3 LaTeX 环境（可选）
+### 1.3 browser-act（实验需要读网页时必装）
+
+ARIS 只通过一个 CLI 使用浏览器：`browser-act`。如果实验环境要从渲染后的页面
+取数据、操作 Web 应用、或读一个没有 API 的看板，它的 `env.json` 里
+`browser.required` 就是 true，此后这个 CLI 是硬依赖。
+
+```bash
+uv tool install browser-act-cli --python 3.12
+browser-act --version
+```
+
+`/aris-setup`（Phase 0.5）会替你装一次，`/experiment-env-manager` 在你回答
+浏览器那道题时也会装，所以手动装是可选的。API key 只有 `stealth` 浏览器和
+`stealth-extract` 需要，`chrome` 和 `chrome-direct` 不需要。
+
+### 1.4 LaTeX 环境（可选）
 
 工作流 3（论文写作）需要，含 `latexmk` 和 `pdfinfo`：
 

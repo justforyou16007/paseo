@@ -349,6 +349,24 @@ for dir in tools dist node_modules templates; do
 done
 ```
 
+### External tooling after the sync
+
+`tools/` was just replaced, so `ensure_browser_act.sh` is current. Re-run it
+when the project has an experiment environment that declares a browser:
+
+```bash
+for ENVJSON in .claude/skills/run-*-experiment/env.json; do
+  [ -f "$ENVJSON" ] || continue
+  [ "$(jq -r '.browser.required // false' "$ENVJSON")" = "true" ] || continue
+  sh ".aris/tools/ensure_browser_act.sh" || echo "  ! browser-act unusable — see hint above"
+  break
+done
+```
+
+Skip it when no bundle declares one. The helper also refreshes the
+`.claude/skills/browser-act/` discovery stub, which is not an ARIS skill and is
+therefore absent from the manifest — the ADD/UPDATE loops never touch it.
+
 ---
 
 ## Phase 5: Rewrite Manifest

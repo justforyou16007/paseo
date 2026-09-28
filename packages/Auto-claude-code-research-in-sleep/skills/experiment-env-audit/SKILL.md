@@ -1,6 +1,6 @@
 ---
 name: experiment-env-audit
-description: 'Cross-model audit of a project''s experiment environment configuration with real execution verification. Static checks (G-K): command provenance, metric key agreement, failure detectability, environment reachability, analysis honesty. Execution checks (L-N): actually run the ops (sync-code, build-env, launch-job, collect-outputs, env-info) and verify real results are produced. Dynamic checks (O): simulate agent workflow with source modifications. Patch regression (P): verify patch did not break existing functionality. Dispatched exclusively by /experiment-env-manager.'
+description: 'Cross-model audit of a project''s experiment environment configuration with real execution verification. Static checks (G-K): command provenance, metric key agreement, failure detectability, environment reachability, analysis honesty. Execution checks (L-N): actually run the ops (sync-code, build-env, launch-job, collect-outputs, env-info) and verify real results are produced. Dynamic checks (O): simulate agent workflow with source modifications. Patch regression (P): verify patch did not break existing functionality. Browser channel (Q): when the environment declares a browser, verify the browser-act CLI answers and the frozen page still reads. Dispatched exclusively by /experiment-env-manager.'
 argument-hint: "[— project: <name>] [— target: draft|promoted] [— report-format: standard|structured] [— patch-id: <id>] [— paseo-config: <path>]"
 allowed-tools: Bash(*), Read, Grep, Glob, mcp__paseo__get_agent_status
 ---
@@ -43,7 +43,7 @@ dispatched directly by `/experiment-env-configuration` or other workflow skills.
 ```
 Phase 0    Resolve target bundle, parse patch-id, clear stale output, verify cross-model host
 Phase 1    Apply the static checklist (/experiment-audit A-F + checks G-K) — static analysis
-Phase 1.5  Execution verification — actually run prepare/run/collect and verify results (checks L-N-O-P)
+Phase 1.5  Execution verification — actually run prepare/run/collect and verify results (checks L-N-O-P-Q)
 Phase 2    Settle the verdict (static half + execution half, no softening)
 Phase 3    Output report and machine-readable verdict
 ```
@@ -415,12 +415,59 @@ FAIL if the patch broke something that previously worked.
 
 **Cleanup:** remove `audit-regression` artifacts.
 
+### Q. Browser channel (conditional — only when `env.json.browser.required` is true)
+
+Skip this check entirely when `browser.required` is false or absent: record
+nothing, and do not report a WARN for a project that needs no browser.
+
+**Q1 — static.** Read `$BUNDLE_DIR/scripts/` yourself:
+
+```bash
+! grep -rEn 'playwright|selenium|puppeteer|chromedriver|requests_html' \
+    "$BUNDLE_DIR/scripts/"
+! grep -rEn 'browser (create|delete)|auth set' "$BUNDLE_DIR/scripts/ops/"
+grep -rn 'session_prefix' "$BUNDLE_DIR/scripts/lib/env.sh"
+grep -rn 'session close' "$BUNDLE_DIR/scripts/ops/release-resources.sh"
+```
+
+FAIL on a second browser stack, on `curl`/`wget` pointed at a page that needs
+rendering, or on a `browser create` / `auth set` / login step inside an op —
+each of those needs user approval and an op runs unattended. FAIL when
+`mode` is `session` and no op closes the session it opened: a leaked session
+holds the profile lock and the next run cannot open the browser. FAIL when
+`browser.required` is true but no op emits a single `browser-act` call — the
+declaration and the bundle disagree, and the declaration is what downstream
+skills read.
+
+**Q2 — execution.** Prove the channel works, read-only:
+
+```bash
+BROWSER_ACT_ENSURE=".aris/tools/ensure_browser_act.sh"
+[ -f "$BROWSER_ACT_ENSURE" ] || BROWSER_ACT_ENSURE="tools/ensure_browser_act.sh"
+sh "$BROWSER_ACT_ENSURE" --check          # exit 0 = CLI usable
+browser-act browser list                  # exit 0 = CLI answers, no session
+```
+
+Then read `browser.smoke_url` once — `browser-act stealth-extract "$SMOKE_URL"`
+when `mode` is `extract`, otherwise open the frozen `browser_id` on a session
+named `audit-browser`, `get markdown`, and `session close audit-browser`. PASS
+when the page returns non-empty content. FAIL when it returns an empty body, a
+login page, or a challenge page — that is what the experiment would collect.
+
+This check never creates or deletes a browser and never logs in. If
+`browser_id` no longer exists, that is a FAIL with `fix_hint` pointing at Step
+1.3b of `/experiment-env-manager`, where a human can approve a new one.
+
+**Cleanup:** `browser-act session close audit-browser` (a close on an
+already-closed session is not a failure).
+
 ### Record execution results
 
-Append checks L, M, N, O (and P if applicable) to the `ENV_CONFIG_AUDIT.json`
-`checks` object and update `overall_verdict` — if any of L/M/N/O/P is FAIL,
-the overall verdict becomes FAIL regardless of the G-K static checks. A
-configuration that looks correct on paper but fails in practice must not pass.
+Append checks L, M, N, O (and P and Q if applicable) to the
+`ENV_CONFIG_AUDIT.json` `checks` object and update `overall_verdict` — if any
+of L/M/N/O/P/Q is FAIL, the overall verdict becomes FAIL regardless of the G-K
+static checks. A configuration that looks correct on paper but fails in
+practice must not pass.
 
 ### Structured Report (when `— report-format: structured`)
 
@@ -512,6 +559,14 @@ When requested by `/experiment-env-manager`, produce an additional file
       "fix_hint": "...",
       "patch_targets": [],
       "error_output": "..."
+    },
+    "Q": {
+      "status": "...",
+      "category": "browser_channel",
+      "action_item": "...",
+      "fix_hint": "...",
+      "patch_targets": ["browser.browser_id", "browser.smoke_url"],
+      "error_output": "..."
     }
   },
   "recommended_action": "none|retry_prepare|patch_config|full_reconfigure|ask_user",
@@ -520,6 +575,9 @@ When requested by `/experiment-env-manager`, produce an additional file
 ```
 
 Field semantics:
+- Conditional checks (`P`, `Q`) are omitted from `checks` when they did not
+  apply — no `— patch-id`, or no browser in the configuration. An omitted check
+  is not a WARN and does not affect the verdict.
 - `patch_id` — echoed from the `— patch-id` argument. `null` when this is
   not a patch re-audit. The manager uses this to verify the verdict belongs
   to the patch it dispatched.
@@ -561,7 +619,7 @@ VERDICT=$(jq -r '.overall_verdict' "$AUDIT_JSON" | tr 'A-Z' 'a-z')
 | `fail` | Configuration is not trustworthy — specific checks failed. |
 | missing / unparseable | Audit did not complete. |
 
-**Worst check wins.** Any FAIL among A–P makes the overall FAIL; any WARN with
+**Worst check wins.** Any FAIL among A–Q makes the overall FAIL; any WARN with
 no FAIL makes it WARN. There is no averaging and no discretion here — the
 aggregation rule is arithmetic, which is why the same agent that formed the
 per-check judgments is allowed to apply it.
@@ -653,7 +711,12 @@ file-paths-only receipts).
 7. **Echo patch-id.** When `— patch-id` is provided, the structured report and
    receipt both include the patch_id. The manager uses this to prove the verdict
    belongs to the patch being finalized.
-8. **Per-check patch_targets.** Each check in the structured report owns its
+8. **The browser check reads, it never provisions.** Check Q verifies the
+   `browser-act` channel with `--check`, `browser list`, and one read of
+   `browser.smoke_url`. It never creates or deletes a browser, never logs in,
+   and never installs the CLI — an audit that provisions what it is auditing
+   has made its own subject pass.
+9. **Per-check patch_targets.** Each check in the structured report owns its
    `patch_targets[]` — the env.json fields that need modification to fix that
    specific check. The manager reads per-check targets to construct targeted
    patches without ambiguity.
@@ -661,7 +724,10 @@ file-paths-only receipts).
 ## External dependencies (reused, not modified)
 
 - `skills/experiment-audit/SKILL.md` — source of checks A-F. Read as a
-  checklist reference, not dispatched; this skill adds G-K and L-P.
+  checklist reference, not dispatched; this skill adds G-K and L-Q.
+- `shared-references/browser-act.md` — the browser channel Check Q verifies.
+- `tools/ensure_browser_act.sh` — run with `--check` in Q2; Policy A gate when
+  `browser.required`.
 - `shared-references/acceptance-gate.md` — DRIVE/ACQUIT; the Type-A / Type-B
   split that this skill implements.
 - `shared-references/reviewer-independence.md` — why the auditor reads the

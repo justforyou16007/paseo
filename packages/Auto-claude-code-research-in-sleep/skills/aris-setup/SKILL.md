@@ -71,6 +71,28 @@ lifetimes — one is project initialization, the other is the precondition
 contract for a specific run — and sharing a file would let a re-run of
 `/research-setup` wipe a sealed run's setup answers.
 
+## Phase 0.5 — install browser-act
+
+Setup is where the external CLI tooling gets installed, while the user is
+present to approve a download. Run the ensure helper once, in install mode:
+
+```bash
+BROWSER_ACT_ENSURE=".aris/tools/ensure_browser_act.sh"
+[ -f "$BROWSER_ACT_ENSURE" ] || BROWSER_ACT_ENSURE="tools/ensure_browser_act.sh"
+sh "$BROWSER_ACT_ENSURE"
+```
+
+It prints one JSON object and is idempotent — a project that already has the
+CLI spends nothing here.
+
+A non-zero exit does not stop setup. `browser-act` is required only by an
+experiment environment that declares `browser.required`, and this project has
+not answered that question yet (Phase 2 asks it). Print the helper's `hint`,
+tell the user it matters only if their experiments read web pages, and go on.
+Do not promote this to a gate: the gate belongs where the requirement is known,
+which is `/experiment-env-manager` Step 1.3b and Phase 0 step 6. See
+[shared-references/browser-act.md](../shared-references/browser-act.md).
+
 ## Phase 1 — project basics
 
 Not ready → tell the user to run `/research-setup`, and stop. It is an
