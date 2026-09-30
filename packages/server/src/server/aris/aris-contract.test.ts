@@ -231,6 +231,26 @@ describe("ARIS runtime contract", () => {
     }
   });
 
+  it("inventory paths are posix-separated and never leak src/ entries", () => {
+    const inventory = buildSourceInventory(ARIS_ROOT);
+
+    // The src/->dist/ mapping rewrites a relative path with a literal "src/"
+    // prefix. If the collector ever emits native separators, the rewrite
+    // silently no-ops on Windows and the inventory fills up with src\*.js
+    // files that exist nowhere, failing every install with runtime_incomplete.
+    const backslashed = inventory.filter((f) => f.includes("\\"));
+    expect(backslashed, "inventory must use forward slashes on every platform").toEqual([]);
+
+    const srcEntries = inventory.filter((f) => f.split("/")[0] === "src");
+    expect(srcEntries, "src/ files must be mapped to their dist/ output").toEqual([]);
+
+    // Mirrors isSafeRuntimeFile(): anything outside these roots is rejected
+    // when the manifest is read back, so it must never be written.
+    const allowedRoots = new Set(["dist", "node_modules", "templates", "tools"]);
+    const badRoots = inventory.filter((f) => !allowedRoots.has(f.split("/")[0] ?? ""));
+    expect(badRoots, "inventory roots must be manifest-safe").toEqual([]);
+  });
+
   it("no helper resolver uses bare git||pwd without upward .aris walk", () => {
     const violations: string[] = [];
     // Pattern: cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" in a helper context
@@ -357,7 +377,7 @@ describe("ARIS runtime contract", () => {
     ).toEqual([]);
   });
 
-  it("requires a new wait after every Paseo child turn", () => {
+  it("requires a new finish notification after every Paseo child turn", () => {
     const dispatchContract = readFileSync(
       path.join(SKILLS_DIR, "shared-references", "paseo-subagent-dispatch.md"),
       "utf-8",
@@ -366,20 +386,53 @@ describe("ARIS runtime contract", () => {
       path.join(SKILLS_DIR, "shared-references", "paseo-reviewer-dispatch.md"),
       "utf-8",
     );
+    // The renderer lives in the shared tools/ dir, not under the skill that
+    // calls it — skills resolve it through .aris/tools/ at runtime.
     const renderedWorkerContract = readFileSync(
-      path.join(SKILLS_DIR, "research-pipeline", "scripts", "render_w_agent_prompt.sh"),
+      path.join(ARIS_ROOT, "tools", "render_w_agent_prompt.sh"),
       "utf-8",
     );
 
-    expect(dispatchContract).toContain("TURN_WAIT_INVARIANT");
-    expect(dispatchContract).toMatch(/every `create_agent` and every `send_agent_prompt`/);
-    expect(dispatchContract).toMatch(/send_agent_prompt[\s\S]{0,300}wait_for_agent/);
+    // A child turn is completed by its finish notification, not by a blocking
+    // call: agent-scoped create_agent always backgrounds the child. Both entry
+    // points that start a turn must be covered, and a continuation prompt must
+    // await its own notification — one round's signal never covers the next.
+    expect(dispatchContract).toContain("TURN_NOTIFICATION_INVARIANT");
+    expect(dispatchContract).toMatch(
+      /`mcp__paseo__create_agent`[\s\S]{0,80}or background `mcp__paseo__send_agent_prompt`/,
+    );
+    expect(dispatchContract).toMatch(/finish notification before the owner advances/);
+    expect(dispatchContract).toMatch(
+      /After a continuation prompt,[\s\S]{0,80}awaits the next notification again/,
+    );
     expect(reviewerContract).toMatch(
-      /every `send_agent_prompt` is immediately[\s\S]*new `wait_for_agent`/,
+      /Every later `send_agent_prompt` likewise completes via its own finish[\s\S]{0,40}notification/,
     );
+    expect(reviewerContract).toMatch(/one round's notification never covers the next/);
     expect(renderedWorkerContract).toContain(
-      "After every create_agent or send_agent_prompt, immediately wait_for_agent",
+      "resume on that child's finish notification (TURN_NOTIFICATION_INVARIANT)",
     );
+
+    // `wait_for_agent` is not a Paseo MCP tool. The rendered worker prompt must
+    // not name it at all — a prompt that names a nonexistent tool invites the
+    // child to call it. The prose contracts may name it only to say it is gone.
+    expect(renderedWorkerContract).not.toContain("wait_for_agent");
+    const prescribesWait: string[] = [];
+    for (const [label, text] of [
+      ["paseo-subagent-dispatch.md", dispatchContract],
+      ["paseo-reviewer-dispatch.md", reviewerContract],
+    ] as const) {
+      for (const match of text.matchAll(/wait_for_agent/g)) {
+        const before = text.slice(Math.max(0, (match.index ?? 0) - 16), match.index);
+        if (!/is no\s+`?$/.test(before)) {
+          prescribesWait.push(`${label}: ...${before}wait_for_agent...`);
+        }
+      }
+    }
+    expect(
+      prescribesWait,
+      `Contract prescribes the nonexistent wait_for_agent tool:\n${prescribesWait.join("\n")}`,
+    ).toEqual([]);
 
     const protocolCorpus = `${dispatchContract}\n${readFileSync(
       path.join(SKILLS_DIR, "shared-references", "fan-out-pattern.md"),

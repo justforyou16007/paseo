@@ -290,7 +290,19 @@ async function copyDirForce(
   }
 }
 
-/** Recursively collect all files under dir, relative to base. */
+/**
+ * Inventory paths are always forward-slash separated, on every platform.
+ * They are compared against each other as strings (the src/->dist/ mapping,
+ * dedup) and written verbatim into the manifest, so a native separator would
+ * both break those comparisons on Windows and make the manifest unreadable on
+ * the other platform. `path.join` accepts forward slashes on Windows, so
+ * resolving a posix-style relative path against a Windows root still works.
+ */
+function toPosixRel(rel: string): string {
+  return path.sep === "/" ? rel : rel.split(path.sep).join("/");
+}
+
+/** Recursively collect all files under dir, relative to base (posix-separated). */
 function collectFiles(dir: string, base: string): string[] {
   const results: string[] = [];
   let entries;
@@ -305,7 +317,7 @@ function collectFiles(dir: string, base: string): string[] {
     if (entry.isDirectory()) {
       results.push(...collectFiles(full, base));
     } else if (entry.isFile()) {
-      results.push(rel);
+      results.push(toPosixRel(rel));
     }
   }
   return results;
@@ -326,7 +338,7 @@ function collectDepInventory(arisRepo: string): string[] {
 
   for (const dep of deps) {
     const depDir = path.join(arisRepo, "node_modules", dep);
-    result.push(path.join("node_modules", dep, "package.json"));
+    result.push(path.posix.join("node_modules", dep, "package.json"));
     if (!existsSync(depDir)) continue;
 
     for (const f of collectFiles(depDir, arisRepo)) {
@@ -338,7 +350,7 @@ function collectDepInventory(arisRepo: string): string[] {
     try {
       const depPkg = JSON.parse(readFileSync(depPkgPath, "utf-8"));
       const main = depPkg.main ?? "index.js";
-      const mainPath = path.join("node_modules", dep, main);
+      const mainPath = path.posix.join("node_modules", dep, toPosixRel(main));
       if (!result.includes(mainPath)) result.push(mainPath);
     } catch {}
   }
