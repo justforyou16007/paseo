@@ -758,7 +758,10 @@ Rule 2, bound to this same skill, and hand it exactly two values: the project
 root and its own run id. No parent run id, no position, no generation - a child
 is told what to do, not who dispatched it, and everything it needs is already in
 its own charter. The child's tester is the acceptance its parent froze for it;
-a sub-ARL never reaches the task tester and never spends tester exposure.
+a sub-ARL never reaches the task tester and never spends tester exposure. Both
+ends refuse it: the bridge rejects a child charter that names a tester, and
+`tester-agent-cli.js submit` rejects a submission whose `outer_run_id` has a
+parent (`TESTER_OUTER_RUN_REQUIRED`).
 
 **4. Collect the generation back.**
 

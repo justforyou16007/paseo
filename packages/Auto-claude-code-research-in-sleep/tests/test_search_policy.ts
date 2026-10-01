@@ -48,6 +48,7 @@ const contract: TesterSubmissionContract = {
   ],
   submission_fields: [{ name: "runner", type: "string", required: true }],
   usage: "run each artifact with the declared runner",
+  runtime: { kind: "docker", image_digest: "d".repeat(64) },
   search_exclusions: {
     terms: ["humaneval", "mbpp+"],
     urls: ["https://github.com/openai/human-eval"],

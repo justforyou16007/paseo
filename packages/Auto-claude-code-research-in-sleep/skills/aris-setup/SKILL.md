@@ -124,7 +124,9 @@ Archive the agent afterwards, including when it failed.
 
 ## Phase 3 — tester and the search gate
 
-This is where the second machine is required. Collect the site facts with
+This is where the second machine is required, and it needs a working docker
+daemon on it: the tester runs submitted artifacts in a container, never on its
+host, and `probe` refuses the machine without one. Collect the site facts with
 `AskUserQuestion` (one question per fact, no guessing):
 
 | Answer | Used by |

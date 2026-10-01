@@ -6,6 +6,7 @@ import { createCli, runCli } from "../lib/cli.js";
 import { assertSearchAuditForContract } from "./search-policy.js";
 import { A1Error } from "./workflow-spec.js";
 import {
+  assertOutermostSubmissionRun,
   cleanupTesterDeployment,
   declareTesterSubmissionContract,
   deployTesterAgent,
@@ -57,7 +58,7 @@ program
           },
         });
         console.log(JSON.stringify(result));
-        if (!result.ssh || !result.daemon || !result.claude) process.exitCode = 1;
+        if (!result.ssh || !result.daemon || !result.claude || !result.docker) process.exitCode = 1;
       } catch {
         reject("tester_probe_failed");
       }
@@ -182,6 +183,11 @@ program
     }
   });
 
+/**
+ * Failures the operator can act on without learning anything about the tester.
+ */
+const LOCAL_SUBMIT_FAILURES = new Set(["TESTER_OUTER_RUN_REQUIRED", "RUN_CONTRACT_NOT_FOUND"]);
+
 program
   .command("submit")
   .description("Submit one artifact pair for testing and verify the signed receipt")
@@ -206,6 +212,10 @@ program
         // cheapest moment to say so is before the tester spends its cases.
         const audit = assertSearchAuditForContract(options.project, contract);
         const submission = bindSubmissionToContract(contract, config, readStateFile(options.input));
+        // Checked here and not inside the transport: the run contract lives on
+        // the research machine, and the rule is about which run may spend an
+        // exposure, not about anything the tester can see.
+        assertOutermostSubmissionRun(options.project, submission);
         const response = await submitToTesterAgent({ config, contract, submission });
         const files = writeTesterAgentResponse(options.outputDir, response);
         console.log(
@@ -221,11 +231,13 @@ program
         );
         if (response.status === "failed") process.exitCode = 1;
       } catch (error) {
-        // The audit refusals are facts about this machine, so naming them tells
-        // the operator what to fix. Everything else still collapses to one
-        // reason, because the rest of the failure surface touches the tester.
+        // The audit refusals, the missing run contract and the wrong-layer
+        // refusal are facts about this machine, so naming them tells the
+        // operator what to fix. Everything else still collapses to one reason,
+        // because the rest of the failure surface touches the tester.
         reject(
-          error instanceof A1Error && error.code.startsWith("SEARCH_")
+          error instanceof A1Error &&
+            (error.code.startsWith("SEARCH_") || LOCAL_SUBMIT_FAILURES.has(error.code))
             ? error.code
             : "tester_submission_rejected",
         );

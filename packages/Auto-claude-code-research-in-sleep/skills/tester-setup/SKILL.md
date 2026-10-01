@@ -24,6 +24,11 @@ private:
 - The cases are written by the tester agent and never leave that machine. What
   comes back is one signed envelope of ids, digests, enumerated values and the
   declared metric aggregates.
+- Nothing the research side submits executes on the tester's host. The submitted
+  artifacts run in a docker container, with the cases mounted read-only and a
+  fresh container per submission. The boundary is otherwise one-directional in
+  the wrong place: research hands the tester code, and the tester runs it on the
+  machine holding the key and the cases.
 
 State the limit as well: the research process and the operator who runs this
 setup share a uid and can read the same `~/.ssh`, so the research process can
@@ -35,10 +40,10 @@ the research machine, and that the remote agent answers only two requests.
 
 | Step | Command | What a failure means |
 | --- | --- | --- |
-| 1. Probe | `tester-agent-cli.js probe --target … --daemon-port …` | ssh, the remote daemon or the remote `claude` binary is unavailable. Fix the machine; do not deploy. |
+| 1. Probe | `tester-agent-cli.js probe --target … --daemon-port …` | ssh, the remote daemon, the remote `claude` binary or a usable docker daemon is unavailable. Fix the machine; do not deploy. |
 | 2. Prepare bundle | `tester-agent-cli.js prepare-bundle --output <local-bundle-dir>` | The remote tester has no operating manual, so it would be inventing its own procedure. |
 | 3. Deploy | `tester-agent-cli.js deploy --input <request> --output <deployment>` | The remote layout, the key or the agent could not be created. Nothing downstream is valid. |
-| 4. Declare | `tester-agent-cli.js declare --deployment <deployment> --need-file <need> --output <contract>` | The tester did not return a contract that verifies against its own key, or its exclusion list was refused (see below). |
+| 4. Declare | `tester-agent-cli.js declare --deployment <deployment> --need-file <need> --output <contract>` | The tester did not return a contract that verifies against its own key, or its runtime declaration or exclusion list was refused (see below). |
 | 5. Emit policy | `search-audit-cli.js emit-policy --contract <contract> --project <path>` | The research side has no blocklist, so the guard would refuse every network call. |
 | 6. Install guard | `search-audit-cli.js install-guard --project <path>` | The hook is not in `.claude/settings.json` and the ledger was never opened. `submit` refuses. |
 | 7. Clean up | `tester-agent-cli.js cleanup --deployment <deployment> [--local-bundle <dir>]` | The staging areas survive. Re-run; cleanup is idempotent. |
@@ -73,6 +78,24 @@ Exactly two things, and both need the project id:
    slot, an undeclared field or a contract digest that does not match the frozen
    one is refused locally.
 
+### Only the outermost run submits
+
+`submit` reads the run named in the submission's `outer_run_id` out of the
+project's own run contract and refuses `TESTER_OUTER_RUN_REQUIRED` unless that
+run has no parent and sits at depth zero. A run whose `run.json` is not there at
+all is `RUN_CONTRACT_NOT_FOUND`. Both are facts about the research machine, so
+both are printed by name; every other submission failure still collapses to one
+reason.
+
+The reason is the exposure budget. Exposures are counted against one task-wide
+limit, so a run dispatched underneath another one that could submit would spend
+the whole task's remaining exposures answering a local question. A child is
+judged by the acceptance its parent froze for it instead, which is why
+`experiment-bridge.ts` already refuses a child charter that names a tester
+(`CHILD_TESTER_FORBIDDEN`). This is the same rule at the other end, where the
+submission is actually sent — the bridge check can only see charters it was
+handed, and a run that never went through the bridge would walk past it.
+
 Re-declaring produces a new contract. If its digest differs from the one frozen
 in the config, `submit` refuses until setup emits a new config. That is the
 intended behaviour: a run does not silently change the test it is being judged
@@ -90,6 +113,29 @@ per-case scores, private observations, fine-grained categories and private URIs
 never return to research. The declared metric aggregates and the coarse feedback
 are not experiment evidence and cannot be fed into analysis, evidence review or
 a research claim.
+
+## The container the test runs in
+
+The tester runs code the research side wrote, on the machine that holds the
+private key and the cases. So the contract has to say where it ran it:
+`runtime` is `{"kind": "docker", "image_digest": "<64 hex>"}`, and `declare`
+refuses `TESTER_RUNTIME_REQUIRED` for a missing runtime or any `kind` other than
+`docker`. There is nothing to negotiate — a tester that wants to run a
+submission on its host has to say so, and saying so is refused.
+
+The digest is the only public fact about that environment, and it is there for
+the same reason `case_manifest_sha256` is: so that "the environment changed
+between two submissions" is detectable. The image name and tag stay on the
+tester machine, because a readable tag names the benchmark the exclusion list
+exists to hide.
+
+What the tester is told to do with that image is in
+`templates/tester-agent-bundle/TESTER_AGENT.md` step 4: cases mounted read-only
+rather than baked in, no network unless the protocol needs one, memory and CPU
+caps, an externally enforced timeout, and a fresh container per submission.
+None of it is checked from this side. `probe` checks `docker info` on the tester
+machine and refuses to call the host ready without it; everything past that is
+the tester's own discipline.
 
 ## The search gate
 

@@ -5,7 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import { canonicalJsonBytes, canonicalJsonString } from "../src/tools/canonical-json.js";
 import { buildTesterFeedback } from "../src/tools/tester-feedback.js";
+import { createRootRun, createRun } from "../src/tools/run-contract.js";
 import {
+  assertOutermostSubmissionRun,
   bindSubmissionToContract,
   cleanupTesterDeployment,
   declareTesterSubmissionContract,
@@ -94,6 +96,7 @@ const contract: TesterSubmissionContract = {
     { name: "repeats", type: "integer", required: false },
   ],
   usage: "run each artifact with the declared runner",
+  runtime: { kind: "docker", image_digest: "d".repeat(64) },
   search_exclusions: {
     terms: ["humaneval", "mbpp+"],
     urls: ["https://github.com/openai/human-eval"],
@@ -487,14 +490,33 @@ const probe = await probeTesterAgentHost({
     return { code: 0, stdout: "[]" };
   },
 });
-assert.deepEqual(probe, { ssh: true, daemon: true, claude: false });
-assert.deepEqual(probeCommands.map((command) => command.kind), ["fetch", "control", "fetch"]);
+// `command -v claude` is the only probe step that names `command`, so the fake
+// transport above fails exactly that one; docker is probed with `sh -c`.
+assert.deepEqual(probe, { ssh: true, daemon: true, claude: false, docker: true });
+assert.deepEqual(probeCommands.map((command) => command.kind), [
+  "fetch",
+  "control",
+  "fetch",
+  "fetch",
+]);
+
+// A machine without a usable container runtime is not deployable: the tester's
+// manual forbids running a submitted artifact on its host, so there would be
+// nowhere left to run it.
+const hostlessProbe = await probeTesterAgentHost({
+  endpoint: { ssh_target: endpoint.ssh_target, daemon_port: 6767, request_timeout_ms: 10_000 },
+  transport: async (command) =>
+    command.argv.some((argument) => argument.includes("docker info"))
+      ? { code: 1, stdout: "" }
+      : { code: 0, stdout: "[]" },
+});
+assert.deepEqual(hostlessProbe, { ssh: true, daemon: true, claude: true, docker: false });
 
 const deadProbe = await probeTesterAgentHost({
   endpoint: { ssh_target: endpoint.ssh_target, daemon_port: 6767, request_timeout_ms: 10_000 },
   transport: async () => ({ code: 255, stdout: "" }),
 });
-assert.deepEqual(deadProbe, { ssh: false, daemon: false, claude: false });
+assert.deepEqual(deadProbe, { ssh: false, daemon: false, claude: false, docker: false });
 
 // --- 9. cleanup only removes a staging directory this layout produced ------
 
@@ -610,6 +632,76 @@ for (const invalid of [
   expectCode("TESTER_EXCLUSIONS_INVALID", () =>
     validateTesterSubmissionContract(withExclusions(invalid)),
   );
+
+// --- 12. the contract has to say the test ran in a container ---------------
+
+// The tester runs code the research side wrote, on the machine holding its
+// private key and its cases. A contract that does not name a container runtime
+// is refused before a single artifact is sent, and "docker" is the only value
+// there is, so there is nothing for a tester to negotiate.
+const withRuntime = (runtime: unknown): unknown => {
+  const { runtime: _declared, ...rest } = contract as unknown as Record<string, unknown>;
+  return runtime === undefined ? rest : { ...rest, runtime };
+};
+assert.deepEqual(
+  validateTesterSubmissionContract(withRuntime({ kind: "docker", image_digest: "d".repeat(64) }))
+    .runtime,
+  { kind: "docker", image_digest: "d".repeat(64) },
+);
+for (const refused of [
+  undefined,
+  { kind: "host", image_digest: "d".repeat(64) },
+  { kind: "podman", image_digest: "d".repeat(64) },
+  { image_digest: "d".repeat(64) },
+])
+  expectCode("TESTER_RUNTIME_REQUIRED", () =>
+    validateTesterSubmissionContract(withRuntime(refused)),
+  );
+// The digest is the whole public fact about the environment, so a malformed one
+// is as useless as a missing runtime.
+expectCode("INVALID_HASH", () =>
+  validateTesterSubmissionContract(withRuntime({ kind: "docker", image_digest: "sha256:abc" })),
+);
+// The image name would name the benchmark the exclusion list exists to hide, so
+// there is no field to put it in.
+expectCode("UNKNOWN_FIELD", () =>
+  validateTesterSubmissionContract(
+    withRuntime({ kind: "docker", image_digest: "d".repeat(64), image: "humaneval-eval:1" }),
+  ),
+);
+
+// --- 13. only the outermost run may spend an exposure -----------------------
+
+// Exposures are counted against one task-wide limit, so a run dispatched
+// underneath another one that could submit would spend the whole task's budget
+// answering a local question.
+const runsRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aris-tester-runs-"));
+createRootRun({
+  project_root: runsRoot,
+  run_id: "outer-1",
+  input_snapshot_sha256: H,
+  code_baseline_sha256: "b".repeat(64),
+  policy_revision: "policy:tester-agent",
+});
+assertOutermostSubmissionRun(runsRoot, submission);
+
+createRun({
+  project_root: runsRoot,
+  run_id: "inner-1",
+  parent_run_id: "outer-1",
+  input_snapshot_sha256: H,
+  code_baseline_sha256: "b".repeat(64),
+  policy_revision: "policy:tester-agent",
+});
+expectCode("TESTER_OUTER_RUN_REQUIRED", () =>
+  assertOutermostSubmissionRun(runsRoot, { ...submission, outer_run_id: "inner-1" }),
+);
+// A submission naming a run this project never opened is refused too: the layer
+// is read from the run contract on disk, never from the submission.
+expectCode("RUN_CONTRACT_NOT_FOUND", () =>
+  assertOutermostSubmissionRun(runsRoot, { ...submission, outer_run_id: "outer-2" }),
+);
+fs.rmSync(runsRoot, { recursive: true, force: true });
 
 fs.rmSync(root, { recursive: true, force: true });
 console.log("tester agent: contract declaration, submission binding, receipt verification and deployment guards passed");
