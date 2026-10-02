@@ -662,6 +662,19 @@ const REQUIRED_ANSWER_FIELDS = [
   "expected_output",
 ] as const;
 
+/**
+ * Auto Research Loop fields have no file to infer them from, so they come only
+ * from the answers. They are carried through untouched; `setupRootRun` owns
+ * their validation, including the refusal of a budget in loop mode.
+ */
+const LOOP_ANSWER_FIELDS = [
+  "mode",
+  "max_iterations",
+  "max_repair_attempts",
+  "max_depth",
+  "model_usage_policy",
+] as const;
+
 export interface AssembleOptions {
   project_root: string;
   /** The owner-confirmed answers file. Items may use either spelling. */
@@ -692,6 +705,8 @@ export function assembleRootSetupInput(options: AssembleOptions): AssembleResult
   const inference = inferSetupItems(root);
   const document: Record<string, unknown> = { project_root: root };
   for (const key of REQUIRED_ANSWER_FIELDS) document[key] = answers[key];
+  for (const key of LOOP_ANSWER_FIELDS)
+    if (answers[key] !== undefined) document[key] = answers[key];
 
   const fromInference: RootSetupItem[] = [];
   const fromAnswers: RootSetupItem[] = [];

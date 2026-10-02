@@ -213,6 +213,13 @@ fields (`run_id`, `task_id`, `workflow_id`, `setup_revision`, `problem`,
 `expected_output`) plus any item the user confirmed or corrected. Items the user
 left as inferred can be omitted — `assemble` merges them in.
 
+The run this hands off to is an Auto Research Loop, so the answers also carry
+`mode: "auto_research_loop"`, `max_iterations`, `model_usage_policy`, and
+`max_repair_attempts` / `max_depth` when the owner sets them. No file answers
+these: ask the round limit, never default it. Do not write a `budget`; the loop
+has none and `root-setup` refuses one. `assemble` copies these fields through
+unchanged.
+
 ```bash
 node "$SETUP_CLI" assemble --project "$ROOT" \
   --answers "$ROOT/.aris/root-setup-answers.json" \
@@ -271,11 +278,12 @@ digest are the whole public surface.
 - It does not seal anything itself. `root-setup` writes the setup record;
   `emit-policy` and `install-guard` write the search gate; this skill only
   orders them and carries the owner's answers between them.
-- It does not seal the model role policy. The role table, the separation of
-  judge from judged (a workflow-produced judge must come from an earlier
-  promoted generation, and an external judge must be independent of current
-  workflow output), and the numbers in
+- It does not write the model role policy. An Auto Research Loop root needs
+  one in its answers, and `root-setup` freezes it, but the role table itself,
+  the separation of judge from judged (a workflow-produced judge must come from
+  an earlier promoted generation, and an external judge must be independent of
+  current workflow output), and the numbers in
   `templates/WORKFLOW_RESEARCH_SPEC_TEMPLATE.json` (examples, never defaults)
-  all live in the frozen workflow spec that `workflow-cli.js start --freeze`
-  consumes. Nothing in `skills/` describes how that input is produced. That is a
-  known gap, not a stage of this skill — do not improvise one here.
+  come from the owner. Nothing in `skills/` describes how that input is
+  produced. That is a known gap, not a stage of this skill — ask for the policy,
+  do not improvise one here.

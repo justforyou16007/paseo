@@ -1148,6 +1148,19 @@ export function addExperiment(
           edge.to.startsWith("claim:"),
       )
     ) {
+      // Reuse keeps the page, so a tester receipt the page does not already
+      // carry would never reach the Wiki and the export could not rank this
+      // iteration by it. Refuse instead of dropping it.
+      const page = model.pages.experiment.get(slug);
+      if (
+        testerEnvelope !== null &&
+        (page?.data.tester_definition_sha256 !== testerEnvelope.tester_definition_sha256 ||
+          canonicalJsonSha256(page?.data.tester_metrics ?? null) !==
+            canonicalJsonSha256(testerEnvelope.feedback.metrics))
+      )
+        throw new Error(
+          `TESTER_RECEIPT_TOO_LATE: ${subject} already formed claims without this tester receipt; attach the receipt in the call that first judges the iteration`,
+        );
       reused = true;
       return null;
     }

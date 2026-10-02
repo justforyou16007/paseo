@@ -902,6 +902,63 @@ test("an iteration that contradicts the tester receipt is refused", () => {
   }
 });
 
+test("a reused experiment refuses a tester receipt it did not form its claims with", () => {
+  const root = tmpDir();
+  try {
+    const { wikiRoot } = setup(root);
+    const { signed, publicKey } = signedTesterFeedback();
+    const formClaim = (slug: string) =>
+      appendWikiEvent(wikiRoot, {
+        producer_kind: "result-export-test",
+        scope: SCOPE,
+        subject_id: `exp:${slug}`,
+        evidence_bundle_id: `bundle:${slug}-claim`,
+        payload: {
+          context: CONTEXT,
+          operations: [
+            {
+              op: "upsert_edge",
+              edge: { from: `exp:${slug}`, to: "claim:c", type: "supports", evidence: "0.9" },
+            },
+          ],
+        },
+      });
+
+    // Judged without the receipt, then a claim formed: the receipt can no
+    // longer attach, so it is refused rather than dropped.
+    addExperiment(wikiRoot, "exp-late", { verdict: "yes", confidence: "high", iteration: 1 });
+    formClaim("exp-late");
+    assert.throws(
+      () =>
+        addExperiment(wikiRoot, "exp-late", {
+          verdict: "yes",
+          confidence: "high",
+          testerReceipt: { signed, publicKey },
+          updateOnExist: true,
+        }),
+      /TESTER_RECEIPT_TOO_LATE/,
+    );
+
+    // Judged with the receipt: repeating the same call reuses the page.
+    addExperiment(wikiRoot, "exp-ontime", {
+      verdict: "yes",
+      confidence: "high",
+      testerReceipt: { signed, publicKey },
+    });
+    formClaim("exp-ontime");
+    addExperiment(wikiRoot, "exp-ontime", {
+      verdict: "yes",
+      confidence: "high",
+      testerReceipt: { signed, publicKey },
+      updateOnExist: true,
+    });
+    const page = readWikiModel(wikiRoot).pages.experiment.get("exp-ontime");
+    assert.deepEqual({ ...(page?.data.tester_metrics as Record<string, number>) }, { score: 0.9 });
+  } finally {
+    cleanup(root);
+  }
+});
+
 test("re-exporting the same winner is idempotent", () => {
   const root = tmpDir();
   try {

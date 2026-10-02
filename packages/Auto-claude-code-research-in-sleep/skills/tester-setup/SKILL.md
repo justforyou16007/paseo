@@ -49,6 +49,13 @@ the research machine, and that the remote agent answers only two requests.
 | 7. Clean up | `tester-agent-cli.js cleanup --deployment <deployment> [--local-bundle <dir>]` | The staging areas survive. Re-run; cleanup is idempotent. |
 | 8. Emit config and hand off | `tester-agent-cli.js emit-config …` then `workflow-tools-cli.js root-setup --project <path> --input <path>` with `tester_agent_config` | The contract digest could not be frozen, or the root setup rejects the config; it is not a formal run. |
 
+The run this hands off to is an Auto Research Loop root, so the root setup
+input carries `mode: "auto_research_loop"`, a positive `max_iterations`, the
+frozen `model_usage_policy`, and optionally `max_repair_attempts` (default 3)
+and `max_depth` (default 2). It carries no `budget`: the loop stops on its round
+limit, and `root-setup` refuses a budget in loop mode. `/aris-setup` Phase 5
+writes these into the answers file it assembles from.
+
 Step 2 runs before deploy because `deploy` pushes exactly one directory, the
 `local_bundle_dir` named in the deployment request. Steps 5 and 6 run after the
 contract exists, because the blocklist is part of the contract, and before any
@@ -87,10 +94,15 @@ all is `RUN_CONTRACT_NOT_FOUND`. Both are facts about the research machine, so
 both are printed by name; every other submission failure still collapses to one
 reason.
 
-The reason is the exposure budget. Exposures are counted against one task-wide
-limit, so a run dispatched underneath another one that could submit would spend
-the whole task's remaining exposures answering a local question. A child is
-judged by the acceptance its parent froze for it instead, which is why
+The reason is the exposure limit. Exposures are counted against one task-wide
+`exposure_limit`, so a run dispatched underneath another one that could submit
+would spend the whole task's remaining exposures answering a local question.
+This limit is separate from the resource budget the loop no longer has: it
+bounds how often the task tester is reached, not how long research runs. A
+child, at any depth down to the frozen `max_depth`, is judged by the acceptance
+its parent froze for it instead. A child whose experiment kept failing
+publishes a `failed` result package to its parent, which collects it before
+closing the round; it never goes to the tester. That is why
 `experiment-bridge.ts` already refuses a child charter that names a tester
 (`CHILD_TESTER_FORBIDDEN`). This is the same rule at the other end, where the
 submission is actually sent — the bridge check can only see charters it was
@@ -107,6 +119,13 @@ The terminal status, a signed conclusion, a signed feedback envelope and the
 fixed coarse `error_analysis` categories. A response that does not verify is
 refused whole and never reaches disk — `writeTesterAgentResponse` refuses any
 response that did not pass `verifyTesterAgentResponse` in this process.
+
+The signed receipt reaches the Wiki only through `/result-to-claim`'s
+`add_experiment --tester-feedback` call for the iteration it judged. Have it in
+hand before that call. Once the iteration's experiment supports or invalidates a
+claim, a repeated `add_experiment` reuses the page as it is, and a receipt the
+page does not already carry is refused with `TESTER_RECEIPT_TOO_LATE`; the
+export cannot rank that iteration by the tester.
 
 Do not analyze the tester run. Case content, answers, prompts, per-case output,
 per-case scores, private observations, fine-grained categories and private URIs

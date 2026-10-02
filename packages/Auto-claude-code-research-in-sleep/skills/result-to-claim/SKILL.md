@@ -338,7 +338,9 @@ if research-wiki/ exists:
     #    point FROM exp:<id>, so this operation must succeed before edges are written.
     #    An exp:<id> that already supports or invalidates a claim has formed its claims
     #    and is reused as is: add_experiment prints "Experiment reused:", writes nothing
-    #    and leaves its edges alone. Skip step 2 for it.
+    #    and leaves its edges alone. Skip step 2 for it. A tester receipt the reused page
+    #    does not already carry is refused (TESTER_RECEIPT_TOO_LATE), so pass the
+    #    receipt in the call that first judges the iteration.
     node "$WIKI_SCRIPT" add_experiment research-wiki/ \
       --slug "<exp_id>" --idea "<active_idea>" \
       --verdict "<yes|partial|no>" --confidence "<high|medium|low>" \
