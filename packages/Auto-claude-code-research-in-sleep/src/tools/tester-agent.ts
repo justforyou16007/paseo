@@ -1139,7 +1139,9 @@ export type TesterAgentTransport = (
  * `docker exec` hands its arguments to the container process without a shell
  * either; only the scripts passed to `sh -c` below need quoting.
  */
-async function defaultTransport(command: TesterAgentCommand): Promise<TesterAgentCommandResult> {
+export async function runTesterCommand(
+  command: TesterAgentCommand,
+): Promise<TesterAgentCommandResult> {
   const [file, ...args] = command.argv;
   if (file === undefined) failA1("TESTER_AGENT_UNREACHABLE", "empty tester agent command");
   return new Promise((resolve) => {
@@ -1247,7 +1249,7 @@ export async function declareTesterSubmissionContract(input: {
   const publicKey = readTesterAgentPublicKey(config);
   const value = await runTesterAgentExchange({
     endpoint: config,
-    transport: input.transport ?? defaultTransport,
+    transport: input.transport ?? runTesterCommand,
     prompt: canonicalJsonString({
       action: "declare_submission_contract",
       project_id: config.project_id,
@@ -1284,7 +1286,7 @@ export async function submitToTesterAgent(input: {
   const submissionSha256 = testerAgentSubmissionSha256(submission);
   const value = await runTesterAgentExchange({
     endpoint: config,
-    transport: input.transport ?? defaultTransport,
+    transport: input.transport ?? runTesterCommand,
     prompt: canonicalJsonString({
       action: "run_submission",
       project_id: config.project_id,
@@ -1370,7 +1372,7 @@ export async function probeTesterAgentHost(input: {
       1000,
     ),
   };
-  const transport = input.transport ?? defaultTransport;
+  const transport = input.transport ?? runTesterCommand;
   const timeout = config.request_timeout_ms;
   const container = await transport({
     kind: "fetch",
@@ -1597,7 +1599,7 @@ export async function deployTesterAgent(input: {
   transport?: TesterAgentTransport;
 }): Promise<TesterDeploymentResult> {
   const request = validateDeploymentRequest(input.request);
-  const transport = input.transport ?? defaultTransport;
+  const transport = input.transport ?? runTesterCommand;
   const target: TesterAgentTarget = {
     container: request.container,
     container_user: request.container_user,
@@ -1686,7 +1688,7 @@ export async function cleanupTesterDeployment(input: {
   if (staging.split("/").filter((part) => part !== "").length < 2 || !staging.endsWith("/staging"))
     failA1("TESTER_CLEANUP_REFUSED", "refusing to remove a path this deployment did not create");
   const removed: string[] = [];
-  const result = await (input.transport ?? defaultTransport)({
+  const result = await (input.transport ?? runTesterCommand)({
     kind: "fetch",
     argv: execArgv(target, ["rm", "-rf", "--", staging]),
     timeout_ms: requireInteger(input.request_timeout_ms, "tester_cleanup.request_timeout_ms", 1000),

@@ -90,10 +90,16 @@ limits, tester binding and expected output.
 Root setup must save a charter with `mode: "auto_research_loop"` and a positive
 `max_iterations`. Setup may also set `max_repair_attempts` (repairs allowed per
 iteration, default 3) and `max_depth` (deepest child level below the root,
-default 2); the charter always carries both. Its model policy, baseline and
+default 2); the charter always carries both. Its baseline and
 resource inventory must be saved before startup. Use the commands below; `start` reads these frozen
 records and verifies their hashes. It requires no external `--freeze` file or
 tester agent configuration.
+
+Which model plays which role is not frozen. It is a rule the owner writes in
+prose under CLAUDE.md's `## Model Usage`; read it before choosing a provider for
+any dispatch and follow it. Nothing checks it, and `root-setup` refuses a
+`model_usage_policy` in loop mode, so the section is the only place the rule
+lives.
 
 ### A child is told what to do, not who dispatched it
 
@@ -107,7 +113,7 @@ therefore cannot make its behaviour depend on where it sits in someone else's
 run, which is what keeps a child's result readable on its own terms. Reject a
 recursive invocation before dispatching any work when any of charter identity,
 execution, baseline, resource inventory, workspace, Wiki head, input snapshot,
-max_iterations, write scope or model policy is absent, conflicting, or supplied by the
+max_iterations or write scope is absent, conflicting, or supplied by the
 prompt instead of the manifest. A missing helper or an unavailable required
 resource stops the current phase. Do not warn and continue on a local default.
 
@@ -129,7 +135,7 @@ children. Read `max_depth` from this run's `frozen-policy.json` and its depth
 from `run.json`; when they are equal, tell idea-discovery to leave `children`
 empty. `bridge-expand` refuses any position there with `MAX_DEPTH_REACHED`.
 `start` checks the child run contract and inherits the parent's
-frozen model policy, metric target, owner limits and resource hashes. A child
+frozen metric target, owner limits and resource hashes. A child
 never receives a task tester snapshot. If the parent policy or child charter is
 missing or differs, stop with the reported error.
 

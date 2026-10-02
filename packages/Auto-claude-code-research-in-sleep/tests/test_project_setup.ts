@@ -296,16 +296,26 @@ assert.equal(Object.hasOwn(input, "mode"), false, "no loop field appears unless 
 
 // Loop fields have no file to come from; answered ones reach the root setup
 // input unchanged so the sealed charter is an Auto Research Loop charter.
-const loopPolicy = { revision: "policy:arl" };
 const loop = assembleRootSetupInput({
   project_root: project,
-  answers: { ...answers, mode: "auto_research_loop", max_iterations: 4, max_depth: 1, model_usage_policy: loopPolicy },
+  answers: { ...answers, mode: "auto_research_loop", max_iterations: 4, max_depth: 1 },
 }).input as unknown as Record<string, unknown>;
 assert.equal(loop.mode, "auto_research_loop");
 assert.equal(loop.max_iterations, 4);
 assert.equal(loop.max_depth, 1);
 assert.equal(Object.hasOwn(loop, "max_repair_attempts"), false, "an unanswered cap is left to setup's default");
-assert.deepEqual(loop.model_usage_policy, loopPolicy);
+// Model usage lives in CLAUDE.md as prose; an answer carrying it is refused
+// rather than silently dropped.
+try {
+  assembleRootSetupInput({
+    project_root: project,
+    answers: { ...answers, mode: "auto_research_loop", max_iterations: 4, model_usage_policy: { revision: "p" } },
+  });
+  assert.fail("assemble must refuse a model usage answer");
+} catch (error) {
+  assert.equal(codeOf(error), "INVALID_VALUE");
+  assert.match((error as Error).message, /## Model Usage/);
+}
 
 // --- 7. the CLI exits non-zero while anything is unconfigured ---------------
 

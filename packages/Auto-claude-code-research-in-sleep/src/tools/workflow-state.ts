@@ -93,7 +93,6 @@ export interface AutoResearchFrozenPolicy {
   metric: MetricConfig;
   owner_limits: OwnerLimits;
   max_bundled_positions_per_graph: number;
-  model_usage_policy: ModelUsagePolicy;
   frozen_at: string;
 }
 
@@ -460,7 +459,6 @@ function validateAutoResearchFrozenPolicy(
       "metric",
       "owner_limits",
       "max_bundled_positions_per_graph",
-      "model_usage_policy",
       "frozen_at",
     ],
     location,
@@ -517,10 +515,6 @@ function validateAutoResearchFrozenPolicy(
       value.max_bundled_positions_per_graph,
       `${location}.max_bundled_positions_per_graph`,
       0,
-    ),
-    model_usage_policy: validateModelUsagePolicy(
-      value.model_usage_policy,
-      `${location}.model_usage_policy`,
     ),
     frozen_at: requireString(value.frozen_at, `${location}.frozen_at`),
   };

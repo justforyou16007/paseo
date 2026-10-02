@@ -124,14 +124,19 @@ Archive the agent afterwards, including when it failed.
 
 ## Phase 3 — tester and the search gate
 
-This is where the tester container is required. What it has to contain is in
-[`/tester-setup`](../tester-setup/SKILL.md) under "The container the tester
-lives in"; `probe` refuses a container without it. Collect the site facts with
-`AskUserQuestion` (one question per fact, no guessing):
+This is where the tester container is required. Make it first, with the two
+commands in [`/tester-setup`](../tester-setup/SKILL.md) under "The container
+the tester lives in": `ensure-base-image` reuses the tester base image, loads it
+from its archive, or builds it and saves the archive to disk; `create-container`
+makes the container from that image. Pin the archive to
+`$HOME/.aris/images/aris-tester-base.tar` so every project on the machine finds
+the same one. Ask the owner to log `claude` in inside the container before
+`probe`. Collect the site facts with `AskUserQuestion` (one question per fact,
+no guessing):
 
 | Answer | Used by |
 | --- | --- |
-| tester container name and the account its Paseo daemon runs as | probe, deploy |
+| tester container name (the account is `paseo`, printed by `create-container`) | create-container, probe, deploy |
 | tester home directory inside the container | deploy |
 | provider and model for the tester agent | deploy |
 | local bundle directory to stage the tester's manual in | prepare-bundle |
@@ -214,11 +219,17 @@ fields (`run_id`, `task_id`, `workflow_id`, `setup_revision`, `problem`,
 left as inferred can be omitted — `assemble` merges them in.
 
 The run this hands off to is an Auto Research Loop, so the answers also carry
-`mode: "auto_research_loop"`, `max_iterations`, `model_usage_policy`, and
-`max_repair_attempts` / `max_depth` when the owner sets them. No file answers
-these: ask the round limit, never default it. Do not write a `budget`; the loop
-has none and `root-setup` refuses one. `assemble` copies these fields through
-unchanged.
+`mode: "auto_research_loop"`, `max_iterations`, and `max_repair_attempts` /
+`max_depth` when the owner sets them. No file answers these: ask the round
+limit, never default it. Do not write a `budget`; the loop has none and
+`root-setup` refuses one. `assemble` copies these fields through unchanged.
+
+Model usage is not an answer. Ask the owner which models may play which roles
+(who generates, who reviews, who may judge whom) and write their reply as prose
+under `## Model Usage` in CLAUDE.md, in their words. Every agent in the project
+reads CLAUDE.md, and that is the whole mechanism: nothing parses, freezes or
+enforces the section. `assemble` refuses a `model_usage_policy` answer so the
+rule cannot end up in two places.
 
 ```bash
 node "$SETUP_CLI" assemble --project "$ROOT" \
@@ -278,12 +289,6 @@ digest are the whole public surface.
 - It does not seal anything itself. `root-setup` writes the setup record;
   `emit-policy` and `install-guard` write the search gate; this skill only
   orders them and carries the owner's answers between them.
-- It does not write the model role policy. An Auto Research Loop root needs
-  one in its answers, and `root-setup` freezes it, but the role table itself,
-  the separation of judge from judged (a workflow-produced judge must come from
-  an earlier promoted generation, and an external judge must be independent of
-  current workflow output), and the numbers in
-  `templates/WORKFLOW_RESEARCH_SPEC_TEMPLATE.json` (examples, never defaults)
-  come from the owner. Nothing in `skills/` describes how that input is
-  produced. That is a known gap, not a stage of this skill — ask for the policy,
-  do not improvise one here.
+- It does not decide the model rule. Phase 5 writes the owner's words into
+  CLAUDE.md's `## Model Usage`; it does not fill in roles the owner did not
+  name.

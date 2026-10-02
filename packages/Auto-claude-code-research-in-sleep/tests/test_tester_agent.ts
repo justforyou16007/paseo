@@ -29,6 +29,7 @@ import {
   type TesterAgentTransport,
   type TesterSubmissionContract,
 } from "../src/tools/tester-agent.js";
+import { createTesterContainer, ensureTesterBaseImage } from "../src/tools/tester-image.js";
 import {
   validateTesterPublicConclusion,
   validateTesterPublicFeedback,
@@ -791,5 +792,170 @@ expectCode("RUN_CONTRACT_NOT_FOUND", () =>
 );
 fs.rmSync(runsRoot, { recursive: true, force: true });
 
+// --- the base image: reuse, load from disk, or build and save ---------------
+
+/**
+ * A docker stand-in holding a set of image tags. `save` writes the archive
+ * and `load` restores the tags an archive was saved with, so the flow is
+ * exercised against files on disk rather than against call order alone.
+ */
+function fakeDocker(images: Set<string>, archiveTags: string[]) {
+  const commands: string[][] = [];
+  const transport: TesterAgentTransport = async (command) => {
+    const argv = [...command.argv];
+    commands.push(argv);
+    const [, verb, sub] = argv;
+    if (verb === "image" && sub === "inspect")
+      return { code: images.has(argv.at(-1)!) ? 0 : 1, stdout: "" };
+    if (verb === "load") {
+      for (const tag of archiveTags) images.add(tag);
+      return { code: 0, stdout: "" };
+    }
+    if (verb === "build") {
+      images.add(argv[argv.indexOf("--tag") + 1]!);
+      return { code: 0, stdout: "" };
+    }
+    if (verb === "save") {
+      fs.writeFileSync(argv[argv.indexOf("--output") + 1]!, "image-archive");
+      return { code: 0, stdout: "" };
+    }
+    return { code: 1, stdout: "" };
+  };
+  return { transport, commands };
+}
+
+const imageRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aris-tester-image-"));
+const archive = path.join(imageRoot, "images", "aris-tester-base.tar");
+const dockerfileDir = path.join(imageRoot, "context");
+fs.mkdirSync(dockerfileDir);
+fs.writeFileSync(path.join(dockerfileDir, "Dockerfile"), "FROM scratch\n");
+const baseImage = { image: "aris-tester-base:latest", archive_path: archive, dockerfile_dir: dockerfileDir, timeout_ms: 10_000 };
+
+// Nothing anywhere: build, then save to disk. The archive appears only by
+// rename, so no `.partial` file is left behind.
+let docker = fakeDocker(new Set(), []);
+assert.deepEqual(await ensureTesterBaseImage({ ...baseImage, transport: docker.transport }), {
+  image: "aris-tester-base:latest",
+  source: "built",
+  archive_path: archive,
+  saved: true,
+});
+assert.ok(fs.existsSync(archive));
+assert.equal(fs.existsSync(`${archive}.partial`), false);
+assert.deepEqual(
+  docker.commands.map((argv) => argv[1]),
+  ["image", "build", "save"],
+);
+
+// Image gone from the daemon but the archive is on disk: load it, never build.
+docker = fakeDocker(new Set(), ["aris-tester-base:latest"]);
+const loaded = await ensureTesterBaseImage({ ...baseImage, transport: docker.transport });
+assert.equal(loaded.source, "loaded");
+assert.equal(loaded.saved, false);
+assert.ok(!docker.commands.some((argv) => argv[1] === "build"), "an archive on disk is never rebuilt");
+
+// Image already in the daemon and on disk: one inspect, nothing else.
+docker = fakeDocker(new Set(["aris-tester-base:latest"]), []);
+assert.equal((await ensureTesterBaseImage({ ...baseImage, transport: docker.transport })).source, "present");
+assert.equal(docker.commands.length, 1);
+
+// Image in the daemon but never saved: the disk copy is written.
+fs.rmSync(archive);
+docker = fakeDocker(new Set(["aris-tester-base:latest"]), []);
+const resaved = await ensureTesterBaseImage({ ...baseImage, transport: docker.transport });
+assert.deepEqual([resaved.source, resaved.saved], ["present", true]);
+assert.ok(fs.existsSync(archive));
+
+// An archive that does not carry the tag is the wrong archive; building over
+// it would hide that.
+docker = fakeDocker(new Set(), ["someone-else:1"]);
+await expectCodeAsync("TESTER_IMAGE_FAILED", () =>
+  ensureTesterBaseImage({ ...baseImage, transport: docker.transport }),
+);
+
+// A failed save leaves no archive, so the next call does not load a truncated one.
+fs.rmSync(archive);
+await expectCodeAsync("TESTER_IMAGE_FAILED", () =>
+  ensureTesterBaseImage({
+    ...baseImage,
+    transport: async (command) => ({
+      code: command.argv[1] === "save" ? 1 : command.argv[1] === "image" ? 0 : 1,
+      stdout: "",
+    }),
+  }),
+);
+assert.equal(fs.existsSync(archive), false);
+
+// The shipped template is what the CLI builds from.
+const shippedDockerfile = fs.readFileSync(
+  path.join(import.meta.dirname, "..", "templates", "tester-image", "Dockerfile"),
+  "utf8",
+);
+assert.match(shippedDockerfile, /FROM \$\{PASEO_IMAGE\}/);
+assert.match(shippedDockerfile, /@anthropic-ai\/claude-code/);
+assert.match(shippedDockerfile, /\/usr\/local\/bin\/docker/);
+fs.rmSync(imageRoot, { recursive: true, force: true });
+
+// --- the tester container is made from the base image ------------------------
+
+const containerCommands: string[][] = [];
+const created = await createTesterContainer({
+  image: "aris-tester-base:latest",
+  container: "aris-tester",
+  home_volume: "aris-tester-home",
+  timeout_ms: 10_000,
+  transport: async (command) => {
+    containerCommands.push([...command.argv]);
+    return { code: command.argv[2] === "inspect" ? 1 : 0, stdout: "" };
+  },
+});
+assert.deepEqual(created, {
+  container: "aris-tester",
+  container_user: "paseo",
+  image: "aris-tester-base:latest",
+  home_volume: "aris-tester-home",
+  created: true,
+});
+const runArgv = containerCommands.find((argv) => argv[1] === "run")!;
+assert.ok(runArgv.includes("/var/run/docker.sock:/var/run/docker.sock"));
+assert.ok(runArgv.includes("aris-tester-home:/home/paseo"));
+assert.equal(runArgv.at(-1), "aris-tester-base:latest");
+// The socket's group goes into /etc/group as root and the container restarts,
+// because the entrypoint's drop to `paseo` resets supplementary groups.
+const groupArgv = containerCommands.find((argv) => argv[1] === "exec")!;
+assert.deepEqual(groupArgv.slice(0, 6), ["docker", "exec", "--user", "root", "aris-tester", "sh"]);
+assert.match(groupArgv.at(-1)!, /usermod -aG "\$group" paseo/);
+assert.deepEqual(containerCommands.at(-1), ["docker", "restart", "aris-tester"]);
+
+// Same name, same image: started, not recreated.
+const startedCommands: string[][] = [];
+const reused = await createTesterContainer({
+  image: "aris-tester-base:latest",
+  container: "aris-tester",
+  home_volume: "aris-tester-home",
+  timeout_ms: 10_000,
+  transport: async (command) => {
+    startedCommands.push([...command.argv]);
+    return { code: 0, stdout: "aris-tester-base:latest\n" };
+  },
+});
+assert.equal(reused.created, false);
+assert.deepEqual(startedCommands.at(-1), ["docker", "start", "aris-tester"]);
+assert.ok(!startedCommands.some((argv) => argv[1] === "run"));
+
+// Same name, another image: somebody else's container, refused.
+await expectCodeAsync("TESTER_CONTAINER_TAKEN", () =>
+  createTesterContainer({
+    image: "aris-tester-base:latest",
+    container: "aris-tester",
+    home_volume: "aris-tester-home",
+    timeout_ms: 10_000,
+    transport: async () => ({ code: 0, stdout: "postgres:16\n" }),
+  }),
+);
+await expectCodeAsync("INVALID_VALUE", () =>
+  createTesterContainer({ image: "aris-tester-base:latest", container: "--privileged", home_volume: "v", timeout_ms: 10_000 }),
+);
+
 fs.rmSync(root, { recursive: true, force: true });
-console.log("tester agent: contract declaration, submission binding, receipt verification and deployment guards passed");
+console.log("tester agent: contract declaration, submission binding, receipt verification, deployment guards and base image flow passed");

@@ -101,7 +101,6 @@ import { readRootCharter } from "./root-charter.js";
 import { validateRunCharter } from "./run-charter.js";
 import { readBaselineScope } from "./baseline-scope.js";
 import { readResourceInventory } from "./resource-inventory.js";
-import { loadTaskSetup } from "./task-setup.js";
 import { resolveRunWikiScope } from "./wiki-scope.js";
 import { readMetricConfig } from "./metric-gate.js";
 import {
@@ -1623,7 +1622,6 @@ function autoResearchPolicy(input: Required<OuterRunIdentity>): AutoResearchFroz
   let taskSetupRevision: string;
   let ownerLimits;
   let maxBundledPositions;
-  let modelUsagePolicy;
   let metric;
   let maxRepairAttempts: number;
   let maxDepth: number;
@@ -1637,7 +1635,6 @@ function autoResearchPolicy(input: Required<OuterRunIdentity>): AutoResearchFroz
       resource.inventory_sha256 !== root.resource_inventory_sha256
     )
       failA1("IDENTITY_MISMATCH", "root charter baseline or resources changed");
-    const setup = loadTaskSetup(input.project_root, root.workflow_id, root.setup_revision);
     taskId = root.task_id;
     workflowId = root.workflow_id;
     taskSetupRevision = root.setup_revision;
@@ -1648,7 +1645,6 @@ function autoResearchPolicy(input: Required<OuterRunIdentity>): AutoResearchFroz
       "root_charter.owner_limits.max_bundled_positions_per_graph",
       0,
     );
-    modelUsagePolicy = setup.model_usage_policy;
     const configuredMetric = readMetricConfig(input.project_root);
     if (configuredMetric.status !== "ok")
       failA1(
@@ -1680,7 +1676,6 @@ function autoResearchPolicy(input: Required<OuterRunIdentity>): AutoResearchFroz
     taskSetupRevision = parent.task_setup_revision;
     ownerLimits = parent.owner_limits;
     maxBundledPositions = parent.max_bundled_positions_per_graph;
-    modelUsagePolicy = parent.model_usage_policy;
     metric = parent.metric;
     // The loop limits pass down through frozen policies, not charters.
     maxRepairAttempts = parent.max_repair_attempts;
@@ -1706,7 +1701,6 @@ function autoResearchPolicy(input: Required<OuterRunIdentity>): AutoResearchFroz
     metric,
     owner_limits: ownerLimits,
     max_bundled_positions_per_graph: maxBundledPositions,
-    model_usage_policy: modelUsagePolicy,
     frozen_at: now(),
   };
 }

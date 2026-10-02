@@ -1338,8 +1338,13 @@ export function setupRootRun(input: RootSetupInput): RootSetupResult {
     if (input.max_depth !== undefined) requireInteger(input.max_depth, "setup.max_depth", 0);
     if (input.budget !== undefined)
       failA1("INVALID_VALUE", "Auto Research Loop setup cannot contain budget");
-    if (input.model_usage_policy === undefined)
-      failA1("INVALID_VALUE", "Auto Research Loop setup needs a frozen model usage policy");
+    // Model choice in the loop is a soft rule the owner writes under CLAUDE.md's
+    // `## Model Usage`; nothing in the loop enforces it, so it is not sealed here.
+    if (input.model_usage_policy !== undefined)
+      failA1(
+        "INVALID_VALUE",
+        "Auto Research Loop setup takes no model_usage_policy; write it in CLAUDE.md under ## Model Usage",
+      );
   } else if (
     input.mode !== undefined ||
     input.max_iterations !== undefined ||

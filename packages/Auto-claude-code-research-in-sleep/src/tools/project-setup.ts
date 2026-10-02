@@ -667,13 +667,7 @@ const REQUIRED_ANSWER_FIELDS = [
  * from the answers. They are carried through untouched; `setupRootRun` owns
  * their validation, including the refusal of a budget in loop mode.
  */
-const LOOP_ANSWER_FIELDS = [
-  "mode",
-  "max_iterations",
-  "max_repair_attempts",
-  "max_depth",
-  "model_usage_policy",
-] as const;
+const LOOP_ANSWER_FIELDS = ["mode", "max_iterations", "max_repair_attempts", "max_depth"] as const;
 
 export interface AssembleOptions {
   project_root: string;
@@ -701,6 +695,15 @@ export function assembleRootSetupInput(options: AssembleOptions): AssembleResult
       `answers.${missingHeader[0]}`,
     );
   }
+
+  // Unknown answer keys are otherwise dropped; this one is refused so the owner
+  // learns where the model rule goes instead of losing it.
+  if (answers.model_usage_policy !== undefined)
+    failA1(
+      "INVALID_VALUE",
+      "model usage is not a setup answer; write it in CLAUDE.md under ## Model Usage",
+      "answers.model_usage_policy",
+    );
 
   const inference = inferSetupItems(root);
   const document: Record<string, unknown> = { project_root: root };

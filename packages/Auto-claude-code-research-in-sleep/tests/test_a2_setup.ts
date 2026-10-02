@@ -77,11 +77,12 @@ test("ARL root setup and charter-only Workflow start/resume use a finite round l
     delete input.budget;
     input.mode = "auto_research_loop";
     input.max_iterations = 2;
-    input.model_usage_policy = {
-      revision: "policy:arl", approval_id: "approval:policy",
-      roles: [{ role_id: "main-model", allowed_modules: ["main"], allowed_uses: ["generate"], judge_targets: [], judge_generation_lag: null, artifact_binding: "previous_promoted", promotion_output: "main.model", user_confirmed: true, approval_id: "approval:main" }],
-    };
     fs.writeFileSync(path.join(root, "CLAUDE.md"), "## Metric Target\nprimary: 0.8 score\ndirection: higher_better\ntolerance: 0.01\n");
+    // Model choice is a CLAUDE.md rule in the loop, never a sealed setup item.
+    assert.throws(
+      () => setupRootRun({ ...input, model_usage_policy: { revision: "policy:arl" } }),
+      /## Model Usage/,
+    );
     const setup = setupRootRun(input);
     assert.equal(setup.root_charter.mode, "auto_research_loop");
     assert.equal(Object.hasOwn(setup.root_charter, "budget"), false);
@@ -99,6 +100,7 @@ test("ARL root setup and charter-only Workflow start/resume use a finite round l
     assert.equal(policy.max_iterations, 2);
     assert.equal(policy.max_repair_attempts, 3);
     assert.equal(policy.max_depth, 2);
+    assert.equal(Object.hasOwn(policy, "model_usage_policy"), false);
     assert.equal(readWorkflowRuntimeState(root, "root-arl").outer_run_id, "root-arl");
     const resumed = spawnSync("npx", command.map((part) => part === "start" ? "resume" : part), { cwd: path.resolve(import.meta.dirname, ".."), encoding: "utf8" });
     assert.equal(resumed.status, 0, resumed.stderr);
@@ -265,7 +267,6 @@ test("ARL exhausted execution repair fails the run and names where it failed", (
     delete input.budget;
     input.mode = "auto_research_loop";
     input.max_iterations = 3;
-    input.model_usage_policy = { revision: "policy:no-proposal", approval_id: "approval:policy", roles: [{ role_id: "main-model", allowed_modules: ["main"], allowed_uses: ["generate"], judge_targets: [], judge_generation_lag: null, artifact_binding: "previous_promoted", promotion_output: "main.model", user_confirmed: true, approval_id: "approval:main" }] };
     fs.writeFileSync(path.join(root, "CLAUDE.md"), "## Metric Target\nprimary: 0.8 score\ndirection: higher_better\n");
     setupRootRun(input);
     const identity = { execution_root: path.join(root, "execution"), project_root: root, outer_run_id: "root-no-proposal", parent_run_id: null, depth: 0, scope_path: "/" };
@@ -350,7 +351,6 @@ test("ARL repair cap is counted per iteration across bridge failure and insuffic
     input.mode = "auto_research_loop";
     input.max_iterations = 3;
     input.max_repair_attempts = 1;
-    input.model_usage_policy = { revision: "policy:cap", approval_id: "approval:policy", roles: [{ role_id: "main-model", allowed_modules: ["main"], allowed_uses: ["generate"], judge_targets: [], judge_generation_lag: null, artifact_binding: "previous_promoted", promotion_output: "main.model", user_confirmed: true, approval_id: "approval:main" }] };
     fs.writeFileSync(path.join(root, "CLAUDE.md"), "## Metric Target\nprimary: 0.8 score\ndirection: higher_better\n");
     setupRootRun(input);
     const identity = { execution_root: path.join(root, "execution"), project_root: root, outer_run_id: "root-cap", parent_run_id: null, depth: 0, scope_path: "/" };

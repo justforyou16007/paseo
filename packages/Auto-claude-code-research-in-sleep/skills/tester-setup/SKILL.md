@@ -44,19 +44,54 @@ requests.
 
 ## The container the tester lives in
 
-Prepare it before step 1. These are the facts `probe` checks:
+Make it before step 1, from a base image, in two commands:
 
-- The image is the Paseo image with the `claude` CLI and a docker client added,
-  in the way `docker/Dockerfile.agents.example` in the Paseo repository adds
-  agent CLIs. Log `claude` in once with
-  `docker exec -it --user <account> <container> claude`.
-- The container reaches a docker daemon, normally the host's, by mounting
-  `/var/run/docker.sock`. The daemon's account must be allowed to use that
-  socket. Without it the tester has nowhere to run a submission, and `probe`
-  reports `docker: false`.
-- `<account>` is the account the Paseo daemon inside runs as, `paseo` in the
-  official image. Every command runs as that account, so the key and the
-  receipts belong to the tester agent.
+```text
+tester-agent-cli.js ensure-base-image --archive "$HOME/.aris/images/aris-tester-base.tar"
+tester-agent-cli.js create-container --name aris-tester
+```
+
+`ensure-base-image` makes sure the image `aris-tester-base:latest` exists, in
+this order:
+
+1. The docker daemon already has it: reuse it.
+2. Otherwise the archive is on disk: `docker load` it. An archive that does not
+   carry the tag is refused, not built over.
+3. Otherwise build it from `templates/tester-image/Dockerfile`: the Paseo image
+   with the `claude` CLI and a static docker client added.
+
+Whichever way the image arrived, if the archive is missing it is written with
+`docker save`, through a `.partial` file renamed into place, so an interrupted
+save never leaves a truncated archive for the next call to load. Keep the
+archive outside any project: one base image serves every project on the
+machine, and it is what you carry to another docker host. Rebuild by deleting
+both the image and the archive. `--paseo-image` builds from a Paseo image other
+than the official one.
+
+`create-container` runs the image with the host's `/var/run/docker.sock` and a
+named volume (`<name>-home`) mounted as `/home/paseo`, so the `claude` login
+and the daemon's state survive a recreated container. A container of that name
+made from the same image is started instead; one made from another image is
+refused as `TESTER_CONTAINER_TAKEN`. It then writes the socket's group into the
+container's `/etc/group` for the `paseo` account and restarts the container
+once. `docker run --group-add` would not work: the Paseo entrypoint drops to
+`paseo` with gosu, which resets supplementary groups from `/etc/group`, and the
+tester agent would then get "permission denied" on the socket.
+
+Then log `claude` in once with `docker exec -it --user paseo aris-tester claude`.
+These are the facts `probe` checks:
+
+- `claude` is installed and the Paseo daemon inside answers.
+- The container reaches a docker daemon through the mounted socket. Without it
+  the tester has nowhere to run a submission, and `probe` reports
+  `docker: false`.
+- `paseo`, the account `create-container` prints as `container_user`, is the
+  account the daemon runs as. Every command runs as that account, so the key
+  and the receipts belong to the tester agent.
+
+Both commands print their docker failure (code, step and the command) because
+nothing in it comes from the tester; re-run the printed command by hand to see
+docker's own output.
 
 `tester-agent-cli.js` runs `docker` with whatever context the environment
 selects. When the tester container lives on another docker host, point
@@ -76,9 +111,10 @@ selects. When the tester container lives on another docker host, point
 | 8. Emit config and hand off | `tester-agent-cli.js emit-config …` then `workflow-tools-cli.js root-setup --project <path> --input <path>` with `tester_agent_config` | The contract digest could not be frozen, or the root setup rejects the config; it is not a formal run. |
 
 The run this hands off to is an Auto Research Loop root, so the root setup
-input carries `mode: "auto_research_loop"`, a positive `max_iterations`, the
-frozen `model_usage_policy`, and optionally `max_repair_attempts` (default 3)
-and `max_depth` (default 2). It carries no `budget`: the loop stops on its round
+input carries `mode: "auto_research_loop"`, a positive `max_iterations`, and
+optionally `max_repair_attempts` (default 3) and `max_depth` (default 2). It
+carries no `model_usage_policy`: model choice is prose in CLAUDE.md's
+`## Model Usage`, and `root-setup` refuses the field in loop mode. It carries no `budget`: the loop stops on its round
 limit, and `root-setup` refuses a budget in loop mode. `/aris-setup` Phase 5
 writes these into the answers file it assembles from.
 

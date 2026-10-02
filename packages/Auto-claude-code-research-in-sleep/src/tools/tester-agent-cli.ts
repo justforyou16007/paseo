@@ -23,6 +23,7 @@ import {
   type TesterDeploymentRequest,
 } from "./tester-agent.js";
 import { readStateFile, writeStateJsonAtomic } from "./state-file.js";
+import { createTesterContainer, ensureTesterBaseImage } from "./tester-image.js";
 
 const program = createCli(
   "tester-agent",
@@ -38,6 +39,78 @@ function reject(reason: string): void {
   console.error(JSON.stringify({ status: "failed", reason }));
   process.exitCode = 1;
 }
+
+/** Templates ship next to `dist`, both in the repository and under `.aris`. */
+function templateDir(name: string): string {
+  return path.resolve(
+    path.dirname(path.dirname(fileURLToPath(import.meta.url))),
+    "..",
+    "templates",
+    name,
+  );
+}
+
+/**
+ * Image and container failures are about the research machine's own docker,
+ * so their code and message are printed; nothing in them comes from the tester.
+ */
+function rejectWithCause(fallback: string, error: unknown): void {
+  if (error instanceof A1Error)
+    console.error(JSON.stringify({ status: "failed", reason: error.code, detail: error.message }));
+  else console.error(JSON.stringify({ status: "failed", reason: fallback }));
+  process.exitCode = 1;
+}
+
+const DEFAULT_BASE_IMAGE = "aris-tester-base:latest";
+
+program
+  .command("ensure-base-image")
+  .description(
+    "Reuse the tester base image, load it from its archive, or build it and save the archive",
+  )
+  .requiredOption("--archive <path>", "absolute path of the saved image archive")
+  .option("--image <tag>", "base image tag", DEFAULT_BASE_IMAGE)
+  .option("--paseo-image <ref>", "Paseo image to build from, if not the official one")
+  .option("--timeout <ms>", "per-step timeout in milliseconds", "1800000")
+  .action(
+    async (options: { archive: string; image: string; paseoImage?: string; timeout: string }) => {
+      try {
+        const result = await ensureTesterBaseImage({
+          image: options.image,
+          archive_path: options.archive,
+          dockerfile_dir: templateDir("tester-image"),
+          ...(options.paseoImage === undefined ? {} : { paseo_image: options.paseoImage }),
+          timeout_ms: Number(options.timeout),
+        });
+        console.log(JSON.stringify(result));
+      } catch (error) {
+        rejectWithCause("tester_image_failed", error);
+      }
+    },
+  );
+
+program
+  .command("create-container")
+  .description("Create the tester container from the base image, or start the existing one")
+  .requiredOption("--name <container>", "tester container name")
+  .option("--image <tag>", "base image tag", DEFAULT_BASE_IMAGE)
+  .option("--home-volume <name>", "named volume for the account's home (default <name>-home)")
+  .option("--timeout <ms>", "per-step timeout in milliseconds", "120000")
+  .action(
+    async (options: { name: string; image: string; homeVolume?: string; timeout: string }) => {
+      try {
+        const result = await createTesterContainer({
+          image: options.image,
+          container: options.name,
+          home_volume: options.homeVolume ?? `${options.name}-home`,
+          timeout_ms: Number(options.timeout),
+        });
+        console.log(JSON.stringify(result));
+      } catch (error) {
+        rejectWithCause("tester_container_failed", error);
+      }
+    },
+  );
 
 program
   .command("probe")
@@ -161,12 +234,7 @@ program
       // deploy pushes exactly one directory, so the manual has to be placed into
       // that directory rather than pushed separately; cleanup keeps working
       // because there is still only one local staging path to remove.
-      const source = path.resolve(
-        path.dirname(path.dirname(fileURLToPath(import.meta.url))),
-        "..",
-        "templates",
-        "tester-agent-bundle",
-      );
+      const source = templateDir("tester-agent-bundle");
       fs.mkdirSync(options.output, { recursive: true, mode: 0o700 });
       const copied: string[] = [];
       for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
