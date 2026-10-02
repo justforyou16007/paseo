@@ -706,6 +706,10 @@ export interface RootSetupInput {
   evidence_refs?: readonly string[];
   constraints?: Record<string, unknown>;
   budget?: unknown;
+  mode?: "auto_research_loop";
+  max_iterations?: number;
+  max_repair_attempts?: number;
+  max_depth?: number;
 
   tester_ref?: string;
   previous_setup?: unknown;
@@ -1298,6 +1302,10 @@ function setupInputAllowedFields(): string[] {
     "evidence_refs",
     "constraints",
     "budget",
+    "mode",
+    "max_iterations",
+    "max_repair_attempts",
+    "max_depth",
 
     "tester_ref",
     "previous_setup",
@@ -1323,6 +1331,26 @@ function setupPreContractArtifactPath(
 
 export function setupRootRun(input: RootSetupInput): RootSetupResult {
   if (!isRecord(input)) failA1("INVALID_VALUE", "root setup input must be an object", "setup");
+  if (input.mode === "auto_research_loop") {
+    requireInteger(input.max_iterations, "setup.max_iterations", 1);
+    if (input.max_repair_attempts !== undefined)
+      requireInteger(input.max_repair_attempts, "setup.max_repair_attempts", 0);
+    if (input.max_depth !== undefined) requireInteger(input.max_depth, "setup.max_depth", 0);
+    if (input.budget !== undefined)
+      failA1("INVALID_VALUE", "Auto Research Loop setup cannot contain budget");
+    if (input.model_usage_policy === undefined)
+      failA1("INVALID_VALUE", "Auto Research Loop setup needs a frozen model usage policy");
+  } else if (
+    input.mode !== undefined ||
+    input.max_iterations !== undefined ||
+    input.max_repair_attempts !== undefined ||
+    input.max_depth !== undefined
+  ) {
+    failA1(
+      "INVALID_VALUE",
+      "max_iterations, max_repair_attempts and max_depth require Auto Research Loop mode",
+    );
+  }
   const draftKey = setupDraftKey(input);
   const missing = collectMissingSetupItems(input);
   if (missing.length > 0) {
@@ -1495,7 +1523,8 @@ export function setupRootRun(input: RootSetupInput): RootSetupResult {
     if (!preexisting.has(setupPreContractArtifactPath(projectRoot, runId, "baseline.json")))
       newlyWritten.push(setupPreContractArtifactPath(projectRoot, runId, "baseline.json"));
     const savedCharter = saveRootCharter(projectRoot, runId, charter);
-    initializeRunBudget(projectRoot, runId, normalizeBudget(charter.budget, "charter.budget"));
+    if (charter.mode !== "auto_research_loop")
+      initializeRunBudget(projectRoot, runId, normalizeBudget(charter.budget, "charter.budget"));
     if (!preexisting.has(setupPreContractArtifactPath(projectRoot, runId, "charter.json")))
       newlyWritten.push(setupPreContractArtifactPath(projectRoot, runId, "charter.json"));
     const revision = saveRootSetupRevision(projectRoot, {

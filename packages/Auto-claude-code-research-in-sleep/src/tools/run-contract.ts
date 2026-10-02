@@ -1140,12 +1140,13 @@ export function createBridgeChildRun(input: unknown): RunRecord {
   });
   if (child.predecessor_run_id !== undefined)
     retirePositionPredecessor(projectRoot, child, child.predecessor_run_id);
-  reserveRunExecution({
-    project_root: projectRoot,
-    run_id: child.parent_run_id,
-    execution_id: child.run_id,
-    budget: child.budget,
-  });
+  if (child.budget !== null)
+    reserveRunExecution({
+      project_root: projectRoot,
+      run_id: child.parent_run_id,
+      execution_id: child.run_id,
+      budget: child.budget,
+    });
   const run = createRun({
     project_root: projectRoot,
     run_id: child.run_id,
@@ -1181,7 +1182,7 @@ export function createBridgeChildRun(input: unknown): RunRecord {
       failA1("IMMUTABLE_CONFLICT", "child inputs changed");
     writeStateJsonAtomic(snapshotPath, snapshot);
   });
-  initializeRunBudget(projectRoot, run.run_id, child.budget);
+  if (child.budget !== null) initializeRunBudget(projectRoot, run.run_id, child.budget);
   if (child.predecessor_run_id !== undefined && child.inherits_wiki === true)
     inheritRunWiki(projectRoot, child.predecessor_run_id, run.run_id);
   return updateRun(projectRoot, run.run_id, {

@@ -4,7 +4,7 @@ import { requireRunContract, runOwnedPath, type RunRecord } from "./run-contract
 import { readResultPackage, resultStatusPolicy, type ResultStatus } from "./result-package.js";
 import { createArtifactRegistry } from "./artifact-registry.js";
 import { readOuterValidationGateRecord } from "./workflow-runtime.js";
-import { readFrozenPolicy, readWorkflowRuntimeState } from "./workflow-state.js";
+import { readLegacyFrozenPolicy, readWorkflowRuntimeState } from "./workflow-state.js";
 import path from "node:path";
 import { canonicalJsonSha256, canonicalJsonString } from "./canonical-json.js";
 import {
@@ -1719,7 +1719,7 @@ export function reservePromotionTrial(input: PromotionReservationInput): Exposur
   );
   if (!resultStatusPolicy(status).consumes_tester_exposure)
     failA1("TESTER_NOT_ALLOWED", "non-executable results cannot reserve tester exposure");
-  const frozen = readFrozenPolicy(input.project_root, input.outer_run_id);
+  const frozen = readLegacyFrozenPolicy(input.project_root, input.outer_run_id);
   if (
     frozen.task_id !== input.task_id ||
     frozen.task_setup_revision !== input.task_setup_revision ||

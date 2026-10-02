@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
 import test from "node:test";
 import { canonicalJsonSha256 } from "../src/tools/canonical-json.js";
 import {
@@ -34,6 +35,16 @@ import {
   type RootSetupInput,
 } from "../src/tools/task-setup.js";
 import { createRootCharter, readRootCharter, rootCharterPath } from "../src/tools/root-charter.js";
+import { readFrozenPolicy, readWorkflowRuntimeState } from "../src/tools/workflow-state.js";
+import { planExperimentBridge, materializeBridgeChildren } from "../src/tools/experiment-bridge.js";
+import { readBaselineScope } from "../src/tools/baseline-scope.js";
+import { readResourceInventory } from "../src/tools/resource-inventory.js";
+import { runOwnedPath } from "../src/tools/run-contract.js";
+import { beginOuterCycle, advanceOuterPhase, recordOuterBridgeSuccess, recordOuterBridgeFailure, recordOuterBridgeRepair, recordAutoResearchInsufficient, completeAutoResearchCycle, completeOuterCycle, recordWorkflowStopDecision, finishOuterRun, resumeAutoResearchRun, startAutoResearchRun } from "../src/tools/workflow-runtime.js";
+import { appendWikiEvent, initializeWikiSchema } from "../src/tools/wiki-event-store.js";
+import { runWikiRoot } from "../src/tools/wiki-scope.js";
+import { planResultExport, exportResultPackage } from "../src/tools/result-export.js";
+import { prepareBridgeInput } from "../src/tools/bridge-input.js";
 import {
   createRun,
   readRun,
@@ -42,6 +53,353 @@ import {
 } from "../src/tools/run-contract.js";
 
 const HASH_A = "a".repeat(64);
+
+function writeReviewManifest(workerDir: string, runId: string): void {
+  const outputDir = path.join(workerDir, "outputs");
+  fs.mkdirSync(outputDir, { recursive: true });
+  fs.writeFileSync(path.join(workerDir, "input-manifest.json"), JSON.stringify({
+    run_id: runId, iteration: 1, worker: "auto-review-loop", phase: "auto-review-loop",
+    output_dir: outputDir,
+  }));
+}
+
+function releaseTestProcessScope(root: string, runId: string): void {
+  const run = readRun(root, runId);
+  const scope = { project_root: root, run_id: runId, parent_run_id: run.parent_run_id, scope_path: run.scope_path };
+  for (const token of readRunScopeLeaseTokens(scope))
+    releaseRunScope({ ...scope, lease_token: token });
+}
+
+test("ARL root setup and charter-only Workflow start/resume use a finite round limit without budget", () => {
+  const root = tempRoot();
+  try {
+    const input = baseInput(root, "root-arl", "setup:arl");
+    delete input.budget;
+    input.mode = "auto_research_loop";
+    input.max_iterations = 2;
+    input.model_usage_policy = {
+      revision: "policy:arl", approval_id: "approval:policy",
+      roles: [{ role_id: "main-model", allowed_modules: ["main"], allowed_uses: ["generate"], judge_targets: [], judge_generation_lag: null, artifact_binding: "previous_promoted", promotion_output: "main.model", user_confirmed: true, approval_id: "approval:main" }],
+    };
+    fs.writeFileSync(path.join(root, "CLAUDE.md"), "## Metric Target\nprimary: 0.8 score\ndirection: higher_better\ntolerance: 0.01\n");
+    const setup = setupRootRun(input);
+    assert.equal(setup.root_charter.mode, "auto_research_loop");
+    assert.equal(Object.hasOwn(setup.root_charter, "budget"), false);
+    assert.equal(fs.existsSync(path.join(root, ".aris", "runs", "root-arl", "budget.json")), false);
+    // Omitted loop limits are frozen at their defaults, never left implicit.
+    assert.equal(setup.root_charter.max_repair_attempts, 3);
+    assert.equal(setup.root_charter.max_depth, 2);
+    releaseTestProcessScope(root, "root-arl");
+    const executionRoot = path.join(root, "execution");
+    const command = ["tsx", "src/tools/workflow-cli.ts", "start", "--execution-root", executionRoot, "--project", root, "--run", "root-arl", "--charter", rootCharterPath(root, "root-arl")];
+    const started = spawnSync("npx", command, { cwd: path.resolve(import.meta.dirname, ".."), encoding: "utf8" });
+    assert.equal(started.status, 0, started.stderr);
+    const policy = readFrozenPolicy(root, "root-arl");
+    assert.equal(policy.mode, "auto_research_loop");
+    assert.equal(policy.max_iterations, 2);
+    assert.equal(policy.max_repair_attempts, 3);
+    assert.equal(policy.max_depth, 2);
+    assert.equal(readWorkflowRuntimeState(root, "root-arl").outer_run_id, "root-arl");
+    const resumed = spawnSync("npx", command.map((part) => part === "start" ? "resume" : part), { cwd: path.resolve(import.meta.dirname, ".."), encoding: "utf8" });
+    assert.equal(resumed.status, 0, resumed.stderr);
+    assert.equal(fs.existsSync(path.join(root, ".aris", "runs", "root-arl", "dashboard.json")), false);
+    const charter = setup.root_charter;
+    const childContent = {
+      problem: "Improve main", expected_output: "A measured candidate", evidence_refs: [], constraints: {}, input_snapshot_refs: [],
+      baseline_ref: "W_0", baseline_sha256: charter.baseline_sha256, optimizable_scope: [],
+      resource_inventory_sha256: charter.resource_inventory_sha256, resource_inventory_ref: charter.resource_inventory_ref,
+      policy_revision: charter.policy_revision, code_baseline_sha256: charter.code_baseline_sha256,
+      measurement: { validator_ref: "validator:main" },
+    };
+    const plan = planExperimentBridge({
+      project_root: root,
+      run: { run_id: "root-arl", depth: 0, scope_path: "/" },
+      charter,
+      baseline: readBaselineScope(root, "root-arl"),
+      resource_inventory: readResourceInventory(root, "root-arl"),
+      strategy_reason: "One declared position",
+      positions: [{ position_id: "main", child_run_id: "child-arl", execution_plan: { method: "improve main" }, resource_request: { platform_id: "gpu-a" }, charter: childContent, acceptance: { metric: { name: "score", direction: "higher_better", threshold: 0.8 } } }],
+    });
+    assert.equal(plan.children.length, 1);
+    assert.equal(plan.children[0]!.result.status, "succeeded", JSON.stringify(plan.children[0]!.result));
+    materializeBridgeChildren(root, plan);
+    releaseTestProcessScope(root, "child-arl");
+    const childCharterPath = runOwnedPath(root, "child-arl", "charter.json");
+    const childCharter = JSON.parse(fs.readFileSync(childCharterPath, "utf8"));
+    assert.equal(childCharter.mode, "auto_research_loop");
+    assert.equal(Object.hasOwn(childCharter, "budget"), false);
+    const childCommand = ["tsx", "src/tools/workflow-cli.ts", "start", "--execution-root", executionRoot, "--project", root, "--run", "child-arl", "--charter", childCharterPath];
+    const childStarted = spawnSync("npx", childCommand, { cwd: path.resolve(import.meta.dirname, ".."), encoding: "utf8" });
+    assert.equal(childStarted.status, 0, childStarted.stderr);
+    const childPolicy = readFrozenPolicy(root, "child-arl");
+    assert.equal(childPolicy.mode, "auto_research_loop");
+    // The child charter carries no depth facts; both limits come from the parent's policy.
+    assert.equal(Object.hasOwn(childCharter, "max_depth"), false);
+    assert.equal(childPolicy.max_repair_attempts, 3);
+    assert.equal(childPolicy.max_depth, 2);
+    const childResumed = spawnSync("npx", childCommand.map((part) => part === "start" ? "resume" : part), { cwd: path.resolve(import.meta.dirname, ".."), encoding: "utf8" });
+    assert.equal(childResumed.status, 0, childResumed.stderr);
+    const childRun = readRun(root, "child-arl");
+    const childIdentity = { execution_root: executionRoot, project_root: root, outer_run_id: "child-arl", parent_run_id: childRun.parent_run_id, depth: childRun.depth, scope_path: childRun.scope_path };
+    const evidencePath = path.join(root, "evidence.json");
+    fs.writeFileSync(evidencePath, "{}");
+    beginOuterCycle({ ...childIdentity, wave_id: "wave:1", wave_kind: "module", evidence_paths: [evidencePath] });
+    const ideaDir = runOwnedPath(root, "child-arl", "cycles", "1", "workers", "1-idea-discovery");
+    fs.mkdirSync(path.join(ideaDir, "outputs"), { recursive: true });
+    const ideaManifest = path.join(ideaDir, "input-manifest.json");
+    fs.writeFileSync(ideaManifest, JSON.stringify({ worker: "idea-discovery", run_id: "child-arl", iteration: 1, output_dir: path.join(ideaDir, "outputs") }));
+    fs.writeFileSync(path.join(ideaDir, "receipt.json"), JSON.stringify({ worker: "idea-discovery", run_id: "child-arl", iteration: 1 }));
+    fs.writeFileSync(path.join(ideaDir, "outputs", "idea-discovery.json"), JSON.stringify({ candidate_ids: [], children: [], strategy_reason: "No further decomposition" }));
+    const prepared = prepareBridgeInput({ ...childIdentity, idea_discovery_manifest_path: ideaManifest });
+    assert.equal(prepared.bridge.baseline.baseline_sha256, charter.baseline_sha256);
+    assert.equal(fs.existsSync(prepared.bridge_input_path), true);
+    advanceOuterPhase({ ...childIdentity, from_phase: "diagnosis", to_phase: "workset", evidence_paths: [evidencePath] });
+    const bridgeDir = runOwnedPath(root, "child-arl", "cycles", "1", "workers", "1-experiment-bridge");
+    fs.mkdirSync(path.join(bridgeDir, "outputs"), { recursive: true });
+    const bridgeOutput = path.join(bridgeDir, "outputs", "result.json");
+    fs.writeFileSync(bridgeOutput, "{}");
+    const bridgeManifest = path.join(bridgeDir, "input-manifest.json");
+    fs.writeFileSync(bridgeManifest, JSON.stringify({ run_id: "child-arl", iteration: 1, worker: "experiment-bridge", phase: "experiment-bridge", inputs: { plan: "frozen" }, context: {}, output_dir: path.join(bridgeDir, "outputs") }));
+    const bridgeReceipt = path.join(bridgeDir, "receipt.json");
+    fs.writeFileSync(bridgeReceipt, JSON.stringify({ run_id: "child-arl", iteration: 1, worker: "experiment-bridge", phase: "experiment-bridge", status: "done", error: null, primary_output: "result.json", primary_output_sha256: crypto.createHash("sha256").update("{}").digest("hex"), summary: {}, dashboard_patch: {} }));
+    recordOuterBridgeSuccess({ ...childIdentity, receipt_path: bridgeReceipt, manifest_path: bridgeManifest, evidence_paths: [bridgeReceipt, bridgeManifest] });
+    const insufficientDir = runOwnedPath(root, "child-arl", "cycles", "1", "workers", "1-insufficient-review");
+    fs.mkdirSync(insufficientDir, { recursive: true });
+    const insufficientReceipt = path.join(insufficientDir, "receipt.json");
+    fs.writeFileSync(insufficientReceipt, JSON.stringify({ run_id: "child-arl", iteration: 1, worker: "auto-review-loop", phase: "auto-review-loop", status: "done", dashboard_patch: { "last_review.verdict": "insufficient", "metric.current": null } }));
+    assert.throws(() => recordAutoResearchInsufficient({ ...childIdentity, review_receipt_path: insufficientReceipt, evidence_paths: [insufficientReceipt] }), /bridge file does not exist/);
+    writeReviewManifest(insufficientDir, "child-arl");
+    const pending = recordAutoResearchInsufficient({ ...childIdentity, review_receipt_path: insufficientReceipt, evidence_paths: [insufficientReceipt] });
+    assert.equal(pending.current_phase, "bridge-repair");
+    assert.equal(recordAutoResearchInsufficient({ ...childIdentity, review_receipt_path: insufficientReceipt, evidence_paths: [insufficientReceipt] }).active_cycle?.bridge_failure?.repair_attempts, 0);
+    assert.equal(resumeAutoResearchRun(childIdentity).current_phase, "bridge-repair");
+    const repairDir = runOwnedPath(root, "child-arl", "cycles", "1", "workers", "1-repair");
+    fs.mkdirSync(path.join(repairDir, "outputs"), { recursive: true });
+    const repairManifest = path.join(repairDir, "input-manifest.json");
+    fs.writeFileSync(repairManifest, JSON.stringify({ run_id: "child-arl", iteration: 1, worker: "auto-review-loop", phase: "bridge-repair", inputs: { bridge: bridgeManifest }, context: { purpose: "bridge_repair", frozen_input_sha256: pending.active_cycle?.bridge_failure?.frozen_input_sha256 }, output_dir: path.join(repairDir, "outputs") }));
+    const repairReceipt = path.join(repairDir, "receipt.json");
+    fs.writeFileSync(repairReceipt, JSON.stringify({ run_id: "child-arl", iteration: 1, worker: "auto-review-loop", phase: "bridge-repair", status: "done", primary_output: null, summary: { repair_status: "fixed", repair_round: 1 }, dashboard_patch: null }));
+    const fixed = recordOuterBridgeRepair({ ...childIdentity, repair_receipt_path: repairReceipt, repair_manifest_path: repairManifest, evidence_paths: [repairReceipt] });
+    assert.equal(fixed.current_phase, "workset");
+    assert.equal(recordOuterBridgeRepair({ ...childIdentity, repair_receipt_path: repairReceipt, repair_manifest_path: repairManifest, evidence_paths: [repairReceipt] }).active_cycle?.bridge_failure?.repair_attempts, 1);
+    recordOuterBridgeSuccess({ ...childIdentity, receipt_path: bridgeReceipt, manifest_path: bridgeManifest, evidence_paths: [bridgeReceipt, bridgeManifest] });
+    const reviewDir = runOwnedPath(root, "child-arl", "cycles", "1", "workers", "1-auto-review-loop");
+    fs.mkdirSync(reviewDir, { recursive: true });
+    const reviewReceipt = path.join(reviewDir, "receipt.json");
+    fs.writeFileSync(reviewReceipt, JSON.stringify({ run_id: "child-arl", iteration: 1, worker: "auto-review-loop", phase: "auto-review-loop", status: "done", dashboard_patch: { "last_review.verdict": "ready", "metric.current": 0.82 } }));
+    writeReviewManifest(reviewDir, "child-arl");
+    completeAutoResearchCycle({ ...childIdentity, review_receipt_path: reviewReceipt, evidence_paths: [evidencePath] });
+    const wikiRoot = runWikiRoot(root, "child-arl");
+    initializeWikiSchema(wikiRoot);
+    appendWikiEvent(wikiRoot, { producer_kind: "result-to-claim", scope: "runs/child-arl", subject_id: "exp-child-arl", evidence_bundle_id: "bundle:child-arl", payload: { context: {}, operations: [{ op: "upsert_page", kind: "experiment", id: "exp-child-arl", data: { title: "Child result", idea_id: "idea:main", verdict: "yes", confidence: "high", date: "2026-01-01", hardware: "", duration: "", provenance: "", metrics: "score 0.82", reasoning: "measured", tags: [], iteration: 1, gate_metric: 0.82 } }] } });
+    assert.throws(() => planResultExport({ project_root: root, run_id: "child-arl" }), /saved terminal stop decision/);
+    const stop = recordWorkflowStopDecision({ ...childIdentity });
+    assert.equal(stop.reason, "target_reached");
+    releaseTestProcessScope(root, "child-arl");
+    const childFinish = spawnSync("npx", ["tsx", "src/tools/workflow-cli.ts", "finish", "--execution-root", executionRoot, "--project", root, "--run", "child-arl", "--outcome", "completed", "--evidence", runOwnedPath(root, "child-arl", "cycles", "1", "stop-decision.json")], { cwd: path.resolve(import.meta.dirname, ".."), encoding: "utf8" });
+    assert.equal(childFinish.status, 0, childFinish.stderr);
+    const exported = planResultExport({ project_root: root, run_id: "child-arl" });
+    assert.equal(exported.candidate.parent_run_id, "root-arl");
+    assert.equal(exported.candidate.termination_reason, "metric_met");
+    assert.equal(exported.candidate.local_metrics?.metric_gate, 0.82);
+    saveResultReview(root, { schema_version: 1, review_id: "review:child-arl", run_id: "child-arl", reviewer_worker_id: "reviewer:child-arl", package_sha256: exported.candidate.package_sha256, verdict: "approved", evidence_refs: [], reason_codes: [] });
+    const published = exportResultPackage({ project_root: root, run_id: "child-arl", review: { review_id: "review:child-arl" } });
+    assert.equal(published.result_package.parent_run_id, "root-arl");
+    assert.equal(readResultPackage(root, "child-arl").termination_reason, "metric_met");
+    const rootIdentity = { execution_root: executionRoot, project_root: root, outer_run_id: "root-arl", parent_run_id: null, depth: 0, scope_path: "/" };
+    beginOuterCycle({ ...rootIdentity, wave_id: "wave:root", wave_kind: "module", evidence_paths: [evidencePath] });
+    advanceOuterPhase({ ...rootIdentity, from_phase: "diagnosis", to_phase: "workset", evidence_paths: [evidencePath] });
+    const rootBridgeDir = runOwnedPath(root, "root-arl", "cycles", "1", "workers", "1-experiment-bridge");
+    fs.mkdirSync(path.join(rootBridgeDir, "outputs"), { recursive: true });
+    fs.writeFileSync(path.join(rootBridgeDir, "outputs", "result.json"), "{}");
+    const rootBridgeManifest = path.join(rootBridgeDir, "input-manifest.json");
+    fs.writeFileSync(rootBridgeManifest, JSON.stringify({ run_id: "root-arl", iteration: 1, worker: "experiment-bridge", phase: "experiment-bridge", inputs: { plan: "frozen" }, context: {}, output_dir: path.join(rootBridgeDir, "outputs") }));
+    const rootBridgeReceipt = path.join(rootBridgeDir, "receipt.json");
+    fs.writeFileSync(rootBridgeReceipt, JSON.stringify({ run_id: "root-arl", iteration: 1, worker: "experiment-bridge", phase: "experiment-bridge", status: "done", error: null, primary_output: "result.json", primary_output_sha256: crypto.createHash("sha256").update("{}").digest("hex"), summary: {}, dashboard_patch: {} }));
+    recordOuterBridgeSuccess({ ...rootIdentity, receipt_path: rootBridgeReceipt, manifest_path: rootBridgeManifest, evidence_paths: [rootBridgeReceipt, rootBridgeManifest] });
+    const rootReviewDir = runOwnedPath(root, "root-arl", "cycles", "1", "workers", "1-auto-review-loop");
+    fs.mkdirSync(rootReviewDir, { recursive: true });
+    const rootReviewReceipt = path.join(rootReviewDir, "receipt.json");
+    fs.writeFileSync(rootReviewReceipt, JSON.stringify({ run_id: "root-arl", iteration: 1, worker: "auto-review-loop", phase: "auto-review-loop", status: "done", dashboard_patch: { "last_review.verdict": "ready", "metric.current": 0.83 } }));
+    writeReviewManifest(rootReviewDir, "root-arl");
+    // The parent's round is not over until its child has published: with the
+    // child's package out of the way, closing the iteration waits for it.
+    const childPackage = runOwnedPath(root, "child-arl", "result-package.json");
+    fs.renameSync(childPackage, `${childPackage}.held`);
+    const waiting = (() => {
+      try {
+        completeAutoResearchCycle({ ...rootIdentity, review_receipt_path: rootReviewReceipt, evidence_paths: [evidencePath] });
+      } catch (error) {
+        return error as Error;
+      }
+      return null;
+    })();
+    assert.equal(thrownCode(waiting), "ROUND_INCOMPLETE");
+    assert.match(waiting!.message, /child-arl/);
+    assert.equal(readWorkflowRuntimeState(root, "root-arl").current_phase, "workset");
+    fs.renameSync(`${childPackage}.held`, childPackage);
+    completeAutoResearchCycle({ ...rootIdentity, review_receipt_path: rootReviewReceipt, evidence_paths: [evidencePath] });
+    assert.equal(recordWorkflowStopDecision(rootIdentity).reason, "target_reached");
+    releaseTestProcessScope(root, "root-arl");
+    const rootFinish = spawnSync("npx", ["tsx", "src/tools/workflow-cli.ts", "finish", "--execution-root", executionRoot, "--project", root, "--run", "root-arl", "--outcome", "completed", "--evidence", runOwnedPath(root, "root-arl", "cycles", "1", "stop-decision.json")], { cwd: path.resolve(import.meta.dirname, ".."), encoding: "utf8" });
+    assert.equal(rootFinish.status, 0, rootFinish.stderr);
+    const rootWiki = runWikiRoot(root, "root-arl");
+    initializeWikiSchema(rootWiki);
+    appendWikiEvent(rootWiki, { producer_kind: "result-to-claim", scope: "runs/root-arl", subject_id: "exp-root-arl", evidence_bundle_id: "bundle:root-arl", payload: { context: {}, operations: [{ op: "upsert_page", kind: "experiment", id: "exp-root-arl", data: { title: "Root result", idea_id: "idea:root", verdict: "yes", confidence: "high", date: "2026-01-01", hardware: "", duration: "", provenance: "", metrics: "score 0.83", reasoning: "measured", tags: [], iteration: 1, gate_metric: 0.83 } }] } });
+    const rootExport = planResultExport({ project_root: root, run_id: "root-arl" });
+    assert.equal(rootExport.candidate.parent_run_id, null);
+    assert.deepEqual(rootExport.candidate.child_summaries.map((child) => child.run_id), ["child-arl"]);
+    assert.equal(rootExport.candidate.termination_reason, "metric_met");
+    saveResultReview(root, { schema_version: 1, review_id: "review:root-arl", run_id: "root-arl", reviewer_worker_id: "reviewer:root-arl", package_sha256: rootExport.candidate.package_sha256, verdict: "approved", evidence_refs: [], reason_codes: [] });
+    exportResultPackage({ project_root: root, run_id: "root-arl", review: { review_id: "review:root-arl" } });
+    assert.equal(readResultPackage(root, "root-arl").termination_reason, "metric_met");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("ARL exhausted execution repair fails the run and names where it failed", () => {
+  const root = tempRoot();
+  try {
+    const input = baseInput(root, "root-no-proposal", "setup:no-proposal");
+    delete input.budget;
+    input.mode = "auto_research_loop";
+    input.max_iterations = 3;
+    input.model_usage_policy = { revision: "policy:no-proposal", approval_id: "approval:policy", roles: [{ role_id: "main-model", allowed_modules: ["main"], allowed_uses: ["generate"], judge_targets: [], judge_generation_lag: null, artifact_binding: "previous_promoted", promotion_output: "main.model", user_confirmed: true, approval_id: "approval:main" }] };
+    fs.writeFileSync(path.join(root, "CLAUDE.md"), "## Metric Target\nprimary: 0.8 score\ndirection: higher_better\n");
+    setupRootRun(input);
+    const identity = { execution_root: path.join(root, "execution"), project_root: root, outer_run_id: "root-no-proposal", parent_run_id: null, depth: 0, scope_path: "/" };
+    startAutoResearchRun(identity);
+    const evidencePath = path.join(root, "evidence.json");
+    fs.writeFileSync(evidencePath, "{}");
+    beginOuterCycle({ ...identity, wave_id: "wave:1", wave_kind: "module", evidence_paths: [evidencePath] });
+    advanceOuterPhase({ ...identity, from_phase: "diagnosis", to_phase: "workset", evidence_paths: [evidencePath] });
+    const bridgeDir = runOwnedPath(root, identity.outer_run_id, "cycles", "1", "workers", "failed-bridge");
+    fs.mkdirSync(path.join(bridgeDir, "outputs"), { recursive: true });
+    const bridgeManifest = path.join(bridgeDir, "input-manifest.json");
+    fs.writeFileSync(bridgeManifest, JSON.stringify({ run_id: identity.outer_run_id, iteration: 1, worker: "experiment-bridge", phase: "experiment-bridge", inputs: { plan: "frozen" }, context: {}, output_dir: path.join(bridgeDir, "outputs") }));
+    const bridgeReceipt = path.join(bridgeDir, "receipt.json");
+    fs.writeFileSync(bridgeReceipt, JSON.stringify({ run_id: identity.outer_run_id, iteration: 1, worker: "experiment-bridge", phase: "experiment-bridge", status: "failed", error: { category: "environment" }, primary_output: null, summary: {}, dashboard_patch: {} }));
+    const pending = recordOuterBridgeFailure({ ...identity, receipt_path: bridgeReceipt, manifest_path: bridgeManifest, evidence_paths: [bridgeReceipt] });
+    assert.equal(pending.current_phase, "bridge-repair");
+    assert.equal(resumeAutoResearchRun(identity).active_cycle?.bridge_failure?.status, "pending");
+    const repairDir = runOwnedPath(root, identity.outer_run_id, "cycles", "1", "workers", "repair-1");
+    fs.mkdirSync(path.join(repairDir, "outputs"), { recursive: true });
+    const repairManifest = path.join(repairDir, "input-manifest.json");
+    fs.writeFileSync(repairManifest, JSON.stringify({ run_id: identity.outer_run_id, iteration: 1, worker: "auto-review-loop", phase: "bridge-repair", inputs: { failed_bridge: bridgeManifest }, context: { purpose: "bridge_repair", frozen_input_sha256: pending.active_cycle?.bridge_failure?.frozen_input_sha256 }, output_dir: path.join(repairDir, "outputs") }));
+    const repairReceipt = path.join(repairDir, "receipt.json");
+    fs.writeFileSync(repairReceipt, JSON.stringify({ run_id: identity.outer_run_id, iteration: 1, worker: "auto-review-loop", phase: "bridge-repair", status: "done", primary_output: null, summary: { repair_status: "exhausted", repair_round: 1 }, dashboard_patch: null }));
+    assert.equal(recordOuterBridgeRepair({ ...identity, repair_receipt_path: repairReceipt, repair_manifest_path: repairManifest, evidence_paths: [repairReceipt] }).active_cycle?.bridge_failure?.status, "exhausted");
+    assert.equal(recordOuterBridgeRepair({ ...identity, repair_receipt_path: repairReceipt, repair_manifest_path: repairManifest, evidence_paths: [repairReceipt] }).active_cycle?.bridge_failure?.repair_attempts, 1);
+    const completed = completeOuterCycle({ ...identity, evidence_paths: [repairReceipt] });
+    // The experiment kept failing, so this is a failure, located the way the
+    // standalone dashboard locates one: worker, iteration, phase, error, repairs.
+    assert.equal(completed.cycle_history[0]?.status, "failed");
+    assert.equal(completed.cycle_history[0]?.outcome, "bridge_failed");
+    assert.equal(completed.cycle_history[0]?.metric_value, null);
+    assert.deepEqual(completed.cycle_history[0]?.failure, {
+      worker: "experiment-bridge",
+      iteration: 1,
+      phase: "experiment-bridge",
+      error: { category: "environment" },
+      repair_status: "exhausted",
+      repair_attempts: 1,
+      bridge_receipt_ref: "workers/failed-bridge/receipt.json",
+      repair_receipt_ref: "workers/repair-1/receipt.json",
+    });
+    assert.equal(recordWorkflowStopDecision(identity).reason, "bridge_failed");
+    const stopEvidence = [runOwnedPath(root, identity.outer_run_id, "cycles", "1", "stop-decision.json")];
+    assert.throws(() => finishOuterRun({ ...identity, outcome: "completed", evidence_paths: stopEvidence }), /bridge_failed finishes as failed/);
+    assert.equal(finishOuterRun({ ...identity, outcome: "failed", evidence_paths: stopEvidence }).status, "failed");
+    initializeWikiSchema(runWikiRoot(root, identity.outer_run_id));
+    assert.throws(() => planResultExport({ project_root: root, run_id: identity.outer_run_id, status: "succeeded" }), /failed run can only export a failed package/);
+    const planned = planResultExport({ project_root: root, run_id: identity.outer_run_id });
+    assert.equal(planned.winner, null);
+    assert.equal(planned.candidate.status, "failed");
+    assert.equal(planned.candidate.termination_reason, undefined);
+    assert.equal(Object.hasOwn(planned.candidate.local_metrics ?? {}, "metric_gate"), false);
+    assert.deepEqual(planned.candidate.failure, {
+      reason: "experiment-bridge failed in iteration 1 at phase experiment-bridge; repair exhausted after 1",
+      failure_code: "BRIDGE_FAILED",
+      evidence_refs: ["cycles/1/workers/failed-bridge/receipt.json", "cycles/1/workers/repair-1/receipt.json"],
+    });
+    saveResultReview(root, { schema_version: 1, review_id: "review:bridge-failed", run_id: identity.outer_run_id, reviewer_worker_id: "reviewer:bridge-failed", package_sha256: planned.candidate.package_sha256, verdict: "approved", evidence_refs: [], reason_codes: [] });
+    exportResultPackage({ project_root: root, run_id: identity.outer_run_id, review: { review_id: "review:bridge-failed" } });
+    assert.equal(readResultPackage(root, identity.outer_run_id).status, "failed");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+test("loop limits outside an Auto Research Loop are refused at setup", () => {
+  const root = tempRoot();
+  try {
+    for (const field of ["max_repair_attempts", "max_depth"] as const) {
+      const input = { ...baseInput(root, `root-${field}`, `setup:${field}`), [field]: 1 };
+      assert.throws(() => setupRootRun(input), /require Auto Research Loop mode/);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("ARL repair cap is counted per iteration across bridge failure and insufficient review", () => {
+  const root = tempRoot();
+  try {
+    const input = baseInput(root, "root-cap", "setup:cap");
+    delete input.budget;
+    input.mode = "auto_research_loop";
+    input.max_iterations = 3;
+    input.max_repair_attempts = 1;
+    input.model_usage_policy = { revision: "policy:cap", approval_id: "approval:policy", roles: [{ role_id: "main-model", allowed_modules: ["main"], allowed_uses: ["generate"], judge_targets: [], judge_generation_lag: null, artifact_binding: "previous_promoted", promotion_output: "main.model", user_confirmed: true, approval_id: "approval:main" }] };
+    fs.writeFileSync(path.join(root, "CLAUDE.md"), "## Metric Target\nprimary: 0.8 score\ndirection: higher_better\n");
+    setupRootRun(input);
+    const identity = { execution_root: path.join(root, "execution"), project_root: root, outer_run_id: "root-cap", parent_run_id: null, depth: 0, scope_path: "/" };
+    startAutoResearchRun(identity);
+    assert.equal(readFrozenPolicy(root, "root-cap").max_repair_attempts, 1);
+    const evidencePath = path.join(root, "evidence.json");
+    fs.writeFileSync(evidencePath, "{}");
+    beginOuterCycle({ ...identity, wave_id: "wave:1", wave_kind: "module", evidence_paths: [evidencePath] });
+    advanceOuterPhase({ ...identity, from_phase: "diagnosis", to_phase: "workset", evidence_paths: [evidencePath] });
+    const bridgeDir = runOwnedPath(root, "root-cap", "cycles", "1", "workers", "failed-bridge");
+    fs.mkdirSync(path.join(bridgeDir, "outputs"), { recursive: true });
+    const bridgeManifest = path.join(bridgeDir, "input-manifest.json");
+    fs.writeFileSync(bridgeManifest, JSON.stringify({ run_id: "root-cap", iteration: 1, worker: "experiment-bridge", phase: "experiment-bridge", inputs: { plan: "frozen" }, context: {}, output_dir: path.join(bridgeDir, "outputs") }));
+    const failedReceipt = path.join(bridgeDir, "receipt.json");
+    fs.writeFileSync(failedReceipt, JSON.stringify({ run_id: "root-cap", iteration: 1, worker: "experiment-bridge", phase: "experiment-bridge", status: "failed", error: { category: "environment" }, primary_output: null, summary: {}, dashboard_patch: {} }));
+    const pending = recordOuterBridgeFailure({ ...identity, receipt_path: failedReceipt, manifest_path: bridgeManifest, evidence_paths: [failedReceipt] });
+    assert.equal(pending.active_cycle?.bridge_failure?.status, "pending");
+    const repairDir = runOwnedPath(root, "root-cap", "cycles", "1", "workers", "repair-1");
+    fs.mkdirSync(path.join(repairDir, "outputs"), { recursive: true });
+    const repairManifest = path.join(repairDir, "input-manifest.json");
+    fs.writeFileSync(repairManifest, JSON.stringify({ run_id: "root-cap", iteration: 1, worker: "auto-review-loop", phase: "bridge-repair", inputs: { failed_bridge: bridgeManifest }, context: { purpose: "bridge_repair", frozen_input_sha256: pending.active_cycle?.bridge_failure?.frozen_input_sha256 }, output_dir: path.join(repairDir, "outputs") }));
+    const repairReceipt = path.join(repairDir, "receipt.json");
+    fs.writeFileSync(repairReceipt, JSON.stringify({ run_id: "root-cap", iteration: 1, worker: "auto-review-loop", phase: "bridge-repair", status: "done", primary_output: null, summary: { repair_status: "fixed", repair_round: 1 }, dashboard_patch: null }));
+    assert.equal(recordOuterBridgeRepair({ ...identity, repair_receipt_path: repairReceipt, repair_manifest_path: repairManifest, evidence_paths: [repairReceipt] }).current_phase, "workset");
+    const retryDir = runOwnedPath(root, "root-cap", "cycles", "1", "workers", "retry-bridge");
+    fs.mkdirSync(path.join(retryDir, "outputs"), { recursive: true });
+    fs.writeFileSync(path.join(retryDir, "outputs", "result.json"), "{}");
+    const retryManifest = path.join(retryDir, "input-manifest.json");
+    fs.writeFileSync(retryManifest, JSON.stringify({ run_id: "root-cap", iteration: 1, worker: "experiment-bridge", phase: "experiment-bridge", inputs: { plan: "frozen" }, context: {}, output_dir: path.join(retryDir, "outputs") }));
+    const retryReceipt = path.join(retryDir, "receipt.json");
+    fs.writeFileSync(retryReceipt, JSON.stringify({ run_id: "root-cap", iteration: 1, worker: "experiment-bridge", phase: "experiment-bridge", status: "done", error: null, primary_output: "result.json", primary_output_sha256: crypto.createHash("sha256").update("{}").digest("hex"), summary: {}, dashboard_patch: {} }));
+    recordOuterBridgeSuccess({ ...identity, receipt_path: retryReceipt, manifest_path: retryManifest, evidence_paths: [retryReceipt, retryManifest] });
+    const reviewDir = runOwnedPath(root, "root-cap", "cycles", "1", "workers", "insufficient-review");
+    fs.mkdirSync(reviewDir, { recursive: true });
+    const reviewReceipt = path.join(reviewDir, "receipt.json");
+    fs.writeFileSync(reviewReceipt, JSON.stringify({ run_id: "root-cap", iteration: 1, worker: "auto-review-loop", phase: "auto-review-loop", status: "done", dashboard_patch: { "last_review.verdict": "insufficient", "metric.current": null } }));
+    writeReviewManifest(reviewDir, "root-cap");
+    // The execution repair already spent this iteration's single repair, so the
+    // insufficient review is final at intake instead of opening a second one.
+    const exhausted = recordAutoResearchInsufficient({ ...identity, review_receipt_path: reviewReceipt, evidence_paths: [reviewReceipt] });
+    assert.equal(exhausted.active_cycle?.bridge_failure?.status, "exhausted");
+    assert.equal(exhausted.active_cycle?.bridge_failure?.repair_attempts, 1);
+    const completed = completeOuterCycle({ ...identity, evidence_paths: [reviewReceipt] });
+    assert.equal(completed.cycle_history[0]?.outcome, "no_proposal");
+    assert.equal(recordWorkflowStopDecision(identity).reason, "no_proposal");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 // A result package only lands once a reviewer outside the run has approved its
 // exact digest. These tests are about the package itself, so the acceptance is
 // produced mechanically here.

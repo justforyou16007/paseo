@@ -223,6 +223,24 @@ function test(name: string, fn: () => void): void {
   tests.push({ name, fn });
 }
 
+test("iteration cap survives result export", () => {
+  const root = tmpDir();
+  try {
+    const { wikiRoot } = setup(root);
+    appendExperiment(wikiRoot, { id: "exp-cap", iteration: 1, gate_metric: 0.5 });
+    writeDashboard(root, [{ iter: 1, value: 0.5 }]);
+    const dashboardPath = runOwnedPath(root, RUN_ID, "dashboard.json");
+    const dashboard = JSON.parse(fs.readFileSync(dashboardPath, "utf-8"));
+    dashboard.stop_reason = "iteration_cap";
+    fs.writeFileSync(dashboardPath, JSON.stringify(dashboard));
+    const result = exportWithReview({ project_root: root, run_id: RUN_ID });
+    assert.equal(result.result_package.termination_reason, "iteration_cap");
+    assert.equal(readResultPackage(root, RUN_ID).termination_reason, "iteration_cap");
+  } finally {
+    cleanup(root);
+  }
+});
+
 test("the best tester iteration wins even when a later one leads on the gate", () => {
   const root = tmpDir();
   try {
@@ -249,7 +267,7 @@ test("the best tester iteration wins even when a later one leads on the gate", (
       run_id: RUN_ID,
       tester_definition_path: definitionPath,
     });
-    assert.equal(exported.winner.page_id, "exp-1");
+    assert.equal(exported.winner?.page_id, "exp-1");
     assert.deepEqual(
       exported.ranked.map((candidate) => candidate.iteration),
       [1, 2],
@@ -301,7 +319,7 @@ test("the gate value only breaks a tie the tester left open", () => {
       run_id: RUN_ID,
       tester_definition_path: definitionPath,
     });
-    assert.equal(exported.winner.page_id, "exp-2");
+    assert.equal(exported.winner?.page_id, "exp-2");
   } finally {
     cleanup(root);
   }
@@ -327,7 +345,7 @@ test("an iteration the tester never judged is not in the running", () => {
       run_id: RUN_ID,
       tester_definition_path: definitionPath,
     });
-    assert.equal(exported.winner.page_id, "exp-2");
+    assert.equal(exported.winner?.page_id, "exp-2");
     assert.deepEqual(
       exported.ranked.map((candidate) => candidate.page_id),
       ["exp-2"],
@@ -353,7 +371,7 @@ test("with no tester evidence at all the gate decides, then the later iteration"
       project_root: root,
       run_id: RUN_ID,
     });
-    assert.equal(exported.winner.page_id, "exp-2");
+    assert.equal(exported.winner?.page_id, "exp-2");
   } finally {
     cleanup(root);
   }
@@ -377,7 +395,7 @@ test("a lower_better dashboard flips which gate reading wins", () => {
       project_root: root,
       run_id: RUN_ID,
     });
-    assert.equal(exported.winner.page_id, "exp-1");
+    assert.equal(exported.winner?.page_id, "exp-1");
   } finally {
     cleanup(root);
   }
@@ -472,6 +490,121 @@ test("a wiki with no iteration-bearing experiment has nothing to export", () => 
       () => exportWithReview({ project_root: root, run_id: RUN_ID }),
       /NO_EXPORTABLE_EXPERIMENT/,
     );
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("a standalone run that ended with an exhausted repair exports no_proposal", () => {
+  const root = tmpDir();
+  try {
+    setup(root);
+    const dashboardPath = runOwnedPath(root, RUN_ID, "dashboard.json");
+    fs.mkdirSync(path.dirname(dashboardPath), { recursive: true });
+    fs.writeFileSync(
+      dashboardPath,
+      JSON.stringify({
+        iteration: 1,
+        status: "completed",
+        outcome: "no_proposal",
+        bridge_failure: { status: "exhausted", repair_receipt_ref: "workers/1-repair/receipt.json" },
+        metric: { name: "accuracy", target: 0.95, direction: "higher_better", tolerance: 0, current: null, history: [] },
+        config: { max_iterations: 3 },
+      }),
+    );
+    const result = exportWithReview({ project_root: root, run_id: RUN_ID });
+    assert.equal(result.winner, null);
+    assert.equal(result.result_package.status, "not_executable");
+    assert.equal(result.result_package.termination_reason, "no_proposal");
+    assert.deepEqual(result.result_package.evidence_refs, ["workers/1-repair/receipt.json"]);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("a standalone no_proposal stop at the repair cap cites the bridge receipt", () => {
+  const root = tmpDir();
+  try {
+    setup(root);
+    const dashboardPath = runOwnedPath(root, RUN_ID, "dashboard.json");
+    fs.mkdirSync(path.dirname(dashboardPath), { recursive: true });
+    // The cap was already spent, so no repair ran for this failure.
+    fs.writeFileSync(
+      dashboardPath,
+      JSON.stringify({
+        iteration: 1,
+        status: "completed",
+        outcome: "no_proposal",
+        bridge_failure: { status: "exhausted", repair_receipt_ref: null, bridge_receipt_ref: "workers/1-bridge/receipt.json" },
+        metric: { name: "accuracy", target: 0.95, direction: "higher_better", tolerance: 0, current: null, history: [] },
+        config: { max_iterations: 3 },
+      }),
+    );
+    const result = exportWithReview({ project_root: root, run_id: RUN_ID });
+    assert.equal(result.result_package.termination_reason, "no_proposal");
+    assert.deepEqual(result.result_package.evidence_refs, ["workers/1-bridge/receipt.json"]);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("a standalone no_proposal stop is kept when earlier iterations have results", () => {
+  const root = tmpDir();
+  try {
+    const { wikiRoot } = setup(root);
+    appendExperiment(wikiRoot, { id: "exp-before-repair", iteration: 1, gate_metric: 0.5 });
+    writeDashboard(root, [{ iter: 1, value: 0.5 }]);
+    const dashboardPath = runOwnedPath(root, RUN_ID, "dashboard.json");
+    const dashboard = JSON.parse(fs.readFileSync(dashboardPath, "utf-8"));
+    Object.assign(dashboard, { iteration: 2, status: "completed", outcome: "no_proposal" });
+    fs.writeFileSync(dashboardPath, JSON.stringify(dashboard));
+    const result = exportWithReview({ project_root: root, run_id: RUN_ID });
+    assert.equal(result.result_package.termination_reason, "no_proposal");
+    assert.equal(result.winner?.iteration, 1);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("a standalone run that failed at the repair cap exports a failed package naming where", () => {
+  const root = tmpDir();
+  try {
+    const { wikiRoot } = setup(root);
+    appendExperiment(wikiRoot, { id: "exp-before-failure", iteration: 1, gate_metric: 0.5 });
+    writeDashboard(root, [{ iter: 1, value: 0.5 }]);
+    const dashboardPath = runOwnedPath(root, RUN_ID, "dashboard.json");
+    const dashboard = JSON.parse(fs.readFileSync(dashboardPath, "utf-8"));
+    Object.assign(dashboard, {
+      iteration: 2,
+      status: "failed",
+      current_phase: "bridge-repair",
+      bridge_failure: { status: "exhausted", repair_receipt_ref: "workers/2-repair/receipt.json", bridge_receipt_ref: "workers/2-bridge/receipt.json" },
+      failure: {
+        worker: "experiment-bridge",
+        iteration: 2,
+        phase: "experiment-bridge",
+        error: { category: "environment" },
+        repair_status: "exhausted",
+        repair_attempts: 3,
+        bridge_receipt_ref: "workers/2-bridge/receipt.json",
+      },
+    });
+    fs.writeFileSync(dashboardPath, JSON.stringify(dashboard));
+    assert.throws(
+      () => planResultExport({ project_root: root, run_id: RUN_ID, status: "succeeded" }),
+      /failed run can only export a failed package/,
+    );
+    // The earlier iteration is still the best thing the run produced, but the
+    // package says the run failed and where, so a parent never counts it a success.
+    const result = exportWithReview({ project_root: root, run_id: RUN_ID });
+    assert.equal(result.winner?.iteration, 1);
+    assert.equal(result.result_package.status, "failed");
+    assert.equal(result.result_package.termination_reason, undefined);
+    assert.deepEqual(result.result_package.failure, {
+      reason: "experiment-bridge failed in iteration 2 at phase experiment-bridge; repair exhausted after 3",
+      failure_code: "BRIDGE_FAILED",
+      evidence_refs: ["workers/2-bridge/receipt.json", "workers/2-repair/receipt.json"],
+    });
   } finally {
     cleanup(root);
   }

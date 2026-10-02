@@ -14,7 +14,8 @@ import {
 } from "./decomposition-graph.js";
 import { readResourceInventory, type ResourceInventory } from "./resource-inventory.js";
 import { readRootCharter } from "./root-charter.js";
-import { requireRunContract, runOwnedPath, type RunRecord } from "./run-contract.js";
+import { validateRunCharter } from "./run-charter.js";
+import { readRun, requireRunContract, runOwnedPath, type RunRecord } from "./run-contract.js";
 import { readStateFile, withStateFileLock, writeStateJsonAtomic } from "./state-file.js";
 import { readWorkflowRuntimeState, workflowCycleWorkerDirectory } from "./workflow-state.js";
 import {
@@ -78,10 +79,12 @@ function readCurrentCharter(projectRoot: string, run: RunRecord): unknown {
   const filePath = runOwnedPath(projectRoot, run.run_id, "charter.json");
   if (!fs.existsSync(filePath))
     failA1("CHARTER_NOT_FOUND", `recursive charter is missing at ${filePath}`, filePath);
-  const charter = readStateFile<unknown>(filePath);
-  if (!isRecord(charter)) failA1("CORRUPT_CHARTER", "charter must be an object", filePath);
-  if (charter.run_id !== run.run_id)
-    failA1("IDENTITY_MISMATCH", "recursive charter run_id does not match run.json", filePath);
+  const charter = validateRunCharter(readStateFile<unknown>(filePath));
+  if (
+    charter.run_id !== run.run_id ||
+    charter.charter_sha256 !== run.identity_material.charter_sha256
+  )
+    failA1("IDENTITY_MISMATCH", "recursive charter does not match run.json", filePath);
   return charter;
 }
 
@@ -455,11 +458,23 @@ export function prepareBridgeInput(input: BridgeInputRequest): PreparedBridgeInp
       paths.receipt_path,
     );
   const orchestrating = hasDecomposition(input.project_root, run.run_id);
+  let sourceRun = run;
+  while (sourceRun.parent_run_id !== null)
+    sourceRun = readRun(input.project_root, sourceRun.parent_run_id);
+  const charter = readCurrentCharter(input.project_root, run);
+  const baseline = readBaselineScope(input.project_root, sourceRun.run_id);
+  const resource = readResourceInventory(input.project_root, sourceRun.run_id);
+  if (
+    !isRecord(charter) ||
+    charter.baseline_sha256 !== baseline.baseline_sha256 ||
+    charter.resource_inventory_sha256 !== resource.inventory_sha256
+  )
+    failA1("IDENTITY_MISMATCH", "run charter differs from inherited baseline or resources");
   const bridge = buildBridgeInput({
     run,
-    charter: readCurrentCharter(input.project_root, run),
-    baseline: readBaselineScope(input.project_root, run.run_id),
-    resource_inventory: readResourceInventory(input.project_root, run.run_id),
+    charter,
+    baseline,
+    resource_inventory: resource,
     idea_discovery: readStateFile<unknown>(paths.idea_discovery_path),
     ...(orchestrating
       ? {

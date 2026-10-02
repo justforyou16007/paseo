@@ -13,7 +13,7 @@ import {
 import { readResultPackage, resultPackagePath, type ResultPackage } from "./result-package.js";
 import { readModuleWorkspace, type ModuleWorkspace } from "./workflow-workspace.js";
 import {
-  readFrozenPolicy,
+  readLegacyFrozenPolicy,
   readWorkflowRuntimeState,
   type WorkflowRuntimeState,
 } from "./workflow-state.js";
@@ -701,7 +701,7 @@ function assertOuterAndFrozenIdentity(
     runtime.active_cycle.generation !== input.generation
   )
     failA1("IDENTITY_MISMATCH", "composition must belong to the active module wave");
-  const frozen = readFrozenPolicy(root, input.outer_run_id);
+  const frozen = readLegacyFrozenPolicy(root, input.outer_run_id);
   if (
     frozen.task_id !== spec.task_id ||
     frozen.workflow_id !== spec.workflow_id ||

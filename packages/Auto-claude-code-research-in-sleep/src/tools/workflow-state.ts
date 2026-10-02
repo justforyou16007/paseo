@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { canonicalJsonSha256 } from "./canonical-json.js";
+import type { MetricConfig } from "./metric-gate.js";
 import { type ArtifactRegistry } from "./artifact-registry.js";
 import { validateIncumbentSnapshot } from "./model-assignment.js";
 import { readStateFile, withStateFileLock, writeStateJsonAtomic } from "./state-file.js";
@@ -44,6 +45,8 @@ import {
 
 export interface FrozenPolicy {
   schema_version: 1;
+  mode?: never;
+  max_iterations?: number;
   task_id: string;
   workflow_id: string;
   outer_run_id: string;
@@ -70,9 +73,36 @@ export interface FrozenPolicy {
   frozen_at: string;
 }
 
+export interface AutoResearchFrozenPolicy {
+  schema_version: 1;
+  mode: "auto_research_loop";
+  outer_run_id: string;
+  task_id: string;
+  workflow_id: string;
+  task_setup_revision: string;
+  charter_sha256: string;
+  baseline_sha256: string;
+  resource_inventory_sha256: string;
+  input_snapshot_sha256: string;
+  wiki_scope: string;
+  max_iterations: number;
+  /** Repairs allowed per iteration before the failure counts as exhausted. */
+  max_repair_attempts: number;
+  /** Deepest child level below the root (depth 0) that may be dispatched. */
+  max_depth: number;
+  metric: MetricConfig;
+  owner_limits: OwnerLimits;
+  max_bundled_positions_per_graph: number;
+  model_usage_policy: ModelUsagePolicy;
+  frozen_at: string;
+}
+
+export type WorkflowFrozenPolicy = FrozenPolicy | AutoResearchFrozenPolicy;
+
 export interface FreezeOuterRunInput {
   project_root: string;
   outer_run_id: string;
+  max_iterations?: number;
   task_id: string;
   owner_limits: OwnerLimits;
   task_setup_revision: string;
@@ -233,6 +263,7 @@ function assertFreezeInputShape(value: unknown): asserts value is FreezeOuterRun
     [
       "project_root",
       "outer_run_id",
+      "max_iterations",
       "task_id",
       "owner_limits",
       "task_setup_revision",
@@ -296,6 +327,9 @@ export function freezeOuterRun(input: FreezeOuterRunInput): FrozenPolicy {
   );
   const policy: FrozenPolicy = {
     schema_version: 1,
+    ...(input.max_iterations === undefined
+      ? {}
+      : { max_iterations: requireInteger(input.max_iterations, "freeze.max_iterations", 1) }),
     task_id: taskId,
     workflow_id: taskSetup.workflow_id,
     outer_run_id: runId,
@@ -365,7 +399,7 @@ export function saveFrozenPolicy(input: FreezeOuterRunInput): FrozenPolicy {
   });
   return withStateFileLock(filePath, () => {
     if (fs.existsSync(filePath)) {
-      const existing = readFrozenPolicy(input.project_root, policy.outer_run_id);
+      const existing = readLegacyFrozenPolicy(input.project_root, policy.outer_run_id);
       const requestedWithoutTimestamp = { ...policy, frozen_at: existing.frozen_at };
       if (
         hashValue(existing, "frozen-policy-v1") ===
@@ -379,7 +413,120 @@ export function saveFrozenPolicy(input: FreezeOuterRunInput): FrozenPolicy {
   });
 }
 
-export function readFrozenPolicy(projectRoot: string, outerRunId: string): FrozenPolicy {
+export function saveAutoResearchFrozenPolicy(
+  projectRoot: string,
+  input: AutoResearchFrozenPolicy,
+): AutoResearchFrozenPolicy {
+  const filePath = frozenPolicyPath(projectRoot, input.outer_run_id);
+  // The caller validates charter, contract and ancestry before entering this storage boundary.
+  const policy = validateAutoResearchFrozenPolicy(input, filePath);
+  return withStateFileLock(filePath, () => {
+    if (fs.existsSync(filePath)) {
+      const existing = readFrozenPolicy(projectRoot, input.outer_run_id);
+      if (existing.mode !== "auto_research_loop")
+        failA1("IMMUTABLE_CONFLICT", "frozen mode differs");
+      const requested = { ...policy, frozen_at: existing.frozen_at };
+      if (hashValue(existing, "frozen-policy-v1") !== hashValue(requested, "frozen-policy-v1"))
+        failA1("IMMUTABLE_CONFLICT", "Auto Research Loop frozen policy changed");
+      return existing;
+    }
+    writeStateJsonAtomic(filePath, policy);
+    return policy;
+  });
+}
+
+function validateAutoResearchFrozenPolicy(
+  value: unknown,
+  location: string,
+): AutoResearchFrozenPolicy {
+  if (!isRecord(value)) failA1("CORRUPT_FROZEN_POLICY", "ARL policy must be an object", location);
+  assertNoUnknownFields(
+    value,
+    [
+      "schema_version",
+      "mode",
+      "outer_run_id",
+      "task_id",
+      "workflow_id",
+      "task_setup_revision",
+      "charter_sha256",
+      "baseline_sha256",
+      "resource_inventory_sha256",
+      "input_snapshot_sha256",
+      "wiki_scope",
+      "max_iterations",
+      "max_repair_attempts",
+      "max_depth",
+      "metric",
+      "owner_limits",
+      "max_bundled_positions_per_graph",
+      "model_usage_policy",
+      "frozen_at",
+    ],
+    location,
+  );
+  if (value.schema_version !== 1 || value.mode !== "auto_research_loop")
+    failA1("CORRUPT_FROZEN_POLICY", "ARL policy mode is invalid", location);
+  const runId = assertIdentifier(value.outer_run_id, `${location}.outer_run_id`);
+  if (value.wiki_scope !== `runs/${runId}`)
+    failA1("IDENTITY_MISMATCH", "ARL Wiki scope differs from run id", location);
+  const metric = value.metric;
+  if (
+    !isRecord(metric) ||
+    metric.configured !== true ||
+    (metric.direction !== "higher_better" && metric.direction !== "lower_better") ||
+    (metric.name !== null && typeof metric.name !== "string") ||
+    (metric.baseline !== null && typeof metric.baseline !== "number") ||
+    !Number.isFinite(metric.target) ||
+    !Number.isFinite(metric.tolerance) ||
+    (metric.tolerance as number) < 0 ||
+    (metric.tolerance as number) >= 1
+  )
+    failA1("CORRUPT_FROZEN_POLICY", "frozen metric target is invalid", location);
+  return {
+    schema_version: 1,
+    mode: "auto_research_loop",
+    outer_run_id: runId,
+    task_id: assertIdentifier(value.task_id, `${location}.task_id`),
+    workflow_id: assertIdentifier(value.workflow_id, `${location}.workflow_id`),
+    task_setup_revision: assertIdentifier(
+      value.task_setup_revision,
+      `${location}.task_setup_revision`,
+    ),
+    charter_sha256: assertSha256(value.charter_sha256, `${location}.charter_sha256`),
+    baseline_sha256: assertSha256(value.baseline_sha256, `${location}.baseline_sha256`),
+    resource_inventory_sha256: assertSha256(
+      value.resource_inventory_sha256,
+      `${location}.resource_inventory_sha256`,
+    ),
+    input_snapshot_sha256: assertSha256(
+      value.input_snapshot_sha256,
+      `${location}.input_snapshot_sha256`,
+    ),
+    wiki_scope: requireString(value.wiki_scope, `${location}.wiki_scope`),
+    max_iterations: requireInteger(value.max_iterations, `${location}.max_iterations`, 1),
+    max_repair_attempts: requireInteger(
+      value.max_repair_attempts,
+      `${location}.max_repair_attempts`,
+      0,
+    ),
+    max_depth: requireInteger(value.max_depth, `${location}.max_depth`, 0),
+    metric: metric as unknown as MetricConfig,
+    owner_limits: validateOwnerLimits(value.owner_limits, `${location}.owner_limits`),
+    max_bundled_positions_per_graph: requireInteger(
+      value.max_bundled_positions_per_graph,
+      `${location}.max_bundled_positions_per_graph`,
+      0,
+    ),
+    model_usage_policy: validateModelUsagePolicy(
+      value.model_usage_policy,
+      `${location}.model_usage_policy`,
+    ),
+    frozen_at: requireString(value.frozen_at, `${location}.frozen_at`),
+  };
+}
+
+export function readFrozenPolicy(projectRoot: string, outerRunId: string): WorkflowFrozenPolicy {
   const filePath = frozenPolicyPath(projectRoot, outerRunId);
   if (!fs.existsSync(filePath))
     failA1("FROZEN_POLICY_NOT_FOUND", `no frozen policy at ${filePath}`);
@@ -389,6 +536,8 @@ export function readFrozenPolicy(projectRoot: string, outerRunId: string): Froze
   const safeOuterRunId = assertIdentifier(outerRunId, "outer_run_id");
   if (parsed.schema_version !== 1 || parsed.outer_run_id !== safeOuterRunId)
     failA1("IDENTITY_MISMATCH", "frozen policy path and content disagree", filePath);
+  if (parsed.mode === "auto_research_loop")
+    return validateAutoResearchFrozenPolicy(parsed, filePath);
   const allowed = [
     "schema_version",
     "task_id",
@@ -412,6 +561,7 @@ export function readFrozenPolicy(projectRoot: string, outerRunId: string): Froze
     "tester_definition",
     "tester_agent_config",
     "tester_agent_sha256",
+    "max_iterations",
     "incumbent",
     "frozen_at",
   ];
@@ -514,6 +664,9 @@ export function readFrozenPolicy(projectRoot: string, outerRunId: string): Froze
     failA1("CORRUPT_FROZEN_POLICY", "frozen incumbent hash cannot be verified", filePath);
   return {
     schema_version: 1,
+    ...(parsed.max_iterations === undefined
+      ? {}
+      : { max_iterations: requireInteger(parsed.max_iterations, `${filePath}.max_iterations`, 1) }),
     task_id: taskId,
     workflow_id: workflowId,
     outer_run_id: safeOuterRunId,
@@ -551,6 +704,13 @@ export function readFrozenPolicy(projectRoot: string, outerRunId: string): Froze
     incumbent,
     frozen_at: requireString(parsed.frozen_at, `${filePath}.frozen_at`),
   };
+}
+
+export function readLegacyFrozenPolicy(projectRoot: string, outerRunId: string): FrozenPolicy {
+  const policy = readFrozenPolicy(projectRoot, outerRunId);
+  if (policy.mode === "auto_research_loop")
+    failA1("INVALID_VALUE", "this operation requires a tester-based workflow");
+  return policy;
 }
 
 function emptyDashboard(runId: string, frozenHash: string): WorkflowDashboard {
@@ -830,7 +990,7 @@ export function saveCycleWikiHead(
   return snapshot;
 }
 
-export function frozenPolicyFingerprint(policy: FrozenPolicy): string {
+export function frozenPolicyFingerprint(policy: WorkflowFrozenPolicy): string {
   return canonicalJsonSha256(policy, undefined, { schemaVersion: "frozen-policy-v1" });
 }
 
@@ -894,12 +1054,35 @@ export interface OuterCycleSummary {
   validation_result: "passed" | "rejected" | "incomplete" | "not_run";
   promotion_result: "passed" | "rejected" | "not_run" | "infra_failed";
   target_reached: boolean;
+  metric_value?: number | null;
+  /**
+   * How an ARL iteration ended without a judged metric. `no_proposal` means
+   * repair could not make the evidence judgeable; `bridge_failed` means the
+   * experiment itself kept failing and the run fails with `failure`.
+   */
+  outcome?: "no_proposal" | "bridge_failed";
+  /** Where a `bridge_failed` iteration broke, in the standalone dashboard's terms. */
+  failure?: OuterCycleFailure;
+  review_receipt_ref?: string;
+  review_receipt_sha256?: string;
   valid_candidate: boolean;
   tester_improved: boolean | null;
-  budget: OuterCycleBudgetSummary;
+  budget?: OuterCycleBudgetSummary;
   evidence_refs: string[];
   evidence_sha256: string;
   recorded_at: string;
+}
+
+export interface OuterCycleFailure {
+  worker: string;
+  iteration: number;
+  phase: string;
+  error: Record<string, unknown>;
+  repair_status: "exhausted";
+  repair_attempts: number;
+  /** Relative to the cycle directory, like the bridge failure it comes from. */
+  bridge_receipt_ref: string;
+  repair_receipt_ref: string | null;
 }
 
 export interface OuterChildRecord {
@@ -1113,6 +1296,45 @@ function validateCycleBudget(value: unknown, location: string): OuterCycleBudget
   };
 }
 
+function validateCycleFailure(value: unknown, location: string): OuterCycleFailure {
+  if (!isRecord(value))
+    failA1("CORRUPT_WORKFLOW_RUNTIME", "cycle failure must be an object", location);
+  assertNoUnknownFields(
+    value,
+    [
+      "worker",
+      "iteration",
+      "phase",
+      "error",
+      "repair_status",
+      "repair_attempts",
+      "bridge_receipt_ref",
+      "repair_receipt_ref",
+    ],
+    location,
+  );
+  if (!isRecord(value.error))
+    failA1("CORRUPT_WORKFLOW_RUNTIME", "cycle failure error must be an object", location);
+  if (value.repair_status !== "exhausted")
+    failA1("CORRUPT_WORKFLOW_RUNTIME", "cycle failure repair_status is invalid", location);
+  return {
+    worker: requireString(value.worker, `${location}.worker`),
+    iteration: requireInteger(value.iteration, `${location}.iteration`, 1),
+    phase: requireString(value.phase, `${location}.phase`),
+    error: value.error,
+    repair_status: "exhausted",
+    repair_attempts: requireInteger(value.repair_attempts, `${location}.repair_attempts`, 0),
+    bridge_receipt_ref: assertRelativePath(
+      value.bridge_receipt_ref,
+      `${location}.bridge_receipt_ref`,
+    ),
+    repair_receipt_ref:
+      value.repair_receipt_ref === null
+        ? null
+        : assertRelativePath(value.repair_receipt_ref, `${location}.repair_receipt_ref`),
+  };
+}
+
 function validateCycleSummary(value: unknown, location: string): OuterCycleSummary {
   if (!isRecord(value))
     failA1("CORRUPT_WORKFLOW_RUNTIME", "cycle summary must be an object", location);
@@ -1132,6 +1354,11 @@ function validateCycleSummary(value: unknown, location: string): OuterCycleSumma
       "validation_result",
       "promotion_result",
       "target_reached",
+      "metric_value",
+      "outcome",
+      "failure",
+      "review_receipt_ref",
+      "review_receipt_sha256",
       "valid_candidate",
       "tester_improved",
       "budget",
@@ -1191,6 +1418,12 @@ function validateCycleSummary(value: unknown, location: string): OuterCycleSumma
   );
   if (evidenceRefs.length === 0)
     failA1("OUTER_EVIDENCE_REQUIRED", "cycle completion needs evidence references", location);
+  if ((value.outcome === "bridge_failed") !== (value.failure !== undefined))
+    failA1(
+      "CORRUPT_WORKFLOW_RUNTIME",
+      "a bridge_failed cycle and its failure location come together",
+      location,
+    );
   return {
     schema_version: 1,
     outer_run_id: assertIdentifier(value.outer_run_id, `${location}.outer_run_id`),
@@ -1205,9 +1438,46 @@ function validateCycleSummary(value: unknown, location: string): OuterCycleSumma
     validation_result: value.validation_result,
     promotion_result: value.promotion_result,
     target_reached: value.target_reached,
+    ...(value.metric_value === undefined
+      ? {}
+      : {
+          metric_value:
+            value.metric_value === null
+              ? null
+              : requireFiniteNumber(value.metric_value, `${location}.metric_value`),
+        }),
+    ...(value.outcome === undefined
+      ? {}
+      : {
+          outcome:
+            value.outcome === "no_proposal" || value.outcome === "bridge_failed"
+              ? value.outcome
+              : failA1("INVALID_VALUE", "cycle outcome is invalid"),
+        }),
+    ...(value.failure === undefined
+      ? {}
+      : { failure: validateCycleFailure(value.failure, `${location}.failure`) }),
+    ...(value.review_receipt_ref === undefined
+      ? {}
+      : {
+          review_receipt_ref: assertRelativePath(
+            value.review_receipt_ref,
+            `${location}.review_receipt_ref`,
+          ),
+        }),
+    ...(value.review_receipt_sha256 === undefined
+      ? {}
+      : {
+          review_receipt_sha256: assertSha256(
+            value.review_receipt_sha256,
+            `${location}.review_receipt_sha256`,
+          ),
+        }),
     valid_candidate: value.valid_candidate,
     tester_improved: value.tester_improved,
-    budget: validateCycleBudget(value.budget, `${location}.budget`),
+    ...(value.budget === undefined
+      ? {}
+      : { budget: validateCycleBudget(value.budget, `${location}.budget`) }),
     evidence_refs: evidenceRefs,
     evidence_sha256: assertSha256(value.evidence_sha256, `${location}.evidence_sha256`),
     recorded_at: requireString(value.recorded_at, `${location}.recorded_at`),

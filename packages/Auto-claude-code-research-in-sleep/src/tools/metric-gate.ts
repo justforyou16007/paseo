@@ -1,4 +1,4 @@
-import { runBudgetExhausted, settleExecutionReceipt } from "./run-budget.js";
+import { runBudgetExhausted } from "./run-budget.js";
 import { runOwnedPath } from "./run-contract.js";
 import { assertOuterWikiScope, assertResearchVisible } from "./wiki-scope.js";
 import fs from "fs";
@@ -18,22 +18,15 @@ import { createCli, runCli } from "../lib/cli.js";
 //                          the iteration loop stops. The decision is a pure
 //                          function of the dashboard's metric fields, so
 //                          re-running it (resume, crash, retry) always yields
-//                          the same answer - patience is DERIVED from
-//                          metric.history, never accumulated.
+//                          the same answer.
 //
 // Stop reasons are mutually exclusive; the first match in this priority
-// order wins: invalid_metric > metric_met > budget_exhausted >
-// patience_exhausted > iteration_cap. Quality verdicts (auto-review-loop's
+// order wins: invalid_metric > metric_met > iteration_cap. Quality verdicts (auto-review-loop's
 // ready/almost) are recorded on the dashboard but never participate in this
 // decision - they end the current idea's review rounds, not the research loop.
 //
-// A round count is not a stop criterion. What a run is allowed to spend is its
-// budget ledger, and what it has to reach is its metric target; `budget_exhausted`
-// means the ledger cannot fund another reservation, never `iteration >= N`.
-// `config.max_iterations` is an optional backstop for a run whose budget is
-// large enough that a non-terminating loop would burn it all before anyone
-// looks: omit it and there is no round limit at all, set it and it fires last,
-// after every criterion that carries meaning about the research itself.
+// The run must persist a positive max_iterations. No execution ledger or
+// no-progress streak participates in dispatch or termination.
 
 const DIRECTIONS = new Set(["higher_better", "lower_better"]);
 const RUN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -309,10 +302,10 @@ export interface HistoryEntry {
 interface Decision {
   stop_reason:
     | "metric_met"
-    | "budget_exhausted"
-    | "patience_exhausted"
     | "iteration_cap"
     | "invalid_metric"
+    | "budget_exhausted"
+    | "patience_exhausted"
     | null;
   metric_met: boolean;
   current: number | null;
@@ -324,7 +317,7 @@ interface Decision {
 
   no_progress_streak: number;
   patience: number;
-  /** null when the run set no backstop, which is the default. */
+  /** Null only for an invalid dashboard decision. */
   max_iterations: number | null;
   invalid_reason?: string;
 }
@@ -337,16 +330,9 @@ function isBetter(candidate: number, incumbent: number, direction: string): bool
   return direction === "lower_better" ? candidate < incumbent : candidate > incumbent;
 }
 
-// Trailing count of history entries that did not improve on the best value
-// seen before them. Derived from history alone - no counter to double-count
-// across a crash + resume.
-//
-// The incumbent is seeded from `metric.baseline` when it is anchored, because
-// the baseline is the value a run has to beat: without it, a run whose every
-// iteration sits far below its own baseline still scores streak 0 as long as
-// each iteration edges past the previous one, and burns the whole budget. When
-// the baseline is anchored, iteration 1 is the reproduction that produced it,
-// not a challenger, so it does not count against patience.
+// A legacy diagnostic retained for consumers that display progress. It never
+// controls Auto Research Loop dispatch or termination. The anchored baseline
+// seeds the comparison; iteration 1 reproduces it and is not a challenger.
 function noProgressStreak(
   history: HistoryEntry[],
   direction: string,
@@ -457,6 +443,7 @@ export function evaluateDashboard(
     dash.mode === "module" ||
     dashboardModuleId !== undefined ||
     typeof dash.workflow_id === "string";
+  const arlMode = !workflowMode || dash.mode === "auto_research_loop";
   if (workflowMode && (dash.scope === "standalone" || dash.allow_standalone === true)) {
     throw new Error("STANDALONE_OUTER_DECISION_FORBIDDEN");
   }
@@ -509,25 +496,23 @@ export function evaluateDashboard(
 
   const config = (dash.config ?? {}) as Record<string, unknown>;
   const patience = moduleMetric?.patience ?? config.patience ?? 2;
-  if (!Number.isInteger(patience) || (patience as number) < 1) {
+  if (!arlMode && (!Number.isInteger(patience) || (patience as number) < 1))
+    return invalidMetricDecision("dashboard.config.patience must be an integer >= 1");
+
+  // A run always has a finite round limit, including after recovery.
+  const maxIterationsRaw = config.max_iterations;
+  if (
+    (arlMode || (maxIterationsRaw !== undefined && maxIterationsRaw !== null)) &&
+    (!Number.isInteger(maxIterationsRaw) || (maxIterationsRaw as number) < 1)
+  ) {
     return invalidMetricDecision(
-      `dashboard.config.patience must be an integer >= 1, got '${String(patience)}'`,
+      `dashboard.config.max_iterations must be an integer >= 1, got '${String(maxIterationsRaw)}'`,
     );
   }
-
-  // Optional. `undefined` and `null` both mean "no round limit"; anything else
-  // has to be a usable count, because a malformed backstop that silently does
-  // nothing is worse than no backstop.
-  const maxIterationsRaw = config.max_iterations;
-  let maxIterations: number | null = null;
-  if (maxIterationsRaw !== undefined && maxIterationsRaw !== null) {
-    if (!Number.isInteger(maxIterationsRaw) || (maxIterationsRaw as number) < 1) {
-      return invalidMetricDecision(
-        `dashboard.config.max_iterations must be an integer >= 1 when set, got '${String(maxIterationsRaw)}'`,
-      );
-    }
-    maxIterations = maxIterationsRaw as number;
-  }
+  const maxIterations =
+    maxIterationsRaw === undefined || maxIterationsRaw === null
+      ? null
+      : (maxIterationsRaw as number);
 
   const historyRaw = Array.isArray(metric.history) ? (metric.history as unknown[]) : [];
   const history: HistoryEntry[] = [];
@@ -549,15 +534,14 @@ export function evaluateDashboard(
     stopReason = "invalid_metric";
   } else if (direction === "lower_better" ? current <= threshold : current >= threshold) {
     stopReason = "metric_met";
+  } else if (arlMode) {
+    if ((iteration as number) >= maxIterations!) stopReason = "iteration_cap";
   } else if (runBudgetExhausted(root, runId)) {
     stopReason = "budget_exhausted";
-  } else {
-    const streak = noProgressStreak(history, direction, baseline);
-    if (streak >= (patience as number)) {
-      stopReason = "patience_exhausted";
-    } else if (maxIterations !== null && (iteration as number) >= maxIterations) {
-      stopReason = "iteration_cap";
-    }
+  } else if (noProgressStreak(history, direction, baseline) >= (patience as number)) {
+    stopReason = "patience_exhausted";
+  } else if (maxIterations !== null && (iteration as number) >= maxIterations) {
+    stopReason = "iteration_cap";
   }
 
   const streak = noProgressStreak(history, direction, baseline);
@@ -574,7 +558,7 @@ export function evaluateDashboard(
     iteration: iteration as number,
 
     no_progress_streak: streak,
-    patience: patience as number,
+    patience: typeof patience === "number" && Number.isInteger(patience) ? patience : 0,
     max_iterations: maxIterations,
   };
 }

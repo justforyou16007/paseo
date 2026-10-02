@@ -1,5 +1,6 @@
 import { initializeRunBudget } from "../src/tools/run-budget.js";
 import { bridgeFixture } from "./helpers/recursive-fixture.js";
+import { createRunCharter } from "../src/tools/run-charter.js";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -13,6 +14,8 @@ import {
   checkExpansionScope,
   decideWave,
   planExperimentBridge,
+  planAutoResearchBridge,
+  validateBridgeExpansionPlan,
   refundChildBudget,
   splitChildBudget,
   
@@ -1088,6 +1091,45 @@ test("zero balance still records resource-free positions without allocating fund
  const result=planExperimentBridge({...input,positions:[{...input.positions[0]!,resource_request:{...request(),accelerator_count:99}}]});
  assert.equal(result.children[0]!.result.status,"not_executable");
  assert.deepEqual(result.budget.allocations,[]);
+});
+
+test("Auto Research Loop plans a child without a budget ledger or reservation", () => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aris-arl-child-no-budget-"));
+  try {
+  const baseline = baselineFor();
+  const resource = resources();
+  const input = bridgeFixture({
+    charter: charter(baseline, resource, { budget: null }),
+    baseline,
+    resource_inventory: resource,
+    positions: [position("main")],
+  });
+  const { budget: _budget, charter_sha256: _hash, ...charterFields } = input.charter;
+  input.charter = createRunCharter({ ...charterFields, mode: "auto_research_loop", max_iterations: 2 });
+  // A run at max_depth may still finish its own work, but it cannot dispatch children.
+  expectCode(() => planAutoResearchBridge(input, input.run.depth), "MAX_DEPTH_REACHED");
+  assert.equal(planAutoResearchBridge({ ...input, positions: [] }, input.run.depth).children.length, 0);
+  const plan = planAutoResearchBridge(input, 2);
+  assert.equal(plan.budget, null);
+  assert.equal(plan.children[0]!.budget, null);
+  assert.equal(Object.hasOwn(plan.children[0]!.charter, "budget"), false);
+  assert.equal(validateBridgeExpansionPlan(plan).plan_sha256, plan.plan_sha256);
+  createRun({
+    project_root: projectRoot,
+    run_id: plan.parent_run_id,
+    charter_sha256: HASH_A,
+    input_snapshot_sha256: HASH_C,
+    execution_plan_sha256: HASH_B,
+    code_baseline_sha256: HASH_A,
+    policy_revision: "policy:a2-3",
+  });
+  const children = materializeBridgeChildren(projectRoot, plan);
+  assert.equal(children.length, 1);
+  assert.equal(fs.existsSync(path.join(projectRoot, ".aris", "runs", plan.parent_run_id, "budget.json")), false);
+  assert.equal(fs.existsSync(path.join(projectRoot, ".aris", "runs", children[0]!.run_id, "budget.json")), false);
+  } finally {
+    fs.rmSync(projectRoot, { recursive: true, force: true });
+  }
 });
 
 function generationFixture(projectRoot: string, generation: number, changes: Record<string, unknown> = {}) {

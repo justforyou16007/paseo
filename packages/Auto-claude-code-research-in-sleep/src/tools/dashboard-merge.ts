@@ -1,4 +1,3 @@
-import { settleExecutionReceipt, runBudgetExhausted } from "./run-budget.js";
 import { assertRunId } from "./workflow-spec.js";
 import { assertResearchVisible } from "./wiki-scope.js";
 import crypto from "node:crypto";
@@ -11,6 +10,7 @@ import { requireRunContract, runJsonPath, runOwnedPath } from "./run-contract.js
 import { readDispatchStructure, type DispatchStructure } from "./child-index.js";
 import { hasDecomposition } from "./decomposition-graph.js";
 import { requireCompleteRound } from "./orchestration-round.js";
+import { DEFAULT_MAX_REPAIR_ATTEMPTS } from "./root-charter.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -164,7 +164,7 @@ const WORKER_RULES: Readonly<Record<string, WorkerRule>> = {
       "last_review.verdict": isReviewVerdict,
       "last_review.score": isScore,
       "last_review.reviewer_id": isNonEmptyString,
-      "metric.current": isFiniteNumber,
+      "metric.current": isNullableFiniteNumber,
       "metric.delta": isNullableFiniteNumber,
       statistical_significance: (value) => typeof value === "boolean" || value === null,
     },
@@ -344,6 +344,8 @@ function validateReceipt(raw: unknown, runId: string, receiptPath: string): Rece
     "module_run_id",
     "module_id",
     "scope",
+    "ranked_ideas",
+    "gate1_provenance",
   ];
   for (const key of Object.keys(raw)) {
     if (!allowedFields.includes(key)) fail(`receipt at ${receiptPath} has unknown field '${key}'`);
@@ -373,6 +375,33 @@ function validateReceipt(raw: unknown, runId: string, receiptPath: string): Rece
   }
   if (raw.status !== "done" && raw.status !== "failed") {
     fail(`receipt at ${receiptPath} has invalid status '${String(raw.status)}'`);
+  }
+  if (raw.worker === "idea-discovery" && raw.status === "done") {
+    if (
+      !Array.isArray(raw.ranked_ideas) ||
+      raw.ranked_ideas.length === 0 ||
+      !raw.ranked_ideas.every(
+        (idea: unknown) =>
+          isObject(idea) &&
+          isNonEmptyString(idea.id) &&
+          isNonEmptyString(idea.title) &&
+          Number.isInteger(idea.rank) &&
+          isFiniteNumber(idea.score),
+      )
+    )
+      fail("idea-discovery receipt needs ranked_ideas");
+    const provenance = raw.gate1_provenance;
+    if (
+      !isObject(provenance) ||
+      !isNonEmptyString(provenance.novelty_verdict) ||
+      !isNonEmptyString(provenance.novelty_agent_id) ||
+      !isNonEmptyString(provenance.review_verdict) ||
+      !isNonEmptyString(provenance.review_agent_id) ||
+      !isNonEmptyString(provenance.reviewer_model)
+    )
+      fail("idea-discovery receipt needs gate1_provenance");
+  } else if (raw.ranked_ideas !== undefined || raw.gate1_provenance !== undefined) {
+    fail("only a completed idea-discovery receipt can carry Gate 1 provenance");
   }
   if (
     !isObject(raw.summary) ||
@@ -599,7 +628,18 @@ function validatePatch(receipt: Receipt, dashboard: JsonObject): void {
 
   if (receipt.worker === "auto-review-loop") {
     const metric = dashboard.metric as JsonObject;
-    if (metric.target !== null && !Object.hasOwn(receipt.dashboard_patch, "metric.current")) {
+    const insufficient = receipt.dashboard_patch["last_review.verdict"] === "insufficient";
+    if (!insufficient && receipt.dashboard_patch["metric.current"] === null) {
+      fail("a judged review must publish a finite metric");
+    }
+    if (insufficient && receipt.dashboard_patch["metric.current"] !== null) {
+      fail("an insufficient review must publish metric.current as null");
+    }
+    if (
+      metric.target !== null &&
+      !insufficient &&
+      !Object.hasOwn(receipt.dashboard_patch, "metric.current")
+    ) {
       fail("auto-review-loop must publish the final metric for metric-target runs");
     }
   }
@@ -632,6 +672,9 @@ function setDotPath(target: JsonObject, dottedKey: string, value: unknown): void
 }
 
 function updateMetricHistory(dashboard: JsonObject, receipt: Receipt): void {
+  // The bridge's reading is provisional. Only a judged review (or the
+  // analysis worker for runs without review) can make it a history entry.
+  if (receipt.worker === "experiment-bridge") return;
   const patch = receipt.dashboard_patch;
   const current = patch["metric.current"];
   if (!isFiniteNumber(current)) return;
@@ -772,6 +815,65 @@ function verifyRecordedBridgeFacts(
   };
 }
 
+/**
+ * The bridge failure that still governs this iteration. A failure record is
+ * tagged with the iteration it opened in; once the loop moves on, a `fixed`
+ * record from an earlier iteration is history. It must neither pin the next
+ * candidate to the old frozen inputs nor spend that candidate's repair allowance.
+ */
+function currentBridgeFailure(dashboard: JsonObject): JsonObject | null {
+  const failure = isObject(dashboard.bridge_failure) ? dashboard.bridge_failure : null;
+  if (failure?.status === "fixed" && failure.iteration !== dashboard.iteration) return null;
+  return failure;
+}
+
+/** Repairs allowed per iteration, frozen into the dashboard config at start. */
+function maxRepairAttempts(dashboard: JsonObject): number {
+  const config = isObject(dashboard.config) ? dashboard.config : {};
+  const value = config.max_repair_attempts ?? DEFAULT_MAX_REPAIR_ATTEMPTS;
+  if (!Number.isInteger(value) || (value as number) < 0) {
+    fail(`dashboard.config.max_repair_attempts must be an integer >= 0, got '${String(value)}'`);
+  }
+  return value as number;
+}
+
+/**
+ * End the run after a repair that can go no further. A tuning repair that ran
+ * out completes without a proposal; a bridge that never ran ends failed.
+ */
+function settleExhaustedRepair(
+  dashboard: JsonObject,
+  bridgeFailure: JsonObject,
+  repairStatus: string,
+  repairAttempts: number,
+): void {
+  if (bridgeFailure.reason === "insufficient_evidence") {
+    // The bridge ran; the repair spent its rounds tuning the experiment and
+    // still produced nothing anyone could rule on. Nothing broke, so the run
+    // ends without a result. Marking it failed would read as "this direction
+    // was tested and lost", which is a claim the evidence never supported.
+    dashboard.current_phase = "completed";
+    dashboard.status = "completed";
+    dashboard.outcome = "no_proposal";
+    // The bridge's provisional reading was never judged. It cannot remain a
+    // result of this iteration after repair found no usable proposal.
+    const metric = dashboard.metric as JsonObject;
+    metric.current = null;
+    metric.history = (metric.history as JsonObject[]).filter(
+      (entry) => entry.iter !== dashboard.iteration,
+    );
+    return;
+  }
+  dashboard.current_phase = "bridge-repair";
+  dashboard.status = "failed";
+  dashboard.failure = {
+    ...(isObject(dashboard.failure) ? dashboard.failure : {}),
+    repair_status: repairStatus,
+    repair_attempts: repairAttempts,
+    bridge_receipt_ref: bridgeFailure.bridge_receipt_ref,
+  };
+}
+
 function applyStandaloneBridgeRepair(
   root: string,
   runId: string,
@@ -807,9 +909,6 @@ function applyStandaloneBridgeRepair(
   const currentAttempts = Number(bridgeFailure.repair_attempts);
 
   if (!Number.isInteger(currentAttempts) || currentAttempts < 0) fail("repair counter is invalid");
-  settleExecutionReceipt(root, runId, manifest, receipt.summary);
-  if (repairStatus === "exhausted" && !runBudgetExhausted(root, runId))
-    fail("repair still has execution budget");
   const nextAttempts = currentAttempts + 1;
 
   if (receipt.summary.repair_round !== undefined && receipt.summary.repair_round !== nextAttempts) {
@@ -843,25 +942,8 @@ function applyStandaloneBridgeRepair(
   if (repairStatus === "fixed") {
     dashboard.current_phase = "experiment-bridge";
     dashboard.status = "running";
-  } else if (bridgeFailure.reason === "insufficient_evidence") {
-    // The bridge ran; the repair spent its rounds tuning the experiment and
-    // still produced nothing anyone could rule on. Nothing broke, so the run
-    // ends without a result. Marking it failed would read as "this direction
-    // was tested and lost", which is a claim the evidence never supported.
-    dashboard.current_phase = "completed";
-    dashboard.status = "completed";
-    dashboard.outcome = "no_proposal";
   } else {
-    dashboard.current_phase = "bridge-repair";
-    dashboard.status = "failed";
-  }
-  if (dashboard.status === "failed") {
-    dashboard.failure = {
-      ...(isObject(dashboard.failure) ? dashboard.failure : {}),
-      repair_status: repairStatus,
-      repair_attempts: nextAttempts,
-      bridge_receipt_ref: bridgeFailure.bridge_receipt_ref,
-    };
+    settleExhaustedRepair(dashboard, bridgeFailure, repairStatus, nextAttempts);
   }
   dashboard.updated_at = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
   writeStateJsonAtomic(path.join(runRoot, "dashboard.json"), dashboard);
@@ -936,15 +1018,12 @@ function apply(root: string, runId: string, receiptPath: string): void {
       receipt.worker === "experiment-bridge" &&
       (receipt.phase === undefined || receipt.phase === "experiment-bridge") &&
       receipt.status === "done" &&
-      isObject(dashboard.bridge_failure) &&
-      dashboard.bridge_failure.status === "fixed" &&
-      dashboard.bridge_failure.frozen_input_sha256 !== frozenBridgeInputHash(receiptManifest)
+      currentBridgeFailure(dashboard)?.status === "fixed" &&
+      currentBridgeFailure(dashboard)?.frozen_input_sha256 !==
+        frozenBridgeInputHash(receiptManifest)
     ) {
       fail("bridge retry inputs changed after repair; start a new candidate");
     }
-
-    if (receipt.worker === "experiment-bridge")
-      settleExecutionReceipt(root, runId, receiptManifest, receipt.summary);
 
     if (receipt.status === "failed") {
       if (
@@ -954,9 +1033,7 @@ function apply(root: string, runId: string, receiptPath: string): void {
         if (dashboard.status !== "running" || dashboard.current_phase !== "experiment-bridge") {
           fail("a bridge failure can only be recorded from the running experiment-bridge phase");
         }
-        const previousFailure = isObject(dashboard.bridge_failure)
-          ? dashboard.bridge_failure
-          : null;
+        const previousFailure = currentBridgeFailure(dashboard);
         if (previousFailure?.status === "pending") {
           fail("a bridge repair is already pending");
         }
@@ -967,9 +1044,13 @@ function apply(root: string, runId: string, receiptPath: string): void {
           fail("a repaired bridge must be retried with the same frozen inputs");
         }
         const repairAttempts = Number(previousFailure?.repair_attempts ?? 0);
+        // Once this iteration has used its repair allowance, the failure is
+        // final instead of opening another repair.
+        const exhausted = repairAttempts >= maxRepairAttempts(dashboard);
 
         const bridgeFailure = {
           schema_version: 1,
+          iteration: dashboard.iteration,
           // This merge path only ever fires on a failed bridge receipt; the
           // evidence-too-weak repair is opened further down, when the review
           // loop reports a verdict it could not rule on.
@@ -989,7 +1070,7 @@ function apply(root: string, runId: string, receiptPath: string): void {
           error: receipt.error,
           repair_attempts: repairAttempts,
 
-          status: "pending",
+          status: exhausted ? "exhausted" : "pending",
           repair_receipt_ref: null,
           repair_receipt_sha256: null,
         };
@@ -1009,9 +1090,15 @@ function apply(root: string, runId: string, receiptPath: string): void {
           error: receipt.error,
           failed_at: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
         };
+        if (exhausted) settleExhaustedRepair(dashboard, bridgeFailure, "exhausted", repairAttempts);
         dashboard.updated_at = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
         writeStateJsonAtomic(dashboardPath, dashboard);
-        console.log(JSON.stringify({ applied: false, reason: "bridge-repair-pending" }));
+        console.log(
+          JSON.stringify({
+            applied: false,
+            reason: exhausted ? "bridge-repair-exhausted" : "bridge-repair-pending",
+          }),
+        );
         return;
       }
       // A failed receipt is a terminal event, not a no-op. The resume path
@@ -1075,11 +1162,13 @@ function apply(root: string, runId: string, receiptPath: string): void {
       // back to the bridge to be run properly and the iteration does not
       // advance. An unjudgeable result also never enters metric history, which
       // is why this returns before updateMetricHistory.
-      const previousFailure = isObject(dashboard.bridge_failure) ? dashboard.bridge_failure : null;
+      const previousFailure = currentBridgeFailure(dashboard);
       if (previousFailure?.status === "pending") fail("a bridge repair is already pending");
-      if (runBudgetExhausted(root, runId)) {
-        fail("no execution budget left to retune the experiment");
-      }
+      // Repair rounds are counted per iteration, not per cause. A candidate
+      // that already burned rounds on a broken bridge does not get a fresh
+      // allowance for tuning.
+      const repairAttempts = Number(previousFailure?.repair_attempts ?? 0);
+      const exhausted = repairAttempts >= maxRepairAttempts(dashboard);
       const appliedHashes = isObject(dashboard.applied_receipt_hashes)
         ? dashboard.applied_receipt_hashes
         : {};
@@ -1090,6 +1179,7 @@ function apply(root: string, runId: string, receiptPath: string): void {
       dashboard.current_phase = "bridge-repair";
       dashboard.bridge_failure = {
         schema_version: 1,
+        iteration: dashboard.iteration,
         reason: "insufficient_evidence",
         ...verifyRecordedBridgeFacts(root, runId, dashboard),
         error: {
@@ -1097,17 +1187,26 @@ function apply(root: string, runId: string, receiptPath: string): void {
           score: review.score,
           reviewer_id: review.reviewer_id,
         },
-        // Repair rounds are counted per candidate, not per cause. A candidate
-        // that already burned rounds on a broken bridge does not get a fresh
-        // allowance for tuning.
-        repair_attempts: Number(previousFailure?.repair_attempts ?? 0),
-        status: "pending",
+        repair_attempts: repairAttempts,
+        status: exhausted ? "exhausted" : "pending",
         repair_receipt_ref: null,
         repair_receipt_sha256: null,
       };
+      if (exhausted)
+        settleExhaustedRepair(
+          dashboard,
+          dashboard.bridge_failure as JsonObject,
+          "exhausted",
+          repairAttempts,
+        );
       dashboard.updated_at = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
       writeStateJsonAtomic(dashboardPath, dashboard);
-      console.log(JSON.stringify({ applied: false, reason: "bridge-repair-pending" }));
+      console.log(
+        JSON.stringify({
+          applied: false,
+          reason: exhausted ? "bridge-repair-exhausted" : "bridge-repair-pending",
+        }),
+      );
       return;
     }
 

@@ -101,12 +101,14 @@ import {
   settleOuterBudget,
   startOuterRun,
   startOuterRunForTest,
+  resumeOuterRun,
   resumeOuterRunForTest,
   withOuterRuntimeMutation,
   type OuterRunIdentity,
 } from "../src/tools/workflow-runtime.js";
 import {
   createWorkflowRuntimeState,
+  readFrozenPolicy,
   writeWorkflowRuntimeState,
   type FreezeOuterRunInput,
   type OuterPhase,
@@ -1238,6 +1240,37 @@ function testFormalStartRequiresIsolationCheck(): void {
   }
 }
 
+function testRecursiveAutoResearchStartWithoutTaskTester(): void {
+  const root = tempDir("aris-workflow-child-project-");
+  const executionRoot = tempDir("aris-workflow-child-execution-");
+  try {
+    const fixture = makeFixture(root, executionRoot, "outer-child-start");
+    const child = readRun(root, "artifact-run");
+    const identity = {
+      execution_root: executionRoot,
+      project_root: root,
+      outer_run_id: child.run_id,
+      parent_run_id: child.parent_run_id,
+      depth: child.depth,
+      scope_path: child.scope_path,
+    };
+    const frozen = {
+      ...fixture.freezeInput,
+      outer_run_id: child.run_id,
+      max_iterations: 2,
+    };
+    const started = startOuterRun({ ...identity, freeze_input: frozen, tester_agent_config_path: "" });
+    assert.equal(started.depth, 1);
+    assert.equal(started.outer_run_id, child.run_id);
+    const resumed = resumeOuterRun({ ...identity, tester_agent_config_path: "" });
+    assert.equal(resumed.outer_run_id, child.run_id);
+    assert.equal(readFrozenPolicy(root, child.run_id).max_iterations, 2);
+  } finally {
+    cleanup(root);
+    cleanup(executionRoot);
+  }
+}
+
 function runClosedCycle(finalistScores: readonly [number, number, number, number]): {
   result: "passed" | "rejected";
   reason: string;
@@ -1544,6 +1577,7 @@ if (
   testRuntimeMutationRejectsMissingContractBeforeLeasing();
   await testNonRootOwnershipNeedsTerminalCleanup();
   testFormalStartRequiresIsolationCheck();
+  testRecursiveAutoResearchStartWithoutTaskTester();
   const adopted = runClosedCycle([1.4, 1.4, 1.6, 1.6]);
   assert.deepEqual(adopted, {
     result: "passed",

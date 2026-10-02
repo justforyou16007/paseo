@@ -24,7 +24,10 @@ export type StopReason =
   | "tester_exposure_exhausted"
   | "no_finalist"
   | "no_tester_improvement"
-  | "no_valid_candidate";
+  | "no_valid_candidate"
+  | "iteration_cap"
+  | "no_proposal"
+  | "bridge_failed";
 
 export interface StopTargetPolicy {
   name: string;
@@ -38,6 +41,8 @@ export interface StopBudgetPolicy {
 }
 
 export interface StopPolicy {
+  mode?: "auto_research_loop";
+  max_iterations?: number;
   target?: StopTargetPolicy;
   max_outer_budget?: StopBudgetPolicy;
   max_no_finalist_cycles?: number;
@@ -110,6 +115,21 @@ function positiveInteger(value: unknown, location: string): number {
 }
 
 function validatePolicy(policy: StopPolicy): void {
+  if (policy.mode === "auto_research_loop") {
+    positiveInteger(policy.max_iterations, "stop.policy.max_iterations");
+    if (
+      policy.max_outer_budget !== undefined ||
+      policy.max_no_finalist_cycles !== undefined ||
+      policy.max_no_tester_improvement_cycles !== undefined ||
+      policy.max_no_valid_candidate_cycles !== undefined
+    )
+      failA1(
+        "INVALID_VALUE",
+        "Auto Research Loop stop policy only accepts target and max_iterations",
+      );
+  } else if (policy.mode !== undefined || policy.max_iterations !== undefined) {
+    failA1("INVALID_VALUE", "max_iterations requires auto_research_loop mode");
+  }
   if (policy.target !== undefined) {
     requireString(policy.target.name, "stop.policy.target.name");
     if (policy.target.direction !== "higher_better" && policy.target.direction !== "lower_better")
@@ -325,6 +345,8 @@ function decisionPayload(
 
 export function evaluateWorkflowStopGate(input: StopGateInput): StopDecision {
   validatePolicy(input.policy);
+  if (input.policy.mode === "auto_research_loop" && input.budget !== undefined)
+    failA1("INVALID_VALUE", "Auto Research Loop stop gate does not accept a budget snapshot");
   const outerRunId =
     input.outer_run_id === undefined ? null : assertIdentifier(input.outer_run_id, "outer_run_id");
   const cycles = [...input.cycle_summaries].sort(
@@ -338,8 +360,13 @@ export function evaluateWorkflowStopGate(input: StopGateInput): StopDecision {
     if (outerRunId !== null && cycle.outer_run_id !== outerRunId)
       failA1("IDENTITY_MISMATCH", "stop gate cycle belongs to another outer run");
   }
-  const exposureRemaining = validateExposure(input.exposure);
-  if (input.policy.max_outer_budget !== undefined && input.budget === undefined)
+  const exposureRemaining =
+    input.policy.mode === "auto_research_loop" ? 0 : validateExposure(input.exposure);
+  if (
+    input.policy.mode !== "auto_research_loop" &&
+    input.policy.max_outer_budget !== undefined &&
+    input.budget === undefined
+  )
     failA1(
       "STOP_BUDGET_SNAPSHOT_REQUIRED",
       "a stop policy with a budget limit needs an explicit budget snapshot",
@@ -351,7 +378,10 @@ export function evaluateWorkflowStopGate(input: StopGateInput): StopDecision {
       input.policy.max_outer_budget.unit !== input.budget.unit)
   )
     failA1("INVALID_VALUE", "stop budget snapshot does not match the configured budget limit");
-  const budgetRemaining = input.budget === undefined ? null : validateBudget(input.budget);
+  const budgetRemaining =
+    input.policy.mode === "auto_research_loop" || input.budget === undefined
+      ? null
+      : validateBudget(input.budget);
   const latest = cycles[cycles.length - 1] ?? null;
   const resultPackages = input.result_packages ?? input.cycle_result_packages;
   if (input.result_packages !== undefined && input.cycle_result_packages !== undefined)
@@ -395,8 +425,14 @@ export function evaluateWorkflowStopGate(input: StopGateInput): StopDecision {
         );
 
   let reason: StopReason = "continue";
-  if (targetReached) reason = "target_reached";
-  else if (budgetExhausted) reason = "outer_budget_exhausted";
+  if (input.policy.mode === "auto_research_loop" && latest?.outcome === "no_proposal")
+    reason = "no_proposal";
+  else if (input.policy.mode === "auto_research_loop" && latest?.outcome === "bridge_failed")
+    reason = "bridge_failed";
+  else if (targetReached) reason = "target_reached";
+  else if (input.policy.mode === "auto_research_loop") {
+    if (cycles.length >= input.policy.max_iterations!) reason = "iteration_cap";
+  } else if (budgetExhausted) reason = "outer_budget_exhausted";
   else if (exposureExhausted) reason = "tester_exposure_exhausted";
   else if (
     input.policy.max_no_finalist_cycles !== undefined &&
@@ -488,6 +524,9 @@ export function validateWorkflowStopDecision(
     "no_finalist",
     "no_tester_improvement",
     "no_valid_candidate",
+    "iteration_cap",
+    "no_proposal",
+    "bridge_failed",
   ];
   if (!reasons.includes(record.reason as StopReason))
     failA1("CORRUPT_STOP_DECISION", "stop reason is invalid", filePath);

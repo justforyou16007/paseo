@@ -10,7 +10,7 @@
 
 | # | 目标能力 | 靠什么机制成立 | 状态 |
 |---|---|---|---|
-| 1 | 研究可以无限递归下去，不靠人预设层数 | run 三字段（`parent_run_id` / `depth` / `scope_path`）+ 预算切分 | 已实现 |
+| 1 | 研究可递归派子，层数由根冻结的 `max_depth` 封顶 | run 三字段（`parent_run_id` / `depth` / `scope_path`）+ frozen policy 的 `max_depth` | 已实现 |
 | 2 | 子 run 不知道自己是谁的子、在第几层 | charter 的字段集合里没有这类信息，子 run 只收到任务 | 已实现 |
 | 3 | 父子之间只有两个文件，任何深度形状一样 | `charter.json` 下行、`result-package.json` 上行 | 已实现 |
 | 4 | 跑不起来和跑出来不好，是两条不同的修正路径 | `bridge_repair` vs. 参数修正 | 已实现 |
@@ -19,7 +19,7 @@
 | 7 | 知识在 run 之间以事件流积累，不是共享可变状态 | Research Wiki 事件 + 投影 | 已实现 |
 | 8 | 最优版本由导出阶段跨轮挑选，不是由某一轮自己宣称 | `result-export` 排名 | 已实现 |
 | 9 | tester 只能说聚合数字和粗粒度方向，说不出测试内容 | tester 的出口是签名的结构化回执，没有放一段话的位置 | 已实现 |
-| 10 | 停机判据是预算和验收，轮数只是可省略的兜底 | `budget_exhausted` 先于 `iteration_cap`，后者不配置就不存在 | 已实现 |
+| 10 | Auto Research Loop 以必填轮数和指标目标停机 | root/child charter 启动 Workflow，评审收据进入 cycle summary，停机决定进入结果包 | 代码交接测试通过；现场 agent 派发仍需验证 |
 | 11 | 人配一个项目只需要一条命令，缺什么由检测器指出而不是靠记 | `/aris-setup` 编排六个阶段，`project-setup-cli.js status` 逐段判定并在没配全时退非零 | 已实现 |
 | 12 | 一个 run 的优化对象可以是"这个问题该怎么拆"，而不是某个实验 | 每一代的分解图先落盘再派子，改图要 tester 信号开 wave | 已实现 |
 
@@ -39,7 +39,7 @@ idea-discovery  →  experiment-bridge  →  auto-review-loop  →  metric-gate
 - **idea-discovery** 出想法，并且**自带 verifier**——想法不是自说自话落盘的。
 - **规划在计划里，不在 bridge 里**：要不要派子 run、派几个、每个子 run 的 charter 写什么，是 idea-discovery 产出的实验计划决定的。只有一种 run 例外——它的优化对象就是这张分解图本身，那张图在派任何子之前已经单独落盘（§3），计划只能决定这一轮先派其中哪几个。
 - **experiment-bridge 只是执行者**，不做规划决策。它的输出是"跑成了/没跑成"。
-- **auto-review-loop** 跑实验、读结果、调参、重跑，直到达标或者这轮预算用光。它有参数诊断能力：结果不好时判断是想法不行还是参数没调对。
+- **auto-review-loop** 跑实验、读结果、调参、重跑，直到能给出本轮评审结论。它有参数诊断能力：结果不好时判断是想法不行还是参数没调对。
 - **metric-gate** 判这一轮算不算有提升。
 
 ### 两条修正路径
@@ -52,9 +52,10 @@ idea-discovery  →  experiment-bridge  →  auto-review-loop  →  metric-gate
 | 路径 | `bridge_repair` | 参数修正（auto-review-loop 内部） |
 | 身份 | 保持同一 candidate identity | 新的 trial identity |
 | 指标门 | 不推进 | 推进 |
-| 结束条件 | `repair_status` 为 `fixed` 或 `exhausted` | 本轮切分下来的预算用完 |
+| 结束条件 | `repair_status` 为 `fixed` 或 `exhausted` | 得出本轮评审结论 |
 
 **判定权归 `analyze-results`，不归修正者。** 让修正者自己判断"我这次算不算修好了"就是让它给自己打分。监督信号必须来自 `analyze-results`，不能来自 tester——tester 是最后的验收方，不参与过程指导。
+桥接阶段的数值是暂存值，评审可判定后才进入 `metric.history`。`insufficient` 收据不发布有效指标；修复返回 `exhausted` 且没有可判定方案时，面板清除本轮暂存数值并记录 `no_proposal`；实验本身一直跑不通而耗尽修复时，run 以失败结束（见下文停机条件）。
 
 ---
 
@@ -72,7 +73,7 @@ idea-discovery  →  experiment-bridge  →  auto-review-loop  →  metric-gate
 ```
 
 - `parent_run_id` 为空就是根。
-- `depth` 是**观测值，不是约束**——它记录"这个 run 在第几层"，不用来限制能派多深。
+- `depth` 记录"这个 run 在第几层"。旧工作流里它只是观测值；Auto Research Loop 用它和 frozen policy 里的 `max_depth` 比较，决定还能不能派子（见 §4）。
 - `scope_path` 只用于知识作用域和所有权互斥，**不是文件路径**。
 - 子的 run id 不用父 id 作前缀。父子链接只记在子的 `run.json.parent_run_id` 这一处（父另有 `runtime.children` 做位置索引，那是索引不是真相）。
 
@@ -102,11 +103,12 @@ charter.json                      result-package.json
   input_snapshot_refs               best_idea_ref / execution_plan_ref
   baseline_ref                      evidence_refs
   optimizable_scope                 failure { reason, failure_code, evidence_refs }
-  budget                            child_summaries
+  mode/max_iterations               child_summaries
   measurement                       cost_actual
 ```
 
 `result-package.json` 旁边配一份人读的 `result-summary.md`，正文不超过 500 字。
+Auto Research Loop charter 不写 `budget`。旧工作流仍有预算字段和账本；结果包可记录实际成本，但它不控制 Auto Research Loop 派发或停机。
 
 ### status 四分类
 
@@ -114,7 +116,7 @@ charter.json                      result-package.json
 |---|---|---|---|---|
 | `succeeded` | 跑完了，有结果 | 能 | 按结果计 | 按流程 |
 | `failed` | 跑完了但结果不合格 | 能，作为有效负结果 | 计入 | 按流程 |
-| `not_executable` | 修复预算耗尽，实验没跑起来 | 不能 | 不计入 | 不占用 |
+| `not_executable` | 方案无法在冻结资源内执行 | 不能 | 不计入 | 不占用 |
 | `infra_unavailable` | 远程服务、GPU 或传输故障 | 不能 | 不计入 | 不占用 |
 
 区分 `not_executable` 和 `infra_unavailable` 的判据只有一条：方案需要的资源**不在冻结清单里**是 `not_executable`；清单里有但运行时拿不到是 `infra_unavailable`。前者是方案的问题，后者是环境的问题，只有前者算研究上的负结果。
@@ -130,13 +132,13 @@ run_identity = H(
 
 子身份进父身份，所以任何一层变了，上面所有层的身份都变。`execution_plan_sha256` 必须是实验方案本身的规范化哈希，不能拿别的凑。复用封存输出前必须重新校验 `output_hashes` 和磁盘一致——文件可能在两次之间被动过。
 
-**预算是切分不是叠加。** 父把自己的预算分给子，子花完就没了，不能向父再要。这是递归能自然收敛的原因。
+Auto Research Loop 的子 run 各自冻结 `max_iterations`，父 run 不向子 run 切分预算。
 
 ### 位置、任务和代
 
 `children.json` 是父的位置索引：一个位置（`position_id`）记它这一代派给了哪个 run、任务哈希是多少、上一代同位置是谁。任务哈希只取父决定的那部分——问题、要求的产出、约束、依赖谁。于是"这一代和上一代是不是同一个任务"是可判定的事实，不靠谁声明：
 
-- 任务没变：这一代照样开一个新 run（run 的预算只能花一次），但它从上一代同位置那个 run 的 Wiki 继承知识。
+- 任务没变：这一代照样开一个新 run，但它从上一代同位置那个 run 的 Wiki 继承知识。
 - 任务变了：那是另一个问题，新 run 从空 Wiki 开始。让它带着上一个问题的结论开工，等于让它去接着证明一件已经不成立的事。
 
 ### 串行边
@@ -155,7 +157,7 @@ run_identity = H(
 
 全代收完之后，父才用自己的 validator 去测装配起来的整体，把这个数写成 `metric.current` 进指标门。收完之前这个键会被拒——半个结构测出来的数没有意义，而下一代要拿它当比较基准。
 
-父的预算按"还打算跑几代"切分，第一代不能把它全花掉，否则后面几代没有可派的东西。
+每一代完成后计入父 run 的轮数，达到 `max_iterations` 时停止派发新一代。
 
 ### 父子不同时改
 
@@ -165,18 +167,18 @@ run_identity = H(
 
 ## 4. 递归怎么停
 
-四条，任意一条命中就停：
+**深度由 `max_depth` 封顶。** 子 run 继承与父相同的 `max_iterations`，自己还能再派子，所以轮数本身挡不住层数和总工作量的增长。根 setup 冻结 `max_depth`（默认 2，根是第 0 层）；它不写进子 charter，而是由子的 `start` 从父的 frozen policy 抄下来，子 charter 因此仍不含任何层数信息。`depth` 等于 `max_depth` 的 run 不能再派子，`bridge-expand` 以 `MAX_DEPTH_REACHED` 拒绝。
 
-1. 本轮 plan 没派子节点。
-2. 成本预算切分耗尽。
-3. stop gate 判定无提升。
-4. 验收通过。
+**修复次数按轮封顶。** 一轮里桥接失败和"证据不足"的评审共用一个修复计数，上限 `max_repair_attempts`（默认 3）。Workflow 由根 setup 冻结并沿 frozen policy 传给子；单过程写在 `dashboard.json` 的 `config` 里。计数用完后再来的失败直接记为 `exhausted`，不再派修复。单过程的修复记录带有所属轮次，进入下一轮后上一轮已修好的记录不再约束新候选的输入，也不占新一轮的次数。
 
-**没有深度上限。** 轮数也不是停机判据：`config.max_iterations` 是可省略的兜底，只在预算大到一个死循环能烧完它之前没人看的情况下才有意义。它排在所有判据最后（`invalid_metric > metric_met > budget_exhausted > patience_exhausted > iteration_cap`），不配置就没有轮数上限。
+Auto Research Loop 的每个 run 必须冻结正整数 `max_iterations`。有效指标达到目标时提前成功终止；否则在最大轮数结束时以 `iteration_cap` 停止。修复耗尽时分两种：评审一直判"证据不足"，以 `no_proposal` 停止并正常完成；实验本身一直执行失败，run 以 `failed` 结束。失败时两种模式都记下失败位置（哪个 worker、第几轮、哪个阶段、错误内容、修复次数和收据）：单过程写在 `dashboard.failure`，Workflow 写在该轮 cycle summary 的 `failure`，停机原因为 `bridge_failed`。单过程的指标门不读取预算账本，也不按连续无提升轮数停机。递归 Workflow 的 Auto Research Loop 模式用相同的判据；其他 Workflow 模式保留原有停机策略。
 
 stop gate 数的是**想法轮数**。参数修正的重跑不产生新迭代号，同一迭代号只保留最后一条记录。这带来一条使用纪律：**一轮里调参多次时，最后提交的那次必须是最好的那次**，否则你把一个次优结果当成这轮的成绩交上去了。
 
-预算文件是前置条件：任何能被 gate 评估的 run 必须先 `initializeRunBudget`，否则 gate 读预算时抛 `BUDGET_REQUIRED`。
+恢复时从已保存的配置读取轮数上限；缺失或非法值是配置错误，不继续派发。
+结果包把 Workflow 的 `target_reached` 映射为 `metric_met`，并保留 `iteration_cap` 或 `no_proposal`。失败的 run 也发布结果包，状态为 `failed`，`failure` 写明失败位置并引用桥接与修复收据，父 run 据此把它当作失败的子收回。
+
+Workflow 的一轮必须等所有子 run 发布结果包后才能结束：`arl-cycle-complete` 以及修复耗尽后的 `cycle-complete` 在还有子没交结果时以 `ROUND_INCOMPLETE` 拒绝并列出这些子。Workflow 的读数来自 cycle summary 及其评审收据，`workflow-summary.json.stop_reason` 读取已落盘的停机决定。
 
 ---
 
@@ -250,7 +252,7 @@ advice:      increase_long_horizon_consistency | strengthen_tool_use_consistency
 
 递归里只有根那个 run 面对 tester。子 ARL 的验收器是父在派它的时候冻结的：一个指标名、一个方向、一个阈值，存在父这边，子的 charter 只拿到它的 id。子不能把 task tester 的 id 写进自己的 charter——bridge 直接拒——所以没有任何一条路径能让子去问 tester 要一个数。
 
-这条边界同时是预算边界：tester 的曝光次数是按整个研究算的稀缺资源，子拿父给的验收器打分不消耗它。否则一个 run 只要多拆几层就能把曝光预算花光，而每个子拿回来的还是同一个 held-out 集的信息。
+这条边界也限制 tester 调用：子拿父给的验收器打分，不直接访问 held-out 集。否则增加递归层数就会重复查询同一份测试数据。
 
 ### tester 在哪、隔离靠什么
 
@@ -373,9 +375,10 @@ tester、搜索闸门、root charter），没配全就退非零；`infer` 从已
     child-acceptance.json          父给每个子的验收标准
     decomposition/generation-N.json  这一代的分解图（只有编排 run 有）
     decomposition/wave-N.json        改图的那次冻结提案
-    dashboard.json
-    frozen-policy.json             只有根封存完整 policy
-    cycles/<iteration>/*
+    workflow-dashboard.json         递归 Workflow 的状态视图
+    workflow-runtime.json           递归 Workflow 的阶段和轮次
+    frozen-policy.json              根和子各自封存；子继承父的模型、资源和指标约束
+    cycles/<iteration>/workers/*    每轮 worker 清单与收据
 ```
 
 平铺是有意的：run 的树结构靠 `parent_run_id` 表达，不靠目录嵌套。目录嵌套会让"读某个 run"依赖于知道它在第几层，而那恰好是子 run 不该知道的东西。
@@ -391,4 +394,4 @@ tester、搜索闸门、root charter），没配全就退非零；`infer` 从已
 发现不了"从头就是伪造的"。要关掉这条，唯一的办法是让账本摘要进提交体并由 tester 连带签名，本轮
 没做。
 
-除此之外没有已知的架构级缺口。上一版列出的三条都已关闭：轮数上限只剩 metric-gate 里的可选兜底（§4），`standalone-adapter.ts` 和 `evidence-review` skill 整个删除，`WIKI_MODULE_WORKERS` 只剩四段流程加 `idea-creator`；tester 回执入 Wiki 的路径不再依赖 root 属主，验签靠配置里钉死的公钥摘要（§7）。
+递归桥接按 charter 的显式模式选择无预算计划；其他桥接调用者仍使用原预算计划。`standalone-adapter.ts` 和 `evidence-review` skill 已删除；tester 回执入 Wiki 的路径靠配置里钉死的公钥摘要验签（§7）。

@@ -201,9 +201,8 @@ function reviewPatch(verdict: string): Record<string, unknown> {
     "last_review.verdict": verdict,
     "last_review.score": 0.3,
     "last_review.reviewer_id": "reviewer:1",
-    // A metric-target run needs the review to publish the number it ruled on,
-    // even when the ruling is that the evidence could not be ruled on.
-    "metric.current": 0.7,
+    // An unjudgeable review has no valid metric to publish.
+    "metric.current": verdict === "insufficient" ? null : 0.7,
   };
 }
 
@@ -318,9 +317,11 @@ function advanceToReview(
   runId: string,
   bridgeSlot: string,
   frozenInput: Record<string, unknown>,
+  withoutBudget = false,
 ): void {
   const bridge = makeReceipt(root, runId, bridgeSlot, frozenInput, "measured", "done", {
     dashboard_patch: BRIDGE_PATCH,
+    ...(withoutBudget ? { reserve: false } : {}),
   });
   merge(root, runId, bridge);
   setPhase(root, runId, "auto-review-loop");
@@ -334,8 +335,9 @@ function testInsufficientEvidenceReturnsToTheBridge(): void {
   try {
     const runId = "train-3";
     makeRun(root, runId);
+    fs.rmSync(path.join(root, ".aris", "runs", runId, "budget.json"));
     const frozenInput = { experiment_plan_sha256: "plan:1", seed: 7 };
-    advanceToReview(root, runId, "bridge-1", frozenInput);
+    advanceToReview(root, runId, "bridge-1", frozenInput, true);
 
     const review = makeReceipt(root, runId, "review-1", {}, "review-report", "done", {
       worker: "auto-review-loop",
@@ -353,16 +355,16 @@ function testInsufficientEvidenceReturnsToTheBridge(): void {
     // The repair worker reads the experiment it has to re-tune, so the receipt
     // that produced the thin evidence is still on the dashboard.
     assert.equal(dashboard.bridge_failure?.bridge_receipt_ref, "workers/bridge-1/receipt.json");
-    // An unjudgeable result never enters metric history: the only entry for
-    // this iteration is still the one the bridge wrote.
+    // The bridge's provisional reading does not replace the baseline row.
     assert.equal(dashboard.metric.history.length, 1);
-    assert.equal(dashboard.metric.history[0]!.source, "experiment-bridge");
+    assert.deepEqual(dashboard.metric.history[0], { iter: 1, value: 0.6 });
 
     const repair = makeReceipt(root, runId, "repair-1", {}, null, "done", {
       worker: "auto-review-loop",
       phase: "bridge-repair",
       context: { purpose: "bridge_repair", candidate_id: "candidate:1" },
       summary: { repair_status: "fixed", repair_round: 1 },
+      reserve: false,
     });
     merge(root, runId, repair);
     dashboard = readDashboard(root, runId);
@@ -373,6 +375,7 @@ function testInsufficientEvidenceReturnsToTheBridge(): void {
     // so the retry still carries the frozen inputs the repair was bound to.
     const retry = makeReceipt(root, runId, "bridge-2", frozenInput, "better", "done", {
       dashboard_patch: BRIDGE_PATCH,
+      reserve: false,
     });
     assert.match(merge(root, runId, retry), /"applied":true/);
   } finally {
@@ -380,16 +383,16 @@ function testInsufficientEvidenceReturnsToTheBridge(): void {
   }
 }
 
-// A candidate that ran out of tuning budget never earned a proposal, but it did
+// A candidate whose repair exhausted its options never earned a proposal, but it did
 // not break either - so it completes without a proposal instead of failing.
 function testExhaustedTuningCompletesWithoutAProposal(): void {
   const root = tempDir("aris-bridge-insufficient-exhausted-");
   try {
     const runId = "train-4";
-    // The bridge takes the first unit and the repair takes the second, which is
-    // the only way the repair is allowed to report exhaustion.
+    // The worker reports that its repair options are exhausted.
     makeRun(root, runId, 2);
-    advanceToReview(root, runId, "bridge-1", { plan: "p" });
+    fs.rmSync(path.join(root, ".aris", "runs", runId, "budget.json"));
+    advanceToReview(root, runId, "bridge-1", { plan: "p" }, true);
     const review = makeReceipt(root, runId, "review-1", {}, "review-report", "done", {
       worker: "auto-review-loop",
       phase: "auto-review-loop",
@@ -403,12 +406,140 @@ function testExhaustedTuningCompletesWithoutAProposal(): void {
       phase: "bridge-repair",
       context: { purpose: "bridge_repair", candidate_id: "candidate:1" },
       summary: { repair_status: "exhausted", repair_round: 1 },
+      reserve: false,
     });
     merge(root, runId, repair);
     const dashboard = readDashboard(root, runId);
     assert.equal(dashboard.current_phase, "completed");
     assert.equal(dashboard.status, "completed");
     assert.equal(dashboard.outcome, "no_proposal");
+    assert.equal(dashboard.metric.current, null);
+    assert.equal(dashboard.metric.history.length, 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+/** Patch dashboard fields the orchestrator owns (config, iteration, phase). */
+function patchDashboard(root: string, runId: string, patch: Record<string, unknown>): void {
+  const dashboard = JSON.parse(fs.readFileSync(dashboardPath(root, runId), "utf8")) as Record<
+    string,
+    unknown
+  >;
+  writeJson(dashboardPath(root, runId), { ...dashboard, ...patch });
+}
+
+function repairReceipt(
+  root: string,
+  runId: string,
+  slot: string,
+  round: number,
+  iteration = 1,
+): string {
+  return makeReceipt(root, runId, slot, {}, null, "done", {
+    worker: "auto-review-loop",
+    phase: "bridge-repair",
+    context: { purpose: "bridge_repair", candidate_id: "candidate:1" },
+    summary: { repair_status: "fixed", repair_round: round },
+    iteration,
+    reserve: false,
+  });
+}
+
+/** A loop without budget, whose repair allowance per iteration is `cap`. */
+function makeCappedRun(root: string, runId: string, cap: number): void {
+  makeRun(root, runId);
+  fs.rmSync(path.join(root, ".aris", "runs", runId, "budget.json"));
+  patchDashboard(root, runId, { config: { patience: 2, max_repair_attempts: cap } });
+}
+
+// Once an iteration has spent its repair allowance, the next bridge failure is
+// final at intake: no further repair is dispatched.
+function testRepairCapEndsTheRunAtIntake(): void {
+  const root = tempDir("aris-bridge-cap-");
+  try {
+    const runId = "train-6";
+    makeCappedRun(root, runId, 1);
+    const frozenInput = { plan: "p" };
+    const first = makeReceipt(root, runId, "bridge-fail-1", frozenInput, null, "failed", {
+      reserve: false,
+    });
+    assert.match(merge(root, runId, first), /bridge-repair-pending/);
+    merge(root, runId, repairReceipt(root, runId, "repair-1", 1));
+    const second = makeReceipt(root, runId, "bridge-fail-2", frozenInput, null, "failed", {
+      reserve: false,
+    });
+    assert.match(merge(root, runId, second), /bridge-repair-exhausted/);
+    const dashboard = readDashboard(root, runId);
+    assert.equal(dashboard.status, "failed");
+    assert.equal(dashboard.bridge_failure?.status, "exhausted");
+    assert.equal(dashboard.bridge_failure?.repair_attempts, 1);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// Repairs are counted per iteration, not per cause: a tuning repair after an
+// execution repair draws on the same allowance.
+function testInsufficientReviewSharesTheRepairCount(): void {
+  const root = tempDir("aris-bridge-cap-insufficient-");
+  try {
+    const runId = "train-7";
+    makeCappedRun(root, runId, 1);
+    const frozenInput = { plan: "p" };
+    const failed = makeReceipt(root, runId, "bridge-fail-1", frozenInput, null, "failed", {
+      reserve: false,
+    });
+    merge(root, runId, failed);
+    merge(root, runId, repairReceipt(root, runId, "repair-1", 1));
+    advanceToReview(root, runId, "bridge-retry-1", frozenInput, true);
+    const review = makeReceipt(root, runId, "review-1", {}, "review-report", "done", {
+      worker: "auto-review-loop",
+      phase: "auto-review-loop",
+      summary: { verdict: "insufficient" },
+      dashboard_patch: reviewPatch("insufficient"),
+    });
+    assert.match(merge(root, runId, review), /bridge-repair-exhausted/);
+    const dashboard = readDashboard(root, runId);
+    assert.equal(dashboard.bridge_failure?.repair_attempts, 1);
+    assert.equal(dashboard.status, "completed");
+    assert.equal(dashboard.outcome, "no_proposal");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// A fixed repair belongs to its iteration. The next iteration's candidate has
+// new frozen inputs and its own repair allowance.
+function testFixedRepairDoesNotPinTheNextIteration(): void {
+  const root = tempDir("aris-bridge-next-iteration-");
+  try {
+    const runId = "train-8";
+    makeCappedRun(root, runId, 1);
+    const failed = makeReceipt(root, runId, "bridge-fail-1", { plan: "p1" }, null, "failed", {
+      reserve: false,
+    });
+    merge(root, runId, failed);
+    merge(root, runId, repairReceipt(root, runId, "repair-1", 1));
+    const retried = makeReceipt(root, runId, "bridge-retry-1", { plan: "p1" }, "ok", "done", {
+      dashboard_patch: BRIDGE_PATCH,
+      reserve: false,
+    });
+    assert.match(merge(root, runId, retried), /"applied":true/);
+
+    patchDashboard(root, runId, { iteration: 2, current_phase: "experiment-bridge" });
+    const next = makeReceipt(root, runId, "bridge-2", { plan: "p2" }, "ok", "done", {
+      dashboard_patch: BRIDGE_PATCH,
+      iteration: 2,
+      reserve: false,
+    });
+    assert.match(merge(root, runId, next), /"applied":true/);
+    const nextFailure = makeReceipt(root, runId, "bridge-fail-2", { plan: "p2" }, null, "failed", {
+      iteration: 2,
+      reserve: false,
+    });
+    assert.match(merge(root, runId, nextFailure), /bridge-repair-pending/);
+    assert.equal(readDashboard(root, runId).bridge_failure?.repair_attempts, 0);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -538,4 +669,7 @@ testInsufficientEvidenceReturnsToTheBridge();
 testExhaustedTuningCompletesWithoutAProposal();
 testRepairBoundaries();
 testOrchestrationReceiptMustMatchTheDispatch();
+testRepairCapEndsTheRunAtIntake();
+testInsufficientReviewSharesTheRepairCount();
+testFixedRepairDoesNotPinTheNextIteration();
 console.log("bridge repair tests passed");

@@ -57,6 +57,55 @@ function basePolicy(): StopPolicy {
 }
 
 {
+  const { budget: _budget, ...noBudgetCycle } = cycle(1, { status: "failed", metric_value: null, outcome: "no_proposal" });
+  const decision = evaluateWorkflowStopGate({
+    outer_run_id: "outer-stop-test",
+    policy: { mode: "auto_research_loop", max_iterations: 3, target: { name: "score", direction: "higher_better", value: 0.8 } },
+    cycle_summaries: [noBudgetCycle],
+    exposure: { max_exposures_per_task: 0, reserved: 0, settled: 0, released: 0 },
+  });
+  assert.equal(decision.reason, "no_proposal");
+  assert.equal(decision.budget_remaining, null);
+}
+
+{
+  // An experiment that kept failing stops the loop as a failure, ahead of the
+  // round limit, and the decision survives the trip through disk.
+  const { budget: _budget, ...failedCycle } = cycle(3, {
+    status: "failed",
+    metric_value: null,
+    outcome: "bridge_failed",
+    failure: {
+      worker: "experiment-bridge",
+      iteration: 3,
+      phase: "experiment-bridge",
+      error: { category: "environment" },
+      repair_status: "exhausted",
+      repair_attempts: 3,
+      bridge_receipt_ref: "workers/3-experiment-bridge/receipt.json",
+      repair_receipt_ref: null,
+    },
+  });
+  const root = tempDir();
+  try {
+    createRootRun({ project_root: root, run_id: "outer-stop-test" });
+    const decision = evaluateWorkflowStopGate({
+      outer_run_id: "outer-stop-test",
+      policy: { mode: "auto_research_loop", max_iterations: 3, target: { name: "score", direction: "higher_better", value: 0.8 } },
+      cycle_summaries: [failedCycle],
+      outer_iteration: 3,
+      exposure: { max_exposures_per_task: 0, reserved: 0, settled: 0, released: 0 },
+    });
+    assert.equal(decision.decision, "stop");
+    assert.equal(decision.reason, "bridge_failed");
+    writeWorkflowStopDecision(root, "outer-stop-test", 3, decision);
+    assert.equal(readWorkflowStopDecision(root, "outer-stop-test", 3).reason, "bridge_failed");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+{
   const first = cycle(1, {
     finalist_id: "candidate:finalist",
     candidate_ids: ["candidate:baseline", "candidate:finalist"],

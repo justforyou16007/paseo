@@ -1276,6 +1276,38 @@ test("standalone first-write output, claim dates, and experiment IDs remain comp
     assert.equal(retryUpsert.exitCode, 0, `${retryUpsert.stdout}\n${retryUpsert.stderr}`);
     assert.match(retryUpsert.stdout, /Experiment skipped:/);
     assert.equal(readWikiEvents(root).length, beforeUpsertRetry + 1);
+    // Once the experiment supports a claim, the same id is reused as it is:
+    // neither its page nor the claim edge is rewritten by a later update.
+    const formed = runTsx(
+      RESEARCH_WIKI,
+      "add_edge",
+      root,
+      "--from",
+      "exp:exp-upsert",
+      "--to",
+      "claim:visible-claim",
+      "--type",
+      "supports",
+    );
+    assert.equal(formed.exitCode, 0, `${formed.stdout}\n${formed.stderr}`);
+    const beforeReuse = readWikiEvents(root).length;
+    const reused = runTsx(
+      RESEARCH_WIKI,
+      "add_experiment",
+      root,
+      "--slug",
+      "exp-upsert",
+      "--title",
+      "Rewritten experiment",
+      "--update-on-exist",
+    );
+    assert.equal(reused.exitCode, 0, `${reused.stdout}\n${reused.stderr}`);
+    assert.match(reused.stdout, /Experiment reused:/);
+    assert.equal(/Experiment (?:added|updated|skipped):/.test(reused.stdout), false);
+    assert.equal(readWikiEvents(root).length, beforeReuse);
+    const reusedPage = fs.readFileSync(path.join(root, "experiments", "exp-upsert.md"), "utf-8");
+    assert.match(reusedPage, /Upsert experiment/);
+    assert.equal(reusedPage.includes("Rewritten experiment"), false);
     const index = fs.readFileSync(path.join(root, "index.md"), "utf-8");
     assert.match(index, /`exp:exp-visible`/);
     assert.equal(index.includes("`experiment:exp-visible`"), false);

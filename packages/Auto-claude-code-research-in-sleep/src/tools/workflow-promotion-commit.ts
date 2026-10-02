@@ -52,7 +52,7 @@ import {
   type OuterTesterArmMapping,
 } from "./workflow-runtime.js";
 import {
-  readFrozenPolicy,
+  readLegacyFrozenPolicy,
   workflowCycleDirectory,
   workflowCycleRelativePath,
   type ActiveOuterCycle,
@@ -1187,7 +1187,7 @@ function prepareCommit(
   const cycle = state.active_cycle;
   if (cycle.wave_kind !== "module" && cycle.wave_kind !== "structure")
     failA1("PROMOTION_NOT_ALLOWED", "scorer cycles cannot commit a workflow promotion");
-  const frozen = readFrozenPolicy(normalized.project_root, normalized.outer_run_id);
+  const frozen = readLegacyFrozenPolicy(normalized.project_root, normalized.outer_run_id);
   if (frozen.workflow_id !== normalized.workflow_id && normalized.workflow_id !== "")
     failA1("IDENTITY_MISMATCH", "promotion commit workflow id differs from frozen policy");
   const validation = readOuterValidationGateRecord({

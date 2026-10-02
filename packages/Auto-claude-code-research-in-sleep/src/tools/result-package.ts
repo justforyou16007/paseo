@@ -29,6 +29,17 @@ import {
 } from "./state-file.js";
 
 export type ResultStatus = "succeeded" | "failed" | "not_executable" | "infra_unavailable";
+export type ResultTerminationReason = "metric_met" | "iteration_cap" | "no_proposal";
+
+function normalizeTerminationReason(value: unknown): ResultTerminationReason {
+  if (value !== "metric_met" && value !== "iteration_cap" && value !== "no_proposal")
+    failA1(
+      "INVALID_RESULT_PACKAGE",
+      "termination_reason is invalid",
+      "result_package.termination_reason",
+    );
+  return value;
+}
 
 export interface ResultFailure {
   reason: string;
@@ -58,6 +69,7 @@ export interface ResultPackage {
   evidence_refs: string[];
   child_summaries: ResultChildSummary[];
   cost_actual: number | { amount: number; unit: string };
+  termination_reason?: ResultTerminationReason;
   failure?: ResultFailure;
   local_metrics?: Record<string, number>;
   interface_record_ref?: string | null;
@@ -82,6 +94,7 @@ export interface ResultPackageInput {
   evidence_refs?: readonly string[];
   child_summaries?: readonly ResultChildSummary[];
   cost_actual?: number | { amount: number; unit: string };
+  termination_reason?: ResultTerminationReason;
   failure?: ResultFailure;
   local_metrics?: Record<string, number>;
   interface_record_ref?: string | null;
@@ -221,6 +234,9 @@ function packageWithoutHash(value: Omit<ResultPackage, "package_sha256">): objec
     evidence_refs: value.evidence_refs,
     child_summaries: value.child_summaries,
     cost_actual: value.cost_actual,
+    ...(value.termination_reason === undefined
+      ? {}
+      : { termination_reason: value.termination_reason }),
     ...(value.failure === undefined ? {} : { failure: value.failure }),
     ...(value.local_metrics === undefined ? {} : { local_metrics: value.local_metrics }),
     ...(value.interface_record_ref === undefined
@@ -315,6 +331,9 @@ function buildPackage(input: ResultPackageInput, summarySha256: string): ResultP
     child_summaries:
       input.child_summaries === undefined ? [] : normalizeChildSummaries(input.child_summaries),
     cost_actual: normalizeCost(input.cost_actual),
+    ...(input.termination_reason === undefined
+      ? {}
+      : { termination_reason: normalizeTerminationReason(input.termination_reason) }),
     ...(failure === undefined ? {} : { failure }),
     ...(input.local_metrics === undefined
       ? {}
@@ -368,6 +387,7 @@ export function createResultPackage(input: ResultPackageInput): ResultPackage {
       "evidence_refs",
       "child_summaries",
       "cost_actual",
+      "termination_reason",
       "failure",
       "local_metrics",
       "interface_record_ref",
@@ -412,6 +432,7 @@ export function validateResultPackage(value: unknown, location = "result_package
       "evidence_refs",
       "child_summaries",
       "cost_actual",
+      "termination_reason",
       "failure",
       "local_metrics",
       "interface_record_ref",
@@ -467,6 +488,10 @@ export function validateResultPackage(value: unknown, location = "result_package
       evidence_refs: value.evidence_refs as string[],
       child_summaries: value.child_summaries as ResultChildSummary[],
       cost_actual: value.cost_actual as ResultPackage["cost_actual"],
+      termination_reason:
+        value.termination_reason === undefined
+          ? undefined
+          : normalizeTerminationReason(value.termination_reason),
       failure:
         value.failure === undefined
           ? undefined

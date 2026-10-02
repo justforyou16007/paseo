@@ -7,6 +7,7 @@ import {
   assertSha256,
   failA1,
   isRecord,
+  requireInteger,
   requireString,
 } from "./workflow-spec.js";
 
@@ -26,7 +27,9 @@ export interface RunCharter {
   baseline_ref: string;
   baseline_sha256: string;
   optimizable_scope: OptimizablePosition[];
-  budget: BridgeBudget;
+  mode?: "auto_research_loop";
+  max_iterations?: number;
+  budget?: BridgeBudget | null;
   measurement: RunMeasurement;
   resource_inventory_sha256: string;
   resource_inventory_ref: string;
@@ -37,6 +40,33 @@ export interface RunCharter {
 export type RunCharterInput = Omit<RunCharter, "charter_sha256">;
 export function validateCharterContent(value: unknown): void {
   if (!isRecord(value)) failA1("CORRUPT_CHARTER", "charter must be an object");
+  if (!Object.hasOwn(value, "task_id"))
+    assertNoUnknownFields(
+      value,
+      [
+        "schema_version",
+        "charter_id",
+        "run_id",
+        "problem",
+        "expected_output",
+        "evidence_refs",
+        "constraints",
+        "input_snapshot_refs",
+        "baseline_ref",
+        "baseline_sha256",
+        "optimizable_scope",
+        "mode",
+        "max_iterations",
+        "budget",
+        "measurement",
+        "resource_inventory_sha256",
+        "resource_inventory_ref",
+        "policy_revision",
+        "code_baseline_sha256",
+        "charter_sha256",
+      ],
+      "charter",
+    );
   if (value.schema_version !== 1) failA1("CORRUPT_CHARTER", "unsupported charter schema");
   assertIdentifier(value.charter_id, "charter_id");
   assertIdentifier(value.run_id, "run_id");
@@ -61,7 +91,16 @@ export function validateCharterContent(value: unknown): void {
   assertSha256(value.resource_inventory_sha256, "resource_inventory_sha256");
   requireString(value.resource_inventory_ref, "resource_inventory_ref");
   normalizeOptimizableScope(value.optimizable_scope, []);
-  normalizeBudget(value.budget, "charter.budget");
+  if (value.mode === "auto_research_loop") {
+    if (value.budget !== undefined)
+      failA1("INVALID_VALUE", "Auto Research Loop charter cannot contain budget");
+    requireInteger(value.max_iterations, "charter.max_iterations", 1);
+  } else {
+    if (value.mode !== undefined || value.max_iterations !== undefined)
+      failA1("INVALID_VALUE", "max_iterations requires Auto Research Loop mode");
+    if (value.budget === undefined) failA1("BUDGET_REQUIRED", "budgeted charter needs budget");
+    if (value.budget !== null) normalizeBudget(value.budget, "charter.budget");
+  }
   if (!isRecord(value.measurement))
     failA1("CORRUPT_CHARTER", "measurement must be frozen before starting a run");
   assertNoUnknownFields(value.measurement, ["validator_ref", "tester_ref"], "measurement");

@@ -8,6 +8,7 @@ import {
   recordOuterBridgeFailure,
   recordOuterBridgeRepair,
   recordOuterBridgeSuccess,
+  resumeOuterRunForTest,
 } from "../src/tools/workflow-runtime.js";
 import { prepareRunExecution } from "../src/tools/run-budget.js";
 import {
@@ -133,6 +134,17 @@ function testRepairAndFrozenRetry(): void {
     });
     assert.equal(pending.current_phase, "bridge-repair");
     assert.equal(pending.active_cycle?.bridge_failure?.status, "pending");
+    const recovered = resumeOuterRunForTest(fixture.identity);
+    assert.equal(recovered.current_phase, "bridge-repair");
+    assert.equal(recovered.active_cycle?.bridge_failure?.bridge_receipt_ref,
+      pending.active_cycle?.bridge_failure?.bridge_receipt_ref);
+    const repeated = recordOuterBridgeFailure({
+      ...fixture.identity,
+      receipt_path: failed.receiptPath,
+      manifest_path: failed.manifestPath,
+      evidence_paths: [failed.receiptPath, failed.manifestPath],
+    });
+    assert.equal(repeated.active_cycle?.bridge_failure?.repair_attempts, 0);
     expectCode(
       () =>
         advanceOuterPhase({

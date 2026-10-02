@@ -23,19 +23,31 @@
  * export fails if it does not.
  */
 import fs from "node:fs";
+import crypto from "node:crypto";
 import path from "node:path";
 import { hasDecomposition } from "./decomposition-graph.js";
 import { readDashboardMetric } from "./metric-gate.js";
+import {
+  readFrozenPolicy,
+  readWorkflowRuntimeState,
+  workflowCycleRelativePath,
+  workflowDashboardPath,
+} from "./workflow-state.js";
+import { readWorkflowStopDecision } from "./workflow-stop-gate.js";
 import { collectOrchestrationRound, roundChildSummaries } from "./orchestration-round.js";
 import {
   buildResultPackageForRun,
+  readResultPackage,
+  resultPackagePath,
   saveResultPackage,
+  type ResultFailure,
   type ResultPackage,
   type ResultPackageInput,
   type ResultPackageReview,
   type ResultStatus,
+  type ResultTerminationReason,
 } from "./result-package.js";
-import { requireRunContract } from "./run-contract.js";
+import { requireRunContract, runOwnedPath } from "./run-contract.js";
 import { readStateFile } from "./state-file.js";
 import { validateTesterDefinition, type TesterPrimaryMetric } from "./tester-state.js";
 import { eventLogHead, readWikiEvents } from "./wiki-event-store.js";
@@ -72,7 +84,7 @@ export interface ResultExportInput {
 
 export interface ResultExport {
   result_package: ResultPackage;
-  winner: ExportCandidate;
+  winner: ExportCandidate | null;
   /** Every iteration that was eligible, best first. */
   ranked: ExportCandidate[];
 }
@@ -85,7 +97,7 @@ export interface ResultExport {
 export interface ResultExportPlan {
   candidate: ResultPackage;
   result_input: ResultPackageInput;
-  winner: ExportCandidate;
+  winner: ExportCandidate | null;
   ranked: ExportCandidate[];
 }
 
@@ -253,6 +265,96 @@ export function rankCandidates(
 }
 
 /**
+ * The run ended because bridge repair was exhausted. Workflow runs prove it
+ * with the saved stop decision; standalone runs with the dashboard outcome
+ * that `dashboard-merge` writes on exhausted repair.
+ */
+function noProposalStop(
+  projectRoot: string,
+  runId: string,
+): { iteration: number; evidence_refs: string[] } | null {
+  if (fs.existsSync(runOwnedPath(projectRoot, runId, "frozen-policy.json"))) {
+    if (readFrozenPolicy(projectRoot, runId).mode !== "auto_research_loop") return null;
+    const runtime = readWorkflowRuntimeState(projectRoot, runId);
+    const latest = runtime.cycle_history.at(-1);
+    if (
+      latest?.outcome !== "no_proposal" ||
+      runtime.stop_decision_ref === null ||
+      readWorkflowStopDecision(projectRoot, runId, latest.outer_iteration).reason !== "no_proposal"
+    )
+      return null;
+    return { iteration: latest.outer_iteration, evidence_refs: latest.evidence_refs };
+  }
+  const dashboardPath = runOwnedPath(projectRoot, runId, "dashboard.json");
+  if (!fs.existsSync(dashboardPath)) return null;
+  const dashboard = readStateFile<Record<string, unknown>>(dashboardPath);
+  if (
+    dashboard.outcome !== "no_proposal" ||
+    dashboard.status !== "completed" ||
+    typeof dashboard.iteration !== "number"
+  )
+    return null;
+  const failure = dashboard.bridge_failure as Record<string, unknown> | null | undefined;
+  // A failure that arrived after the repair cap was used up has no repair
+  // receipt of its own; the bridge receipt it was raised against is the evidence.
+  const ref = failure?.repair_receipt_ref ?? failure?.bridge_receipt_ref;
+  return {
+    iteration: dashboard.iteration,
+    evidence_refs: typeof ref === "string" ? [ref] : [],
+  };
+}
+
+/**
+ * The run ended failed, and where. Workflow runs prove it with the
+ * `bridge_failed` cycle and its saved stop decision; standalone runs with the
+ * failed dashboard and the failure location `dashboard-merge` wrote. Both say
+ * the same things: which worker broke, in which iteration and phase, and how
+ * many repairs were spent on it.
+ */
+function failedStop(projectRoot: string, runId: string): ResultFailure | null {
+  let location: Record<string, unknown>;
+  let evidenceRefs: string[];
+  if (fs.existsSync(runOwnedPath(projectRoot, runId, "frozen-policy.json"))) {
+    if (readFrozenPolicy(projectRoot, runId).mode !== "auto_research_loop") return null;
+    const runtime = readWorkflowRuntimeState(projectRoot, runId);
+    const latest = runtime.cycle_history.at(-1);
+    if (
+      latest?.outcome !== "bridge_failed" ||
+      latest.failure === undefined ||
+      runtime.stop_decision_ref === null ||
+      readWorkflowStopDecision(projectRoot, runId, latest.outer_iteration).reason !==
+        "bridge_failed"
+    )
+      return null;
+    location = { ...latest.failure };
+    // The cycle keeps its receipt references relative to the cycle directory;
+    // the package names them relative to the run like every other evidence ref.
+    evidenceRefs = [latest.failure.bridge_receipt_ref, latest.failure.repair_receipt_ref]
+      .filter((ref): ref is string => ref !== null)
+      .map((ref) => workflowCycleRelativePath(latest.outer_iteration, ref));
+  } else {
+    const dashboardPath = runOwnedPath(projectRoot, runId, "dashboard.json");
+    if (!fs.existsSync(dashboardPath)) return null;
+    const dashboard = readStateFile<Record<string, unknown>>(dashboardPath);
+    const failure = dashboard.failure;
+    if (dashboard.status !== "failed" || typeof failure !== "object" || failure === null)
+      return null;
+    location = failure as Record<string, unknown>;
+    const bridge = dashboard.bridge_failure as Record<string, unknown> | null | undefined;
+    evidenceRefs = [location.bridge_receipt_ref, bridge?.repair_receipt_ref].filter(
+      (ref): ref is string => typeof ref === "string",
+    );
+  }
+  const exhausted = location.repair_status === "exhausted";
+  const repairs = exhausted ? `; repair exhausted after ${String(location.repair_attempts)}` : "";
+  return {
+    reason: `${String(location.worker)} failed in iteration ${String(location.iteration)} at phase ${String(location.phase)}${repairs}`,
+    failure_code: exhausted ? "BRIDGE_FAILED" : "WORKER_FAILED",
+    evidence_refs: [...new Set(evidenceRefs)],
+  };
+}
+
+/**
  * Pick the winning iteration and build the package it would publish, without
  * publishing it. Ranking reads only the Wiki and the dashboard, so it is a pure
  * read: running it twice on unchanged evidence gives the same candidate and the
@@ -271,12 +373,69 @@ export function planResultExport(input: Omit<ResultExportInput, "review">): Resu
   const allCandidates = [...model.pages.experiment.values()]
     .map(candidateFromPage)
     .filter((candidate): candidate is ExportCandidate => candidate !== null);
-  if (allCandidates.length === 0)
+  const failure = failedStop(projectRoot, input.run_id);
+  if (failure !== null && input.status !== undefined && input.status !== "failed")
     failA1(
-      "NO_EXPORTABLE_EXPERIMENT",
-      `wiki at ${wikiRoot} has no experiment page carrying an iteration`,
-      "result_export.wiki_root",
+      "INVALID_VALUE",
+      "a failed run can only export a failed package",
+      "result_export.status",
     );
+  if (allCandidates.length === 0 && failure !== null) {
+    // Nothing to rank, but the run still publishes, so a parent waiting on it
+    // collects a failed child instead of waiting forever.
+    const head = eventLogHead(readWikiEvents(wikiRoot));
+    const resultInput: ResultPackageInput = {
+      run_id: input.run_id,
+      parent_run_id: contract.parent_run_id,
+      scope_path: contract.scope_path,
+      status: "failed",
+      input_snapshot_sha256: contract.identity_material.input_snapshot_sha256,
+      best_idea_ref: null,
+      evidence_refs: failure.evidence_refs,
+      wiki_head_ref: head.event_id,
+      summary: input.summary ?? failure.reason,
+      failure,
+    };
+    return {
+      candidate: buildResultPackageForRun(projectRoot, input.run_id, resultInput).package,
+      result_input: resultInput,
+      winner: null,
+      ranked: [],
+    };
+  }
+  if (allCandidates.length === 0) {
+    const stop = noProposalStop(projectRoot, input.run_id);
+    if (stop === null)
+      failA1(
+        "NO_EXPORTABLE_EXPERIMENT",
+        `wiki at ${wikiRoot} has no experiment page carrying an iteration and the run has no verified no_proposal stop`,
+      );
+    const head = eventLogHead(readWikiEvents(wikiRoot));
+    const resultInput: ResultPackageInput = {
+      run_id: input.run_id,
+      parent_run_id: contract.parent_run_id,
+      scope_path: contract.scope_path,
+      status: "not_executable",
+      termination_reason: "no_proposal",
+      input_snapshot_sha256: contract.identity_material.input_snapshot_sha256,
+      best_idea_ref: null,
+      evidence_refs: stop.evidence_refs,
+      local_metrics: { winning_iteration: stop.iteration },
+      wiki_head_ref: head.event_id,
+      summary: input.summary ?? "No proposal produced a valid metric",
+      failure: {
+        reason: "No proposal produced a valid metric",
+        failure_code: "NO_PROPOSAL",
+        evidence_refs: stop.evidence_refs,
+      },
+    };
+    return {
+      candidate: buildResultPackageForRun(projectRoot, input.run_id, resultInput).package,
+      result_input: resultInput,
+      winner: null,
+      ranked: [],
+    };
+  }
   const iterations = allCandidates.map((candidate) => candidate.iteration);
   if (new Set(iterations).size !== iterations.length)
     failA1(
@@ -285,8 +444,66 @@ export function planResultExport(input: Omit<ResultExportInput, "review">): Resu
       "result_export.wiki_root",
     );
 
-  const dashboard = readDashboardMetric(projectRoot, input.run_id);
-  const dashboardByIteration = new Map(dashboard.history.map((entry) => [entry.iter, entry.value]));
+  const frozenPath = runOwnedPath(projectRoot, input.run_id, "frozen-policy.json");
+  const frozen = fs.existsSync(frozenPath) ? readFrozenPolicy(projectRoot, input.run_id) : null;
+  if (frozen === null && fs.existsSync(workflowDashboardPath(projectRoot, input.run_id)))
+    failA1("FROZEN_POLICY_NOT_FOUND", "Workflow result needs its frozen policy");
+  let direction: "higher_better" | "lower_better";
+  let dashboardByIteration: Map<number, number>;
+  let terminationReason: ResultTerminationReason | undefined;
+  if (frozen?.mode === "auto_research_loop") {
+    const workflowDashboard = readStateFile<Record<string, unknown>>(
+      workflowDashboardPath(projectRoot, input.run_id),
+    );
+    const runtime = readWorkflowRuntimeState(projectRoot, input.run_id);
+    if (workflowDashboard.run_id !== input.run_id || runtime.outer_run_id !== input.run_id)
+      failA1("IDENTITY_MISMATCH", "Workflow dashboard and runtime refer to a different run");
+    direction = frozen.metric.direction;
+    dashboardByIteration = new Map();
+    for (const cycle of runtime.cycle_history) {
+      if (cycle.metric_value === undefined)
+        failA1(
+          "GATE_METRIC_MISSING",
+          `Workflow cycle ${cycle.outer_iteration} has no metric receipt`,
+        );
+      if (cycle.review_receipt_ref !== undefined) {
+        const receiptPath = runOwnedPath(projectRoot, input.run_id, cycle.review_receipt_ref);
+        const bytes = fs.readFileSync(receiptPath);
+        if (crypto.createHash("sha256").update(bytes).digest("hex") !== cycle.review_receipt_sha256)
+          failA1("INVALID_EXECUTION_RECEIPT", "review receipt changed after cycle completion");
+        const receipt = readStateFile<Record<string, unknown>>(receiptPath);
+        const patch = receipt.dashboard_patch as Record<string, unknown> | null;
+        if (patch?.["metric.current"] !== cycle.metric_value)
+          failA1("GATE_METRIC_MISMATCH", "Workflow summary differs from its review receipt");
+      }
+      if (cycle.metric_value !== null)
+        dashboardByIteration.set(cycle.outer_iteration, cycle.metric_value);
+    }
+    if (runtime.stop_decision_ref === null)
+      failA1("STOP_DECISION_REQUIRED", "ARL result requires a saved terminal stop decision");
+    const latest = runtime.cycle_history.at(-1);
+    if (!latest) failA1("OUTER_CYCLE_REQUIRED", "stop decision has no cycle");
+    const decision = readWorkflowStopDecision(projectRoot, input.run_id, latest.outer_iteration);
+    if (decision.reason === "target_reached") terminationReason = "metric_met";
+    else if (decision.reason === "iteration_cap") terminationReason = "iteration_cap";
+    else if (decision.reason === "no_proposal") terminationReason = "no_proposal";
+    // A failed run has no termination reason; its failure says why it ended.
+    else if (decision.reason !== "bridge_failed")
+      failA1("STOP_DECISION_REQUIRED", "ARL result requires a terminal stop decision");
+  } else {
+    const dashboard = readDashboardMetric(projectRoot, input.run_id);
+    const persistedDashboard = readStateFile<Record<string, unknown>>(
+      runOwnedPath(projectRoot, input.run_id, "dashboard.json"),
+    );
+    direction = dashboard.direction;
+    dashboardByIteration = new Map(dashboard.history.map((entry) => [entry.iter, entry.value]));
+    if (persistedDashboard.outcome === "no_proposal") terminationReason = "no_proposal";
+    else if (
+      persistedDashboard.stop_reason === "metric_met" ||
+      persistedDashboard.stop_reason === "iteration_cap"
+    )
+      terminationReason = persistedDashboard.stop_reason;
+  }
   const candidates = allCandidates.map((candidate) => ({
     ...candidate,
     gate_metric: reconcileGateMetric(candidate, dashboardByIteration, "result_export.wiki_root"),
@@ -296,11 +513,7 @@ export function planResultExport(input: Omit<ResultExportInput, "review">): Resu
   // Once any iteration has been judged by the tester, the unjudged ones are not
   // in the running: they have no reading on the evidence that decides first.
   const eligible = tester === null ? candidates : tester.judged;
-  const ranked = rankCandidates(
-    eligible,
-    tester === null ? null : tester.declared,
-    dashboard.direction,
-  );
+  const ranked = rankCandidates(eligible, tester === null ? null : tester.declared, direction);
   const winner = ranked[0]!;
 
   const localMetrics: Record<string, number> = {};
@@ -320,14 +533,25 @@ export function planResultExport(input: Omit<ResultExportInput, "review">): Resu
     ? roundChildSummaries(
         collectOrchestrationRound({ project_root: projectRoot, parent_run_id: input.run_id }),
       )
-    : [];
+    : frozen?.mode === "auto_research_loop"
+      ? contract.child_run_ids.map((childId) => {
+          if (!fs.existsSync(resultPackagePath(projectRoot, childId)))
+            failA1("CHILD_RESULT_REQUIRED", `child ${childId} has no reviewed result package`);
+          const child = readResultPackage(projectRoot, childId);
+          if (child.parent_run_id !== input.run_id)
+            failA1("IDENTITY_MISMATCH", "child result names a different parent");
+          return { run_id: childId, status: child.status, summary_sha256: child.summary_sha256 };
+        })
+      : [];
 
   const head = eventLogHead(readWikiEvents(wikiRoot));
   const resultInput: ResultPackageInput = {
     run_id: input.run_id,
     parent_run_id: contract.parent_run_id,
     scope_path: contract.scope_path,
-    status: input.status ?? "succeeded",
+    status: failure === null ? (input.status ?? "succeeded") : "failed",
+    ...(terminationReason === undefined ? {} : { termination_reason: terminationReason }),
+    ...(failure === null ? {} : { failure }),
     input_snapshot_sha256: contract.identity_material.input_snapshot_sha256,
     best_idea_ref: winner.idea_id,
     evidence_refs: [`experiment:${winner.page_id}`],

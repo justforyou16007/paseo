@@ -20,6 +20,7 @@ import {
 import { readScorerRunState } from "./scorer-state.js";
 import { readTesterRunState } from "./tester-state.js";
 import { validateCandidateSnapshot } from "./workflow-compiler.js";
+import { readWorkflowStopDecision, type StopReason } from "./workflow-stop-gate.js";
 
 export interface WorkflowSummaryInput {
   project_root: string;
@@ -86,6 +87,7 @@ export interface WorkflowSummary {
   workflow_id: string;
   status: WorkflowRuntimeState["status"];
   current_phase: WorkflowRuntimeState["current_phase"];
+  stop_reason: StopReason | null;
   outer_iteration: number;
   generation: number;
   active_cycle: WorkflowRuntimeState["active_cycle"];
@@ -254,6 +256,11 @@ function publicBase(
   outerRunId: string,
 ): Omit<WorkflowSummary, "summary_sha256" | "generated_at"> {
   const state = readWorkflowRuntimeState(projectRoot, outerRunId);
+  const lastCycle = state.cycle_history.at(-1);
+  const stopReason =
+    state.stop_decision_ref === null || lastCycle === undefined
+      ? null
+      : readWorkflowStopDecision(projectRoot, outerRunId, lastCycle.outer_iteration).reason;
   return {
     schema_version: 1,
     outer_run_id: state.outer_run_id,
@@ -261,6 +268,7 @@ function publicBase(
     workflow_id: state.workflow_id,
     status: state.status,
     current_phase: state.current_phase,
+    stop_reason: stopReason,
     outer_iteration: state.outer_iteration,
     generation: state.generation,
     active_cycle: state.active_cycle,

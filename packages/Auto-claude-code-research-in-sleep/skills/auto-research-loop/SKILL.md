@@ -1,7 +1,7 @@
 ---
 name: auto-research-loop
 description: 'Metric-target-driven iterative research loop. Each iteration runs the research-pipeline main flow - full idea-discovery (reads the research wiki for prior outcomes and open problems), experiment-bridge, auto-review-loop (whose /result-to-claim termination absorbs results into the wiki) - followed by a deterministic metric stop gate. Iteration 1 reproduces the baseline described in RESEARCH_BRIEF; every later iteration is an improvement attempt. Use when the user asks for an auto research loop or autonomous quantitative improvement toward a configured Metric Target.'
-argument-hint: "[- resume <run_id>] [- max-iterations: N]"
+argument-hint: "[- resume <run_id>] [- max-iterations: N] [- max-repair-attempts: N]"
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent, mcp__paseo__create_heartbeat, mcp__paseo__delete_heartbeat
 ---
 
@@ -11,11 +11,11 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent,
 > to wait, disarm once no awaited child turn remains. The procedure lives
 > there, not here.
 
-# Auto Research Loop - Dashboard + Manifest Architecture
+# Auto Research Loop
 
-> **Paseo dispatch contract (Rules 1-5).** This skill is a thin scheduler. It dispatches sub-agents via `mcp__paseo__create_agent`, merges their `receipt.json` files into `dashboard.json` (via `dashboard-merge.js`), evaluates the deterministic stop gate on dashboard fields only (via `metric-gate.js`), and archives finished children. It performs **no analysis, no drafting, and no judgment of its own**. Every sub-skill invocation is a separate paseo agent - no in-process `Skill` tool calls.
+> **Paseo dispatch contract (Rules 1-5).** This skill dispatches sub-agents via `mcp__paseo__create_agent` and archives finished children. Workflow runs record progress in `workflow-dashboard.json` and `workflow-runtime.json`; an explicit standalone run uses `dashboard.json`, `dashboard-merge.js`, and `metric-gate.js`. The skill performs **no analysis, no drafting, and no judgment of its own**. Every sub-skill invocation is a separate paseo agent - no in-process `Skill` tool calls.
 >
-> **Rule 5 - Manifest Protocol.** All context for workers goes through `input-manifest.json`, not the orchestrator prompt. The dispatch prompt is minimal: skill name + manifest path. Workers read their manifest, do their work, write `receipt.json`. The orchestrator never reads worker output files (no `cat`, `awk`, `grep` on outputs). It reads only `dashboard.json` and `receipt.json` files.
+> **Rule 5 - Manifest Protocol.** All context for workers goes through `input-manifest.json`, not the orchestrator prompt. The dispatch prompt is minimal: skill name + manifest path. Workers read their manifest, do their work, write `receipt.json`. The orchestrator reads receipts and the active run's dashboard and runtime records. The `bridge-input` command validates the one idea output it needs.
 >
 > See: `shared-references/paseo-subagent-dispatch.md`, `shared-references/worker-manifest.md`
 
@@ -44,9 +44,10 @@ Iterative, metric-target-driven research. The loop is
    the first - merely more detailed - idea and run by experiment-bridge. After
    iteration 1 the orchestrator anchors `metric.baseline` from the measured
    value (pure dashboard arithmetic). Iterations 2+ are improvement attempts.
-4. **Metric-driven.** The loop is governed by a quantitative target parsed
-   from the active `## Metric Target` block in `CLAUDE.md` (validated by
-   `metric-gate.js config`).
+4. **Metric-driven.** The loop is governed by the frozen quantitative target
+   and required `max_iterations`. Standalone parses the active `## Metric
+   Target` block in `CLAUDE.md` with `metric-gate.js config`; Workflow reads
+   the target from its frozen policy.
 
 ### Stop-gate responsibility boundary
 
@@ -61,8 +62,9 @@ Two different "stop" concepts are in play; they never mix:
   properly. It still does not terminate the loop, and it does not advance the
   iteration.
 - **This skill's stop condition** terminates the *research loop itself*. It
-  is pure dashboard arithmetic (`metric-gate.js evaluate`): metric target,
-  direction, tolerance, iteration budget, and patience. It consumes no
+  compares the measured metric with the target, direction, tolerance, and the
+  required `max_iterations`. Workflow runs use `workflow-cli stop-gate`;
+  standalone runs use `metric-gate.js evaluate`. It consumes no
   reviewer verdict, no `metric_progress`, and no stop/continue/pivot signal -
   `/auto-review-loop` does not produce those fields.
 
@@ -85,13 +87,13 @@ and `scope_path: "/"`. The charter carries no identity fields of its own; it
 names `baseline_ref: "W_0"` and carries the frozen resource inventory, owner
 limits, tester binding and expected output.
 
-The caller supplies the charter reference, baseline reference, resource
-inventory reference, input snapshot, write scope, Wiki request and head, and
-budget. Forward those as manifest fields. Never assemble `workspace_root`,
-`wiki_root` or a resource request by concatenating prompt values, current
-checkout paths or old receipts. Use `workflow-cli.js start`/`resume` for
-startup and recovery; expansion is a separate command (Stage 2) and neither
-`start` nor `resume` performs it.
+Root setup must save a charter with `mode: "auto_research_loop"` and a positive
+`max_iterations`. Setup may also set `max_repair_attempts` (repairs allowed per
+iteration, default 3) and `max_depth` (deepest child level below the root,
+default 2); the charter always carries both. Its model policy, baseline and
+resource inventory must be saved before startup. Use the commands below; `start` reads these frozen
+records and verifies their hashes. It requires no external `--freeze` file or
+tester agent configuration.
 
 ### A child is told what to do, not who dispatched it
 
@@ -105,24 +107,149 @@ therefore cannot make its behaviour depend on where it sits in someone else's
 run, which is what keeps a child's result readable on its own terms. Reject a
 recursive invocation before dispatching any work when any of charter identity,
 execution, baseline, resource inventory, workspace, Wiki head, input snapshot,
-budget, write scope or model policy is absent, conflicting, or supplied by the
+max_iterations, write scope or model policy is absent, conflicting, or supplied by the
 prompt instead of the manifest. A missing helper or an unavailable required
 resource stops the current phase. Do not warn and continue on a local default.
 
-Three pieces of the recursive substrate are owned outside this skill itself: a
-charter-only `workflow-cli` start adapter, child charter/result-package
-persistence, and the Paseo workspace create/archive path. If one is missing at
-runtime, stop with the exact missing artifact or helper. Never document it as
-complete and never synthesize a local replacement. If the bridge command cannot
-be resolved, the status report
-must not say that the old runtime is already using it. A missing connection is
-a hard stop and a report item, not a reason to call the old path.
+The child charter is written by `bridge-expand` and carries the same mode and
+round limit. The repair cap and `max_depth` are not in the charter; `start`
+copies them from the parent's frozen policy, so a child never learns how deep it
+sits. A child runs as many iterations as its parent, so `max_depth` is what
+bounds the recursion: a run whose depth equals `max_depth` cannot dispatch
+children. Read `max_depth` from this run's `frozen-policy.json` and its depth
+from `run.json`; when they are equal, tell idea-discovery to leave `children`
+empty. `bridge-expand` refuses any position there with `MAX_DEPTH_REACHED`.
+`start` checks the child run contract and inherits the parent's
+frozen model policy, metric target, owner limits and resource hashes. A child
+never receives a task tester snapshot. If the parent policy or child charter is
+missing or differs, stop with the reported error.
+
+### Executable Workflow entry and cycle
+
+Resolve `WORKFLOW` to `.aris/dist/tools/workflow-cli.js` or
+`dist/tools/workflow-cli.js` under the project root. Resolve `RESULT_EXPORT`
+the same way to `result-export-cli.js`. Set `ROOT`, `EXECUTION_ROOT` and
+`RUN_ID` from the sealed run manifest; never choose a new id on resume. The
+following commands apply to root and child alike:
+
+```bash
+CHARTER="$ROOT/.aris/runs/$RUN_ID/charter.json"
+RUNTIME="$ROOT/.aris/runs/$RUN_ID/workflow-runtime.json"
+test -f "$CHARTER" || exit 1
+if test -f "$RUNTIME"; then
+  node "$WORKFLOW" resume --execution-root "$EXECUTION_ROOT" --project "$ROOT" --run "$RUN_ID" --charter "$CHARTER"
+else
+  node "$WORKFLOW" start --execution-root "$EXECUTION_ROOT" --project "$ROOT" --run "$RUN_ID" --charter "$CHARTER"
+fi
+```
+
+`start` and `resume` verify the positive limit and the charter identity before
+dispatch. Read `workflow-dashboard.json` and `workflow-runtime.json` after the
+command. The `current_phase` there determines recovery. For iteration `N`, set
+`WORKERS_DIR="$ROOT/.aris/runs/$RUN_ID/cycles/$N/workers"`; every worker
+manifest and receipt is directly below one child directory of this path.
+
+```bash
+# Once per new iteration. The charter is existing startup evidence.
+node "$WORKFLOW" cycle-begin --execution-root "$EXECUTION_ROOT" --project "$ROOT" --run "$RUN_ID" --wave-id "arl-$N" --wave-kind module --evidence "$CHARTER"
+# Dispatch idea-discovery under $WORKERS_DIR/$N-idea-discovery.
+node "$WORKFLOW" phase --execution-root "$EXECUTION_ROOT" --project "$ROOT" --run "$RUN_ID" --from diagnosis --to workset --evidence "$WORKERS_DIR/$N-idea-discovery/receipt.json"
+node "$WORKFLOW" bridge-input --execution-root "$EXECUTION_ROOT" --project "$ROOT" --run "$RUN_ID" --idea-discovery-manifest "$WORKERS_DIR/$N-idea-discovery/input-manifest.json"
+# Write the validated bridge input JSON from bridge-input, then expand it.
+node "$WORKFLOW" bridge-expand --execution-root "$EXECUTION_ROOT" --project "$ROOT" --run "$RUN_ID" --input "$WORKERS_DIR/$N-idea-discovery/outputs/bridge-input.json" --evidence "$WORKERS_DIR/$N-idea-discovery/receipt.json"
+# Start each child returned by bridge-expand with this skill and its sealed
+# manifest. Await its reviewed result-package; the run contract records which
+# children belong to this parent.
+# If experiment-bridge reports a failed run, record it and go to the repair
+# procedure below instead of dispatching the review:
+#   node "$WORKFLOW" bridge-failure --execution-root "$EXECUTION_ROOT" --project "$ROOT" --run "$RUN_ID" --receipt "$WORKERS_DIR/$N-experiment-bridge/receipt.json" --manifest "$WORKERS_DIR/$N-experiment-bridge/input-manifest.json" --evidence "$WORKERS_DIR/$N-experiment-bridge/receipt.json"
+# After experiment-bridge reports a complete output:
+node "$WORKFLOW" bridge-success --execution-root "$EXECUTION_ROOT" --project "$ROOT" --run "$RUN_ID" --receipt "$WORKERS_DIR/$N-experiment-bridge/receipt.json" --evidence "$WORKERS_DIR/$N-experiment-bridge/receipt.json"
+# After auto-review-loop writes a judgeable metric:
+node "$WORKFLOW" arl-cycle-complete --execution-root "$EXECUTION_ROOT" --project "$ROOT" --run "$RUN_ID" --review-receipt "$WORKERS_DIR/$N-auto-review-loop/receipt.json" --evidence "$WORKERS_DIR/$N-experiment-bridge/receipt.json"
+node "$WORKFLOW" stop-gate --execution-root "$EXECUTION_ROOT" --project "$ROOT" --run "$RUN_ID"
+```
+
+Wait for every child that `bridge-expand` started to publish its
+result-package before the iteration closes. `arl-cycle-complete`, and
+`cycle-complete` after an exhausted repair, refuse with `ROUND_INCOMPLETE` and
+name the children still out until then. A failed child counts once its failed
+package is published. If `bridge-expand` reports decomposition positions, also
+run `node "$WORKFLOW" bridge-collect --project "$ROOT" --run "$RUN_ID"
+--require-complete` before submitting the parent review.
+
+If the review verdict is `insufficient`, its `metric.current` must be `null`.
+Call `workflow-cli arl-insufficient --execution-root "$EXECUTION_ROOT"
+--project "$ROOT" --run "$RUN_ID" --review-receipt <receipt> --evidence
+<receipt>` instead of `arl-cycle-complete`. This persists `bridge-repair` and
+keeps the iteration number. A second call with the same receipt is harmless.
+
+Repairs count per iteration, across bridge failures and insufficient reviews
+alike. When the iteration has already used `max_repair_attempts`, `bridge-failure`
+and `arl-insufficient` record the failure as `exhausted` at once. Do not
+dispatch a repair; run `cycle-complete` with the failure receipt as evidence
+and continue as for an exhausted repair below.
+
+`stop-gate` reads the frozen target and round limit. It stops on `metric_met`,
+`iteration_cap`, or after an exhausted repair; the Workflow decision spells the
+first as `target_reached`. An exhausted repair stops with `no_proposal` when the
+review kept finding the evidence `insufficient`, and with `bridge_failed` when
+the experiment itself kept failing. The `bridge_failed` cycle summary carries a
+`failure` object with the location the standalone `dashboard.failure` gives:
+`worker`, `iteration`, `phase`, `error`, `repair_status`, `repair_attempts`,
+`bridge_receipt_ref` and `repair_receipt_ref`.
+On `continue`, begin the next cycle once. On `stop`, finish with the saved
+decision as evidence. Use `completed` for `target_reached` and `no_proposal`,
+`stopped` for `iteration_cap`, and `failed` for `bridge_failed`. `finish`
+refuses any other pairing. A run that could not judge its evidence ends without
+a result, which is not a failure; a run whose experiment kept breaking failed:
+
+```bash
+STOP_EVIDENCE="$ROOT/.aris/runs/$RUN_ID/cycles/$N/stop-decision.json"
+node "$WORKFLOW" finish --execution-root "$EXECUTION_ROOT" --project "$ROOT" --run "$RUN_ID" --outcome "$OUTCOME" --evidence "$STOP_EVIDENCE"
+node "$WORKFLOW" summary --execution-root "$EXECUTION_ROOT" --project "$ROOT" --run "$RUN_ID"
+node "$RESULT_EXPORT" plan --project "$ROOT" --run "$RUN_ID"
+```
+
+Have an independent reviewer approve that exact package
+digest with `node "$WIKI_SCRIPT" submit_result_review` (see "Result package
+export" below for its arguments), then run `result-export-cli.js publish --project "$ROOT" --run
+"$RUN_ID" --review-id "$REVIEW_ID"`. The exporter reads only Workflow cycle
+summaries and their review receipts for root and child metrics. A `bridge_failed`
+run exports a `failed` package whose `failure` names the location and cites the
+bridge and repair receipts, so a parent collects it as a failed child.
+
+If `workflow-runtime.json` says `current_phase: "bridge-repair"`, read
+`active_cycle.bridge_failure`. An `exhausted` failure goes straight to
+`cycle-complete`. A `pending` failure uses its saved bridge
+receipt and manifest; reattach to the existing repair worker, or dispatch one
+repair manifest with the same frozen inputs. Use the run's current iteration
+directory and keep the same repair manifest on resume:
+
+```bash
+REPAIR_DIR="$WORKERS_DIR/$N-bridge-repair"
+REPAIR_MANIFEST="$REPAIR_DIR/input-manifest.json"
+REPAIR_RECEIPT="$REPAIR_DIR/receipt.json"
+# Dispatch /auto-review-loop with $REPAIR_MANIFEST if the receipt is absent.
+# If it exists, verify that it belongs to this manifest before recording it.
+node "$WORKFLOW" bridge-repair --execution-root "$EXECUTION_ROOT" --project "$ROOT" --run "$RUN_ID" --receipt "$REPAIR_RECEIPT" --manifest "$REPAIR_MANIFEST" --evidence "$REPAIR_RECEIPT"
+```
+
+The repair manifest must name the saved `bridge_failure.frozen_input_sha256`
+and the same run and iteration. Repeating the command with the same receipt is
+safe. On
+`fixed`, the command returns to `workset`; retry the saved bridge input. On `exhausted`, run
+`workflow-cli cycle-complete --execution-root "$EXECUTION_ROOT" --project
+"$ROOT" --run "$RUN_ID" --evidence "$REPAIR_RECEIPT"`, then `stop-gate`;
+the stop reason is `bridge_failed` after an execution failure and `no_proposal`
+after an insufficient review. Never create a second idea or increment the
+iteration during repair.
 
 ## One sequence at depth 0, 1 and 2
 
-Every run walks the same phases regardless of depth. A child is a standalone
-run, so nothing outside it owns this sequence - the loop walks it, and
-`dashboard-merge` is what decides which worker may write from which phase:
+Every run walks the same worker sequence regardless of depth. A child has its
+own Workflow runtime. The Workflow commands above record its phase changes;
+the standalone commands below use `dashboard-merge`:
 
 ```text
 idea-discovery
@@ -140,7 +267,8 @@ its own: only the repair handler may leave it, and it always returns to
 
 ## Dispatch Pattern
 
-Every stage follows the same cycle. This is shown once here; each stage section
+The remaining dashboard and run-state procedure applies only to an explicit
+depth-0 `standalone` invocation. Every stage follows the same cycle. This is shown once here; each stage section
 below specifies only what differs (inputs, context, dispatch skill).
 Stages 1-3 use the iteration-scoped directory shown below. The non-repeating
 `summary` and `paper-writing` phases explicitly override `WORKER_DIR` with their
@@ -218,7 +346,7 @@ resume to skip to summary. Instead:
 | run-state phase | When `done` | When `accepted` | When `skipped` |
 |---|---|---|---|
 | `init` | Preconditions validated, dashboard created | Deterministic: dashboard exists | Never |
-| `loop` | Normal stop gate fired (metric met / budget exhausted / patience exhausted); invalid metric sets this phase to `failed` instead | After summary phase completes successfully | Never |
+| `loop` | Metric target or maximum iteration count reached; invalid metric sets this phase to `failed` instead | After summary phase completes successfully | Never |
 | `summary` | NARRATIVE_REPORT.md written | Deterministic or codex reviewer | Never |
 | `paper-writing` | Paper compiled and audits pass | `deterministic:verify_paper_audits.sh` | `AUTO_WRITE=false` |
 
@@ -231,8 +359,8 @@ The dashboard tracks intra-iteration state for crash-safe resume:
 | `iteration` | Current iteration number (1-based) |
 | `current_phase` | Last completed or in-progress phase within the iteration (`idea-discovery` -> `experiment-bridge` -> `auto-review-loop`) |
 | `status` | `running` / `finishing` / `completed` / `invalid` / `failed` |
-| `stop_reason` | `null` while looping; one of `metric_met`, `budget_exhausted`, `patience_exhausted`, `invalid_metric` when the stop gate fires |
-| `config` | Immutable run inputs needed after restart: auto-write/render flags, patience |
+| `stop_reason` | `null` while looping; one of `metric_met`, `iteration_cap`, `invalid_metric` when the stop gate fires |
+| `config` | Immutable run inputs needed after restart: auto-write/render flags, required `max_iterations` and `max_repair_attempts` |
 
 **Status values:**
 - `running` - iteration loop is active
@@ -277,10 +405,10 @@ paper-writing  Paper Writing (optional; skipped on invalid_metric)
 
 | Constant | Value | Notes |
 |----------|-------|-------|
-| `MAX_ITERATIONS` | 5 | Override via `- max-iterations: N`. |
+| `MAX_ITERATIONS` | required positive integer | Supply via `- max-iterations: N`. |
+| `MAX_REPAIR_ATTEMPTS` | integer >= 0, default 3 | Bridge repairs allowed per iteration. Supply via `- max-repair-attempts: N`. |
 | `TARGET_METRIC` | from CLAUDE.md | Parsed + validated by `metric-gate.js config` from the active `## Metric Target` block. |
 | `TARGET_TOLERANCE` | from CLAUDE.md | Default 0.01. `current >= target - abs(target) * tolerance` (higher_better) or `current <= target + abs(target) * tolerance` (lower_better). |
-| `PATIENCE` | 2 | Max consecutive iterations without metric improvement (derived from `metric.history`, anchored on `metric.baseline`) before force stop. |
 | `DASHBOARD_PATH` | `.aris/runs/<run_id>/dashboard.json` | Single source of truth. |
 | `WORKERS_DIR` | `.aris/runs/<run_id>/workers/` | All worker manifests and receipts. |
 
@@ -289,6 +417,12 @@ Dashboard schema: see `shared-references/worker-manifest.md` section "dashboard.
 ---
 
 ## Phase 0: Preconditions + Initialize
+
+Use the Workflow entry above whenever the invocation names a charter. A
+missing charter is an error and cannot select the standalone branch.
+
+The shell procedure below applies only when the invocation explicitly says
+`standalone`. Standalone runs use `dashboard.json` and `run-state.json`.
 
 ```bash
 _pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
@@ -445,7 +579,9 @@ if [ -n "$ARG_RESUME" ]; then
     CURRENT_PHASE=$(jq -r '.current_phase' "$DASHBOARD")
     AUTO_WRITE=$(jq -r '.config.auto_write // false' "$DASHBOARD")
     RENDER_HTML=$(jq -r '.config.render_html // true' "$DASHBOARD")
-    PATIENCE=$(jq -r '.config.patience // 2' "$DASHBOARD")
+    jq -e '.config.max_iterations | type == "number" and . >= 1 and . == floor' "$DASHBOARD" >/dev/null || {
+        echo "ERROR: saved max_iterations is missing or invalid" >&2; exit 1;
+    }
 
     if [ "$STATUS" = "invalid" ]; then
         INVALID_REASON=$(jq -r '.stop_reason // "invalid_metric"' "$DASHBOARD")
@@ -460,7 +596,14 @@ if [ -n "$ARG_RESUME" ]; then
         exit 1
     fi
 
-    if [ "$STATUS" = "completed" ]; then
+    if [ "$STATUS" = "completed" ] && [ "$(jq -r '.outcome // empty' "$DASHBOARD")" = "no_proposal" ]; then
+        # The exhausted repair is terminal even though no numeric metric exists.
+        # Do not evaluate metric-gate or dispatch another idea.
+        if [ "$RESUME_OUTER" = "loop" ]; then
+            node "$RUN_STATE" set "$ROOT" "$RUN_ID" loop done --artifact "$ROOT/$DASHBOARD"
+        fi
+        RESUME_OUTER="summary"
+    elif [ "$STATUS" = "completed" ]; then
         echo "ERROR: dashboard is completed but run-state still requires $RESUME_OUTER. Refusing to skip an acceptance obligation."
         exit 1
     fi
@@ -489,6 +632,14 @@ if [ -n "$ARG_RESUME" ]; then
 
 else
     # ---- FRESH START PATH ----
+    case "${ARG_MAX_ITERATIONS:-}" in
+      ''|*[!0-9]*) echo "ERROR: max-iterations must be a positive integer" >&2; exit 1 ;;
+    esac
+    [ "$ARG_MAX_ITERATIONS" -ge 1 ] || { echo "ERROR: max-iterations must be >= 1" >&2; exit 1; }
+    ARG_MAX_REPAIR_ATTEMPTS="${ARG_MAX_REPAIR_ATTEMPTS:-3}"
+    case "$ARG_MAX_REPAIR_ATTEMPTS" in
+      ''|*[!0-9]*) echo "ERROR: max-repair-attempts must be an integer >= 0" >&2; exit 1 ;;
+    esac
     RUN_ID=$(date +%Y%m%d-%H%M%S)-research-loop
     DASHBOARD=".aris/runs/$RUN_ID/dashboard.json"
     WORKERS_DIR=".aris/runs/$RUN_ID/workers"
@@ -496,7 +647,6 @@ else
 
     AUTO_WRITE=${AUTO_WRITE:-false}
     RENDER_HTML=${RENDER_HTML:-true}
-    PATIENCE=${PATIENCE:-2}
 
     # Emit the paseo run config ONCE (provider/mode/thinking for every
     # create_agent below come from $CFG - never hardcoded, per
@@ -522,11 +672,8 @@ else
   "config": {
     "auto_write": $AUTO_WRITE,
     "render_html": $RENDER_HTML,
-    "patience": $PATIENCE$(
-      # Optional backstop. Unset means no round limit: what bounds the run is
-      # its budget ledger and its metric target, not a round count.
-      [ -n "${ARG_MAX_ITERATIONS:-}" ] && printf ',\n    "max_iterations": %s' "$ARG_MAX_ITERATIONS"
-    )
+    "max_iterations": $ARG_MAX_ITERATIONS,
+    "max_repair_attempts": $ARG_MAX_REPAIR_ATTEMPTS
   },
   "metric": $METRIC_JSON,
   "best_idea": null,
@@ -647,7 +794,10 @@ and the frozen input hash. Dispatch `/auto-review-loop` with
 Merging its repair receipt returns the run to `experiment-bridge` on
 `repair_status = "fixed"`, and ends the run as `failed` on `exhausted`. The
 retry must carry the same frozen inputs; a changed input is a new candidate,
-not a repair.
+not a repair. Repairs count per iteration against `config.max_repair_attempts`.
+A failure that arrives after the iteration has used them is recorded as
+`exhausted` straight away (merge prints `bridge-repair-exhausted`) and ends the
+run the same way; do not dispatch a repair for it.
 
 After merge, set `current_phase = "auto-review-loop"` and proceed to Stage 3.
 
@@ -692,13 +842,11 @@ from a directory listing or left to the agent's guess.
 - `BRIDGE_EVIDENCE_PATH` uses the exact sibling `.../receipt.json` entry in
   [`shared-references/bridge-expansion.md`](../shared-references/bridge-expansion.md).
 
-The command delegates the child plan, resource classification, budget
-settlement and dynamic matrix to
+The command delegates the child plan, resource classification and dynamic matrix to
 `planExperimentBridge` in `src/tools/experiment-bridge.ts`. Do not reproduce
 those decisions in this skill or in a worker. The bridge is BFS by default.
-DFS needs a completed round, bottleneck evidence, positive remaining depth
-budget and an independent acceptance condition. A depth budget of zero plans no
-children; a child is checked against its own `charter_expected_output` rather
+DFS needs a completed round, bottleneck evidence and an independent acceptance
+condition. A child is checked against its own `charter_expected_output` rather
 than the parent's full-workflow metric.
 
 The command then passes the unchanged hashed plan to
@@ -790,9 +938,8 @@ generation's assembly against the last one's, which is what makes the
 decomposition the thing being optimized.
 
 If more generations are intended, say so once in the upstream artifact's
-`remaining_generations` (see `/idea-discovery`'s bridge contract). The bridge
-splits this run's budget across the generations still to come, so the first one
-cannot spend all of it.
+`remaining_generations` (see `/idea-discovery`'s bridge contract). Each completed
+generation counts toward the run's frozen `max_iterations`.
 
 ## Result status routing
 
@@ -871,7 +1018,7 @@ a path:
   same candidate and the same iteration. The repair tunes the experiment (see
   `/dse-loop`), then the bridge reruns and the new evidence is reviewed again.
   Do not send this back to `idea-discovery`: nobody asked for a new idea. When
-  the repair budget runs out the run completes with no result rather than
+  repair reports `exhausted`, the run completes with no result rather than
   failing.
 
 ---
@@ -935,8 +1082,8 @@ same candidate and the same iteration. The repair is a search over the knobs
 runtime flags; dispatch `/dse-loop` to do the tuning. Changing a value is a
 repair, changing which question the experiment asks is not.
 
-An unjudgeable result never enters `metric.history`, and when the repair budget
-runs out the run completes with no result rather than failing - "we could not
+An unjudgeable result never enters `metric.history`, and when repair reports
+`exhausted` the run completes with no result rather than failing - "we could not
 measure this" is different evidence from "we measured this and it lost".
 
 After merge, set `current_phase = "metric-gate"` and run the Baseline
@@ -991,19 +1138,11 @@ identical answer - nothing is accumulated across calls.
 |---|---|---|---|
 | 1 | `metric.current` null / non-finite, or metric config (target/direction/tolerance/history) invalid | `invalid_metric` | error - stop and report; never continue on a broken metric |
 | 2 | `current >= target - abs(target) * tolerance` (higher_better) or `current <= target + abs(target) * tolerance` (lower_better) | `metric_met` | arithmetic success |
-| 3 | the run's budget ledger cannot fund another reservation | `budget_exhausted` | pure budget termination |
-| 4 | trailing no-improvement iterations in `metric.history` >= `patience` | `patience_exhausted` | pure arithmetic termination |
-| 5 | `config.max_iterations` is set and `iteration >= config.max_iterations` | `iteration_cap` | backstop only - omit the field and there is no round limit |
+| 3 | `iteration >= config.max_iterations` | `iteration_cap` | required round limit |
 
-- **Quality vs budget.** `metric_met` is arithmetic. `budget_exhausted` and
-  `patience_exhausted` are pure budget/arithmetic terminations - they say
-  nothing about quality. The iteration's quality verdict lives separately in
-  `last_review` and never affects this table.
-- **Patience is derived, not accumulated.** The no-progress streak is computed
-  from `metric.history` on every evaluation (direction-aware: an entry counts
-  as progress only if it improves on the best value seen before it, seeded
-  from `metric.baseline`). There is no `consecutive_pivots` counter to
-  double-count across a crash + resume.
+- `metric_met` is arithmetic. `iteration_cap` records that the configured
+  number of idea iterations has run. The iteration's quality verdict lives in
+  `last_review` and does not alter the stop decision.
 - **Provenance.** Whichever row fires, the `loop` phase is accepted with
   `deterministic:<stop_reason>` - the actual termination basis. A reviewer
   verdict (which may well be `not ready`) is never attached to a deterministic
@@ -1030,7 +1169,7 @@ If `stop_reason` is non-empty:
      exit 1
      ```
 
-     **Otherwise** (`metric_met`, `budget_exhausted`, `patience_exhausted`):
+     **Otherwise** (`metric_met`, `iteration_cap`):
      mark the loop as done and proceed to Summary:
      ```bash
      node "$RUN_STATE" set "$ROOT" "$RUN_ID" loop done \
@@ -1330,6 +1469,7 @@ STATUS=$(jq -r '.status' "$DASHBOARD")
 | `summary` | `finishing` | Resume summary |
 | `paper-writing` | `finishing` | Resume paper-writing |
 | any | `failed` | Report `dashboard.failure` and exit without dispatching |
+| `loop` | `bridge_repair_pending` | Read `bridge_failure` and its frozen receipt/manifest refs. If a repair receipt is already merged, follow its persisted `fixed` or `exhausted` state. Otherwise reattach to the existing repair worker, or dispatch the same frozen repair manifest once. Merge its receipt once, then retry the same bridge input on `fixed`; treat `exhausted` as terminal. |
 
 The `failed` row short-circuits every row above it: the resume code checks
 `status` before consulting `RESUME_OUTER`, because a worker in any phase -
@@ -1373,10 +1513,10 @@ state fails validation.
 ## Stop Gate (deterministic)
 
 > **STOP is decided by dashboard arithmetic only** (`metric-gate.js evaluate`):
-> the metric target/direction/tolerance, the iteration budget, and patience
+> the metric target/direction/tolerance and required `max_iterations`
 > derived from `metric.history` anchored on `metric.baseline`. Stop reasons are
 > mutually exclusive
-> (`invalid_metric` > `metric_met` > `budget_exhausted` > `patience_exhausted`).
+> (`invalid_metric` > `metric_met` > `iteration_cap`).
 >
 > The iteration's review verdict (`last_review`, from `/auto-review-loop`) is a
 > quality verdict about the current iteration's work. It is recorded and
@@ -1463,7 +1603,7 @@ reported, not as your own finding.
 
 10. **Providers come from the run's paseo-config.json.** `render_w_agent_prompt.sh --emit-config` emits it once at startup; every `create_agent` reads `executor_provider`/`executor_mode`/`executor_thinking` from it. A missing or invalid provider configuration fails dispatch.
 
-11. **Patience enforcement.** `metric-gate.js evaluate` derives the no-progress streak from `metric.history` (direction-aware, seeded from `metric.baseline`) and stops with `patience_exhausted` when it reaches `config.patience`. No counter is accumulated, so resume is idempotent.
+11. **Iteration limit.** Persist a positive `config.max_iterations` at start. `metric-gate.js evaluate` stops at that count unless the metric target was already reached. Persist `config.max_repair_attempts` beside it; `dashboard-merge` stops repairing an iteration at that count.
 
 12. **Review verdicts are not stop signals.** `/auto-review-loop`'s verdict/score end the current iteration's review rounds - nothing more. The loop stops only via the deterministic gate, and the `loop` phase is accepted with `deterministic:<stop_reason>` provenance.
 

@@ -87,7 +87,10 @@ run identity, frozen Wiki query hash, the candidate list, plan hash/paths, budge
 used, and evidence references. List dispatched tasks in `children`; each child
 declares its position, experiment plan, resource request, and complete local
 charter (task, expected output, inputs, measurement, baseline, resources, and
-policy). The bridge checks the frozen scope and reserves this run's budget.
+policy). The bridge checks the frozen scope and, outside an Auto Research
+Loop, reserves this run's budget. When the Auto Research Loop orchestrator says
+this run is at its maximum depth, leave `children` empty; the bridge refuses
+children there with `MAX_DEPTH_REACHED`.
 Declare `strategy` (`bfs` or `dfs`) and `strategy_reason` in the plan; these are
 research decisions made here.
 

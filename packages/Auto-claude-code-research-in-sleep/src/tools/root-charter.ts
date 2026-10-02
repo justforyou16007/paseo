@@ -56,7 +56,11 @@ export interface RootCharter {
   baseline_ref: "W_0";
   baseline_sha256: string;
   optimizable_scope: OptimizablePosition[];
-  budget: unknown;
+  mode?: "auto_research_loop";
+  max_iterations?: number;
+  max_repair_attempts?: number;
+  max_depth?: number;
+  budget?: unknown;
 
   owner_limits: Record<string, unknown>;
   measurement: RootMeasurement;
@@ -95,12 +99,21 @@ export interface RootCharterInput {
   input_snapshot_refs?: readonly string[];
   constraints?: Record<string, unknown>;
   budget?: unknown;
+  mode?: "auto_research_loop";
+  max_iterations?: number;
+  max_repair_attempts?: number;
+  max_depth?: number;
 
   charter_id?: string;
   [key: string]: unknown;
 }
 
 const CHARTER_SCHEMA = "root-charter-v1";
+
+// Auto Research Loop defaults when setup omits the limit. Both are frozen in
+// the charter, so a resumed or child run never picks up a changed default.
+export const DEFAULT_MAX_REPAIR_ATTEMPTS = 3;
+export const DEFAULT_MAX_DEPTH = 2;
 
 function listOfStrings(value: unknown, location: string): string[] {
   if (!Array.isArray(value)) failA1("INVALID_VALUE", "expected an array", location);
@@ -234,7 +247,13 @@ function charterWithoutHash(value: Omit<RootCharter, "charter_sha256">): object 
     baseline_ref: value.baseline_ref,
     baseline_sha256: value.baseline_sha256,
     optimizable_scope: value.optimizable_scope,
-    budget: value.budget,
+    ...(value.mode === undefined ? {} : { mode: value.mode }),
+    ...(value.max_iterations === undefined ? {} : { max_iterations: value.max_iterations }),
+    ...(value.max_repair_attempts === undefined
+      ? {}
+      : { max_repair_attempts: value.max_repair_attempts }),
+    ...(value.max_depth === undefined ? {} : { max_depth: value.max_depth }),
+    ...(value.budget === undefined ? {} : { budget: value.budget }),
 
     owner_limits: value.owner_limits,
     measurement: value.measurement,
@@ -279,6 +298,24 @@ function testerRef(input: RootCharterInput): string {
 }
 
 export function createRootCharter(input: RootCharterInput): RootCharter {
+  if (input.mode === "auto_research_loop") {
+    requireInteger(input.max_iterations, "root_charter.max_iterations", 1);
+    if (input.max_repair_attempts !== undefined)
+      requireInteger(input.max_repair_attempts, "root_charter.max_repair_attempts", 0);
+    if (input.max_depth !== undefined) requireInteger(input.max_depth, "root_charter.max_depth", 0);
+    if (input.budget !== undefined)
+      failA1("INVALID_VALUE", "Auto Research Loop root charter cannot contain budget");
+  } else if (
+    input.mode !== undefined ||
+    input.max_iterations !== undefined ||
+    input.max_repair_attempts !== undefined ||
+    input.max_depth !== undefined
+  ) {
+    failA1(
+      "INVALID_VALUE",
+      "max_iterations, max_repair_attempts and max_depth require Auto Research Loop mode",
+    );
+  }
   if (!isRecord(input))
     failA1("INVALID_VALUE", "root charter input must be an object", "root_charter");
   const runId = assertIdentifier(input.run_id, "root_charter.run_id");
@@ -334,7 +371,20 @@ export function createRootCharter(input: RootCharterInput): RootCharter {
     baseline_ref: "W_0",
     baseline_sha256: baseline.baseline_sha256,
     optimizable_scope: baseline.optimizable_scope,
-    budget: input.budget === undefined ? null : input.budget,
+    ...(input.mode === "auto_research_loop"
+      ? {
+          mode: input.mode,
+          max_iterations: requireInteger(input.max_iterations, "root_charter.max_iterations", 1),
+          max_repair_attempts:
+            input.max_repair_attempts === undefined
+              ? DEFAULT_MAX_REPAIR_ATTEMPTS
+              : requireInteger(input.max_repair_attempts, "root_charter.max_repair_attempts", 0),
+          max_depth:
+            input.max_depth === undefined
+              ? DEFAULT_MAX_DEPTH
+              : requireInteger(input.max_depth, "root_charter.max_depth", 0),
+        }
+      : { budget: input.budget === undefined ? null : input.budget }),
 
     owner_limits: ownerLimits,
     measurement: {
@@ -378,6 +428,10 @@ export function validateRootCharter(value: unknown, location = "root_charter"): 
       "baseline_sha256",
       "optimizable_scope",
       "budget",
+      "mode",
+      "max_iterations",
+      "max_repair_attempts",
+      "max_depth",
 
       "owner_limits",
       "measurement",
@@ -389,7 +443,14 @@ export function validateRootCharter(value: unknown, location = "root_charter"): 
     location,
   );
   if (value.schema_version !== 1) failA1("CORRUPT_CHARTER", "schema_version must be 1", location);
-  if (!Object.hasOwn(value, "budget"))
+  if (value.mode === "auto_research_loop") {
+    if (Object.hasOwn(value, "budget"))
+      failA1(
+        "INVALID_VALUE",
+        "Auto Research Loop charter cannot contain budget",
+        `${location}.budget`,
+      );
+  } else if (!Object.hasOwn(value, "budget"))
     failA1("CORRUPT_CHARTER", "budget is required", `${location}.budget`);
   if (value.baseline_ref !== "W_0")
     failA1("INVALID_BASELINE", "root baseline_ref must be W_0", `${location}.baseline_ref`);
@@ -488,7 +549,18 @@ export function validateRootCharter(value: unknown, location = "root_charter"): 
     baseline_ref: "W_0",
     baseline_sha256: normalizedRefs.baseline_sha256,
     optimizable_scope: scopeValue as OptimizablePosition[],
-    budget: value.budget,
+    ...(value.mode === "auto_research_loop"
+      ? {
+          mode: value.mode,
+          max_iterations: requireInteger(value.max_iterations, `${location}.max_iterations`, 1),
+          max_repair_attempts: requireInteger(
+            value.max_repair_attempts,
+            `${location}.max_repair_attempts`,
+            0,
+          ),
+          max_depth: requireInteger(value.max_depth, `${location}.max_depth`, 0),
+        }
+      : { budget: value.budget }),
 
     owner_limits: normalizedOwnerLimits,
     measurement: normalizedMeasurement,

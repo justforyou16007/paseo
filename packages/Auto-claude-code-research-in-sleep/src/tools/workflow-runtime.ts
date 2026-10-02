@@ -20,6 +20,7 @@ import {
   requireInteger,
   requireString,
   validateWorkflowSpec,
+  validateOwnerLimits,
   type WorkflowSpec,
 } from "./workflow-spec.js";
 import { canonicalJsonSha256 } from "./canonical-json.js";
@@ -63,6 +64,8 @@ import {
   frozenPolicyPath,
   frozenPolicyFingerprint,
   readFrozenPolicy,
+  readLegacyFrozenPolicy,
+  saveAutoResearchFrozenPolicy,
   readWorkflowCycleSummary,
   readWorkflowRuntimeState,
   synchronizeWorkflowHistory,
@@ -78,11 +81,13 @@ import {
   type ActiveOuterCycle,
   type OuterBridgeFailure,
   type FreezeOuterRunInput,
+  type AutoResearchFrozenPolicy,
   type OuterBudgetCategory,
   type OuterBudgetReservation,
   type OuterChildKind,
   type OuterChildRecord,
   type OuterChildStatus,
+  type OuterCycleFailure,
   type OuterCycleSummary,
   type OuterPhase,
   type OuterPhaseHistoryEntry,
@@ -91,6 +96,14 @@ import {
   saveFrozenPolicy,
 } from "./workflow-state.js";
 import { readResultPackage, resultPackagePath, type ResultPackage } from "./result-package.js";
+import { requireCollectedChildren } from "./orchestration-round.js";
+import { readRootCharter } from "./root-charter.js";
+import { validateRunCharter } from "./run-charter.js";
+import { readBaselineScope } from "./baseline-scope.js";
+import { readResourceInventory } from "./resource-inventory.js";
+import { loadTaskSetup } from "./task-setup.js";
+import { resolveRunWikiScope } from "./wiki-scope.js";
+import { readMetricConfig } from "./metric-gate.js";
 import {
   acquireRunScope,
   assertRunReferenceCompatible,
@@ -331,6 +344,7 @@ export interface RecordPromotionGateInput extends OuterRunIdentity {
 export interface CompleteOuterCycleInput extends OuterRunIdentity {
   status?: "completed" | "failed" | "stopped";
   target_reached?: boolean;
+  metric_value?: number | null;
   evidence_paths: readonly string[];
   candidate_ids?: readonly string[];
   finalist_id?: string | null;
@@ -339,6 +353,13 @@ export interface CompleteOuterCycleInput extends OuterRunIdentity {
   promotion_result?: OuterCycleSummary["promotion_result"];
   tester_improved?: boolean | null;
 }
+
+export interface CompleteAutoResearchCycleInput extends OuterRunIdentity {
+  review_receipt_path: string;
+  evidence_paths: readonly string[];
+}
+
+export type RecordAutoResearchInsufficientInput = CompleteAutoResearchCycleInput;
 
 export interface ReserveOuterBudgetInput extends OuterRunIdentity {
   reservation_id: string;
@@ -354,7 +375,7 @@ export interface CloseOuterBudgetInput extends OuterRunIdentity {
 }
 
 export interface RecordStopDecisionInput extends OuterRunIdentity {
-  policy: StopPolicy;
+  policy?: StopPolicy;
   budget?: Pick<StopBudgetSnapshot, "limit" | "unit">;
 }
 
@@ -416,9 +437,14 @@ function normalizedIdentity(input: OuterRunIdentity): NormalizedOuterRunIdentity
 
     run_identity: input.run_identity ?? {},
     output_hashes: input.output_hashes ?? {},
-    task_id: input.task_id === undefined ? "" : assertIdentifier(input.task_id, "task_id"),
+    task_id:
+      input.task_id === undefined || input.task_id === ""
+        ? ""
+        : assertIdentifier(input.task_id, "task_id"),
     workflow_id:
-      input.workflow_id === undefined ? "" : assertIdentifier(input.workflow_id, "workflow_id"),
+      input.workflow_id === undefined || input.workflow_id === ""
+        ? ""
+        : assertIdentifier(input.workflow_id, "workflow_id"),
   };
 }
 
@@ -710,6 +736,52 @@ function validateOuterBridgeFiles(
   };
 }
 
+function validateAutoResearchReviewFiles(
+  projectRoot: string,
+  outerRunId: string,
+  cycle: ActiveOuterCycle,
+  receiptPathInput: string,
+): { receipt: { absolute: string; ref: string }; value: Record<string, unknown> } {
+  const receipt = resolveOuterCycleFile(
+    projectRoot,
+    outerRunId,
+    cycle.outer_iteration,
+    receiptPathInput,
+    "receipt.json",
+    "review_receipt_path",
+  );
+  const manifest = resolveOuterCycleFile(
+    projectRoot,
+    outerRunId,
+    cycle.outer_iteration,
+    path.join(path.dirname(receipt.absolute), "input-manifest.json"),
+    "input-manifest.json",
+    "review_manifest_path",
+  );
+  const value = readStateFile(receipt.absolute);
+  const manifestValue = readStateFile(manifest.absolute);
+  if (!isRecord(value) || !isRecord(manifestValue))
+    failA1("INVALID_EXECUTION_RECEIPT", "ARL review receipt and manifest must be JSON objects");
+  assertOptionalOuterIdentity(value, outerRunId, cycle, "ARL review receipt");
+  assertOptionalOuterIdentity(manifestValue, outerRunId, cycle, "ARL review manifest");
+  if (
+    value.worker !== "auto-review-loop" ||
+    manifestValue.worker !== "auto-review-loop" ||
+    value.phase !== "auto-review-loop" ||
+    manifestValue.phase !== "auto-review-loop" ||
+    value.iteration !== cycle.outer_iteration ||
+    manifestValue.iteration !== cycle.outer_iteration ||
+    value.status !== "done" ||
+    !isRecord(value.dashboard_patch)
+  )
+    failA1(
+      "INVALID_EXECUTION_RECEIPT",
+      "ARL review receipt and manifest identity or status is invalid",
+    );
+  manifestOutputDirectory(projectRoot, manifest.absolute, manifestValue);
+  return { receipt, value };
+}
+
 function assertStoredBridgeFile(
   projectRoot: string,
   outerRunId: string,
@@ -836,9 +908,8 @@ export function runAutoResearchBridge(input: AutoResearchBridgeInput): AutoResea
   const normalized = normalizedIdentity(input);
   const evidence = hashOuterEvidence(normalized.project_root, input.evidence_paths);
   const bridgeInput = validateAutomaticBridgeInput(input.bridge);
-  // Whose expansion this is has to be settled before planning, because
-  // planning now reads and writes this run's budget and position index. A
-  // plan for another parent must not touch either.
+  // Settle ownership before planning touches this run's position index or,
+  // for legacy tester workflows, its budget.
   if (!isRecord(bridgeInput.charter) || bridgeInput.charter.run_id !== normalized.outer_run_id)
     failA1(
       "IDENTITY_MISMATCH",
@@ -1390,7 +1461,7 @@ function assertFrozenTesterAgentConfig(
 ): void {
   const config = readRequiredTesterAgentConfig(input, required);
   if (config === null) return;
-  const frozen = readFrozenPolicy(projectRoot, outerRunId);
+  const frozen = readLegacyFrozenPolicy(projectRoot, outerRunId);
   if (
     frozen.tester_agent_config === undefined ||
     frozen.tester_agent_sha256 === undefined ||
@@ -1521,7 +1592,166 @@ function startOuterRunInternal(
 }
 
 export function startOuterRun(input: StartOuterRunInput): WorkflowRuntimeState {
-  return startOuterRunInternal(input, true);
+  return startOuterRunInternal(input, normalizedIdentity(input).depth === 0);
+}
+
+function autoResearchPolicy(input: Required<OuterRunIdentity>): AutoResearchFrozenPolicy {
+  const contract = requireRunContract(input.project_root, input.outer_run_id);
+  const rawChildCharter =
+    input.depth === 0
+      ? null
+      : readStateFile(runOwnedPath(input.project_root, input.outer_run_id, "charter.json"));
+  if (
+    rawChildCharter !== null &&
+    isRecord(rawChildCharter) &&
+    Object.hasOwn(rawChildCharter, "task_id")
+  )
+    failA1("CHILD_TESTER_FORBIDDEN", "child charter cannot carry root task identity");
+  const charter =
+    input.depth === 0
+      ? readRootCharter(input.project_root, input.outer_run_id)
+      : validateRunCharter(rawChildCharter);
+  if (charter.mode !== "auto_research_loop" || charter.max_iterations === undefined)
+    failA1("INVALID_VALUE", "Auto Research Loop needs a charter with max_iterations");
+  if (
+    contract.identity_material.charter_sha256 !== charter.charter_sha256 ||
+    contract.identity_material.code_baseline_sha256 !== charter.code_baseline_sha256
+  )
+    failA1("IDENTITY_MISMATCH", "charter differs from run.json");
+  let taskId: string;
+  let workflowId: string;
+  let taskSetupRevision: string;
+  let ownerLimits;
+  let maxBundledPositions;
+  let modelUsagePolicy;
+  let metric;
+  let maxRepairAttempts: number;
+  let maxDepth: number;
+  if (input.depth === 0) {
+    if (!("task_id" in charter)) failA1("IDENTITY_MISMATCH", "root charter is required");
+    const root = readRootCharter(input.project_root, input.outer_run_id);
+    const baseline = readBaselineScope(input.project_root, input.outer_run_id);
+    const resource = readResourceInventory(input.project_root, input.outer_run_id);
+    if (
+      baseline.baseline_sha256 !== root.baseline_sha256 ||
+      resource.inventory_sha256 !== root.resource_inventory_sha256
+    )
+      failA1("IDENTITY_MISMATCH", "root charter baseline or resources changed");
+    const setup = loadTaskSetup(input.project_root, root.workflow_id, root.setup_revision);
+    taskId = root.task_id;
+    workflowId = root.workflow_id;
+    taskSetupRevision = root.setup_revision;
+    const { max_bundled_positions_per_graph, ...workflowLimits } = root.owner_limits;
+    ownerLimits = validateOwnerLimits(workflowLimits, "root_charter.owner_limits");
+    maxBundledPositions = requireInteger(
+      max_bundled_positions_per_graph,
+      "root_charter.owner_limits.max_bundled_positions_per_graph",
+      0,
+    );
+    modelUsagePolicy = setup.model_usage_policy;
+    const configuredMetric = readMetricConfig(input.project_root);
+    if (configuredMetric.status !== "ok")
+      failA1(
+        "INVALID_VALUE",
+        `Auto Research Loop metric target is unavailable: ${configuredMetric.reason}`,
+      );
+    metric = configuredMetric.config;
+    if (root.max_repair_attempts === undefined || root.max_depth === undefined)
+      failA1(
+        "INVALID_VALUE",
+        "Auto Research Loop root charter needs max_repair_attempts and max_depth",
+      );
+    maxRepairAttempts = root.max_repair_attempts;
+    maxDepth = root.max_depth;
+  } else {
+    if (input.parent_run_id === null) failA1("RUN_DEPTH_MISMATCH", "child needs parent");
+    const parent = readFrozenPolicy(input.project_root, input.parent_run_id);
+    if (parent.mode !== "auto_research_loop")
+      failA1("IDENTITY_MISMATCH", "child parent is not ARL");
+    if (
+      parent.baseline_sha256 !== charter.baseline_sha256 ||
+      parent.resource_inventory_sha256 !== charter.resource_inventory_sha256 ||
+      parent.max_iterations !== charter.max_iterations ||
+      parent.task_setup_revision !== charter.policy_revision
+    )
+      failA1("IDENTITY_MISMATCH", "child charter exceeds or differs from parent frozen policy");
+    taskId = parent.task_id;
+    workflowId = parent.workflow_id;
+    taskSetupRevision = parent.task_setup_revision;
+    ownerLimits = parent.owner_limits;
+    maxBundledPositions = parent.max_bundled_positions_per_graph;
+    modelUsagePolicy = parent.model_usage_policy;
+    metric = parent.metric;
+    // The loop limits pass down through frozen policies, not charters.
+    maxRepairAttempts = parent.max_repair_attempts;
+    maxDepth = parent.max_depth;
+    if (input.depth > maxDepth)
+      failA1("RUN_DEPTH_MISMATCH", `run depth ${input.depth} exceeds max_depth ${maxDepth}`);
+  }
+  return {
+    schema_version: 1,
+    mode: "auto_research_loop",
+    outer_run_id: input.outer_run_id,
+    task_id: taskId,
+    workflow_id: workflowId,
+    task_setup_revision: taskSetupRevision,
+    charter_sha256: charter.charter_sha256,
+    baseline_sha256: charter.baseline_sha256,
+    resource_inventory_sha256: charter.resource_inventory_sha256,
+    input_snapshot_sha256: contract.identity_material.input_snapshot_sha256,
+    wiki_scope: resolveRunWikiScope(input.project_root, input.outer_run_id),
+    max_iterations: charter.max_iterations,
+    max_repair_attempts: maxRepairAttempts,
+    max_depth: maxDepth,
+    metric,
+    owner_limits: ownerLimits,
+    max_bundled_positions_per_graph: maxBundledPositions,
+    model_usage_policy: modelUsagePolicy,
+    frozen_at: now(),
+  };
+}
+
+export function startAutoResearchRun(input: OuterRunIdentity): WorkflowRuntimeState {
+  const normalized = normalizedIdentity(input);
+  const policy = autoResearchPolicy(normalized);
+  for (const name of [
+    "workflow-runtime.json",
+    "workflow-dashboard.json",
+    "frozen-policy.json",
+  ] as const)
+    if (fs.existsSync(startPreflightPath(normalized.project_root, normalized.outer_run_id, name)))
+      failA1("OUTER_RUN_EXISTS", "outer run files already exist; use resume");
+  const lease = acquireOuterRunLease({ ...normalized, mode: "start" });
+  try {
+    saveAutoResearchFrozenPolicy(normalized.project_root, policy);
+    const state = writeInitialRuntime(normalized);
+    setOwnershipRuntimeStatus(normalized, state.status);
+    return state;
+  } catch (error) {
+    if (!fs.existsSync(workflowRuntimePath(normalized.project_root, normalized.outer_run_id)))
+      lease.abortSetup();
+    throw error;
+  } finally {
+    lease.close();
+  }
+}
+
+export function resumeAutoResearchRun(input: OuterRunIdentity): WorkflowRuntimeState {
+  const normalized = normalizedIdentity(input);
+  const policy = autoResearchPolicy(normalized);
+  const frozenPath = frozenPolicyPath(normalized.project_root, normalized.outer_run_id);
+  if (fs.existsSync(frozenPath)) {
+    const existing = readFrozenPolicy(normalized.project_root, normalized.outer_run_id);
+    if (
+      existing.mode !== "auto_research_loop" ||
+      frozenPolicyFingerprint(existing) !==
+        frozenPolicyFingerprint({ ...policy, frozen_at: existing.frozen_at })
+    )
+      failA1("IDENTITY_MISMATCH", "resume charter differs from frozen policy");
+  } else {
+    saveAutoResearchFrozenPolicy(normalized.project_root, policy);
+  }
+  return resumeOuterRunInternal({ ...input, tester_agent_config_path: "" }, false);
 }
 
 /** Used only by storage/transition tests; production start always requires a tester agent. */
@@ -2439,11 +2669,6 @@ export function recordOuterBridgeFailure(
   return withRuntimeMutation(input, (state, normalized) => {
     const cycle = currentCycle(state);
     assertWorkflowBridgeCycle(cycle);
-    if (state.current_phase !== "workset")
-      failA1(
-        "OUTER_PHASE_ORDER",
-        "an outer bridge failure can only be recorded in the workset bridge phase",
-      );
     const bridge = validateOuterBridgeFiles(
       normalized.project_root,
       normalized.outer_run_id,
@@ -2463,6 +2688,11 @@ export function recordOuterBridgeFailure(
       )
     )
       return { state, result: state };
+    if (state.current_phase !== "workset")
+      failA1(
+        "OUTER_PHASE_ORDER",
+        "an outer bridge failure can only be recorded in the workset bridge phase",
+      );
     if (previous?.status === "pending")
       failA1("OUTER_PHASE_ORDER", "a bridge repair is already pending for this cycle");
     if (previous?.status === "exhausted")
@@ -2474,13 +2704,20 @@ export function recordOuterBridgeFailure(
       );
 
     const repairAttempts = previous?.repair_attempts ?? 0;
-    settleExecutionReceipt(
-      normalized.project_root,
-      normalized.outer_run_id,
-      bridge.manifest,
-      bridge.receipt.summary,
-    );
-    const exhausted = runBudgetExhausted(normalized.project_root, normalized.outer_run_id);
+    const policy = readFrozenPolicy(normalized.project_root, normalized.outer_run_id);
+    const arl = policy.mode === "auto_research_loop";
+    if (!arl)
+      settleExecutionReceipt(
+        normalized.project_root,
+        normalized.outer_run_id,
+        bridge.manifest,
+        bridge.receipt.summary,
+      );
+    // ARL has no execution budget; the frozen per-iteration repair cap ends
+    // the retries instead.
+    const exhausted = arl
+      ? repairAttempts >= policy.max_repair_attempts
+      : runBudgetExhausted(normalized.project_root, normalized.outer_run_id);
     const failure: OuterBridgeFailure = {
       schema_version: 1,
       bridge_receipt_ref: bridge.receiptRef,
@@ -2576,13 +2813,18 @@ export function recordOuterBridgeRepair(input: RecordOuterBridgeRepairInput): Wo
     if (repairStatus !== "fixed" && repairStatus !== "exhausted")
       failA1("INVALID_REPAIR_RECEIPT", "bridge repair summary needs fixed or exhausted status");
 
-    settleExecutionReceipt(
-      normalized.project_root,
-      normalized.outer_run_id,
-      repair.manifest,
-      repair.receipt.summary,
-    );
+    const arl =
+      readFrozenPolicy(normalized.project_root, normalized.outer_run_id).mode ===
+      "auto_research_loop";
+    if (!arl)
+      settleExecutionReceipt(
+        normalized.project_root,
+        normalized.outer_run_id,
+        repair.manifest,
+        repair.receipt.summary,
+      );
     if (
+      !arl &&
       repairStatus === "exhausted" &&
       !runBudgetExhausted(normalized.project_root, normalized.outer_run_id)
     )
@@ -2666,12 +2908,16 @@ export function recordOuterBridgeSuccess(
       return { state, result: state };
     }
     bridgeEvidence(normalized.project_root, input.evidence_paths);
-    settleExecutionReceipt(
-      normalized.project_root,
-      normalized.outer_run_id,
-      bridge.manifest,
-      bridge.receipt.summary,
-    );
+    if (
+      readFrozenPolicy(normalized.project_root, normalized.outer_run_id).mode !==
+      "auto_research_loop"
+    )
+      settleExecutionReceipt(
+        normalized.project_root,
+        normalized.outer_run_id,
+        bridge.manifest,
+        bridge.receipt.summary,
+      );
     const nextCycle: ActiveOuterCycle = {
       ...cycle,
       bridge_success_receipt_ref: bridge.receiptRef,
@@ -3204,6 +3450,11 @@ export function reconcileOuterChildren(input: OuterRunIdentity): WorkflowRuntime
 
 export function reserveOuterBudget(input: ReserveOuterBudgetInput): WorkflowRuntimeState {
   return withRuntimeMutation(input, (state, normalized) => {
+    if (
+      readFrozenPolicy(normalized.project_root, normalized.outer_run_id).mode ===
+      "auto_research_loop"
+    )
+      failA1("INVALID_VALUE", "Auto Research Loop does not reserve execution budget");
     const cycle = currentCycle(state);
     const reservationId = assertIdentifier(input.reservation_id, "reservation_id");
     if (state.budgets.some((budget) => budget.reservation_id === reservationId))
@@ -3398,7 +3649,17 @@ function finishFailedWaveCycle(
     target_reached: false,
     valid_candidate: false,
     tester_improved: null,
-    budget: cycleBudgetSummary(normalized.project_root, normalized.outer_run_id, working, cycle),
+    ...(readFrozenPolicy(normalized.project_root, normalized.outer_run_id).mode ===
+    "auto_research_loop"
+      ? { metric_value: null }
+      : {
+          budget: cycleBudgetSummary(
+            normalized.project_root,
+            normalized.outer_run_id,
+            working,
+            cycle,
+          ),
+        }),
     evidence_refs: evidence.evidence_refs,
     evidence_sha256: evidence.evidence_sha256,
     recorded_at: now(),
@@ -3413,6 +3674,30 @@ function finishFailedWaveCycle(
     cycle_history: [...working.cycle_history, persistedSummary],
     updated_at: now(),
   };
+}
+
+/**
+ * What an exhausted repair means for an ARL iteration, matching the standalone
+ * dashboard. When the review kept finding the evidence insufficient, nothing
+ * broke and the run ends with no proposal. When the experiment itself kept
+ * failing, the run fails and the summary says where.
+ */
+function exhaustedBridgeOutcome(
+  cycle: ActiveOuterCycle,
+  failure: OuterBridgeFailure,
+): Pick<OuterCycleSummary, "outcome" | "failure"> {
+  if (failure.error.category === "insufficient_evidence") return { outcome: "no_proposal" };
+  const location: OuterCycleFailure = {
+    worker: "experiment-bridge",
+    iteration: cycle.outer_iteration,
+    phase: "experiment-bridge",
+    error: failure.error,
+    repair_status: "exhausted",
+    repair_attempts: failure.repair_attempts,
+    bridge_receipt_ref: failure.bridge_receipt_ref,
+    repair_receipt_ref: failure.repair_receipt_ref,
+  };
+  return { outcome: "bridge_failed", failure: location };
 }
 
 function finishFailedBridgeCycle(
@@ -3435,6 +3720,12 @@ function finishFailedBridgeCycle(
       "OUTER_PHASE_ORDER",
       "an exhausted bridge candidate cannot have created downstream children",
     );
+  const arl =
+    readFrozenPolicy(normalized.project_root, normalized.outer_run_id).mode ===
+    "auto_research_loop";
+  // A failed iteration still closes the round it dispatched: every child the
+  // bridge started has to come back before the parent moves on.
+  if (arl) requireCollectedChildren(normalized.project_root, normalized.outer_run_id);
   const evidence = hashOuterEvidence(normalized.project_root, input.evidence_paths);
   const summary: OuterCycleSummary = {
     schema_version: 1,
@@ -3452,7 +3743,16 @@ function finishFailedBridgeCycle(
     target_reached: false,
     valid_candidate: false,
     tester_improved: null,
-    budget: cycleBudgetSummary(normalized.project_root, normalized.outer_run_id, working, cycle),
+    ...(arl
+      ? { metric_value: null, ...exhaustedBridgeOutcome(cycle, failure) }
+      : {
+          budget: cycleBudgetSummary(
+            normalized.project_root,
+            normalized.outer_run_id,
+            working,
+            cycle,
+          ),
+        }),
     evidence_refs: evidence.evidence_refs,
     evidence_sha256: evidence.evidence_sha256,
     recorded_at: now(),
@@ -3646,7 +3946,31 @@ function closeOuterCycle(
       "PROMOTION_GATE_CONFLICT",
       "cycle tester improvement differs from public tester evidence",
     );
-  const targetReached = input.target_reached ?? false;
+  const frozenMetric = readFrozenPolicy(normalized.project_root, normalized.outer_run_id);
+  const metricValue =
+    input.metric_value === undefined || input.metric_value === null
+      ? null
+      : requireFiniteNumber(input.metric_value, "metric_value");
+  if (frozenMetric.mode === "auto_research_loop" && input.metric_value === undefined)
+    failA1("INVALID_VALUE", "Auto Research Loop cycle needs a metric reading or null");
+  const measuredTarget =
+    frozenMetric.mode === "auto_research_loop" && metricValue !== null
+      ? frozenMetric.metric.direction === "higher_better"
+        ? metricValue >=
+          frozenMetric.metric.target -
+            Math.abs(frozenMetric.metric.target) * frozenMetric.metric.tolerance
+        : metricValue <=
+          frozenMetric.metric.target +
+            Math.abs(frozenMetric.metric.target) * frozenMetric.metric.tolerance
+      : false;
+  if (
+    frozenMetric.mode === "auto_research_loop" &&
+    input.target_reached !== undefined &&
+    input.target_reached !== measuredTarget
+  )
+    failA1("IDENTITY_MISMATCH", "target_reached differs from frozen metric reading");
+  const targetReached =
+    frozenMetric.mode === "auto_research_loop" ? measuredTarget : (input.target_reached ?? false);
   requireBoolean(targetReached, "target_reached");
   if (targetReached && validation.finalist_id === null)
     failA1("TARGET_EVIDENCE_REQUIRED", "a reached target requires a validated finalist");
@@ -3677,7 +4001,16 @@ function closeOuterCycle(
     target_reached: targetReached,
     valid_candidate: validation.validation_result === "passed",
     tester_improved: testerImproved,
-    budget: cycleBudgetSummary(normalized.project_root, normalized.outer_run_id, working, cycle),
+    ...(frozenMetric.mode === "auto_research_loop"
+      ? { metric_value: metricValue }
+      : {
+          budget: cycleBudgetSummary(
+            normalized.project_root,
+            normalized.outer_run_id,
+            working,
+            cycle,
+          ),
+        }),
     evidence_refs: evidence.evidence_refs,
     evidence_sha256: evidence.evidence_sha256,
     recorded_at: now(),
@@ -3695,6 +4028,221 @@ function closeOuterCycle(
 export const finishOuterCycle = completeOuterCycle;
 export const completeWorkflowCycle = completeOuterCycle;
 
+/** Persist an insufficient review as a pending bridge repair for the same cycle. */
+export function recordAutoResearchInsufficient(
+  input: RecordAutoResearchInsufficientInput,
+): WorkflowRuntimeState {
+  return withRuntimeMutation(input, (state, normalized) => {
+    const policy = readFrozenPolicy(normalized.project_root, normalized.outer_run_id);
+    if (policy.mode !== "auto_research_loop")
+      failA1("INVALID_VALUE", "insufficient review requires ARL mode");
+    const cycle = currentCycle(state);
+    const { receipt, value } = validateAutoResearchReviewFiles(
+      normalized.project_root,
+      normalized.outer_run_id,
+      cycle,
+      input.review_receipt_path,
+    );
+    if (
+      !isRecord(value) ||
+      value.worker !== "auto-review-loop" ||
+      value.phase !== "auto-review-loop" ||
+      value.status !== "done" ||
+      value.run_id !== normalized.outer_run_id ||
+      value.iteration !== cycle.outer_iteration ||
+      !isRecord(value.dashboard_patch) ||
+      value.dashboard_patch["last_review.verdict"] !== "insufficient" ||
+      value.dashboard_patch["metric.current"] !== null
+    )
+      failA1(
+        "INVALID_REPAIR_RECEIPT",
+        "insufficient review must carry a null metric and matching identity",
+      );
+    const receiptSha = hashBytes(receipt.absolute);
+    if (
+      state.current_phase === "bridge-repair" &&
+      cycle.bridge_failure?.status !== "fixed" &&
+      cycle.bridge_failure?.error.review_receipt_sha256 === receiptSha
+    )
+      return { state, result: state };
+    if (
+      state.current_phase !== "workset" ||
+      cycle.bridge_success_receipt_ref == null ||
+      cycle.bridge_success_manifest_ref == null
+    )
+      failA1("OUTER_PHASE_ORDER", "insufficient review needs a successful bridge in workset");
+    const source = validateOuterBridgeFiles(
+      normalized.project_root,
+      normalized.outer_run_id,
+      cycle,
+      path.join(
+        workflowCycleDirectory(
+          normalized.project_root,
+          normalized.outer_run_id,
+          cycle.outer_iteration,
+        ),
+        cycle.bridge_success_receipt_ref,
+      ),
+      path.join(
+        workflowCycleDirectory(
+          normalized.project_root,
+          normalized.outer_run_id,
+          cycle.outer_iteration,
+        ),
+        cycle.bridge_success_manifest_ref,
+      ),
+      "success",
+    );
+    const previous = bridgeFailureOf(cycle);
+    const repairAttempts = previous?.repair_attempts ?? 0;
+    const exhausted = repairAttempts >= policy.max_repair_attempts;
+    const failure: OuterBridgeFailure = {
+      schema_version: 1,
+      bridge_receipt_ref: source.receiptRef,
+      bridge_receipt_sha256: source.receiptSha256,
+      bridge_manifest_ref: source.manifestRef,
+      bridge_manifest_sha256: source.manifestSha256,
+      frozen_input_sha256: source.frozenInputSha256,
+      error: { category: "insufficient_evidence", review_receipt_sha256: receiptSha },
+      // Repairs after an insufficient review count against the same
+      // per-iteration cap as repairs after a bridge failure.
+      repair_attempts: repairAttempts,
+      status: exhausted ? "exhausted" : "pending",
+      repair_receipt_ref: exhausted ? (previous?.repair_receipt_ref ?? null) : null,
+      repair_receipt_sha256: exhausted ? (previous?.repair_receipt_sha256 ?? null) : null,
+    };
+    const nextCycle: ActiveOuterCycle = {
+      ...cycle,
+      bridge_success_receipt_ref: null,
+      bridge_success_receipt_sha256: null,
+      bridge_success_manifest_ref: null,
+      bridge_success_manifest_sha256: null,
+      bridge_failure: failure,
+    };
+    const evidence = hashOuterEvidence(normalized.project_root, [
+      ...new Set([...input.evidence_paths, receipt.absolute]),
+    ]);
+    const next: WorkflowRuntimeState = {
+      ...state,
+      current_phase: "bridge-repair",
+      active_cycle: nextCycle,
+      phase_history: openPhase(closePhase(state, evidence, "failed"), "bridge-repair", nextCycle),
+      updated_at: now(),
+    };
+    return { state: next, result: next };
+  });
+}
+
+/** Close an ARL iteration from its review receipt, without invoking the tester workflow gates. */
+export function completeAutoResearchCycle(
+  input: CompleteAutoResearchCycleInput,
+): WorkflowRuntimeState {
+  return withRuntimeMutation(input, (state, normalized) => {
+    const policy = readFrozenPolicy(normalized.project_root, normalized.outer_run_id);
+    if (policy.mode !== "auto_research_loop")
+      failA1("INVALID_VALUE", "ARL cycle completion requires ARL mode");
+    if (state.current_phase === "summary" && state.active_cycle === null) {
+      const latest = state.cycle_history.at(-1);
+      if (latest?.review_receipt_ref !== undefined) {
+        const expected = runOwnedPath(
+          normalized.project_root,
+          normalized.outer_run_id,
+          latest.review_receipt_ref,
+        );
+        if (
+          path.resolve(input.review_receipt_path) === expected &&
+          hashBytes(expected) === latest.review_receipt_sha256
+        )
+          return { state, result: state };
+      }
+    }
+    if (state.current_phase !== "workset")
+      failA1("OUTER_PHASE_ORDER", "ARL review can close only the active bridge workset");
+    // The review judges this iteration's whole output, so every child the
+    // bridge dispatched has to have published its result first.
+    requireCollectedChildren(normalized.project_root, normalized.outer_run_id);
+    const cycle = currentCycle(state);
+    if (cycle.bridge_success_receipt_ref === null || cycle.bridge_success_receipt_ref === undefined)
+      failA1("BRIDGE_SUCCESS_REQUIRED", "ARL review needs a recorded successful bridge");
+    if (cycle.bridge_failure?.status === "pending" || cycle.bridge_failure?.status === "exhausted")
+      failA1(
+        "BRIDGE_REPAIR_PENDING",
+        "bridge repair must finish before review can close the cycle",
+      );
+    const { receipt, value } = validateAutoResearchReviewFiles(
+      normalized.project_root,
+      normalized.outer_run_id,
+      cycle,
+      input.review_receipt_path,
+    );
+    if (
+      !isRecord(value) ||
+      value.worker !== "auto-review-loop" ||
+      value.status !== "done" ||
+      value.phase !== "auto-review-loop" ||
+      value.run_id !== normalized.outer_run_id ||
+      value.iteration !== cycle.outer_iteration ||
+      !isRecord(value.dashboard_patch)
+    )
+      failA1("INVALID_EXECUTION_RECEIPT", "ARL review receipt identity or status is invalid");
+    const patch = value.dashboard_patch;
+    if (patch["last_review.verdict"] === "insufficient")
+      failA1(
+        "BRIDGE_REPAIR_PENDING",
+        "insufficient review needs bridge repair before cycle completion",
+      );
+    if (!["ready", "almost", "not ready"].includes(String(patch["last_review.verdict"])))
+      failA1("INVALID_EXECUTION_RECEIPT", "review verdict is invalid");
+    const metricValue = requireFiniteNumber(patch["metric.current"], "review.metric.current");
+    const targetReached =
+      policy.metric.direction === "higher_better"
+        ? metricValue >=
+          policy.metric.target - Math.abs(policy.metric.target) * policy.metric.tolerance
+        : metricValue <=
+          policy.metric.target + Math.abs(policy.metric.target) * policy.metric.tolerance;
+    const evidence = hashOuterEvidence(normalized.project_root, [
+      ...new Set([...input.evidence_paths, receipt.absolute]),
+    ]);
+    const summary: OuterCycleSummary = {
+      schema_version: 1,
+      outer_run_id: normalized.outer_run_id,
+      outer_iteration: cycle.outer_iteration,
+      generation: cycle.generation,
+      wave_id: cycle.wave_id,
+      wave_kind: cycle.wave_kind,
+      status: "completed",
+      candidate_ids: [],
+      finalist_id: null,
+      promotion_trial_id: null,
+      validation_result: "not_run",
+      promotion_result: "not_run",
+      target_reached: targetReached,
+      metric_value: metricValue,
+      review_receipt_ref: path
+        .relative(runOwnedPath(normalized.project_root, normalized.outer_run_id), receipt.absolute)
+        .split(path.sep)
+        .join("/"),
+      review_receipt_sha256: hashBytes(receipt.absolute),
+      valid_candidate: true,
+      tester_improved: null,
+      evidence_refs: evidence.evidence_refs,
+      evidence_sha256: evidence.evidence_sha256,
+      recorded_at: now(),
+    };
+    const persisted = stableCycleSummary(normalized.project_root, summary);
+    const next: WorkflowRuntimeState = {
+      ...state,
+      active_cycle: null,
+      current_phase: "summary",
+      cycle_history: [...state.cycle_history, persisted],
+      phase_history: openPhase(closePhase(state, evidence), "summary", cycle),
+      updated_at: now(),
+    };
+    releaseLineageHold(normalized.project_root, normalized.outer_run_id, "iteration");
+    return { state: next, result: next };
+  });
+}
+
 export function recordWorkflowStopDecision(input: RecordStopDecisionInput): StopDecision {
   return withRuntimeMutation(input, (state, normalized) => {
     if (state.current_phase !== "summary" || state.active_cycle !== null)
@@ -3702,20 +4250,48 @@ export function recordWorkflowStopDecision(input: RecordStopDecisionInput): Stop
     const latest = state.cycle_history[state.cycle_history.length - 1];
     if (!latest) failA1("OUTER_CYCLE_REQUIRED", "stop gate requires at least one completed cycle");
     const policy = readFrozenPolicy(normalized.project_root, normalized.outer_run_id);
-    const ledger = readExposureLedger(
-      normalized.project_root,
-      policy.task_id,
-      policy.tester_definition.max_exposures_per_task,
-    );
-    const exposure: StopExposureSnapshot = {
-      max_exposures_per_task: ledger.max_exposures_per_task,
-      reserved: ledger.exposures.filter((item) => item.status === "reserved").length,
-      settled: ledger.exposures.filter((item) => item.status === "settled").length,
-      released: ledger.exposures.filter((item) => item.status === "released").length,
-    };
+    const stopPolicy: StopPolicy =
+      policy.mode === "auto_research_loop"
+        ? {
+            mode: "auto_research_loop",
+            max_iterations: policy.max_iterations,
+            target: {
+              name: policy.metric.name ?? "primary",
+              direction: policy.metric.direction,
+              value: policy.metric.target,
+            },
+          }
+        : (input.policy ?? failA1("INVALID_VALUE", "tester workflow stop gate needs --policy"));
+    if (policy.mode === "auto_research_loop") {
+      if (input.policy !== undefined && !sameCanonical(input.policy, stopPolicy, "stop-policy-v1"))
+        failA1(
+          "IDENTITY_MISMATCH",
+          "stop policy differs from the frozen ARL target and round limit",
+        );
+      if (input.budget !== undefined || state.budgets.length > 0)
+        failA1("INVALID_VALUE", "Auto Research Loop stop gate does not accept budget state");
+    } else if (stopPolicy.mode === "auto_research_loop") {
+      failA1("INVALID_VALUE", "a frozen Auto Research Loop requires its iteration stop policy");
+    }
+    const exposure: StopExposureSnapshot =
+      policy.mode === "auto_research_loop"
+        ? { max_exposures_per_task: 0, reserved: 0, settled: 0, released: 0 }
+        : (() => {
+            const ledger = readExposureLedger(
+              normalized.project_root,
+              policy.task_id,
+              policy.tester_definition.max_exposures_per_task,
+            );
+            return {
+              max_exposures_per_task: ledger.max_exposures_per_task,
+              reserved: ledger.exposures.filter((item) => item.status === "reserved").length,
+              settled: ledger.exposures.filter((item) => item.status === "settled").length,
+              released: ledger.exposures.filter((item) => item.status === "released").length,
+            };
+          })();
     const budgetPolicy = input.budget
       ? { limit: input.budget.limit, unit: input.budget.unit }
-      : input.policy.max_outer_budget;
+      : stopPolicy.max_outer_budget;
     const budget: StopBudgetSnapshot | undefined = budgetPolicy
       ? {
           limit: "limit" in budgetPolicy ? budgetPolicy.limit : budgetPolicy.amount,
@@ -3733,7 +4309,7 @@ export function recordWorkflowStopDecision(input: RecordStopDecisionInput): Stop
       : undefined;
     const decision = evaluateWorkflowStopGate({
       outer_run_id: normalized.outer_run_id,
-      policy: input.policy,
+      policy: stopPolicy,
       cycle_summaries: state.cycle_history,
       exposure,
       budget,
@@ -3806,6 +4382,25 @@ export function finishOuterRun(input: FinishOuterRunInput): WorkflowRuntimeState
         input.outcome !== "stopped"
       )
         failA1("INVALID_VALUE", "outer run outcome is invalid");
+      // ARL derives the outcome from the stop reason. A repair exhausted on
+      // insufficient evidence completes without a result: nothing was measured
+      // and lost. A repair exhausted on a failing experiment fails the run.
+      if (
+        readFrozenPolicy(normalized.project_root, normalized.outer_run_id).mode ===
+        "auto_research_loop"
+      ) {
+        const expected =
+          decision.reason === "iteration_cap"
+            ? "stopped"
+            : decision.reason === "bridge_failed"
+              ? "failed"
+              : "completed";
+        if (input.outcome !== expected)
+          failA1(
+            "INVALID_VALUE",
+            `Auto Research Loop stop reason ${decision.reason} finishes as ${expected}`,
+          );
+      }
       const evidence = hashOuterEvidence(normalized.project_root, input.evidence_paths);
       const next: WorkflowRuntimeState = {
         ...reconciled,
@@ -3825,7 +4420,7 @@ export function finishOuterRun(input: FinishOuterRunInput): WorkflowRuntimeState
 export const finishWorkflowRun = finishOuterRun;
 
 export function resumeOuterRun(input: ResumeOuterRunInput): WorkflowRuntimeState {
-  return resumeOuterRunInternal(input, true);
+  return resumeOuterRunInternal(input, normalizedIdentity(input).depth === 0);
 }
 
 function resumeOuterRunInternal(

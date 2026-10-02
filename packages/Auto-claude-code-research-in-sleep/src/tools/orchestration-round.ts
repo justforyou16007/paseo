@@ -2,12 +2,13 @@ import fs from "node:fs";
 import { requireChildAcceptance, type ChildAcceptanceMetric } from "./child-acceptance.js";
 import { childIndexPath, entryGeneration, readChildIndex } from "./child-index.js";
 import {
+  hasDecomposition,
   latestDecompositionGeneration,
   readDecompositionGraph,
   type DecompositionPosition,
 } from "./decomposition-graph.js";
 import { readResultPackage, type ResultChildSummary, type ResultStatus } from "./result-package.js";
-import { runOwnedPath } from "./run-contract.js";
+import { requireRunContract, runOwnedPath } from "./run-contract.js";
 import { validateRunCharter } from "./run-charter.js";
 import { readStateFile } from "./state-file.js";
 import { assertIdentifier, failA1 } from "./workflow-spec.js";
@@ -275,6 +276,30 @@ export function requireCompleteRound(projectRoot: string, parentRunId: string): 
       parentRunId,
     );
   return round;
+}
+
+/**
+ * Refuse while any child this run dispatched has not published its result.
+ *
+ * An orchestration run answers for every position of its newest decomposition.
+ * Any other run answers for every child its run contract lists, which is the
+ * same set result export later summarizes: earlier iterations already passed
+ * this check, so in practice it waits on the children of the current one.
+ */
+export function requireCollectedChildren(projectRoot: string, parentRunId: string): void {
+  if (hasDecomposition(projectRoot, parentRunId)) {
+    requireCompleteRound(projectRoot, parentRunId);
+    return;
+  }
+  const open = requireRunContract(projectRoot, parentRunId).child_run_ids.filter(
+    (childId) => !fs.existsSync(runOwnedPath(projectRoot, childId, "result-package.json")),
+  );
+  if (open.length > 0)
+    failA1(
+      "ROUND_INCOMPLETE",
+      `children have not published a result package yet: ${open.join(", ")}`,
+      parentRunId,
+    );
 }
 
 /**

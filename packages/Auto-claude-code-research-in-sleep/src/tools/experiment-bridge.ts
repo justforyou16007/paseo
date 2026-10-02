@@ -16,6 +16,7 @@ import {
   type ChildAcceptanceMetric,
 } from "./child-acceptance.js";
 import { initializeRunBudget } from "./run-budget.js";
+import { frozenPolicyPath, readFrozenPolicy } from "./workflow-state.js";
 import {
   createBudgetLedger,
   optionalBudget,
@@ -205,7 +206,7 @@ export interface ChildRunPlan {
   depth: number;
   scope_path: string;
 
-  budget: BridgeBudget;
+  budget: BridgeBudget | null;
   charter_sha256: string;
   baseline_sha256: string;
   resource_inventory_sha256: string;
@@ -230,7 +231,7 @@ export interface BridgeExpansionPlan {
   parent_depth: number;
   strategy: ExpansionStrategy;
   children: ChildRunPlan[];
-  budget: BudgetLedger;
+  budget: BudgetLedger | null;
   matrix: DynamicAblationPlan | null;
   downstream: DownstreamRoute[];
   plan_sha256: string;
@@ -1339,7 +1340,7 @@ function validateChildRunPlan(
     depth: requireInteger(value.depth, `${location}.depth`, 0),
     scope_path: normalizeRunScopePath(value.scope_path, `${location}.scope_path`),
 
-    budget: validatePlanBudget(value.budget, `${location}.budget`),
+    budget: value.budget === null ? null : validatePlanBudget(value.budget, `${location}.budget`),
     charter_sha256: assertSha256(value.charter_sha256, `${location}.charter_sha256`),
     baseline_sha256: assertSha256(value.baseline_sha256, `${location}.baseline_sha256`),
     resource_inventory_sha256: assertSha256(
@@ -1410,7 +1411,9 @@ function validateChildRunPlan(
     );
   if (
     child.charter.run_id !== child.run_id ||
-    canonicalJsonSha256(child.charter.budget) !== canonicalJsonSha256(child.budget) ||
+    (child.charter.mode === "auto_research_loop"
+      ? child.budget !== null
+      : canonicalJsonSha256(child.charter.budget) !== canonicalJsonSha256(child.budget)) ||
     canonicalJsonSha256(child.charter.expected_output) !==
       canonicalJsonSha256(child.expected_output)
   )
@@ -1527,8 +1530,19 @@ export function validateBridgeExpansionPlan(value: unknown): BridgeExpansionPlan
         "bridge.plan.children",
       );
   }
-  const budget = validateBudgetLedger(value.budget, "bridge.plan.budget");
+  const budget =
+    value.budget === null ? null : validateBudgetLedger(value.budget, "bridge.plan.budget");
   for (const child of children) {
+    if (budget === null) {
+      if (
+        child.budget !== null ||
+        (child.charter.mode !== "auto_research_loop" && child.charter.budget !== null)
+      )
+        failA1("INVALID_EXPANSION", "an ARL child must not carry a budget");
+      continue;
+    }
+    if (child.budget === null)
+      failA1("INVALID_EXPANSION", "budgeted bridge child is missing its budget");
     const allocation = budget.allocations.find((entry) => entry.execution_id === child.run_id);
     const consumes =
       child.result.status !== "not_executable" && child.result.status !== "infra_unavailable";
@@ -1800,6 +1814,19 @@ function indexBridgePositions(input: ExperimentBridgeInput): ExperimentBridgeInp
 }
 export function planExperimentBridge(input: ExperimentBridgeInput): BridgeExpansionPlan {
   const charter = validateRunCharter(input.charter);
+  if (charter.mode === "auto_research_loop") {
+    if (
+      input.project_root === undefined ||
+      !fs.existsSync(frozenPolicyPath(input.project_root, charter.run_id))
+    )
+      failA1("FROZEN_POLICY_NOT_FOUND", "Auto Research Loop bridge needs its frozen policy");
+    const frozen = readFrozenPolicy(input.project_root, charter.run_id);
+    if (frozen.mode !== "auto_research_loop" || frozen.max_iterations !== charter.max_iterations)
+      failA1("IDENTITY_MISMATCH", "bridge charter and frozen round limit differ");
+    // ARL freezes a round limit instead of allocating execution currency.
+    // Keep the legacy ledger planner available to other bridge callers.
+    return planAutoResearchBridge(input, frozen.max_depth);
+  }
   if (input.project_root !== undefined)
     return withRunBudget(
       input.project_root,
@@ -1808,6 +1835,7 @@ export function planExperimentBridge(input: ExperimentBridgeInput): BridgeExpans
       (ledger) => {
         const indexed = indexBridgePositions(input);
         const plan = planWithBudget(indexed, ledger);
+        if (plan.budget === null) failA1("INVALID_EXPANSION", "budgeted bridge lost its ledger");
         return { ledger: plan.budget, result: plan };
       },
     );
@@ -1816,10 +1844,36 @@ export function planExperimentBridge(input: ExperimentBridgeInput): BridgeExpans
     createBudgetLedger(charter.budget ?? { amount: 0, unit: "budget_units" }),
   );
 }
+/**
+ * `maxDepth` comes from the run's frozen policy, never from the charter: a
+ * child charter does not say how deep it sits or how deep it may go.
+ */
+export function planAutoResearchBridge(
+  input: ExperimentBridgeInput,
+  maxDepth: number,
+): BridgeExpansionPlan {
+  if (validateRunCharter(input.charter).mode !== "auto_research_loop")
+    failA1("INVALID_VALUE", "ARL bridge needs an explicit Auto Research Loop charter");
+  // Children inherit the full round limit, so depth is the only bound on how
+  // far the recursion can fan out. A run at max_depth works without children.
+  if (input.positions.length > 0 && input.run.depth + 1 > maxDepth)
+    failA1(
+      "MAX_DEPTH_REACHED",
+      `run depth ${input.run.depth} is at max_depth ${maxDepth}; it cannot dispatch children`,
+      "positions",
+    );
+  return planWithBudget(
+    input.project_root === undefined ? input : indexBridgePositions(input),
+    null,
+    true,
+  );
+}
 function planWithBudget(
   input: ExperimentBridgeInput,
-  initialLedger: BudgetLedger,
+  initialLedger: BudgetLedger | null,
+  arl = false,
 ): BridgeExpansionPlan {
+  if (!arl && initialLedger === null) failA1("BUDGET_REQUIRED", "budgeted bridge needs a ledger");
   const validated = validateBridgeInputs(input);
   assertWaveCreationAllowed(input.stop_decision);
   requireString(input.strategy_reason, "strategy_reason");
@@ -1827,7 +1881,7 @@ function planWithBudget(
   if (strategy !== "bfs" && strategy !== "dfs")
     failA1("INVALID_EXPANSION", "bridge strategy must be bfs or dfs", "strategy");
   const parentBudget = validated.charter.budget;
-  if (validated.positions.length > 0 && parentBudget === null)
+  if (!arl && validated.positions.length > 0 && parentBudget === null)
     failA1(
       "BUDGET_REQUIRED",
       "a graph bridge needs a parent budget before creating children",
@@ -1866,19 +1920,21 @@ function planWithBudget(
     const result = classified.get(position.position_id)!;
     const runId = childRunId(position);
     const consumes = result.status !== "not_executable" && result.status !== "infra_unavailable";
-    const existing = ledger.allocations.find((entry) => entry.execution_id === runId);
-    const budget = consumes
-      ? existing === undefined
-        ? positionBudget(
-            position,
-            { amount: ledger.available, unit: ledger.unit },
-            remaining,
-            remainingGenerations,
-          )
-        : { amount: existing.amount, unit: ledger.unit }
-      : { amount: 0, unit: ledger.unit };
-    if (consumes) {
-      ledger = splitChildBudget(ledger, runId, budget);
+    const existing = ledger?.allocations.find((entry) => entry.execution_id === runId);
+    const budget = arl
+      ? null
+      : consumes
+        ? existing === undefined
+          ? positionBudget(
+              position,
+              { amount: ledger!.available, unit: ledger!.unit },
+              remaining,
+              remainingGenerations,
+            )
+          : { amount: existing.amount, unit: ledger!.unit }
+        : { amount: 0, unit: ledger!.unit };
+    if (consumes && !arl && budget !== null) {
+      ledger = splitChildBudget(ledger!, runId, budget);
       remaining--;
       if (position.cost_actual !== undefined)
         ledger = refundChildBudget(ledger, runId, position.cost_actual);
@@ -1909,7 +1965,9 @@ function planWithBudget(
       schema_version: 1,
       charter_id: `charter:${canonicalJsonSha256(runId)}`,
       run_id: runId,
-      budget,
+      ...(arl
+        ? { mode: "auto_research_loop", max_iterations: validated.charter.max_iterations }
+        : { budget }),
       measurement: {
         validator_ref: requireString(
           (position.charter.measurement as { validator_ref?: unknown } | undefined)?.validator_ref,
@@ -1993,7 +2051,7 @@ function planWithBudget(
     parent_depth: input.run.depth,
     strategy,
     children,
-    budget: ledger,
+    budget: arl ? null : ledger,
     matrix,
     downstream,
   };
@@ -2058,15 +2116,18 @@ export function materializeBridgeChildren(
       if ((error as { code?: unknown }).code !== "RUN_NOT_FOUND") throw error;
     }
   }
-  withRunBudget(projectRoot, parent.run_id, undefined, (ledger) => {
-    let next = ledger;
-    for (const child of orderedChildren) {
-      if (child.result.status === "not_executable" || child.result.status === "infra_unavailable")
-        continue;
-      next = splitChildBudget(next, child.run_id, child.budget);
-    }
-    return { ledger: next, result: undefined };
-  });
+  if (validatedPlan.budget !== null)
+    withRunBudget(projectRoot, parent.run_id, undefined, (ledger) => {
+      let next = ledger;
+      for (const child of orderedChildren) {
+        if (child.result.status === "not_executable" || child.result.status === "infra_unavailable")
+          continue;
+        if (child.budget === null)
+          failA1("INVALID_EXPANSION", "budgeted bridge child is missing its budget");
+        next = splitChildBudget(next, child.run_id, child.budget);
+      }
+      return { ledger: next, result: undefined };
+    });
   // The acceptance lands before the child does. A child that started without
   // its standard on disk would have a charter pointing at nothing.
   for (const child of orderedChildren) {
@@ -2097,7 +2158,7 @@ export function materializeBridgeChildren(
         failA1("IMMUTABLE_CONFLICT", "child charter changed");
       writeStateJsonAtomic(file, child.charter);
     });
-    initializeRunBudget(projectRoot, child.run_id, child.budget);
+    if (child.budget !== null) initializeRunBudget(projectRoot, child.run_id, child.budget);
   }
   return created;
 }

@@ -194,10 +194,15 @@ implementation or runtime environment and returns a repair receipt for the
 caller to retry `experiment-bridge`. Under `insufficient_evidence` the repair
 is a search over the experiment's own knobs, so dispatch `/dse-loop` to do the
 tuning: it runs the experiment, reads the result, adjusts parameters and
-repeats until the objective is met or the budget runs out. The hyperparameters
+reports whether a usable experiment can be produced. The hyperparameters
 it may move are the ones `EXPERIMENT_PLAN.md` already names and
 `experiment-bridge` exposed as runtime flags. Changing their values is a
 repair; changing which question the experiment asks is not.
+
+For an Auto Research Loop run, an `insufficient` review publishes
+`last_review.verdict = "insufficient"` with `metric.current = null`. The
+provisional bridge number is not a judged metric. Do not send a finite number
+to the parent until a later review can judge the retried experiment.
 
 The repair manifest must include the bridge receipt and the loop's own review
 record that opened the repair, error logs, frozen experiment plan, current interface record
@@ -209,7 +214,7 @@ complete artifact first.
 In `bridge_repair` purpose the loop may not change the Workflow graph, node
 interface, connection decision, scoring policy, tester definition or tester
 private data. Such a change is a new research proposal for a later iteration.
-When the repair limit is reached, return a structured exhausted result so the
+When the repair cannot produce a usable experiment, return a structured exhausted result so the
 caller can store failure evidence and stop downstream work. Do not dispatch
 `result-to-claim` as though the failed bridge were a measured result, and do
 not dispatch it for a retuned run that was never re-reviewed.
@@ -672,8 +677,9 @@ For the ordinary quality-review purpose, continue with the following steps.
      already a canonical node id (`idea:<slug>`), so tell the sub-agent NOT to prepend
      another `idea:` prefix.
    - Experiment identity: `exp_id = iter-<iteration>` — one experiment node per loop
-     iteration (`exp:iter-<iteration>`), so a re-judged iteration overwrites its own node
-     instead of accumulating duplicates.
+     iteration (`exp:iter-<iteration>`), so a repeated dispatch for the iteration lands on
+     its own node instead of accumulating duplicates. Once that node supports or
+     invalidates a claim it is reused unchanged.
    - Intended claims: the outer manifest's `experiment_plan` input path.
    - Comparability fields, so the iteration can be ranked against the others when
      the run exports its result package: the outer `iteration` number, this

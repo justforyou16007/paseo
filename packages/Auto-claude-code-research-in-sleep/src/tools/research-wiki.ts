@@ -1131,8 +1131,26 @@ export function addExperiment(
   const iteration = options.iteration ?? testerEnvelope?.outer_iteration;
   const subject = `exp:${slug}`;
   let existedBefore = false;
+  let reused = false;
   const result = commitOperations(root, subject, options.provenance || subject, (model) => {
     existedBefore = model.pages.experiment.has(slug);
+    reused = false;
+    // An experiment that already supports or invalidates a claim has been
+    // judged. Writing it again under the same id would either replace the
+    // evidence those claims stand on or strip their edges, so the existing
+    // page is reused as it is, even with --update-on-exist.
+    if (
+      existedBefore &&
+      model.edges.some(
+        (edge) =>
+          edge.from === subject &&
+          (edge.type === "supports" || edge.type === "invalidates") &&
+          edge.to.startsWith("claim:"),
+      )
+    ) {
+      reused = true;
+      return null;
+    }
     if (model.pages.experiment.has(slug) && !options.updateOnExist) {
       console.log(`Experiment already exists: ${slug}.md (slug dedup) — skipping.`);
       return null;
@@ -1197,6 +1215,12 @@ export function addExperiment(
     );
     return operations;
   });
+  if (reused) {
+    console.log(
+      `Experiment reused: ${path.join(root, "experiments", `${slug}.md`)} already formed claims; page and claim edges kept.`,
+    );
+    return;
+  }
   if (result.status === "skipped") {
     console.log(`Experiment skipped: ${path.join(root, "experiments", `${slug}.md`)}`);
     return;

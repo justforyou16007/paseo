@@ -333,8 +333,12 @@ if research-wiki/ exists:
     #     iteration); standalone runs use the experiment's own slug from the tracker.
     #
     # 1. Create/refresh the experiment node FIRST (verdict OWNER → --update-on-exist so
-    #    a re-judge overwrites the stale verdict). The supports/invalidates edges in #2
+    #    a re-judge before any claim edge exists overwrites the stale verdict). The
+    #    supports/invalidates edges in #2
     #    point FROM exp:<id>, so this operation must succeed before edges are written.
+    #    An exp:<id> that already supports or invalidates a claim has formed its claims
+    #    and is reused as is: add_experiment prints "Experiment reused:", writes nothing
+    #    and leaves its edges alone. Skip step 2 for it.
     node "$WIKI_SCRIPT" add_experiment research-wiki/ \
       --slug "<exp_id>" --idea "<active_idea>" \
       --verdict "<yes|partial|no>" --confidence "<high|medium|low>" \

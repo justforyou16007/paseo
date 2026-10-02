@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import path from "node:path";
 import type { Command } from "commander";
 import { createCli, runCli } from "../lib/cli.js";
 import { createArtifactRegistry } from "./artifact-registry.js";
@@ -19,7 +20,7 @@ import {
   requireString,
   type JsonObject,
 } from "./workflow-spec.js";
-import { requireRunContract } from "./run-contract.js";
+import { requireRunContract, runOwnedPath } from "./run-contract.js";
 import type { FreezeOuterRunInput } from "./workflow-state.js";
 import type { StopPolicy } from "./workflow-stop-gate.js";
 import {
@@ -27,6 +28,8 @@ import {
   beginOuterCycle,
   compileOuterCandidate,
   completeOuterCycle,
+  completeAutoResearchCycle,
+  recordAutoResearchInsufficient,
   finishOuterRun,
   markOuterChildTerminal,
   readOuterRunStatus,
@@ -40,9 +43,11 @@ import {
   releaseOuterBudget,
   reserveOuterBudget,
   resumeOuterRun,
+  resumeAutoResearchRun,
   runAutoResearchBridge,
   settleOuterBudget,
   startOuterRun,
+  startAutoResearchRun,
   type AutoResearchBridgeInput,
   type CompileOuterCandidateInput,
   type CompleteOuterCycleInput,
@@ -162,9 +167,9 @@ function freezeInput(filePath: string): FreezeOuterRunInput {
 }
 
 function testerAgentOption(command: Command): Command {
-  return command.requiredOption(
+  return command.option(
     "--tester-agent-config <path>",
-    "root-owned remote tester job configuration",
+    "remote tester configuration for legacy depth-0 tester workflows",
   );
 }
 
@@ -175,17 +180,33 @@ const runOptions = (command: Command): Command =>
     .requiredOption("--run <id>", "run id");
 
 const start = testerAgentOption(
-  runOptions(program.command("start")).requiredOption("--freeze <path>", "frozen outer-run input"),
+  runOptions(program.command("start"))
+    .option("--freeze <path>", "frozen tester workflow input")
+    .option("--charter <path>", "Auto Research Loop charter.json"),
 );
-start.action((options: IdentityOptions & { freeze: string; testerAgentConfig: string }) => {
-  const base = identity(options);
-  const input: StartOuterRunInput = {
-    ...base,
-    freeze_input: freezeInput(options.freeze),
-    tester_agent_config_path: requireString(options.testerAgentConfig, "tester_agent_config_path"),
-  };
-  print(startOuterRun(input));
-});
+start.action(
+  (
+    options: IdentityOptions & { freeze?: string; charter?: string; testerAgentConfig?: string },
+  ) => {
+    if (options.charter !== undefined) {
+      if (options.freeze !== undefined || options.testerAgentConfig !== undefined)
+        failA1("INVALID_VALUE", "ARL charter start cannot accept tester or freeze options");
+      const expected = runOwnedPath(options.project, options.run, "charter.json");
+      if (path.resolve(options.charter) !== expected)
+        failA1("IDENTITY_MISMATCH", "charter path must be this run's charter.json");
+      print(startAutoResearchRun(identity(options)));
+      return;
+    }
+    if (options.freeze === undefined) failA1("INVALID_VALUE", "start needs --charter or --freeze");
+    const base = identity(options);
+    const input: StartOuterRunInput = {
+      ...base,
+      freeze_input: freezeInput(options.freeze),
+      tester_agent_config_path: options.testerAgentConfig ?? "",
+    };
+    print(startOuterRun(input));
+  },
+);
 
 runOptions(
   program
@@ -255,20 +276,35 @@ program
   );
 
 const resume = testerAgentOption(
-  runOptions(program.command("resume")).option(
-    "--freeze <path>",
-    "frozen outer-run input, only needed if setup was interrupted before runtime creation",
-  ),
+  runOptions(program.command("resume"))
+    .option(
+      "--freeze <path>",
+      "frozen outer-run input, only needed if setup was interrupted before runtime creation",
+    )
+    .option("--charter <path>", "Auto Research Loop charter.json"),
 );
-resume.action((options: IdentityOptions & { freeze?: string; testerAgentConfig: string }) => {
-  const base = identity(options);
-  const input: ResumeOuterRunInput = {
-    ...base,
-    tester_agent_config_path: requireString(options.testerAgentConfig, "tester_agent_config_path"),
-    ...(options.freeze === undefined ? {} : { freeze_input: freezeInput(options.freeze) }),
-  };
-  print(resumeOuterRun(input));
-});
+resume.action(
+  (
+    options: IdentityOptions & { freeze?: string; charter?: string; testerAgentConfig?: string },
+  ) => {
+    if (options.charter !== undefined) {
+      if (options.freeze !== undefined || options.testerAgentConfig !== undefined)
+        failA1("INVALID_VALUE", "ARL charter resume cannot accept tester or freeze options");
+      const expected = runOwnedPath(options.project, options.run, "charter.json");
+      if (path.resolve(options.charter) !== expected)
+        failA1("IDENTITY_MISMATCH", "charter path must be this run's charter.json");
+      print(resumeAutoResearchRun(identity(options)));
+      return;
+    }
+    const base = identity(options);
+    const input: ResumeOuterRunInput = {
+      ...base,
+      tester_agent_config_path: options.testerAgentConfig ?? "",
+      ...(options.freeze === undefined ? {} : { freeze_input: freezeInput(options.freeze) }),
+    };
+    print(resumeOuterRun(input));
+  },
+);
 
 runOptions(program.command("status")).action((options: IdentityOptions) =>
   print(readOuterRunStatus(identity(options))),
@@ -421,14 +457,56 @@ runOptions(
 runOptions(
   program
     .command("cycle-complete")
+    .option(
+      "--metric-value <number-or-null>",
+      "ARL cycle metric reading, or null when no measurement exists",
+    )
     .requiredOption("--evidence <paths...>", "cycle completion evidence"),
-).action((options: IdentityOptions & EvidenceOptions) => {
+).action((options: IdentityOptions & EvidenceOptions & { metricValue?: string }) => {
   const input: CompleteOuterCycleInput = {
     ...identity(options),
     evidence_paths: evidence(options),
+    ...(options.metricValue === undefined
+      ? {}
+      : {
+          metric_value:
+            options.metricValue === "null"
+              ? null
+              : requireFiniteNumber(Number(options.metricValue), "metric_value"),
+        }),
   };
   print(completeOuterCycle(input));
 });
+
+runOptions(
+  program
+    .command("arl-cycle-complete")
+    .requiredOption("--review-receipt <path>", "finished auto-review-loop receipt")
+    .requiredOption("--evidence <paths...>", "cycle evidence"),
+).action((options: IdentityOptions & EvidenceOptions & { reviewReceipt: string }) =>
+  print(
+    completeAutoResearchCycle({
+      ...identity(options),
+      review_receipt_path: options.reviewReceipt,
+      evidence_paths: evidence(options),
+    }),
+  ),
+);
+
+runOptions(
+  program
+    .command("arl-insufficient")
+    .requiredOption("--review-receipt <path>", "insufficient auto-review-loop receipt")
+    .requiredOption("--evidence <paths...>", "repair evidence"),
+).action((options: IdentityOptions & EvidenceOptions & { reviewReceipt: string }) =>
+  print(
+    recordAutoResearchInsufficient({
+      ...identity(options),
+      review_receipt_path: options.reviewReceipt,
+      evidence_paths: evidence(options),
+    }),
+  ),
+);
 
 runOptions(
   program
@@ -593,11 +671,15 @@ runOptions(
 );
 
 runOptions(
-  program.command("stop-gate").requiredOption("--policy <path>", "explicit stop policy"),
-).action((options: IdentityOptions & { policy: string }) => {
+  program
+    .command("stop-gate")
+    .option("--policy <path>", "tester workflow stop policy; ARL uses its frozen target"),
+).action((options: IdentityOptions & { policy?: string }) => {
   const input: RecordStopDecisionInput = {
     ...identity(options),
-    policy: document(options.policy) as unknown as StopPolicy,
+    ...(options.policy === undefined
+      ? {}
+      : { policy: document(options.policy) as unknown as StopPolicy }),
   };
   print(recordWorkflowStopDecision(input));
 });

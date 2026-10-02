@@ -781,7 +781,7 @@ test("contract: worker output path chain — orchestrator reads from worker outp
 
 test("contract: resume restores persisted run configuration", () => {
   const arl = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
-  for (const field of ["auto_write", "render_html", "patience"]) {
+  for (const field of ["auto_write", "render_html", "max_iterations"]) {
     assert.ok(arl.includes(`.config.${field}`), `auto-research-loop does not restore config.${field}`);
   }
   assert.ok(!arl.includes(".config.baseline_plan"), "baseline_plan is no longer a run config field (baseline is anchored during /research-setup Phase 7.6)");
@@ -861,7 +861,6 @@ function makeDashboard(overrides: Record<string, unknown> = {}): Record<string, 
     iteration: 1,
     max_iterations: 5,
     current_phase: "experiment-bridge",
-    config: { patience: 2 },
     metric: {
       name: "F1",
       target: 0.85,
@@ -878,14 +877,13 @@ function makeDashboard(overrides: Record<string, unknown> = {}): Record<string, 
     system_errors: { total: 0, last: null },
     applied_receipts: [],
     ...overrides,
+    config: { max_iterations: 10, patience: 2, ...(overrides.config as object | undefined) },
   };
 }
 
 function writeDash(root: string, runId: string, dash: Record<string, unknown>): string {
-  // metric-gate reads the run contract and the budget ledger before it reads
-  // the dashboard: a run with no budget is already stopped, so there would be
-  // nothing to evaluate. The amount here is just "not exhausted" -- the one
-  // test that wants exhaustion spends it explicitly.
+  // The shared fixture also serves legacy budgeted bridge tests. The ARL
+  // metric gate ignores this ledger; the dedicated cap test omits it entirely.
   openRun(root, runId);
   initializeRunBudget(root, runId, 10);
   const dir = path.join(root, ".aris", "runs", runId);
@@ -962,11 +960,16 @@ function writeWorkerReceipt(
     has_errors: false,
     error_count: 0,
     ...receipt,
+    ...(receipt.worker === "idea-discovery" ? {
+      ranked_ideas: [{ id: "idea-2-1", title: "t", rank: 1, score: 8 }],
+      gate1_provenance: {
+        novelty_verdict: "pass", novelty_agent_id: "novelty-agent",
+        review_verdict: "pass", review_agent_id: "review-agent", reviewer_model: "codex",
+      },
+    } : {}),
   };
-  // An experiment-bridge receipt settles the budget its dispatch reserved, so
-  // the manifest has to name that execution and the reservation has to already
-  // exist. A bridge run that settles without a prior reservation is a dispatch
-  // that spent resources without booking them, and the ledger refuses it.
+  // Legacy budgeted fixtures still include an execution reservation. ARL
+  // dashboard merge no longer reads or settles it.
   const isBridge = complete.worker === "experiment-bridge";
   const executionId = `exec-${String(complete.iteration)}`;
   if (isBridge)
@@ -1115,7 +1118,7 @@ test("metric-gate evaluate: metric_met (lower_better)", () => {
   } finally { cleanup(d); }
 });
 
-test("metric-gate evaluate: budget_exhausted", () => {
+test("metric-gate evaluate: cap applies even with an exhausted ledger", () => {
   const d = tmpDir();
   try {
     // The gate stops on cost, not on a round count: `max_iterations` is not an
@@ -1126,11 +1129,11 @@ test("metric-gate evaluate: budget_exhausted", () => {
     const r = metricGateCli("evaluate", d, "run1");
     assert.equal(r.exitCode, 0, r.stderr);
     const dec = JSON.parse(r.stdout.trim());
-    assert.equal(dec.stop_reason, "budget_exhausted");
+    assert.equal(dec.stop_reason, null);
   } finally { cleanup(d); }
 });
 
-test("metric-gate evaluate: no round limit unless config.max_iterations is set", () => {
+test("metric-gate evaluate: missing max_iterations is invalid", () => {
   const d = tmpDir();
   try {
     // 40 iterations of steady progress and no backstop configured. A round
@@ -1139,14 +1142,14 @@ test("metric-gate evaluate: no round limit unless config.max_iterations is set",
     const history = Array.from({ length: 40 }, (_, i) => ({ iter: i + 1, value: 0.5 + i * 0.001 }));
     const dash = makeDashboard({
       iteration: 40,
-      config: { patience: 2 },
+      config: { patience: 2, max_iterations: null },
       metric: { name: "F1", target: 0.95, direction: "higher_better", tolerance: 0.01, current: 0.539, baseline: 0.5, history },
     });
     writeDash(d, "run1", dash);
     const r = metricGateCli("evaluate", d, "run1");
     assert.equal(r.exitCode, 0, r.stderr);
     const dec = JSON.parse(r.stdout.trim());
-    assert.equal(dec.stop_reason, null);
+    assert.equal(dec.stop_reason, "invalid_metric");
     assert.equal(dec.max_iterations, null);
   } finally { cleanup(d); }
 });
@@ -1208,7 +1211,7 @@ test("metric-gate evaluate: a malformed max_iterations is invalid, not ignored",
   } finally { cleanup(d); }
 });
 
-test("metric-gate evaluate: patience_exhausted (no improvement for 2 consecutive)", () => {
+test("metric-gate evaluate: no-progress streak does not stop the run", () => {
   const d = tmpDir();
   try {
     // iter 1=0.65 (baseline), iter 2=0.72 (improvement), iter 3=0.71 (no), iter 4=0.70 (no) -> streak=2
@@ -1222,7 +1225,7 @@ test("metric-gate evaluate: patience_exhausted (no improvement for 2 consecutive
     const r = metricGateCli("evaluate", d, "run1");
     assert.equal(r.exitCode, 0, r.stderr);
     const dec = JSON.parse(r.stdout.trim());
-    assert.equal(dec.stop_reason, "patience_exhausted");
+    assert.equal(dec.stop_reason, null);
     assert.equal(dec.no_progress_streak, 2);
   } finally { cleanup(d); }
 });
@@ -1286,12 +1289,12 @@ test("metric-gate evaluate: resume idempotency — same stop_reason on re-evalua
     const r1 = metricGateCli("evaluate", d, "run1");
     assert.equal(r1.exitCode, 0, r1.stderr);
     const d1 = JSON.parse(r1.stdout.trim());
-    assert.equal(d1.stop_reason, "budget_exhausted");
+    assert.equal(d1.stop_reason, null);
     // Second call should produce the same reason.
     const r2 = metricGateCli("evaluate", d, "run1");
     assert.equal(r2.exitCode, 0, r2.stderr);
     const d2 = JSON.parse(r2.stdout.trim());
-    assert.equal(d2.stop_reason, "budget_exhausted");
+    assert.equal(d2.stop_reason, null);
   } finally { cleanup(d); }
 });
 
@@ -1690,7 +1693,7 @@ test("contract: auto-research-loop stop gate reads dashboard fields only (no rev
   assert.ok(!gateSection.includes("metric_progress"), "the stop gate must not consume metric_progress");
   assert.ok(!gateSection.includes("REVIEW_VERDICT"), "stop gate must not use REVIEW_VERDICT");
   // Verify stop_reason vocabulary
-  for (const reason of ["metric_met", "budget_exhausted", "patience_exhausted", "invalid_metric"]) {
+  for (const reason of ["metric_met", "iteration_cap", "invalid_metric"]) {
     assert.ok(loop.includes(reason), `stop_reason '${reason}' must be defined`);
   }
   // Acceptance provenance must be deterministic, not from a reviewer id
@@ -1729,7 +1732,7 @@ test("metric-gate evaluate: Infinity current fires invalid_metric", () => {
   } finally { cleanup(d); }
 });
 
-test("metric-gate evaluate: priority — metric_met beats budget_exhausted", () => {
+test("metric-gate evaluate: metric_met beats iteration_cap", () => {
   const d = tmpDir();
   try {
     const dash = makeDashboard({
@@ -1741,7 +1744,7 @@ test("metric-gate evaluate: priority — metric_met beats budget_exhausted", () 
     const r = metricGateCli("evaluate", d, "run1");
     assert.equal(r.exitCode, 0, r.stderr);
     const dec = JSON.parse(r.stdout.trim());
-    assert.equal(dec.stop_reason, "metric_met", "metric_met must take priority over budget_exhausted");
+    assert.equal(dec.stop_reason, "metric_met", "metric_met must take priority over iteration_cap");
   } finally { cleanup(d); }
 });
 
@@ -1781,7 +1784,7 @@ test("metric-gate evaluate: lower_better patience streak computed correctly", ()
     const r = metricGateCli("evaluate", d, "run1");
     assert.equal(r.exitCode, 0, r.stderr);
     const dec = JSON.parse(r.stdout.trim());
-    assert.equal(dec.stop_reason, "patience_exhausted");
+    assert.equal(dec.stop_reason, null);
     assert.equal(dec.no_progress_streak, 2);
   } finally { cleanup(d); }
 });
@@ -1803,7 +1806,7 @@ test("metric-gate evaluate: the anchored baseline is the incumbent patience meas
     assert.equal(r.exitCode, 0, r.stderr);
     const dec = JSON.parse(r.stdout.trim());
     assert.equal(dec.no_progress_streak, 3, "iters 2-4 all fail to beat the baseline");
-    assert.equal(dec.stop_reason, "patience_exhausted");
+    assert.equal(dec.stop_reason, null);
   } finally { cleanup(d); }
 });
 
@@ -1843,7 +1846,7 @@ test("metric-gate evaluate: without an anchored baseline, history[0] is still th
     assert.equal(r.exitCode, 0, r.stderr);
     const dec = JSON.parse(r.stdout.trim());
     assert.equal(dec.no_progress_streak, 2, "iters 2 and 3 miss the iter-1 incumbent");
-    assert.equal(dec.stop_reason, "patience_exhausted");
+    assert.equal(dec.stop_reason, null);
   } finally { cleanup(d); }
 });
 
@@ -2069,7 +2072,7 @@ test("metric-gate config: absent baseline accepted as null", () => {
 // dashboard-merge — current overrides same-iteration baseline history
 // ============================================================================
 
-test("dashboard-merge: final review metric replaces the bridge metric for the same iteration", () => {
+test("dashboard-merge: only the final reviewed metric enters history", () => {
   const d = tmpDir();
   try {
     const dash = makeDashboard({
@@ -2095,8 +2098,7 @@ test("dashboard-merge: final review metric replaces the bridge metric for the sa
     let updated = JSON.parse(fs.readFileSync(
       path.join(d, ".aris", "runs", "run1", "dashboard.json"), "utf-8"));
     let history = (updated.metric as Record<string, unknown>).history as Record<string, unknown>[];
-    assert.equal(history.length, 1, "bridge must create one history entry");
-    assert.equal(history[0].value, 0.65, "bridge history entry value");
+    assert.equal(history.length, 0, "bridge reading is provisional");
 
     updated.current_phase = "auto-review-loop";
     fs.writeFileSync(
@@ -2122,9 +2124,9 @@ test("dashboard-merge: final review metric replaces the bridge metric for the sa
     updated = JSON.parse(fs.readFileSync(
       path.join(d, ".aris", "runs", "run1", "dashboard.json"), "utf-8"));
     history = (updated.metric as Record<string, unknown>).history as Record<string, unknown>[];
-    assert.equal(history.length, 1, "must still be 1 entry (overwritten, not appended)");
+    assert.equal(history.length, 1, "review adds the only history entry");
     assert.equal(history[0].value, 0.72,
-      "the final reviewed value must overwrite the initial bridge value");
+      "the history value must be the judged reading");
     assert.equal(history[0].source, "auto-review-loop");
   } finally { cleanup(d); }
 });
@@ -2440,7 +2442,7 @@ test("contract: research-pipeline persists all override constants in dashboard.c
 
 test("contract: auto-research-loop persists all resume-needed constants", () => {
   const arl = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
-  const requiredFields = ["auto_write", "render_html", "patience"];
+  const requiredFields = ["auto_write", "render_html", "max_iterations"];
 
   const dashInitStart = arl.indexOf('cat > "$DASHBOARD"');
   const dashInitEnd = arl.indexOf("\nDASH", dashInitStart);
@@ -2908,7 +2910,7 @@ test("research-wiki: closing a problem preserves the fields the close call omits
   } finally { cleanup(d); }
 });
 
-test("research-wiki: a re-judged experiment drops its previous verdict edges", () => {
+test("research-wiki: an experiment that formed claims is reused, not re-judged", () => {
   const d = tmpDir();
   try {
     const wiki = path.join(d, "research-wiki");
@@ -2922,28 +2924,33 @@ test("research-wiki: a re-judged experiment drops its previous verdict edges", (
     // The idea id is passed exactly as the loop carries it (already prefixed).
     // add_experiment must NOT prepend a second idea:.
     let r = wikiCli("add_experiment", wiki,
-      "--slug", "iter-2", "--idea", "idea:clean-split-v2", "--verdict", "no");
+      "--slug", "iter-2", "--idea", "idea:clean-split-v2", "--verdict", "partial");
     assert.equal(r.exitCode, 0, r.stderr);
+    // Before any claim edge exists, the same id can still be re-judged.
+    r = wikiCli("add_experiment", wiki,
+      "--slug", "iter-2", "--idea", "idea:clean-split-v2", "--verdict", "no",
+      "--update-on-exist");
+    assert.equal(r.exitCode, 0, r.stderr);
+    assert.match(fs.readFileSync(path.join(wiki, "experiments", "iter-2.md"), "utf-8"), /verdict: no/);
     assert.equal(wikiCli("add_edge", wiki,
       "--from", "exp:iter-2", "--to", "claim:split-works", "--type", "invalidates",
       "--evidence", "0.71").exitCode, 0);
 
-    // Re-judge: same iteration, verdict flips to yes.
+    // Same id again after it formed a claim: the page and its edges are kept.
     r = wikiCli("add_experiment", wiki,
       "--slug", "iter-2", "--idea", "idea:clean-split-v2", "--verdict", "yes",
       "--update-on-exist");
     assert.equal(r.exitCode, 0, r.stderr);
-    assert.equal(wikiCli("add_edge", wiki,
-      "--from", "exp:iter-2", "--to", "claim:split-works", "--type", "supports",
-      "--evidence", "0.84").exitCode, 0);
+    assert.match(r.stdout, /Experiment reused:/);
+    assert.match(fs.readFileSync(path.join(wiki, "experiments", "iter-2.md"), "utf-8"), /verdict: no/);
 
     const edges = fs.readFileSync(path.join(wiki, "graph", "edges.jsonl"), "utf-8")
       .split("\n").filter(Boolean).map((l) => JSON.parse(l));
     const fromExp = edges.filter((e) => e.from === "exp:iter-2");
-    assert.ok(!fromExp.some((e) => e.type === "invalidates"),
-      "the stale invalidates edge must be gone - supports+invalidates on one experiment is a contradiction");
-    assert.ok(fromExp.some((e) => e.type === "supports"),
-      "the new supports edge must be present");
+    assert.ok(fromExp.some((e) => e.type === "invalidates" && e.to === "claim:split-works"),
+      "the claim edge the experiment formed must be kept");
+    assert.ok(!fromExp.some((e) => e.type === "supports"),
+      "a reused experiment gains no contradicting edge");
     assert.ok(edges.some((e) => e.from === "idea:clean-split-v2" && e.to === "exp:iter-2" && e.type === "tested_by"),
       "the tested_by edge must use the idea id verbatim (no idea:idea: prefix)");
     assert.ok(!edges.some((e) => e.from === "idea:idea:clean-split-v2"),
@@ -3047,7 +3054,7 @@ test("metric-gate evaluate: duplicate history rows for one iteration count once"
     const dec = JSON.parse(r.stdout.trim());
     assert.equal(dec.no_progress_streak, 2,
       "iters 2 and 3 are the only no-progress rounds; the duplicate row must not count");
-    assert.equal(dec.stop_reason, "patience_exhausted");
+    assert.equal(dec.stop_reason, null);
   } finally { cleanup(d); }
 });
 
