@@ -26,12 +26,12 @@ import { readStateFile, writeStateJsonAtomic } from "./state-file.js";
 
 const program = createCli(
   "tester-agent",
-  "Deploy the remote tester agent and exchange contracts and submissions with it",
+  "Deploy the tester agent into its container and exchange contracts and submissions with it",
 );
 
 /**
  * Every failure prints one fixed reason. The research log must not learn the
- * ssh target, the remote stderr, or anything the tester holds privately, so
+ * container's stderr or anything the tester holds privately, so
  * the caught error is discarded rather than formatted.
  */
 function reject(reason: string): void {
@@ -41,33 +41,32 @@ function reject(reason: string): void {
 
 program
   .command("probe")
-  .description("Check ssh reachability, the remote daemon and the remote claude binary")
-  .requiredOption("--target <ssh-target>", "host or user@host of the tester machine")
-  .option("--ssh-port <port>", "ssh port when it is not 22")
-  .requiredOption("--daemon-port <port>", "Paseo daemon port on the tester machine")
+  .description(
+    "Check the tester container, its Paseo daemon, its claude binary and its docker access",
+  )
+  .requiredOption("--container <name>", "name or id of the running tester container")
+  .requiredOption("--user <user>", "account the container's Paseo daemon runs as")
   .option("--timeout <ms>", "per-step timeout in milliseconds", "60000")
-  .action(
-    async (options: { target: string; sshPort?: string; daemonPort: string; timeout: string }) => {
-      try {
-        const result = await probeTesterAgentHost({
-          endpoint: {
-            ssh_target: options.target,
-            ...(options.sshPort === undefined ? {} : { ssh_port: Number(options.sshPort) }),
-            daemon_port: Number(options.daemonPort),
-            request_timeout_ms: Number(options.timeout),
-          },
-        });
-        console.log(JSON.stringify(result));
-        if (!result.ssh || !result.daemon || !result.claude || !result.docker) process.exitCode = 1;
-      } catch {
-        reject("tester_probe_failed");
-      }
-    },
-  );
+  .action(async (options: { container: string; user: string; timeout: string }) => {
+    try {
+      const result = await probeTesterAgentHost({
+        endpoint: {
+          container: options.container,
+          container_user: options.user,
+          request_timeout_ms: Number(options.timeout),
+        },
+      });
+      console.log(JSON.stringify(result));
+      if (!result.container || !result.daemon || !result.claude || !result.docker)
+        process.exitCode = 1;
+    } catch {
+      reject("tester_probe_failed");
+    }
+  });
 
 program
   .command("deploy")
-  .description("Provision the remote layout and signing key, then create the tester agent")
+  .description("Provision the container layout and signing key, then create the tester agent")
   .requiredOption("--input <path>", "deployment request JSON")
   .requiredOption("--output <path>", "deployment record to write")
   .action(async (options: { input: string; output: string }) => {
@@ -90,7 +89,7 @@ program
 
 program
   .command("cleanup")
-  .description("Remove the staging areas the deployment created, locally and remotely")
+  .description("Remove the staging areas the deployment created, locally and in the container")
   .requiredOption("--deployment <path>", "deployment record written by deploy")
   .option("--local-bundle <path>", "local staging directory to remove as well")
   .action(async (options: { deployment: string; localBundle?: string }) => {
@@ -155,7 +154,7 @@ program
 
 program
   .command("prepare-bundle")
-  .description("Materialize the remote tester's operating manual into the local staging directory")
+  .description("Materialize the tester's operating manual into the local staging directory")
   .requiredOption("--output <dir>", "local bundle directory that deploy will push")
   .action((options: { output: string }) => {
     try {

@@ -14,7 +14,7 @@ allowed-tools: Read, Write, Bash(*), AskUserQuestion, mcp__paseo__create_agent, 
 
 A project is ready for a formal run when six things exist. `/research-setup`
 builds the first two and delegates the third. The last three — the tester agent
-on its own machine, the search guard compiled from its contract, and the root
+in its own docker container, the search guard compiled from its contract, and the root
 charter — had no entry point at all: nothing outside `skills/tester-setup/`
 referenced them, so `/auto-research-loop` stopped on a missing charter with no
 instruction on how to produce one. This skill is that instruction.
@@ -35,7 +35,7 @@ one.
 
 Every project that goes through this skill configures all six. There is no
 branch that skips the tester: a run whose acceptance is judged by the thing
-being judged is not a formal run, so a project with no second machine fails at
+being judged is not a formal run, so a project with no tester container fails at
 Phase 3 rather than getting a downgraded configuration.
 
 ## Resolving the helpers
@@ -124,16 +124,16 @@ Archive the agent afterwards, including when it failed.
 
 ## Phase 3 — tester and the search gate
 
-This is where the second machine is required, and it needs a working docker
-daemon on it: the tester runs submitted artifacts in a container, never on its
-host, and `probe` refuses the machine without one. Collect the site facts with
+This is where the tester container is required. What it has to contain is in
+[`/tester-setup`](../tester-setup/SKILL.md) under "The container the tester
+lives in"; `probe` refuses a container without it. Collect the site facts with
 `AskUserQuestion` (one question per fact, no guessing):
 
 | Answer | Used by |
 | --- | --- |
-| ssh target (`user@host`) and daemon port | probe, deploy |
-| remote home / work directory | deploy |
-| provider and model for the remote tester agent | deploy |
+| tester container name and the account its Paseo daemon runs as | probe, deploy |
+| tester home directory inside the container | deploy |
+| provider and model for the tester agent | deploy |
 | local bundle directory to stage the tester's manual in | prepare-bundle |
 | **the domain / task description in prose** | declare |
 
@@ -273,8 +273,8 @@ digest are the whole public surface.
 
 - It does not reproduce the baseline. `/auto-research-loop` iteration 1 does
   that through the normal pipeline.
-- It does not decide what the tester measures. That is researched on the tester
-  machine, from `templates/tester-agent-bundle/TESTER_AGENT.md`.
+- It does not decide what the tester measures. That is researched inside the tester
+  container, from `templates/tester-agent-bundle/TESTER_AGENT.md`.
 - It does not seal anything itself. `root-setup` writes the setup record;
   `emit-policy` and `install-guard` write the search gate; this skill only
   orders them and carries the owner's answers between them.

@@ -256,24 +256,28 @@ advice:      increase_long_horizon_consistency | strengthen_tool_use_consistency
 
 ### tester 在哪、隔离靠什么
 
-tester 是**另一台机器上的一个 Claude agent**，由那台机器自己的 Paseo daemon 管。研究侧通过 `paseo --host ssh://...` 把远端 daemon 端口隧道回本机，能做的只有两件事：**声明一个测试**（给 project id + 领域测试需求，tester 回一份签名的提交契约，说明它要什么格式的产物、怎么跑）、**提交一对产物去测**。
+tester 是**一个独立 docker 容器里的 Claude agent**，由容器里自己的 Paseo daemon 管。研究侧只通过 `docker exec` 进这个容器和它打交道（容器里的 paseo 命令直接找自己的 daemon，所以 daemon 端口不用对宿主机公开），能做的只有两件事：**声明一个测试**（给 project id + 领域测试需求，tester 回一份签名的提交契约，说明它要什么格式的产物、怎么跑）、**提交一对产物去测**。
 
-隔离**不靠文件属主**，靠两条物理事实：
+隔离**不靠文件属主**，靠两条事实：
 
-- **私钥从来没离开那台机器**。密钥对在部署时由远程机器上的命令生成，只有公钥被拉回本机，并在配置里用 sha256 钉死。研究侧可以随便读公钥——公钥本来就是公开的——但签不出一份能过验签的回执。钉死摘要防的是"把公钥换成一把自己生成的钥匙"，这件事以前靠 root 属主挡，现在靠摘要比对挡，而且不需要有人来 sudo。
-- **case 从来没离开那台机器**。tester 自己生成 case、自己评分，回来的只有一个签名的结构化 envelope。
+- **私钥从来没离开容器**。密钥对在部署时由容器里的命令生成，只有公钥被拷出来，并在配置里用 sha256 钉死。研究侧可以随便读公钥——公钥本来就是公开的——但签不出一份能过验签的回执。钉死摘要防的是"把公钥换成一把自己生成的钥匙"，这件事以前靠 root 属主挡，现在靠摘要比对挡，而且不需要有人来 sudo。
+- **case 从来没离开容器**。tester 自己生成 case、自己评分，回来的只有一个签名的结构化 envelope。
 
-边界要说清楚，别自欺：研究进程和做 setup 的人同 uid，能读同一个 `~/.ssh`，所以它**技术上能 ssh 到那台机器**。这套设计不声称挡得住这一条。它声称的是：私钥和 case 都不在研究这台机器上，远程 agent 只回答上面那两个请求。
+这两条成立有个前提：容器里的文件在研究侧的文件系统上看不到。tester 的 home 放在容器里或 named volume 里，不要 bind mount 一个研究账号读得到的目录，也不要把研究项目挂进 tester 容器。
+
+被测产物也不在 tester 容器里跑。tester 容器通过挂进来的宿主机 docker socket 为每次提交另起一个新容器，case 只读挂进去。
+
+边界要说清楚，别自欺：研究进程和做 setup 的人同 uid，能用 `docker`，所以它**技术上能 `docker exec` 进 tester 容器**。这套设计不声称挡得住这一条。它声称的是：私钥和 case 都不在研究侧的文件系统上，tester agent 只回答上面那两个请求。
 
 ### tester 自己选测什么，ARL 不许去搜同一个
 
 研究侧给 tester 的只有一段领域/任务的**散文描述**，不带 benchmark 名。选哪个 benchmark、用什么
 评测协议、case 怎么造，全由 tester 自己上网调研决定（论文、GitHub、dataset 站）。让研究侧指定测法
-等于让被考的人出卷子，所以这件事必须在远端做，手册在 `templates/tester-agent-bundle/TESTER_AGENT.md`。
+等于让被考的人出卷子，所以这件事必须在 tester 容器里做，手册在 `templates/tester-agent-bundle/TESTER_AGENT.md`。
 
 但这样就开了一个新洞：**tester 用的是公开 benchmark，那个仓库和那篇论文还在网上挂着**。ARL 根本
-不需要碰 tester 那台机器，搜同一个名字、读同一个附录就够了。私钥不出远端挡不住这条，case 不出
-远端也挡不住——泄漏源不是 tester，是公共互联网。
+不需要碰 tester 容器，搜同一个名字、读同一个附录就够了。私钥不出容器挡不住这条，case 不出
+容器也挡不住——泄漏源不是 tester，是公共互联网。
 
 所以契约里多一个跟着一起签名的字段 `search_exclusions`：tester **真正用到**的 benchmark 名、
 dataset 名、URL、host+路径前缀。研究侧拿它做两件事：
@@ -324,7 +328,7 @@ hook 判所有**网络形状**的调用：`WebSearch`、`WebFetch`、命令里�
 
 ### 这些东西谁来配
 
-上面这套——远端 tester、搜索闸门、七项 root setup——以前**没有入口**。实验环境那层有两个入口
+上面这套——容器里的 tester、搜索闸门、七项 root setup——以前**没有入口**。实验环境那层有两个入口
 （人走 `/research-setup`，机器走 `auto-research-loop` 第 0b 步和 `experiment-bridge`），但
 `tester-setup` 在自己目录之外没有任何地方引用，`research-setup` 全文
 也不提 tester 和 charter。结果是人配完项目跑 `/auto-research-loop`，撞到一句"charter 缺失"，

@@ -1430,7 +1430,7 @@ function readRequiredTesterAgentConfig(
   }
   // The tester agent config carries the pinned public key used to verify the
   // response. It is deliberately independent of execution_root: swapping the
-  // tester machine is prevented by the frozen config hash below.
+  // tester container is prevented by the frozen config hash below.
   return readTesterAgentConfig(configPath);
 }
 

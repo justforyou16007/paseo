@@ -524,7 +524,7 @@ test("tester boundary documents selected response fields and sanitizer vocabular
     findExactLineEnding(auto, line, `auto skill tester boundary for ${line}`);
 
   // What the tester may NOT send back is stated once, in the skill that owns the
-  // tester machine. /aris-setup points at it rather than restating it, so this
+  // tester container. /aris-setup points at it rather than restating it, so this
   // is one whole-paragraph comparison against tester-setup instead of the seven
   // per-line checks the old merged copy allowed.
   assertExactTextSpan(
@@ -558,7 +558,7 @@ test("tester boundary documents selected response fields and sanitizer vocabular
   assert.deepEqual(parseBacktickList(forbiddenLines.join("\n")), sourceForbiddenKeys);
   // The isolation claim now rests on where the cases live, not on file
   // ownership. The comment wraps across lines in the source.
-  assert.match(testerAgentSource, /cases[\s\S]{0,40}never leave that machine/);
+  assert.match(testerAgentSource, /cases[\s\S]{0,40}never leave the container/);
 
   const validFeedback = buildTesterFeedback({
     schema_version: 1,

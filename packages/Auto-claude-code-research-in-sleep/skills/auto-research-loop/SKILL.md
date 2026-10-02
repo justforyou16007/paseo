@@ -111,6 +111,15 @@ max_iterations, write scope or model policy is absent, conflicting, or supplied 
 prompt instead of the manifest. A missing helper or an unavailable required
 resource stops the current phase. Do not warn and continue on a local default.
 
+Three pieces of the recursive substrate are owned outside this skill itself: a
+charter-only `workflow-cli` start adapter, child charter/result-package
+persistence, and the Paseo workspace create/archive path. If one is missing at
+runtime, stop with the exact missing artifact or helper. Never document it as
+complete and never synthesize a local replacement. If the bridge command cannot
+be resolved, the status report
+must not say that the old runtime is already using it. A missing connection is
+a hard stop and a report item, not a reason to call the old path.
+
 The child charter is written by `bridge-expand` and carries the same mode and
 round limit. The repair cap and `max_depth` are not in the charter; `start`
 copies them from the parent's frozen policy, so a child never learns how deep it
@@ -1554,7 +1563,7 @@ The sanitizer's forbidden key vocabulary includes `case_id`, `case_ids`,
 `category`.
 The submission carries bindings and hashes such as artifact hashes, harness
 hash, case manifest digest, input distribution and judge binding; it does not
-carry the private cases themselves, which never leave the tester machine. The
+carry the private cases themselves, which never leave the tester container. The
 response validator
 in `src/tools/tester-agent.ts` accepts only terminal status, coarse
 `error_analysis` and signed public receipts. `src/tools/tester-feedback.ts`

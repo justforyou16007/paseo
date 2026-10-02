@@ -25,15 +25,15 @@ import {
 } from "./workflow-spec.js";
 
 /**
- * The tester is a Claude agent on another machine, managed by that machine's
- * Paseo daemon. The research process reaches it through `paseo --host
- * ssh://...`, which tunnels the daemon port back to this machine.
+ * The tester is a Claude agent in a docker container of its own, managed by
+ * the Paseo daemon running in that container. The research process reaches it
+ * only through `docker exec` into that container.
  *
- * Nothing here protects the tester by file ownership. Two physical facts do
- * that instead: the signing key is generated on the remote machine during
- * deployment and only its public half is fetched back, and the cases the
- * tester writes never leave that machine. The research process may read the
- * public key freely -- it is public -- but it cannot sign a receipt with it.
+ * Nothing here protects the tester by file ownership. Two facts do that
+ * instead: the signing key is generated inside the container during deployment
+ * and only its public half is copied out, and the cases the tester writes
+ * never leave the container. The research process may read the public key
+ * freely -- it is public -- but it cannot sign a receipt with it.
  */
 export interface TesterAgentConfig {
   schema_version: 1;
@@ -41,12 +41,13 @@ export interface TesterAgentConfig {
   tester_id: string;
   /** The handle the research process must name to reach its own test. */
   project_id: string;
-  /** `user@host` or `host`; also the ssh argument used to fetch receipts. */
-  ssh_target: string;
-  ssh_port?: number;
-  daemon_port: number;
-  /** The tester-role agent on the remote daemon. */
+  /** Name or id of the tester container; every exchange is a `docker exec` into it. */
+  container: string;
+  /** The account the container's Paseo daemon and the tester agent run as. */
+  container_user: string;
+  /** The tester-role agent on the container's daemon. */
   agent_id: string;
+  /** Receipt directory inside the container. */
   remote_receipt_dir: string;
   public_key_path: string;
   /** Pinned at deployment so a later swap of the key file is refused. */
@@ -84,8 +85,8 @@ export interface TesterSubmissionField {
  * into the guard that refuses those searches, so a benchmark the tester built
  * on cannot be looked up and copied from its public repository or paper.
  *
- * The leak this closes is not the tester machine -- it is the open web. Keeping
- * the private key and the cases on the tester machine does nothing about a
+ * The leak this closes is not the tester container -- it is the open web. Keeping
+ * the private key and the cases in the tester container does nothing about a
  * research process that simply searches for the same benchmark.
  */
 export interface TesterSearchExclusions {
@@ -101,15 +102,15 @@ export interface TesterSearchExclusions {
  * Where the tester runs what it is sent.
  *
  * A submitted artifact is code the research side wrote, and the tester runs it
- * on the machine that holds the private key and the cases. Running it on the
- * host puts both inside the blast radius of whatever was submitted, so the test
- * service and the cases run in a container instead, and a contract that does
+ * in the container that holds the private key and the cases. Running it there
+ * puts both inside the blast radius of whatever was submitted, so the test
+ * service runs in a fresh container of its own instead, and a contract that does
  * not say so is refused before a single artifact is sent.
  *
  * The digest is the one public fact about that container. It makes "the
  * environment changed between two submissions" detectable, the same way
  * `case_manifest_sha256` makes a changed case set detectable. The image
- * reference itself stays on the tester machine: a readable tag would name the
+ * reference itself stays in the tester container: a readable tag would name the
  * benchmark the tester just spent step 4 excluding.
  */
 export interface TesterRuntime {
@@ -224,40 +225,37 @@ function normalizedAbsolutePath(value: unknown, location: string): string {
 }
 
 /**
- * An ssh target reaches the command line, so it is validated rather than
- * escaped: one optional `user@`, one host, and nothing that could be read as
- * an ssh option. `assertIdentifier` already refuses a leading hyphen and
- * whitespace; the only extra rule is that `@` appears at most once.
+ * A container name and a user name both reach the `docker` command line, so
+ * they are validated rather than escaped: docker's own name alphabet, and a
+ * first character that cannot be read as an option.
  */
-function sshTarget(value: unknown, location: string): string {
-  const target = assertIdentifier(value, location);
-  const parts = target.split("@");
-  if (parts.length > 2 || parts.some((part) => part === "" || part.includes(":")))
-    failA1("TESTER_AGENT_CONFIG_INVALID", "ssh target must be host or user@host", location);
-  return target;
-}
+const DOCKER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+const CONTAINER_USER = /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/;
 
-function port(value: unknown, location: string): number {
-  const result = requireInteger(value, location, 1);
-  if (result > 65535) failA1("TESTER_AGENT_CONFIG_INVALID", "port is out of range", location);
-  return result;
-}
-
-/** Everything needed to reach the tester machine, config or not. */
-export interface TesterAgentTarget {
-  ssh_target: string;
-  ssh_port?: number;
-  daemon_port: number;
+function dockerName(value: unknown, pattern: RegExp, location: string): string {
+  const name = requireString(value, location);
+  if (name.length > 128 || !pattern.test(name))
+    failA1("TESTER_AGENT_CONFIG_INVALID", "not a usable docker name", location);
+  return name;
 }
 
 /**
- * The `--host` target for the Paseo CLI. It is derived rather than stored so
- * the ssh target and the daemon port have exactly one place to be wrong.
+ * Everything needed to reach the tester container, config or not. The tester
+ * is a Paseo daemon running inside that container, and every command reaches
+ * it through `docker exec`, so no daemon port has to be published to the host.
  */
-export function testerAgentDaemonHost(target: TesterAgentTarget): string {
-  const authority =
-    target.ssh_port === undefined ? target.ssh_target : `${target.ssh_target}:${target.ssh_port}`;
-  return `ssh://${authority}?daemonPort=${target.daemon_port}`;
+export interface TesterAgentTarget {
+  /** Name or id of the running tester container. */
+  container: string;
+  /** The account the container's Paseo daemon runs as, `paseo` in the official image. */
+  container_user: string;
+}
+
+function validateTarget(value: TesterAgentTarget, location: string): TesterAgentTarget {
+  return {
+    container: dockerName(value.container, DOCKER_NAME, `${location}.container`),
+    container_user: dockerName(value.container_user, CONTAINER_USER, `${location}.container_user`),
+  };
 }
 
 /**
@@ -281,11 +279,7 @@ function validateTesterAgentEndpoint(value: Record<string, unknown>): TesterAgen
   return {
     tester_id: assertIdentifier(value.tester_id, "tester_agent_config.tester_id"),
     project_id: assertIdentifier(value.project_id, "tester_agent_config.project_id"),
-    ssh_target: sshTarget(value.ssh_target, "tester_agent_config.ssh_target"),
-    ...(value.ssh_port === undefined
-      ? {}
-      : { ssh_port: port(value.ssh_port, "tester_agent_config.ssh_port") }),
-    daemon_port: port(value.daemon_port, "tester_agent_config.daemon_port"),
+    ...validateTarget(value as unknown as TesterAgentTarget, "tester_agent_config"),
     agent_id: assertIdentifier(value.agent_id, "tester_agent_config.agent_id"),
     remote_receipt_dir: normalizedAbsolutePath(
       value.remote_receipt_dir,
@@ -313,9 +307,8 @@ export function validateTesterAgentConfig(value: unknown): TesterAgentConfig {
       "mode",
       "tester_id",
       "project_id",
-      "ssh_target",
-      "ssh_port",
-      "daemon_port",
+      "container",
+      "container_user",
       "agent_id",
       "remote_receipt_dir",
       "public_key_path",
@@ -809,7 +802,7 @@ export function validateTesterAgentSubmission(value: unknown): TesterAgentSubmis
 /**
  * Check a submission against the shape the tester declared. This is the whole
  * of the format contract: the tester said what it wants, and a submission that
- * does not match is refused here instead of on the far side of an ssh hop.
+ * does not match is refused here instead of inside the tester container.
  */
 export function bindSubmissionToContract(
   contract: TesterSubmissionContract,
@@ -1142,9 +1135,9 @@ export type TesterAgentTransport = (
 ) => Promise<TesterAgentCommandResult>;
 
 /**
- * Spawn without a shell, so the argv array is the whole of the command. The
- * remote side of `ssh host cat -- <path>` does run a shell, which is why the
- * receipt path is quoted below.
+ * Spawn without a shell, so the argv array is the whole of the command.
+ * `docker exec` hands its arguments to the container process without a shell
+ * either; only the scripts passed to `sh -c` below need quoting.
  */
 async function defaultTransport(command: TesterAgentCommand): Promise<TesterAgentCommandResult> {
   const [file, ...args] = command.argv;
@@ -1171,38 +1164,35 @@ async function defaultTransport(command: TesterAgentCommand): Promise<TesterAgen
   });
 }
 
-/** Quote one argument for the remote shell that `ssh` starts. */
-function remoteQuote(value: string): string {
+/** Quote one argument for a `sh -c` script run inside the container. */
+function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
-function sshArgv(target: TesterAgentTarget, remoteCommand: readonly string[]): string[] {
-  return [
-    "ssh",
-    "-T",
-    "-o",
-    "BatchMode=yes",
-    "-o",
-    "ConnectTimeout=10",
-    ...(target.ssh_port === undefined ? [] : ["-p", String(target.ssh_port)]),
-    target.ssh_target,
-    "--",
-    ...remoteCommand,
-  ];
+/**
+ * Run one command inside the tester container. The account defaults to the
+ * daemon's own, so files the command creates belong to the tester agent;
+ * `root` is passed only where `docker cp` left root-owned files behind.
+ */
+function execArgv(
+  target: TesterAgentTarget,
+  command: readonly string[],
+  user: string = target.container_user,
+): string[] {
+  return ["docker", "exec", "--user", user, target.container, ...command];
+}
+
+/**
+ * The Paseo CLI inside the container finds that container's daemon through its
+ * own home, and `docker exec` passes the container's environment, including a
+ * configured `PASEO_PASSWORD`, so no `--host` is needed.
+ */
+function paseoArgv(target: TesterAgentTarget, args: readonly string[]): string[] {
+  return execArgv(target, ["paseo", ...args]);
 }
 
 function paseoSendArgv(config: TesterAgentTarget & { agent_id: string }, prompt: string): string[] {
-  return [
-    "paseo",
-    "agent",
-    "send",
-    config.agent_id,
-    "--host",
-    testerAgentDaemonHost(config),
-    "--prompt",
-    prompt,
-    "--json",
-  ];
+  return paseoArgv(config, ["agent", "send", config.agent_id, "--prompt", prompt, "--json"]);
 }
 
 function parseReceipt(stdout: string): unknown {
@@ -1232,7 +1222,7 @@ async function runTesterAgentExchange(input: {
   const receiptPath = path.posix.join(config.remote_receipt_dir, input.receipt_name);
   const fetched = await transport({
     kind: "fetch",
-    argv: sshArgv(config, ["cat", "--", remoteQuote(receiptPath)]),
+    argv: execArgv(config, ["cat", "--", receiptPath]),
     timeout_ms: config.request_timeout_ms,
   });
   if (fetched.code !== 0)
@@ -1363,20 +1353,17 @@ export function readTesterAgentSubmission(submissionPath: string): TesterAgentSu
 }
 
 /**
- * Availability probe, in the order that makes a failure legible: can ssh reach
- * the box at all, is a Paseo daemon answering there, and does that box have
- * the claude binary the tester agent needs.
+ * Availability probe, in the order that makes a failure legible: is the
+ * container running and enterable as the daemon's account, is a Paseo daemon
+ * answering inside it, and does it have the claude binary the tester agent
+ * needs.
  */
 export async function probeTesterAgentHost(input: {
   endpoint: TesterAgentTarget & { request_timeout_ms: number };
   transport?: TesterAgentTransport;
-}): Promise<{ ssh: boolean; daemon: boolean; claude: boolean; docker: boolean }> {
+}): Promise<{ container: boolean; daemon: boolean; claude: boolean; docker: boolean }> {
   const config = {
-    ssh_target: sshTarget(input.endpoint.ssh_target, "tester_probe.ssh_target"),
-    ...(input.endpoint.ssh_port === undefined
-      ? {}
-      : { ssh_port: port(input.endpoint.ssh_port, "tester_probe.ssh_port") }),
-    daemon_port: port(input.endpoint.daemon_port, "tester_probe.daemon_port"),
+    ...validateTarget(input.endpoint, "tester_probe"),
     request_timeout_ms: requireInteger(
       input.endpoint.request_timeout_ms,
       "tester_probe.request_timeout_ms",
@@ -1385,34 +1372,38 @@ export async function probeTesterAgentHost(input: {
   };
   const transport = input.transport ?? defaultTransport;
   const timeout = config.request_timeout_ms;
-  const ssh = await transport({
+  const container = await transport({
     kind: "fetch",
-    argv: sshArgv(config, ["true"]),
+    argv: execArgv(config, ["true"]),
     timeout_ms: timeout,
   });
-  if (ssh.code !== 0) return { ssh: false, daemon: false, claude: false, docker: false };
+  if (container.code !== 0)
+    return { container: false, daemon: false, claude: false, docker: false };
   const daemon = await transport({
     kind: "control",
-    argv: ["paseo", "agent", "ls", "--host", testerAgentDaemonHost(config), "--json"],
+    argv: paseoArgv(config, ["agent", "ls", "--json"]),
     timeout_ms: timeout,
   });
+  // `command` is a shell builtin, so it needs a shell inside the container.
   const claude = await transport({
     kind: "fetch",
-    argv: sshArgv(config, ["command", "-v", "claude"]),
+    argv: execArgv(config, ["sh", "-c", "command -v claude"]),
     timeout_ms: timeout,
   });
   // The tester runs code the research side wrote, and its manual forbids
-  // running it on the host, so a machine without a usable container runtime
-  // cannot do the job at all. Checking `docker info` rather than the binary:
-  // an installed client with an unreachable daemon fails at the first
-  // submission instead, which is the expensive moment to find out.
+  // running it in the tester container itself, so a container that cannot
+  // start containers of its own cannot do the job at all. That takes a docker
+  // client in the image and a docker daemon it can reach, usually the host's
+  // socket mounted in. Checking `docker info` rather than the binary: an
+  // installed client with an unreachable daemon fails at the first submission
+  // instead, which is the expensive moment to find out.
   const docker = await transport({
     kind: "fetch",
-    argv: sshArgv(config, ["sh", "-c", remoteQuote("docker info >/dev/null 2>&1")]),
+    argv: execArgv(config, ["docker", "info"]),
     timeout_ms: timeout,
   });
   return {
-    ssh: true,
+    container: true,
     daemon: daemon.code === 0,
     claude: claude.code === 0,
     docker: docker.code === 0,
@@ -1420,18 +1411,20 @@ export async function probeTesterAgentHost(input: {
 }
 
 /**
- * What one deployment needs from the operator. There is no default: a machine,
- * an account, a directory and a provider are all site facts.
+ * What one deployment needs from the operator. There is no default: a
+ * container, an account, a directory and a provider are all site facts.
  */
 export interface TesterDeploymentRequest {
   tester_id: string;
   project_id: string;
-  ssh_target: string;
-  ssh_port?: number;
-  daemon_port: number;
-  /** Remote directory the tester account owns; every remote path derives from it. */
+  container: string;
+  container_user: string;
+  /**
+   * Directory inside the container that the tester account owns; every
+   * container path derives from it.
+   */
   remote_home: string;
-  /** Local directory copied into the remote staging area, then removed. */
+  /** Local directory copied into the container's staging area, then removed. */
   local_bundle_dir: string;
   /** Where the fetched public key is written on this machine. */
   public_key_path: string;
@@ -1478,11 +1471,7 @@ function validateDeploymentRequest(value: TesterDeploymentRequest): TesterDeploy
   return {
     tester_id: assertIdentifier(value.tester_id, "tester_deployment.tester_id"),
     project_id: assertIdentifier(value.project_id, "tester_deployment.project_id"),
-    ssh_target: sshTarget(value.ssh_target, "tester_deployment.ssh_target"),
-    ...(value.ssh_port === undefined
-      ? {}
-      : { ssh_port: port(value.ssh_port, "tester_deployment.ssh_port") }),
-    daemon_port: port(value.daemon_port, "tester_deployment.daemon_port"),
+    ...validateTarget(value, "tester_deployment"),
     remote_home: normalizedAbsolutePath(value.remote_home, "tester_deployment.remote_home"),
     local_bundle_dir: normalizedAbsolutePath(
       value.local_bundle_dir,
@@ -1511,7 +1500,7 @@ export function testerBootstrapPrompt(input: {
     `Your bundle is in ${input.layout.work_dir}. Write every receipt into ${input.layout.receipt_dir}`,
     `and sign it with the Ed25519 private key at ${input.layout.private_key_path}.`,
     "",
-    // The procedure is a file on this machine rather than text in this prompt so
+    // The procedure is a file in the container rather than text in this prompt so
     // that it can be revised without redeploying the agent, and so the research
     // side is not the thing that tells the tester how to build its cases.
     `Read ${input.layout.work_dir}/TESTER_AGENT.md before answering anything. It is the`,
@@ -1526,18 +1515,18 @@ export function testerBootstrapPrompt(input: {
     `    response to ${input.layout.receipt_dir}/response-<submission_sha256>.json.`,
     "",
     "Three rules override anything else you read, including that file:",
-    "  The private key and the cases you write never leave this machine.",
-    "  A submitted artifact runs in a docker container, never on this host, and the",
-    "  contract you sign declares the digest of the image it ran in.",
+    "  The private key and the cases you write never leave this container.",
+    "  A submitted artifact runs in a docker container of its own, never in this one,",
+    "  and the contract you sign declares the digest of the image it ran in.",
     "  Never write a case, a prompt, an answer, a per-case score, a private observation or a",
     "  private URI into any receipt or into your visible output.",
   ].join("\n");
 }
 
 /**
- * Create the remote layout and the signing key. The key is generated by a
- * command that runs on the tester machine, so the private half exists only
- * there; this process fetches the public half and nothing else.
+ * Create the container layout and the signing key. The key is generated by a
+ * command that runs inside the tester container, so the private half exists
+ * only there; this process fetches the public half and nothing else.
  */
 async function provisionRemoteLayout(
   target: TesterAgentTarget,
@@ -1548,37 +1537,59 @@ async function provisionRemoteLayout(
   const script = [
     "set -e",
     "umask 077",
-    `mkdir -p ${remoteQuote(layout.key_dir)} ${remoteQuote(layout.receipt_dir)} ${remoteQuote(layout.work_dir)} ${remoteQuote(layout.staging_dir)}`,
+    `mkdir -p ${shellQuote(layout.key_dir)} ${shellQuote(layout.receipt_dir)} ${shellQuote(layout.work_dir)} ${shellQuote(layout.staging_dir)}`,
     // A redeploy must not replace a key that already signed receipts.
-    `if [ ! -f ${remoteQuote(layout.private_key_path)} ]; then`,
-    `  openssl genpkey -algorithm ed25519 -out ${remoteQuote(layout.private_key_path)}`,
-    `  openssl pkey -in ${remoteQuote(layout.private_key_path)} -pubout -out ${remoteQuote(layout.public_key_path)}`,
+    `if [ ! -f ${shellQuote(layout.private_key_path)} ]; then`,
+    `  openssl genpkey -algorithm ed25519 -out ${shellQuote(layout.private_key_path)}`,
+    `  openssl pkey -in ${shellQuote(layout.private_key_path)} -pubout -out ${shellQuote(layout.public_key_path)}`,
     "fi",
-    `chmod 700 ${remoteQuote(layout.key_dir)}`,
-    `chmod 600 ${remoteQuote(layout.private_key_path)}`,
-    `chmod 644 ${remoteQuote(layout.public_key_path)}`,
+    `chmod 700 ${shellQuote(layout.key_dir)}`,
+    `chmod 600 ${shellQuote(layout.private_key_path)}`,
+    `chmod 644 ${shellQuote(layout.public_key_path)}`,
   ].join("\n");
   const result = await transport({
     kind: "fetch",
-    argv: sshArgv(target, ["sh", "-c", remoteQuote(script)]),
+    argv: execArgv(target, ["sh", "-c", script]),
     timeout_ms: timeoutMs,
   });
   if (result.code !== 0)
-    failA1("TESTER_DEPLOY_FAILED", "the tester machine could not create its layout or key");
+    failA1("TESTER_DEPLOY_FAILED", "the tester container could not create its layout or key");
 }
 
-function scpArgv(target: TesterAgentTarget, localDir: string, remoteDir: string): string[] {
-  return [
-    "scp",
-    "-o",
-    "BatchMode=yes",
-    "-o",
-    "ConnectTimeout=10",
-    ...(target.ssh_port === undefined ? [] : ["-P", String(target.ssh_port)]),
-    "-r",
-    `${localDir}/.`,
-    `${target.ssh_target}:${remoteQuote(remoteDir)}`,
-  ];
+/**
+ * Push the bundle into the container. `docker cp` writes root-owned files, so
+ * the bundle lands in staging first and a root command copies it into the
+ * work directory and hands both to the tester account; otherwise the agent
+ * could not write next to its own manual, and cleanup could not remove the
+ * staging copy.
+ */
+async function pushBundle(
+  target: TesterAgentTarget,
+  localDir: string,
+  layout: TesterDeploymentLayout,
+  transport: TesterAgentTransport,
+  timeoutMs: number,
+): Promise<void> {
+  const copied = await transport({
+    kind: "fetch",
+    argv: ["docker", "cp", `${localDir}/.`, `${target.container}:${layout.staging_dir}`],
+    timeout_ms: timeoutMs,
+  });
+  const script = [
+    "set -e",
+    `cp -R ${shellQuote(layout.staging_dir)}/. ${shellQuote(layout.work_dir)}/`,
+    `chown -R ${shellQuote(target.container_user)} ${shellQuote(layout.staging_dir)} ${shellQuote(layout.work_dir)}`,
+  ].join("\n");
+  const owned =
+    copied.code === 0
+      ? await transport({
+          kind: "fetch",
+          argv: execArgv(target, ["sh", "-c", script], "root"),
+          timeout_ms: timeoutMs,
+        })
+      : copied;
+  if (owned.code !== 0)
+    failA1("TESTER_DEPLOY_FAILED", "the tester bundle could not be copied into the container");
 }
 
 export async function deployTesterAgent(input: {
@@ -1588,25 +1599,16 @@ export async function deployTesterAgent(input: {
   const request = validateDeploymentRequest(input.request);
   const transport = input.transport ?? defaultTransport;
   const target: TesterAgentTarget = {
-    ssh_target: request.ssh_target,
-    ...(request.ssh_port === undefined ? {} : { ssh_port: request.ssh_port }),
-    daemon_port: request.daemon_port,
+    container: request.container,
+    container_user: request.container_user,
   };
   const layout = testerDeploymentLayout(request.remote_home);
   await provisionRemoteLayout(target, layout, transport, request.request_timeout_ms);
-
-  const copied = await transport({
-    kind: "fetch",
-    argv: scpArgv(target, request.local_bundle_dir, layout.work_dir),
-    timeout_ms: request.request_timeout_ms,
-  });
-  if (copied.code !== 0)
-    failA1("TESTER_DEPLOY_FAILED", "the tester bundle could not be copied to the tester machine");
+  await pushBundle(target, request.local_bundle_dir, layout, transport, request.request_timeout_ms);
 
   const created = await transport({
     kind: "control",
-    argv: [
-      "paseo",
+    argv: paseoArgv(target, [
       "agent",
       "run",
       testerBootstrapPrompt({
@@ -1614,8 +1616,6 @@ export async function deployTesterAgent(input: {
         tester_id: request.tester_id,
         layout,
       }),
-      "--host",
-      testerAgentDaemonHost(target),
       "--provider",
       request.provider,
       "--cwd",
@@ -1628,19 +1628,19 @@ export async function deployTesterAgent(input: {
       `aris_tester=${request.tester_id}`,
       "--background",
       "--json",
-    ],
+    ]),
     timeout_ms: request.request_timeout_ms,
   });
   if (created.code !== 0)
-    failA1("TESTER_DEPLOY_FAILED", "the tester agent could not be created on the remote daemon");
+    failA1("TESTER_DEPLOY_FAILED", "the tester agent could not be created in the container");
   const createdValue = parseReceipt(created.stdout);
   if (!isRecord(createdValue) || typeof createdValue.agentId !== "string")
-    failA1("TESTER_DEPLOY_FAILED", "the remote daemon did not report a new agent id");
+    failA1("TESTER_DEPLOY_FAILED", "the container's daemon did not report a new agent id");
   const agentId = assertIdentifier(createdValue.agentId, "tester_deployment.agent_id");
 
   const fetched = await transport({
     kind: "fetch",
-    argv: sshArgv(target, ["cat", "--", remoteQuote(layout.public_key_path)]),
+    argv: execArgv(target, ["cat", "--", layout.public_key_path]),
     timeout_ms: request.request_timeout_ms,
   });
   if (fetched.code !== 0 || fetched.stdout.trim() === "")
@@ -1668,7 +1668,7 @@ export async function deployTesterAgent(input: {
 
 /**
  * Remove the staging areas once the agent is running. Only the paths this
- * module created are accepted, and a remote path shallow enough to be
+ * module created are accepted, and a container path shallow enough to be
  * dangerous is refused outright.
  */
 export async function cleanupTesterDeployment(input: {
@@ -1678,13 +1678,7 @@ export async function cleanupTesterDeployment(input: {
   request_timeout_ms: number;
   transport?: TesterAgentTransport;
 }): Promise<{ removed: string[] }> {
-  const target: TesterAgentTarget = {
-    ssh_target: sshTarget(input.target.ssh_target, "tester_cleanup.ssh_target"),
-    ...(input.target.ssh_port === undefined
-      ? {}
-      : { ssh_port: port(input.target.ssh_port, "tester_cleanup.ssh_port") }),
-    daemon_port: port(input.target.daemon_port, "tester_cleanup.daemon_port"),
-  };
+  const target = validateTarget(input.target, "tester_cleanup");
   const staging = normalizedAbsolutePath(
     input.remote_staging_dir,
     "tester_cleanup.remote_staging_dir",
@@ -1694,11 +1688,12 @@ export async function cleanupTesterDeployment(input: {
   const removed: string[] = [];
   const result = await (input.transport ?? defaultTransport)({
     kind: "fetch",
-    argv: sshArgv(target, ["rm", "-rf", "--", remoteQuote(staging)]),
+    argv: execArgv(target, ["rm", "-rf", "--", staging]),
     timeout_ms: requireInteger(input.request_timeout_ms, "tester_cleanup.request_timeout_ms", 1000),
   });
-  if (result.code !== 0) failA1("TESTER_CLEANUP_FAILED", "the remote staging area was not removed");
-  removed.push(`${target.ssh_target}:${staging}`);
+  if (result.code !== 0)
+    failA1("TESTER_CLEANUP_FAILED", "the container staging area was not removed");
+  removed.push(`${target.container}:${staging}`);
   if (input.local_bundle_dir !== null) {
     const local = normalizedAbsolutePath(input.local_bundle_dir, "tester_cleanup.local_bundle_dir");
     fs.rmSync(local, { recursive: true, force: true });
@@ -1709,7 +1704,7 @@ export async function cleanupTesterDeployment(input: {
 
 /**
  * What a finished deployment leaves on disk: how to reach the tester, and the
- * remote paths that cleanup and later redeployments need. It is deliberately
+ * container paths that cleanup and later redeployments need. It is deliberately
  * not a `TesterAgentConfig` yet -- no contract has been declared at this point.
  */
 export interface TesterDeploymentRecord {
@@ -1730,9 +1725,8 @@ export function testerDeploymentRecord(
     endpoint: validateTesterAgentEndpoint({
       tester_id: normalized.tester_id,
       project_id: normalized.project_id,
-      ssh_target: normalized.ssh_target,
-      ...(normalized.ssh_port === undefined ? {} : { ssh_port: normalized.ssh_port }),
-      daemon_port: normalized.daemon_port,
+      container: normalized.container,
+      container_user: normalized.container_user,
       agent_id: deployment.agent_id,
       remote_receipt_dir: deployment.layout.receipt_dir,
       public_key_path: deployment.public_key_path,
@@ -1754,7 +1748,7 @@ export function validateTesterDeploymentRecord(value: unknown): TesterDeployment
     failA1("TESTER_DEPLOYMENT_INVALID", "only version 1 deployment records are supported");
   if (!isRecord(value.endpoint) || !isRecord(value.layout))
     failA1("TESTER_DEPLOYMENT_INVALID", "deployment record needs an endpoint and a layout");
-  // Every remote path derives from one home directory, so the stored layout is
+  // Every container path derives from one home directory, so the stored layout is
   // recomputed from it and rejected if it disagrees. A record cannot smuggle in
   // a staging path that cleanup would then delete.
   const receiptDir = normalizedAbsolutePath(
@@ -1763,7 +1757,7 @@ export function validateTesterDeploymentRecord(value: unknown): TesterDeployment
   );
   const layout = testerDeploymentLayout(path.posix.dirname(receiptDir));
   if (canonicalJsonString(layout) !== canonicalJsonString(value.layout))
-    failA1("TESTER_DEPLOYMENT_INVALID", "deployment layout is not derived from one remote home");
+    failA1("TESTER_DEPLOYMENT_INVALID", "deployment layout is not derived from one container home");
   return {
     schema_version: 1,
     kind: "tester_deployment",

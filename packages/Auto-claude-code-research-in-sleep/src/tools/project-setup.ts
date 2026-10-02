@@ -234,7 +234,7 @@ function detectTesterAgent(root: string): SetupStage {
       detail: {
         tester_id: config.tester_id,
         project_id: config.project_id,
-        daemon_port: config.daemon_port,
+        container: config.container,
         submission_contract_sha256: config.submission_contract_sha256,
       },
     };

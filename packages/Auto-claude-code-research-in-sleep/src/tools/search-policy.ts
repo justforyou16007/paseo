@@ -3,7 +3,7 @@
  * a decision the research side's PreToolUse hook can make on every network call,
  * plus the hash-chained ledger of those decisions.
  *
- * The leak this closes is the open web, not the tester machine. A tester that
+ * The leak this closes is the open web, not the tester container. A tester that
  * researched and adopted a public benchmark leaves that benchmark's repository
  * and paper sitting in public; a research process that simply searches for it
  * gets the cases without ever touching the tester. Keeping the private key and

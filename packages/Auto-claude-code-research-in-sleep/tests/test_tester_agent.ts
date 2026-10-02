@@ -11,6 +11,7 @@ import {
   bindSubmissionToContract,
   cleanupTesterDeployment,
   declareTesterSubmissionContract,
+  deployTesterAgent,
   probeTesterAgentHost,
   readTesterAgentConfig,
   submitToTesterAgent,
@@ -60,7 +61,7 @@ async function expectCodeAsync(expected: string, run: () => Promise<unknown>): P
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "aris-tester-agent-"));
 const H = "a".repeat(64);
 
-// The tester machine's key. Only the public half exists on this side, exactly
+// The tester container's key. Only the public half exists on this side, exactly
 // as it would after a deployment.
 const testerKeys = crypto.generateKeyPairSync("ed25519");
 const publicKeyPem = testerKeys.publicKey.export({ type: "spki", format: "pem" }) as string;
@@ -71,8 +72,8 @@ const publicKeySha256 = crypto.createHash("sha256").update(publicKeyPem).digest(
 const endpoint = {
   tester_id: "tester:agent",
   project_id: "project:agent",
-  ssh_target: "tester@tester-host.invalid",
-  daemon_port: 6767,
+  container: "aris-tester",
+  container_user: "paseo",
   agent_id: "agent-1",
   remote_receipt_dir: "/srv/aris-tester/receipts",
   public_key_path: publicKeyPath,
@@ -187,7 +188,7 @@ await expectCodeAsync("TESTER_SIGNATURE_INVALID", () =>
 );
 
 // A control command that fails is unreachable, and the failure text carries no
-// ssh target, no remote path and no remote stderr.
+// container name, no container path and no container stderr.
 await expectCodeAsync("TESTER_AGENT_UNREACHABLE", () =>
   declareTesterSubmissionContract({
     endpoint,
@@ -360,15 +361,27 @@ const response: TesterAgentResponse = await submitToTesterAgent({
 assert.equal(response.status, "passed");
 assert.equal(response.submission_sha256, submissionSha256);
 
-// Control plane drives the agent; data plane fetches one named receipt.
+// Control plane drives the agent; data plane fetches one named receipt. Both
+// are `docker exec` into the tester container as the daemon's account, and the
+// Paseo CLI inside finds its own daemon, so no port is published to the host.
+const inContainer = ["docker", "exec", "--user", "paseo", "aris-tester"];
 assert.equal(commands[0]!.kind, "control");
-assert.deepEqual(commands[0]!.argv.slice(0, 4), ["paseo", "agent", "send", config.agent_id]);
+assert.deepEqual(commands[0]!.argv.slice(0, 9), [
+  ...inContainer,
+  "paseo",
+  "agent",
+  "send",
+  config.agent_id,
+]);
+assert.equal(commands[0]!.argv.includes("--host"), false);
 assert.equal(commands[1]!.kind, "fetch");
-assert.equal(commands[1]!.argv[0], "ssh");
-assert.equal(
-  commands[1]!.argv.at(-1),
-  `'${config.remote_receipt_dir}/response-${submissionSha256}.json'`,
-);
+// `docker exec` runs no shell, so the receipt path is passed as it is.
+assert.deepEqual(commands[1]!.argv, [
+  ...inContainer,
+  "cat",
+  "--",
+  `${config.remote_receipt_dir}/response-${submissionSha256}.json`,
+]);
 
 // Raising a published metric does not survive, even when the forger repairs
 // the envelope's own self-digest: `buildTesterFeedback` recomputes
@@ -483,16 +496,16 @@ assert.equal(fs.existsSync(path.join(root, "out2")), false);
 
 const probeCommands: TesterAgentCommand[] = [];
 const probe = await probeTesterAgentHost({
-  endpoint: { ssh_target: endpoint.ssh_target, daemon_port: 6767, request_timeout_ms: 10_000 },
+  endpoint: { container: "aris-tester", container_user: "paseo", request_timeout_ms: 10_000 },
   transport: async (command) => {
     probeCommands.push(command);
-    if (command.argv.includes("command")) return { code: 1, stdout: "" };
+    if (command.argv.includes("command -v claude")) return { code: 1, stdout: "" };
     return { code: 0, stdout: "[]" };
   },
 });
-// `command -v claude` is the only probe step that names `command`, so the fake
-// transport above fails exactly that one; docker is probed with `sh -c`.
-assert.deepEqual(probe, { ssh: true, daemon: true, claude: false, docker: true });
+assert.deepEqual(probe, { container: true, daemon: true, claude: false, docker: true });
+// Every step runs inside the container, including the daemon check.
+for (const command of probeCommands) assert.deepEqual(command.argv.slice(0, 5), inContainer);
 assert.deepEqual(probeCommands.map((command) => command.kind), [
   "fetch",
   "control",
@@ -500,23 +513,38 @@ assert.deepEqual(probeCommands.map((command) => command.kind), [
   "fetch",
 ]);
 
-// A machine without a usable container runtime is not deployable: the tester's
-// manual forbids running a submitted artifact on its host, so there would be
-// nowhere left to run it.
+// A tester container that cannot start containers of its own is not
+// deployable: the tester's manual forbids running a submitted artifact in the
+// container holding the key and the cases, so there would be nowhere left to
+// run it.
 const hostlessProbe = await probeTesterAgentHost({
-  endpoint: { ssh_target: endpoint.ssh_target, daemon_port: 6767, request_timeout_ms: 10_000 },
+  endpoint: { container: "aris-tester", container_user: "paseo", request_timeout_ms: 10_000 },
   transport: async (command) =>
-    command.argv.some((argument) => argument.includes("docker info"))
+    command.argv.at(-2) === "docker" && command.argv.at(-1) === "info"
       ? { code: 1, stdout: "" }
       : { code: 0, stdout: "[]" },
 });
-assert.deepEqual(hostlessProbe, { ssh: true, daemon: true, claude: true, docker: false });
+assert.deepEqual(hostlessProbe, { container: true, daemon: true, claude: true, docker: false });
 
 const deadProbe = await probeTesterAgentHost({
-  endpoint: { ssh_target: endpoint.ssh_target, daemon_port: 6767, request_timeout_ms: 10_000 },
+  endpoint: { container: "aris-tester", container_user: "paseo", request_timeout_ms: 10_000 },
   transport: async () => ({ code: 255, stdout: "" }),
 });
-assert.deepEqual(deadProbe, { ssh: false, daemon: false, claude: false, docker: false });
+assert.deepEqual(deadProbe, { container: false, daemon: false, claude: false, docker: false });
+
+// The container name and the account reach the docker command line, so a value
+// docker would read as an option is refused before anything is spawned.
+for (const target of [
+  { container: "--privileged", container_user: "paseo" },
+  { container: "aris-tester", container_user: "-u0" },
+  { container: "aris tester", container_user: "paseo" },
+])
+  await expectCodeAsync("TESTER_AGENT_CONFIG_INVALID", () =>
+    probeTesterAgentHost({
+      endpoint: { ...target, request_timeout_ms: 10_000 },
+      transport: async () => assert.fail("nothing may be spawned for an invalid target"),
+    }),
+  );
 
 // --- 9. cleanup only removes a staging directory this layout produced ------
 
@@ -524,16 +552,13 @@ const layout = testerDeploymentLayout("/srv/aris-tester");
 const localBundle = path.join(root, "bundle");
 fs.mkdirSync(localBundle, { recursive: true });
 const cleaned = await cleanupTesterDeployment({
-  target: { ssh_target: endpoint.ssh_target, daemon_port: 6767 },
+  target: { container: "aris-tester", container_user: "paseo" },
   remote_staging_dir: layout.staging_dir,
   local_bundle_dir: localBundle,
   request_timeout_ms: 10_000,
   transport: async () => ({ code: 0, stdout: "" }),
 });
-assert.deepEqual(cleaned.removed, [
-  `${endpoint.ssh_target}:${layout.staging_dir}`,
-  localBundle,
-]);
+assert.deepEqual(cleaned.removed, [`aris-tester:${layout.staging_dir}`, localBundle]);
 assert.equal(fs.existsSync(localBundle), false);
 
 // `/` never reaches the staging rule -- it is not a usable path to begin with.
@@ -546,13 +571,76 @@ for (const [refused, code] of [
 ] as const)
   await expectCodeAsync(code, () =>
     cleanupTesterDeployment({
-      target: { ssh_target: endpoint.ssh_target, daemon_port: 6767 },
+      target: { container: "aris-tester", container_user: "paseo" },
       remote_staging_dir: refused,
       local_bundle_dir: null,
       request_timeout_ms: 10_000,
       transport: async () => ({ code: 0, stdout: "" }),
     }),
   );
+
+// --- 9b. deploy builds everything inside the container -------------------
+
+// `docker cp` writes root-owned files, so the bundle goes to staging and one
+// root command copies it into the work directory and hands both to the daemon's
+// account. Everything else runs as that account, and the private key is never
+// read: only the public half comes back out.
+const deployCommands: TesterAgentCommand[] = [];
+const deployedKeyPath = path.join(root, "deployed", "tester.pub");
+const deployRequest = {
+  tester_id: endpoint.tester_id,
+  project_id: endpoint.project_id,
+  container: "aris-tester",
+  container_user: "paseo",
+  remote_home: "/home/paseo/aris",
+  local_bundle_dir: localBundle,
+  public_key_path: deployedKeyPath,
+  provider: "claude/claude-opus-5",
+  request_timeout_ms: 10_000,
+};
+const deployLayout = testerDeploymentLayout(deployRequest.remote_home);
+const deployed = await deployTesterAgent({
+  request: deployRequest,
+  transport: async (command) => {
+    deployCommands.push(command);
+    if (command.argv.includes("run")) return { code: 0, stdout: '{"agentId":"agent-7"}' };
+    if (command.argv.at(-1) === deployLayout.public_key_path)
+      return { code: 0, stdout: publicKeyPem };
+    return { code: 0, stdout: "" };
+  },
+});
+assert.equal(deployed.agent_id, "agent-7");
+assert.equal(deployed.public_key_sha256, publicKeySha256);
+assert.equal(fs.readFileSync(deployedKeyPath, "utf8"), publicKeyPem);
+const [provision, copy, own, run, fetchKey, ...extra] = deployCommands;
+assert.equal(extra.length, 0);
+assert.deepEqual(provision!.argv.slice(0, 5), inContainer);
+assert.deepEqual(copy!.argv, [
+  "docker",
+  "cp",
+  `${localBundle}/.`,
+  `aris-tester:${deployLayout.staging_dir}`,
+]);
+assert.deepEqual(own!.argv.slice(0, 5), ["docker", "exec", "--user", "root", "aris-tester"]);
+assert.match(own!.argv.at(-1)!, /chown -R 'paseo'/);
+assert.deepEqual(run!.argv.slice(0, 8), [...inContainer, "paseo", "agent", "run"]);
+assert.equal(run!.argv[run!.argv.indexOf("--cwd") + 1], deployLayout.work_dir);
+assert.deepEqual(fetchKey!.argv, [...inContainer, "cat", "--", deployLayout.public_key_path]);
+// The private key path appears only inside the provisioning script that
+// generates it; no command names it as an argument to read.
+assert.equal(
+  deployCommands.some((command) => command.argv.includes(deployLayout.private_key_path)),
+  false,
+);
+
+// A bundle that could not be copied stops the deployment before an agent exists.
+await expectCodeAsync("TESTER_DEPLOY_FAILED", () =>
+  deployTesterAgent({
+    request: deployRequest,
+    transport: async (command) =>
+      command.argv[1] === "cp" ? { code: 1, stdout: "" } : { code: 0, stdout: "" },
+  }),
+);
 
 // --- 10. a deployment record cannot smuggle in a foreign layout ------------
 

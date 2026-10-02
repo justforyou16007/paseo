@@ -1,6 +1,6 @@
 ---
 name: tester-setup
-description: Stand up the tester as an agent on its own machine, take the submission contract it declares, and hand the research side a config it can submit against.
+description: Stand up the tester as an agent in its own docker container, take the submission contract it declares, and hand the research side a config it can submit against.
 allowed-tools: Read, Write, Bash(*)
 ---
 
@@ -12,37 +12,63 @@ step is a setup failure, not something to route around.
 
 ## What the boundary actually rests on
 
-The tester is a Claude agent on a different machine, managed by that machine's
-Paseo daemon. The research side reaches it with
-`paseo --host ssh://<target>?daemonPort=<port>`, which tunnels the remote
-daemon port back to this machine. Two physical facts keep the tester's work
-private:
+The tester is a Claude agent in a docker container of its own, managed by the
+Paseo daemon running inside that container. The research side reaches it only
+through `docker exec` into that container. The Paseo CLI inside finds its own
+daemon, so the daemon port does not have to be published to the host. Three
+facts keep the tester's work private:
 
-- The Ed25519 signing key is generated on the tester machine during deployment.
-  Only the public half is fetched back. Research can read the public key — it is
+- The Ed25519 signing key is generated inside the container during deployment.
+  Only the public half is copied out. Research can read the public key — it is
   public — and still cannot forge a receipt.
-- The cases are written by the tester agent and never leave that machine. What
+- The cases are written by the tester agent and never leave the container. What
   comes back is one signed envelope of ids, digests, enumerated values and the
   declared metric aggregates.
-- Nothing the research side submits executes on the tester's host. The submitted
-  artifacts run in a docker container, with the cases mounted read-only and a
-  fresh container per submission. The boundary is otherwise one-directional in
-  the wrong place: research hands the tester code, and the tester runs it on the
-  machine holding the key and the cases.
+- Nothing the research side submits executes in the tester container. Each
+  submission runs in a fresh container of its own, with the cases mounted
+  read-only. The boundary is otherwise one-directional in the wrong place:
+  research hands the tester code, and the tester would run it next to the key
+  and the cases.
+
+The first two hold only while the container's files are not visible from the
+research side's filesystem. Keep the tester home inside the container or in a
+named volume, never in a bind mount of a directory the research account can
+read, and do not mount the research project into the tester container.
 
 State the limit as well: the research process and the operator who runs this
-setup share a uid and can read the same `~/.ssh`, so the research process can
-technically open an ssh connection to the tester machine. This setup does not
-claim to prevent that. It claims that the private key and the cases are not on
-the research machine, and that the remote agent answers only two requests.
+setup share a uid that can run `docker`, so the research process can
+technically `docker exec` into the tester container. This setup does not claim
+to prevent that. It claims that the private key and the cases are not on the
+research side's filesystem, and that the tester agent answers only two
+requests.
+
+## The container the tester lives in
+
+Prepare it before step 1. These are the facts `probe` checks:
+
+- The image is the Paseo image with the `claude` CLI and a docker client added,
+  in the way `docker/Dockerfile.agents.example` in the Paseo repository adds
+  agent CLIs. Log `claude` in once with
+  `docker exec -it --user <account> <container> claude`.
+- The container reaches a docker daemon, normally the host's, by mounting
+  `/var/run/docker.sock`. The daemon's account must be allowed to use that
+  socket. Without it the tester has nowhere to run a submission, and `probe`
+  reports `docker: false`.
+- `<account>` is the account the Paseo daemon inside runs as, `paseo` in the
+  official image. Every command runs as that account, so the key and the
+  receipts belong to the tester agent.
+
+`tester-agent-cli.js` runs `docker` with whatever context the environment
+selects. When the tester container lives on another docker host, point
+`DOCKER_HOST` or the docker context there; nothing else changes.
 
 ## The eight steps
 
 | Step | Command | What a failure means |
 | --- | --- | --- |
-| 1. Probe | `tester-agent-cli.js probe --target … --daemon-port …` | ssh, the remote daemon, the remote `claude` binary or a usable docker daemon is unavailable. Fix the machine; do not deploy. |
-| 2. Prepare bundle | `tester-agent-cli.js prepare-bundle --output <local-bundle-dir>` | The remote tester has no operating manual, so it would be inventing its own procedure. |
-| 3. Deploy | `tester-agent-cli.js deploy --input <request> --output <deployment>` | The remote layout, the key or the agent could not be created. Nothing downstream is valid. |
+| 1. Probe | `tester-agent-cli.js probe --container … --user …` | The container is not running or cannot be entered as that account, its Paseo daemon does not answer, it has no `claude` binary, or it cannot reach a docker daemon. Fix the container; do not deploy. |
+| 2. Prepare bundle | `tester-agent-cli.js prepare-bundle --output <local-bundle-dir>` | The tester has no operating manual, so it would be inventing its own procedure. |
+| 3. Deploy | `tester-agent-cli.js deploy --input <request> --output <deployment>` | The container layout, the key or the agent could not be created. Nothing downstream is valid. |
 | 4. Declare | `tester-agent-cli.js declare --deployment <deployment> --need-file <need> --output <contract>` | The tester did not return a contract that verifies against its own key, or its runtime declaration or exclusion list was refused (see below). |
 | 5. Emit policy | `search-audit-cli.js emit-policy --contract <contract> --project <path>` | The research side has no blocklist, so the guard would refuse every network call. |
 | 6. Install guard | `search-audit-cli.js install-guard --project <path>` | The hook is not in `.claude/settings.json` and the ledger was never opened. `submit` refuses. |
@@ -61,11 +87,14 @@ Step 2 runs before deploy because `deploy` pushes exactly one directory, the
 contract exists, because the blocklist is part of the contract, and before any
 research starts, because a search that already happened cannot be un-searched.
 
-Deployment input names the site facts — ssh target, daemon port, remote home,
-provider, local bundle directory, and where to write the fetched public key.
-There are no defaults for any of them. The remote paths all derive from one
-remote home, which is why cleanup can only delete a staging directory this
-deployment created.
+Deployment input names the site facts — `container`, `container_user` (the
+daemon's account), `remote_home` (the tester's home inside the container),
+`provider`, `local_bundle_dir`, and `public_key_path` for the copied-out public
+key. There are no defaults for any of them. The container paths all derive from
+one home, which is why cleanup can only delete a staging directory this
+deployment created. `docker cp` writes root-owned files, so deploy copies the
+bundle into staging and then, as root inside the container, into the work
+directory, and hands both to the daemon's account.
 
 ## What the research side may do
 
@@ -76,7 +105,7 @@ Exactly two things, and both need the project id:
    is the tester's job, and the research side proposing its own is what this
    whole arrangement exists to prevent. The tester researches the field itself —
    papers, repositories, dataset hosts — picks or designs the protocol, builds
-   the cases on its own machine, and answers with the shape of the artifacts it
+   the cases in its own container, and answers with the shape of the artifacts it
    wants (one reference slot, one candidate slot), the fields it needs, how to
    run them, the digest of the case set, and the list of things the research side
    may no longer search for. It does not answer with cases.
@@ -135,34 +164,34 @@ a research claim.
 
 ## The container the test runs in
 
-The tester runs code the research side wrote, on the machine that holds the
-private key and the cases. So the contract has to say where it ran it:
+The tester runs code the research side wrote, and the container it lives in
+holds the private key and the cases. So the contract has to say where it ran it:
 `runtime` is `{"kind": "docker", "image_digest": "<64 hex>"}`, and `declare`
 refuses `TESTER_RUNTIME_REQUIRED` for a missing runtime or any `kind` other than
 `docker`. There is nothing to negotiate — a tester that wants to run a
-submission on its host has to say so, and saying so is refused.
+submission in its own container has to say so, and saying so is refused.
 
 The digest is the only public fact about that environment, and it is there for
 the same reason `case_manifest_sha256` is: so that "the environment changed
-between two submissions" is detectable. The image name and tag stay on the
-tester machine, because a readable tag names the benchmark the exclusion list
+between two submissions" is detectable. The image name and tag stay in the
+tester container, because a readable tag names the benchmark the exclusion list
 exists to hide.
 
 What the tester is told to do with that image is in
 `templates/tester-agent-bundle/TESTER_AGENT.md` step 4: cases mounted read-only
 rather than baked in, no network unless the protocol needs one, memory and CPU
 caps, an externally enforced timeout, and a fresh container per submission.
-None of it is checked from this side. `probe` checks `docker info` on the tester
-machine and refuses to call the host ready without it; everything past that is
-the tester's own discipline.
+None of it is checked from this side. `probe` checks `docker info` inside the
+tester container and refuses to call it ready without it; everything past that
+is the tester's own discipline.
 
 ## The search gate
 
 The tester just researched a public benchmark. Its repository and its paper are
-still public, so the research side does not need to touch the tester machine to
-contaminate the evaluation — it only needs to search for the same benchmark. The
-leak is the open web, not the tester machine, and neither the remote private key
-nor the remote cases do anything about it.
+still public, so the research side does not need to touch the tester container
+to contaminate the evaluation — it only needs to search for the same benchmark.
+The leak is the open web, not the tester container, and neither the private key
+nor the cases inside it do anything about it.
 
 So the signed contract carries `search_exclusions`: the benchmark and dataset
 names, the exact URLs and the host-plus-path prefixes the tester actually drew
