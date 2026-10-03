@@ -126,10 +126,10 @@ Archive the agent afterwards, including when it failed.
 
 This is where the tester container is required. Make it first with
 `create-container`, described in [`/tester-setup`](../tester-setup/SKILL.md)
-under "The container the tester lives in". It uses the base image the owner
-prepared on the docker host and never builds one; if the image is missing, or
-`deploy` reports `TESTER_MANUAL_MISMATCH`, ask the owner to build it with this
-version's manual and stop. Ask the owner to log `claude` in inside the container before
+under "The container the tester lives in". It uses the base image
+`/aris-update` pulled onto the docker host and never builds one; if the image
+is missing, or `deploy` reports `TESTER_MANUAL_MISMATCH`, ask the owner to run
+`/aris-update` (and recreate the container for a mismatch) and stop. Ask the owner to log `claude` in inside the container before
 `probe`. Collect the site facts with `AskUserQuestion` (one question per fact,
 no guessing):
 

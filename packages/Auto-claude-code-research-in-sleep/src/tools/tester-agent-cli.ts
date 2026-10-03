@@ -23,7 +23,12 @@ import {
   type TesterDeploymentRequest,
 } from "./tester-agent.js";
 import { readStateFile, writeStateJsonAtomic } from "./state-file.js";
-import { createTesterContainer } from "./tester-image.js";
+import {
+  createTesterContainer,
+  DEFAULT_TESTER_IMAGE,
+  PUBLISHED_TESTER_IMAGE,
+  pullTesterImage,
+} from "./tester-image.js";
 
 const program = createCli(
   "tester-agent",
@@ -66,15 +71,33 @@ function rejectWithCause(fallback: string, error: unknown): void {
   process.exitCode = 1;
 }
 
-const DEFAULT_BASE_IMAGE = "aris-tester-base:latest";
+program
+  .command("pull-image")
+  .description(
+    "Pull the published tester base image and give it the local name, once its manual is this version's",
+  )
+  .option("--source <ref>", "published image to pull", PUBLISHED_TESTER_IMAGE)
+  .option("--image <tag>", "local name create-container uses", DEFAULT_TESTER_IMAGE)
+  .option("--timeout <ms>", "per-step timeout in milliseconds", "1800000")
+  .action(async (options: { source: string; image: string; timeout: string }) => {
+    try {
+      const result = await pullTesterImage({
+        source: options.source,
+        image: options.image,
+        manual_sha256: expectedManualSha256(),
+        timeout_ms: Number(options.timeout),
+      });
+      console.log(JSON.stringify(result));
+    } catch (error) {
+      rejectWithCause("tester_image_pull_failed", error);
+    }
+  });
 
 program
   .command("create-container")
-  .description(
-    "Create the tester container from the prepared base image, or start the existing one",
-  )
+  .description("Create the tester container from the base image, or start the existing one")
   .requiredOption("--name <container>", "tester container name")
-  .option("--image <tag>", "the prepared base image", DEFAULT_BASE_IMAGE)
+  .option("--image <tag>", "the tester base image", DEFAULT_TESTER_IMAGE)
   .option("--home-volume <name>", "named volume for the account's home (default <name>-home)")
   .option("--timeout <ms>", "per-step timeout in milliseconds", "120000")
   .action(
