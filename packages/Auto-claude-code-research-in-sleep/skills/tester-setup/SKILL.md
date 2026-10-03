@@ -49,29 +49,39 @@ owner prepares on the docker host beforehand, `aris-tester-base:latest` unless
 `--image` names another. ARIS never builds, pulls or saves that image. The
 image must:
 
-- be the Paseo image with the `claude` CLI and a docker client added;
-- keep the Paseo image's `paseo` account; `create-container` runs the whole
+- run the Paseo daemon, with the `claude` CLI and a docker client added;
+- have the `paseo` account with uid 1000; `create-container` runs the whole
   container as that account;
 - carry the tester's operating manual at `/opt/aris/TESTER_AGENT.md`, readable by
   `paseo`, byte for byte this ARIS version's
   `templates/tester-agent-bundle/TESTER_AGENT.md`.
 
-Put the manual in with the Dockerfile, downloaded from the commit or tag of the
-ARIS version the research side runs:
+`docker/tester-base/Dockerfile` builds one on Ubuntu 22.04 for x86_64, with the
+manual copied from the same commit. `.github/workflows/aris-tester-image.yml`
+publishes it as the public `ghcr.io/justforyou16007/aris-tester-base` on every
+push to `paseo-aris` that changes the Dockerfile or the manual, tagged
+`sha-<first 12 hex of the commit>`, `ubuntu22.04` and `latest`. Pull the build
+that matches the ARIS the research side runs and give it the default name:
+
+```bash
+docker pull ghcr.io/justforyou16007/aris-tester-base:latest
+docker tag ghcr.io/justforyou16007/aris-tester-base:latest aris-tester-base:latest
+```
+
+An image built elsewhere has to put the manual in the same way. Outside this
+repository, download it from the matching commit:
 
 ```dockerfile
 WORKDIR /opt/aris
 ADD --chmod=644 https://raw.githubusercontent.com/<owner>/<repo>/<commit>/packages/Auto-claude-code-research-in-sleep/templates/tester-agent-bundle/TESTER_AGENT.md /opt/aris/TESTER_AGENT.md
-WORKDIR /workspace
 ```
 
 Both modes matter. `ADD` saves a downloaded file as mode 600, so without
 `--chmod=644` `paseo` cannot read it. But `--chmod` also applies to the parent
 directories `ADD` creates, and a directory with mode 644 cannot be entered, so
-`WORKDIR` creates `/opt/aris` first with mode 755. The last line restores the
-Paseo image's working directory. Nothing is ever copied into the tester
-container from outside; `deploy` only checks that the manual is there and is
-this version's.
+`WORKDIR` creates `/opt/aris` first with mode 755; set `WORKDIR` back afterwards.
+Nothing is ever copied into the tester container from outside; `deploy` only
+checks that the manual is there and is this version's.
 
 ```text
 tester-agent-cli.js create-container --name aris-tester
