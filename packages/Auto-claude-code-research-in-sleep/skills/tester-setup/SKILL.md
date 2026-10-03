@@ -122,9 +122,11 @@ daemon's account), `remote_home` (the tester's home inside the container),
 `provider`, `local_bundle_dir`, and `public_key_path` for the copied-out public
 key. There are no defaults for any of them. The container paths all derive from
 one home, which is why cleanup can only delete a staging directory this
-deployment created. `docker cp` writes root-owned files, so deploy copies the
-bundle into staging and then, as root inside the container, into the work
-directory, and hands both to the daemon's account.
+deployment created. Deploy never runs as
+root: the host packs the bundle with `tar` and the daemon's account unpacks it
+into staging inside the container, then copies it into the work directory, so
+every file belongs to the tester agent. `docker cp` is not used because it
+writes root-owned files. The host needs `tar`, and so does the image.
 
 ## What the research side may do
 

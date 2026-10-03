@@ -1122,6 +1122,8 @@ export interface TesterAgentCommand {
   /** `control` drives the remote agent; `fetch` reads one receipt back. */
   kind: "control" | "fetch";
   argv: readonly string[];
+  /** A host command whose stdout is piped into this command's stdin. */
+  stdin_from?: readonly string[];
   timeout_ms: number;
 }
 
@@ -1144,25 +1146,55 @@ export async function runTesterCommand(
 ): Promise<TesterAgentCommandResult> {
   const [file, ...args] = command.argv;
   if (file === undefined) failA1("TESTER_AGENT_UNREACHABLE", "empty tester agent command");
+  const [sourceFile, ...sourceArgs] = command.stdin_from ?? [];
+  if (command.stdin_from !== undefined && sourceFile === undefined)
+    failA1("TESTER_AGENT_UNREACHABLE", "empty tester agent stdin command");
   return new Promise((resolve) => {
-    const child = spawn(file, args, { stdio: ["ignore", "pipe", "ignore"] });
+    const source =
+      sourceFile === undefined
+        ? null
+        : spawn(sourceFile, sourceArgs, { stdio: ["ignore", "pipe", "ignore"] });
+    const child = spawn(file, args, { stdio: [source ? "pipe" : "ignore", "pipe", "ignore"] });
     let stdout = "";
-    let settled = false;
+    // Both processes must exit; the result fails if either one did.
+    let pending = source ? 2 : 1;
+    let failure = 0;
+    let childCode = -1;
     const timer = setTimeout(() => {
       if (!child.killed) child.kill();
+      if (source && !source.killed) source.kill();
     }, command.timeout_ms);
-    const settle = (code: number) => {
-      if (settled) return;
-      settled = true;
+    const finish = (code: number, isChild: boolean) => {
+      if (isChild) childCode = code;
+      else if (code !== 0) failure = code;
+      pending -= 1;
+      if (pending > 0) return;
       clearTimeout(timer);
-      resolve({ code, stdout });
+      resolve({ code: childCode !== 0 ? childCode : failure, stdout });
     };
-    child.stdout.on("data", (chunk: Buffer) => {
+    const settleOnce = (isChild: boolean) => {
+      let settled = false;
+      return (code: number) => {
+        if (settled) return;
+        settled = true;
+        finish(code, isChild);
+      };
+    };
+    const settleChild = settleOnce(true);
+    child.stdout?.on("data", (chunk: Buffer) => {
       // Stop reading long before a runaway remote can fill this process.
       if (stdout.length <= MAX_RECEIPT_BYTES) stdout += chunk.toString("utf8");
     });
-    child.on("error", () => settle(-1));
-    child.on("close", (code) => settle(code ?? -1));
+    child.on("error", () => settleChild(-1));
+    child.on("close", (code) => settleChild(code ?? -1));
+    if (source && child.stdin) {
+      const settleSource = settleOnce(false);
+      // A reader that exits early closes the pipe; its own exit code reports it.
+      child.stdin.on("error", () => {});
+      source.stdout.pipe(child.stdin);
+      source.on("error", () => settleSource(-1));
+      source.on("close", (code) => settleSource(code ?? -1));
+    }
   });
 }
 
@@ -1172,16 +1204,11 @@ function shellQuote(value: string): string {
 }
 
 /**
- * Run one command inside the tester container. The account defaults to the
- * daemon's own, so files the command creates belong to the tester agent;
- * `root` is passed only where `docker cp` left root-owned files behind.
+ * Run one command inside the tester container as the daemon's account, so
+ * files the command creates belong to the tester agent. Nothing runs as root.
  */
-function execArgv(
-  target: TesterAgentTarget,
-  command: readonly string[],
-  user: string = target.container_user,
-): string[] {
-  return ["docker", "exec", "--user", user, target.container, ...command];
+function execArgv(target: TesterAgentTarget, command: readonly string[]): string[] {
+  return ["docker", "exec", "--user", target.container_user, target.container, ...command];
 }
 
 /**
@@ -1559,11 +1586,11 @@ async function provisionRemoteLayout(
 }
 
 /**
- * Push the bundle into the container. `docker cp` writes root-owned files, so
- * the bundle lands in staging first and a root command copies it into the
- * work directory and hands both to the tester account; otherwise the agent
- * could not write next to its own manual, and cleanup could not remove the
- * staging copy.
+ * Push the bundle into the container. The host packs it with `tar` and the
+ * daemon's account unpacks it inside the container, so every file belongs to
+ * the tester agent without a root step (`docker cp` would write root-owned
+ * files). It lands in staging first and is copied into the work directory only
+ * once it unpacked whole, so a broken transfer never leaves a partial manual.
  */
 async function pushBundle(
   target: TesterAgentTarget,
@@ -1572,25 +1599,34 @@ async function pushBundle(
   transport: TesterAgentTransport,
   timeoutMs: number,
 ): Promise<void> {
-  const copied = await transport({
+  const unpacked = await transport({
     kind: "fetch",
-    argv: ["docker", "cp", `${localDir}/.`, `${target.container}:${layout.staging_dir}`],
+    argv: [
+      "docker",
+      "exec",
+      "--interactive",
+      "--user",
+      target.container_user,
+      target.container,
+      "tar",
+      "-x",
+      "-f",
+      "-",
+      "-C",
+      layout.staging_dir,
+    ],
+    stdin_from: ["tar", "-c", "-f", "-", "-C", localDir, "."],
     timeout_ms: timeoutMs,
   });
-  const script = [
-    "set -e",
-    `cp -R ${shellQuote(layout.staging_dir)}/. ${shellQuote(layout.work_dir)}/`,
-    `chown -R ${shellQuote(target.container_user)} ${shellQuote(layout.staging_dir)} ${shellQuote(layout.work_dir)}`,
-  ].join("\n");
-  const owned =
-    copied.code === 0
+  const copied =
+    unpacked.code === 0
       ? await transport({
           kind: "fetch",
-          argv: execArgv(target, ["sh", "-c", script], "root"),
+          argv: execArgv(target, ["cp", "-R", `${layout.staging_dir}/.`, `${layout.work_dir}/`]),
           timeout_ms: timeoutMs,
         })
-      : copied;
-  if (owned.code !== 0)
+      : unpacked;
+  if (copied.code !== 0)
     failA1("TESTER_DEPLOY_FAILED", "the tester bundle could not be copied into the container");
 }
 

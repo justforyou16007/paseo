@@ -18,6 +18,7 @@ import {
   testerAgentSubmissionSha256,
   testerAgentConfigFromDeployment,
   validateTesterSubmissionContract,
+  runTesterCommand,
   testerDeploymentLayout,
   testerSubmissionContractSha256,
   validateTesterDeploymentRecord,
@@ -582,10 +583,10 @@ for (const [refused, code] of [
 
 // --- 9b. deploy builds everything inside the container -------------------
 
-// `docker cp` writes root-owned files, so the bundle goes to staging and one
-// root command copies it into the work directory and hands both to the daemon's
-// account. Everything else runs as that account, and the private key is never
-// read: only the public half comes back out.
+// The host packs the bundle with tar and the daemon's account unpacks it into
+// staging, then copies it into the work directory. Every command runs as that
+// account, none as root, and the private key is never read: only the public
+// half comes back out.
 const deployCommands: TesterAgentCommand[] = [];
 const deployedKeyPath = path.join(root, "deployed", "tester.pub");
 const deployRequest = {
@@ -613,17 +614,32 @@ const deployed = await deployTesterAgent({
 assert.equal(deployed.agent_id, "agent-7");
 assert.equal(deployed.public_key_sha256, publicKeySha256);
 assert.equal(fs.readFileSync(deployedKeyPath, "utf8"), publicKeyPem);
-const [provision, copy, own, run, fetchKey, ...extra] = deployCommands;
+const [provision, unpack, copy, run, fetchKey, ...extra] = deployCommands;
 assert.equal(extra.length, 0);
 assert.deepEqual(provision!.argv.slice(0, 5), inContainer);
-assert.deepEqual(copy!.argv, [
+assert.deepEqual(unpack!.argv, [
   "docker",
-  "cp",
-  `${localBundle}/.`,
-  `aris-tester:${deployLayout.staging_dir}`,
+  "exec",
+  "--interactive",
+  "--user",
+  "paseo",
+  "aris-tester",
+  "tar",
+  "-x",
+  "-f",
+  "-",
+  "-C",
+  deployLayout.staging_dir,
 ]);
-assert.deepEqual(own!.argv.slice(0, 5), ["docker", "exec", "--user", "root", "aris-tester"]);
-assert.match(own!.argv.at(-1)!, /chown -R 'paseo'/);
+assert.deepEqual(unpack!.stdin_from, ["tar", "-c", "-f", "-", "-C", localBundle, "."]);
+assert.deepEqual(copy!.argv, [
+  ...inContainer,
+  "cp",
+  "-R",
+  `${deployLayout.staging_dir}/.`,
+  `${deployLayout.work_dir}/`,
+]);
+assert.ok(!deployCommands.some((command) => command.argv.includes("root")));
 assert.deepEqual(run!.argv.slice(0, 8), [...inContainer, "paseo", "agent", "run"]);
 assert.equal(run!.argv[run!.argv.indexOf("--cwd") + 1], deployLayout.work_dir);
 assert.deepEqual(fetchKey!.argv, [...inContainer, "cat", "--", deployLayout.public_key_path]);
@@ -634,13 +650,43 @@ assert.equal(
   false,
 );
 
-// A bundle that could not be copied stops the deployment before an agent exists.
-await expectCodeAsync("TESTER_DEPLOY_FAILED", () =>
-  deployTesterAgent({
-    request: deployRequest,
-    transport: async (command) =>
-      command.argv[1] === "cp" ? { code: 1, stdout: "" } : { code: 0, stdout: "" },
+// A bundle that could not be unpacked, or copied out of staging, stops the
+// deployment before an agent exists.
+for (const failing of ["tar", "cp"]) {
+  const attempted: TesterAgentCommand[] = [];
+  await expectCodeAsync("TESTER_DEPLOY_FAILED", () =>
+    deployTesterAgent({
+      request: deployRequest,
+      transport: async (command) => {
+        attempted.push(command);
+        return { code: command.argv.includes(failing) ? 1 : 0, stdout: "" };
+      },
+    }),
+  );
+  assert.ok(!attempted.some((command) => command.argv.includes("run")));
+}
+
+// The real transport pipes the host command into the container command, and
+// fails when either side fails: a pack that died midway must not pass as a
+// complete bundle just because the unpacking side exited cleanly.
+assert.deepEqual(
+  await runTesterCommand({
+    kind: "fetch",
+    argv: ["cat"],
+    stdin_from: ["printf", "bundle"],
+    timeout_ms: 10_000,
   }),
+  { code: 0, stdout: "bundle" },
+);
+assert.notEqual(
+  (await runTesterCommand({ kind: "fetch", argv: ["cat"], stdin_from: ["false"], timeout_ms: 10_000 }))
+    .code,
+  0,
+);
+assert.notEqual(
+  (await runTesterCommand({ kind: "fetch", argv: ["false"], stdin_from: ["printf", "x"], timeout_ms: 10_000 }))
+    .code,
+  0,
 );
 
 // --- 10. a deployment record cannot smuggle in a foreign layout ------------
