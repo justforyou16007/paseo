@@ -23,7 +23,7 @@ import {
   type TesterDeploymentRequest,
 } from "./tester-agent.js";
 import { readStateFile, writeStateJsonAtomic } from "./state-file.js";
-import { createTesterContainer, ensureTesterBaseImage } from "./tester-image.js";
+import { createTesterContainer } from "./tester-image.js";
 
 const program = createCli(
   "tester-agent",
@@ -64,36 +64,12 @@ function rejectWithCause(fallback: string, error: unknown): void {
 const DEFAULT_BASE_IMAGE = "aris-tester-base:latest";
 
 program
-  .command("ensure-base-image")
-  .description(
-    "Reuse the tester base image, load it from its archive, or build it and save the archive",
-  )
-  .requiredOption("--archive <path>", "absolute path of the saved image archive")
-  .option("--image <tag>", "base image tag", DEFAULT_BASE_IMAGE)
-  .option("--paseo-image <ref>", "Paseo image to build from, if not the official one")
-  .option("--timeout <ms>", "per-step timeout in milliseconds", "1800000")
-  .action(
-    async (options: { archive: string; image: string; paseoImage?: string; timeout: string }) => {
-      try {
-        const result = await ensureTesterBaseImage({
-          image: options.image,
-          archive_path: options.archive,
-          dockerfile_dir: templateDir("tester-image"),
-          ...(options.paseoImage === undefined ? {} : { paseo_image: options.paseoImage }),
-          timeout_ms: Number(options.timeout),
-        });
-        console.log(JSON.stringify(result));
-      } catch (error) {
-        rejectWithCause("tester_image_failed", error);
-      }
-    },
-  );
-
-program
   .command("create-container")
-  .description("Create the tester container from the base image, or start the existing one")
+  .description(
+    "Create the tester container from the prepared base image, or start the existing one",
+  )
   .requiredOption("--name <container>", "tester container name")
-  .option("--image <tag>", "base image tag", DEFAULT_BASE_IMAGE)
+  .option("--image <tag>", "the prepared base image", DEFAULT_BASE_IMAGE)
   .option("--home-volume <name>", "named volume for the account's home (default <name>-home)")
   .option("--timeout <ms>", "per-step timeout in milliseconds", "120000")
   .action(

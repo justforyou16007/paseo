@@ -1,14 +1,11 @@
-import fs from "node:fs";
-import path from "node:path";
 import { runTesterCommand, type TesterAgentTransport } from "./tester-agent.js";
 import { failA1, requireInteger, requireString } from "./workflow-spec.js";
 
 /**
- * The tester container is made from one base image: the Paseo image with the
- * claude CLI and a docker client added (`templates/tester-image/Dockerfile`).
- * Building it takes minutes and a network, so it is built once and kept twice:
- * as a tagged image in the docker daemon, and as a `docker save` archive on
- * disk that survives an image prune or a move to another docker host.
+ * Every tester container is made from one base image the owner prepares on
+ * the docker host beforehand: the Paseo image with the claude CLI and a docker
+ * client added, starting as the `paseo` account. ARIS never builds, pulls or
+ * saves it; a missing image stops setup instead.
  */
 
 const IMAGE_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9._/:@-]*$/;
@@ -24,17 +21,10 @@ function checked(value: unknown, pattern: RegExp, location: string): string {
   return result;
 }
 
-function absolutePath(value: unknown, location: string): string {
-  const result = requireString(value, location);
-  if (!path.isAbsolute(result) || path.normalize(result) !== result || result === "/")
-    failA1("INVALID_PATH", "must be a normalized absolute path", location);
-  return result;
-}
-
 /**
- * Image failures name the failed step and the command, because nothing about
- * them is private: the operator re-runs the command by hand to see docker's
- * own output.
+ * Failures name the failed step and the command, because nothing about them
+ * is private: the operator re-runs the command by hand to see docker's own
+ * output.
  */
 async function mustRun(
   transport: TesterAgentTransport,
@@ -43,98 +33,9 @@ async function mustRun(
   timeoutMs: number,
 ): Promise<string> {
   const result = await transport({ kind: "control", argv, timeout_ms: timeoutMs });
-  if (result.code !== 0) failA1("TESTER_IMAGE_FAILED", `${step} failed: ${argv.join(" ")}`, step);
+  if (result.code !== 0)
+    failA1("TESTER_CONTAINER_FAILED", `${step} failed: ${argv.join(" ")}`, step);
   return result.stdout;
-}
-
-export interface EnsureTesterBaseImageInput {
-  image: string;
-  /** Where the saved image lives on disk. */
-  archive_path: string;
-  /** Directory holding the Dockerfile; read only when the image is built. */
-  dockerfile_dir: string;
-  /** Overrides the Dockerfile's `PASEO_IMAGE`. */
-  paseo_image?: string;
-  timeout_ms: number;
-  transport?: TesterAgentTransport;
-}
-
-export interface EnsureTesterBaseImageResult {
-  image: string;
-  /** Where the image came from on this call. */
-  source: "present" | "loaded" | "built";
-  archive_path: string;
-  /** Whether this call wrote the archive. */
-  saved: boolean;
-}
-
-/**
- * Reuse the image if the daemon has it, else load it from the archive, else
- * build it. Whichever way it arrived, an image with no archive behind it is
- * saved, so the disk copy always exists once this returns.
- */
-export async function ensureTesterBaseImage(
-  input: EnsureTesterBaseImageInput,
-): Promise<EnsureTesterBaseImageResult> {
-  const image = checked(input.image, IMAGE_REFERENCE, "image");
-  const archive = absolutePath(input.archive_path, "archive_path");
-  const paseoImage =
-    input.paseo_image === undefined
-      ? null
-      : checked(input.paseo_image, IMAGE_REFERENCE, "paseo_image");
-  const timeout = requireInteger(input.timeout_ms, "timeout_ms", 1000);
-  const transport = input.transport ?? runTesterCommand;
-  const present = async () =>
-    (
-      await transport({
-        kind: "fetch",
-        argv: ["docker", "image", "inspect", "--format", "{{.Id}}", image],
-        timeout_ms: timeout,
-      })
-    ).code === 0;
-
-  let source: EnsureTesterBaseImageResult["source"];
-  if (await present()) {
-    source = "present";
-  } else if (fs.existsSync(archive)) {
-    await mustRun(transport, ["docker", "load", "--input", archive], "load", timeout);
-    // An archive carries the tags it was saved with. One without this tag is
-    // the wrong archive, and building over it would hide that.
-    if (!(await present()))
-      failA1("TESTER_IMAGE_FAILED", `${archive} does not contain ${image}`, "load");
-    source = "loaded";
-  } else {
-    const dockerfileDir = absolutePath(input.dockerfile_dir, "dockerfile_dir");
-    if (!fs.existsSync(path.join(dockerfileDir, "Dockerfile")))
-      failA1("TESTER_IMAGE_FAILED", `no Dockerfile in ${dockerfileDir}`, "build");
-    await mustRun(
-      transport,
-      [
-        "docker",
-        "build",
-        "--tag",
-        image,
-        ...(paseoImage === null ? [] : ["--build-arg", `PASEO_IMAGE=${paseoImage}`]),
-        dockerfileDir,
-      ],
-      "build",
-      timeout,
-    );
-    source = "built";
-  }
-
-  let saved = false;
-  if (!fs.existsSync(archive)) {
-    fs.mkdirSync(path.dirname(archive), { recursive: true });
-    // Saved beside the archive and renamed into place, so an interrupted save
-    // never leaves a truncated archive that the next call would try to load.
-    const partial = `${archive}.partial`;
-    fs.rmSync(partial, { force: true });
-    await mustRun(transport, ["docker", "save", "--output", partial, image], "save", timeout);
-    fs.renameSync(partial, archive);
-    saved = true;
-  }
-  return { image, source, archive_path: archive, saved };
 }
 
 export interface CreateTesterContainerInput {
@@ -187,12 +88,13 @@ async function socketGroup(
     )
   ).trim();
   if (!/^\d+$/.test(gid))
-    failA1("TESTER_IMAGE_FAILED", "socket-group printed no numeric group id", "socket-group");
+    failA1("TESTER_CONTAINER_FAILED", "socket-group printed no numeric group id", "socket-group");
   return gid;
 }
 
 /**
- * Create the tester container from the base image, or start the existing one.
+ * Create the tester container from the prepared base image, or start the
+ * existing one.
  * A container under that name made from another image is refused rather than
  * reused: it is somebody else's container.
  */
@@ -229,6 +131,18 @@ export async function createTesterContainer(
     await mustRun(transport, ["docker", "start", container], "start", timeout);
     return result(false);
   }
+
+  const present = await transport({
+    kind: "fetch",
+    argv: ["docker", "image", "inspect", "--format", "{{.Id}}", image],
+    timeout_ms: timeout,
+  });
+  if (present.code !== 0)
+    failA1(
+      "TESTER_IMAGE_MISSING",
+      `${image} is not on this docker host; prepare the tester base image first`,
+      "image",
+    );
 
   // Nothing runs as root. The image starts as the daemon's account, so the
   // Paseo entrypoint never switches user, and the socket group added here

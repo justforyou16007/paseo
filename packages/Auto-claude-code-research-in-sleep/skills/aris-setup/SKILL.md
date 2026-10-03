@@ -124,13 +124,11 @@ Archive the agent afterwards, including when it failed.
 
 ## Phase 3 — tester and the search gate
 
-This is where the tester container is required. Make it first, with the two
-commands in [`/tester-setup`](../tester-setup/SKILL.md) under "The container
-the tester lives in": `ensure-base-image` reuses the tester base image, loads it
-from its archive, or builds it and saves the archive to disk; `create-container`
-makes the container from that image. Pin the archive to
-`$HOME/.aris/images/aris-tester-base.tar` so every project on the machine finds
-the same one. Ask the owner to log `claude` in inside the container before
+This is where the tester container is required. Make it first with
+`create-container`, described in [`/tester-setup`](../tester-setup/SKILL.md)
+under "The container the tester lives in". It uses the base image the owner
+prepared on the docker host and never builds one; if the image is missing, ask
+the owner to prepare it and stop. Ask the owner to log `claude` in inside the container before
 `probe`. Collect the site facts with `AskUserQuestion` (one question per fact,
 no guessing):
 

@@ -44,32 +44,21 @@ requests.
 
 ## The container the tester lives in
 
-Make it before step 1, from a base image, in two commands:
+Make it before step 1. Every tester container comes from one base image the
+owner prepares on the docker host beforehand, `aris-tester-base:latest` unless
+`--image` names another. ARIS never builds, pulls or saves that image. The
+image must:
+
+- be the Paseo image with the `claude` CLI and a docker client added;
+- keep the Paseo image's `paseo` account; `create-container` runs the whole
+  container as that account.
 
 ```text
-tester-agent-cli.js ensure-base-image --archive "$HOME/.aris/images/aris-tester-base.tar"
 tester-agent-cli.js create-container --name aris-tester
 ```
 
-`ensure-base-image` makes sure the image `aris-tester-base:latest` exists, in
-this order:
-
-1. The docker daemon already has it: reuse it.
-2. Otherwise the archive is on disk: `docker load` it. An archive that does not
-   carry the tag is refused, not built over.
-3. Otherwise build it from `templates/tester-image/Dockerfile`: the Paseo image
-   with the `claude` CLI and a static docker client added. No build step runs
-   as root: `claude` is installed by the node image's ordinary account in a
-   separate stage and copied in owned by `paseo`, and the image starts as
-   `paseo`, the account the Paseo daemon runs as.
-
-Whichever way the image arrived, if the archive is missing it is written with
-`docker save`, through a `.partial` file renamed into place, so an interrupted
-save never leaves a truncated archive for the next call to load. Keep the
-archive outside any project: one base image serves every project on the
-machine, and it is what you carry to another docker host. Rebuild by deleting
-both the image and the archive. `--paseo-image` builds from a Paseo image other
-than the official one.
+A base image that is not on the docker host stops `create-container` with
+`TESTER_IMAGE_MISSING`; prepare it and run the command again.
 
 `create-container` runs the image with the host's `/var/run/docker.sock` and a
 named volume (`<name>-home`) mounted as `/home/paseo`, so the `claude` login
