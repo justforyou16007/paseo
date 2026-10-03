@@ -58,7 +58,10 @@ this order:
 2. Otherwise the archive is on disk: `docker load` it. An archive that does not
    carry the tag is refused, not built over.
 3. Otherwise build it from `templates/tester-image/Dockerfile`: the Paseo image
-   with the `claude` CLI and a static docker client added.
+   with the `claude` CLI and a static docker client added. No build step runs
+   as root: `claude` is installed by the node image's ordinary account in a
+   separate stage and copied in owned by `paseo`, and the image starts as
+   `paseo`, the account the Paseo daemon runs as.
 
 Whichever way the image arrived, if the archive is missing it is written with
 `docker save`, through a `.partial` file renamed into place, so an interrupted
@@ -72,11 +75,13 @@ than the official one.
 named volume (`<name>-home`) mounted as `/home/paseo`, so the `claude` login
 and the daemon's state survive a recreated container. A container of that name
 made from the same image is started instead; one made from another image is
-refused as `TESTER_CONTAINER_TAKEN`. It then writes the socket's group into the
-container's `/etc/group` for the `paseo` account and restarts the container
-once. `docker run --group-add` would not work: the Paseo entrypoint drops to
-`paseo` with gosu, which resets supplementary groups from `/etc/group`, and the
-tester agent would then get "permission denied" on the socket.
+refused as `TESTER_CONTAINER_TAKEN`. The container runs as `paseo` from its
+first process, and nothing in it runs as root. To reach the socket,
+`create-container` reads the socket's group id in a throwaway container and
+passes it as `--group-add`. Because the container already starts as `paseo`,
+the Paseo entrypoint skips its switch from root to `paseo` (that switch would
+reset the extra groups), so the daemon and every agent it starts keep the
+group. Without it the tester agent gets "permission denied" on the socket.
 
 Then log `claude` in once with `docker exec -it --user paseo aris-tester claude`.
 These are the facts `probe` checks:

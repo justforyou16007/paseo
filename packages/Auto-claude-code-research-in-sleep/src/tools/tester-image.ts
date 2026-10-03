@@ -156,17 +156,40 @@ export interface CreateTesterContainerResult {
 }
 
 /**
- * Give the daemon's account the docker socket's group. `docker run
- * --group-add` cannot do it: the Paseo entrypoint drops to the account with
- * gosu, which resets supplementary groups from /etc/group, so the group has to
- * be written there and the container restarted once for the daemon to get it.
+ * The group that owns the docker socket, read from inside a throwaway
+ * container because that is where the tester sees it: on Docker Desktop the
+ * socket's group inside a container differs from the host's. `stat` only reads
+ * the inode, so the image's own account can run it.
  */
-const SOCKET_GROUP_SCRIPT = [
-  `gid=$(stat -c %g ${DOCKER_SOCKET})`,
-  'group=$(getent group "$gid" | cut -d: -f1)',
-  'if [ -z "$group" ]; then groupadd --gid "$gid" docker-host && group=docker-host; fi',
-  `usermod -aG "$group" ${TESTER_CONTAINER_USER}`,
-].join(" && ");
+async function socketGroup(
+  transport: TesterAgentTransport,
+  image: string,
+  timeoutMs: number,
+): Promise<string> {
+  const gid = (
+    await mustRun(
+      transport,
+      [
+        "docker",
+        "run",
+        "--rm",
+        "--entrypoint",
+        "stat",
+        "--volume",
+        `${DOCKER_SOCKET}:${DOCKER_SOCKET}`,
+        image,
+        "-c",
+        "%g",
+        DOCKER_SOCKET,
+      ],
+      "socket-group",
+      timeoutMs,
+    )
+  ).trim();
+  if (!/^\d+$/.test(gid))
+    failA1("TESTER_IMAGE_FAILED", "socket-group printed no numeric group id", "socket-group");
+  return gid;
+}
 
 /**
  * Create the tester container from the base image, or start the existing one.
@@ -201,12 +224,16 @@ export async function createTesterContainer(
         `container ${container} exists and was not made from ${image}`,
         "container",
       );
-    // A no-op for a running container; the socket group was written when it
-    // was created and lives in its filesystem.
+    // A no-op for a running container; its user and socket group were fixed
+    // when it was created.
     await mustRun(transport, ["docker", "start", container], "start", timeout);
     return result(false);
   }
 
+  // Nothing runs as root. The image starts as the daemon's account, so the
+  // Paseo entrypoint never switches user, and the socket group added here
+  // stays on the daemon and every agent it starts.
+  const gid = await socketGroup(transport, image, timeout);
   await mustRun(
     transport,
     [
@@ -217,6 +244,10 @@ export async function createTesterContainer(
       container,
       "--restart",
       "unless-stopped",
+      "--user",
+      TESTER_CONTAINER_USER,
+      "--group-add",
+      gid,
       "--volume",
       `${DOCKER_SOCKET}:${DOCKER_SOCKET}`,
       "--volume",
@@ -226,12 +257,5 @@ export async function createTesterContainer(
     "run",
     timeout,
   );
-  await mustRun(
-    transport,
-    ["docker", "exec", "--user", "root", container, "sh", "-c", SOCKET_GROUP_SCRIPT],
-    "socket-group",
-    timeout,
-  );
-  await mustRun(transport, ["docker", "restart", container], "restart", timeout);
   return result(true);
 }

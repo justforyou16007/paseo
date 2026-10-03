@@ -894,6 +894,11 @@ const shippedDockerfile = fs.readFileSync(
 assert.match(shippedDockerfile, /FROM \$\{PASEO_IMAGE\}/);
 assert.match(shippedDockerfile, /@anthropic-ai\/claude-code/);
 assert.match(shippedDockerfile, /\/usr\/local\/bin\/docker/);
+// The Paseo daemon runs as an ordinary account, so the image is made without
+// root: no step switches to it, and the image starts as `paseo`.
+assert.doesNotMatch(shippedDockerfile, /^USER root/m);
+assert.match(shippedDockerfile, /^USER paseo\s*$/m);
+assert.match(shippedDockerfile, /--chown=paseo:paseo/);
 fs.rmSync(imageRoot, { recursive: true, force: true });
 
 // --- the tester container is made from the base image ------------------------
@@ -906,7 +911,9 @@ const created = await createTesterContainer({
   timeout_ms: 10_000,
   transport: async (command) => {
     containerCommands.push([...command.argv]);
-    return { code: command.argv[2] === "inspect" ? 1 : 0, stdout: "" };
+    if (command.argv[2] === "inspect") return { code: 1, stdout: "" };
+    if (command.argv.includes("--rm")) return { code: 0, stdout: "988\n" };
+    return { code: 0, stdout: "" };
   },
 });
 assert.deepEqual(created, {
@@ -916,16 +923,37 @@ assert.deepEqual(created, {
   home_volume: "aris-tester-home",
   created: true,
 });
-const runArgv = containerCommands.find((argv) => argv[1] === "run")!;
+// The socket's group is read in a throwaway container, then given to the
+// tester container as an extra group. The container runs as `paseo` from its
+// first process, so nothing runs as root and no restart is needed.
+assert.deepEqual(
+  containerCommands.map((argv) => argv[1]),
+  ["container", "run", "run"],
+);
+const statArgv = containerCommands[1]!;
+assert.deepEqual(statArgv.slice(0, 5), ["docker", "run", "--rm", "--entrypoint", "stat"]);
+assert.deepEqual(statArgv.slice(-3), ["-c", "%g", "/var/run/docker.sock"]);
+const runArgv = containerCommands[2]!;
+assert.equal(runArgv[runArgv.indexOf("--user") + 1], "paseo");
+assert.equal(runArgv[runArgv.indexOf("--group-add") + 1], "988");
 assert.ok(runArgv.includes("/var/run/docker.sock:/var/run/docker.sock"));
 assert.ok(runArgv.includes("aris-tester-home:/home/paseo"));
 assert.equal(runArgv.at(-1), "aris-tester-base:latest");
-// The socket's group goes into /etc/group as root and the container restarts,
-// because the entrypoint's drop to `paseo` resets supplementary groups.
-const groupArgv = containerCommands.find((argv) => argv[1] === "exec")!;
-assert.deepEqual(groupArgv.slice(0, 6), ["docker", "exec", "--user", "root", "aris-tester", "sh"]);
-assert.match(groupArgv.at(-1)!, /usermod -aG "\$group" paseo/);
-assert.deepEqual(containerCommands.at(-1), ["docker", "restart", "aris-tester"]);
+assert.ok(!containerCommands.some((argv) => argv.includes("root")));
+
+// A socket group that is not a number would turn into a bad --group-add.
+await expectCodeAsync("TESTER_IMAGE_FAILED", () =>
+  createTesterContainer({
+    image: "aris-tester-base:latest",
+    container: "aris-tester",
+    home_volume: "aris-tester-home",
+    timeout_ms: 10_000,
+    transport: async (command) => ({
+      code: command.argv[2] === "inspect" ? 1 : 0,
+      stdout: command.argv.includes("--rm") ? "stat: cannot stat\n" : "",
+    }),
+  }),
+);
 
 // Same name, same image: started, not recreated.
 const startedCommands: string[][] = [];
