@@ -1,6 +1,6 @@
 ---
 name: aris-update
-description: 'Incremental update of ARIS skills in the current project. Compares installed skills against the upstream ARIS repo, shows a diff, applies changes, pulls the tester base image, and provides adaptation guidance based on project progress. Protects project-generated skills (run-<project>-experiment). Use when user says "更新ARIS", "update aris", "sync skills", "升级skills", or after pulling new changes in the ARIS repo.'
+description: 'Incremental update of ARIS skills in the current project. Compares installed skills against the upstream ARIS repo, shows a diff, applies changes, and provides adaptation guidance based on project progress. Protects project-generated skills (run-<project>-experiment). Use when user says "更新ARIS", "update aris", "sync skills", "升级skills", or after pulling new changes in the ARIS repo.'
 argument-hint: "[— force] [— dry-run] [— aris-repo: <path>]"
 allowed-tools: Bash(*), Read, Write, AskUserQuestion
 ---
@@ -26,8 +26,6 @@ compare installed vs upstream, apply changes, and advise on adaptation.
 - ARIS-sourced agents in `.claude/agents/`
 - `.aris/tools/`, `.aris/dist/`, `.aris/templates/`, `.aris/node_modules/`
 - `.aris/installed-skills.txt` manifest
-- the tester base image `aris-tester-base:latest` on the docker host, pulled
-  from the published build
 
 ## Parameters
 
@@ -285,10 +283,9 @@ Support directories:
 ```
 
 If nothing to update (all lists empty and no dir changes), print "Already up
-to date" and skip to Phase 6 (the tester base image is still pulled and
-adaptation analysis still runs).
+to date" and skip to Phase 6 (adaptation analysis still runs).
 
-If `— dry-run`, skip to Phase 7.
+If `— dry-run`, skip to Phase 6.
 
 If not `— force`, use `AskUserQuestion` to confirm:
 
@@ -414,49 +411,12 @@ mv "$TMP_MANIFEST" "$MANIFEST"
 
 ---
 
-## Phase 6: Tester Base Image
-
-Every tester container is made from `aris-tester-base:latest` on the docker
-host (see [`/tester-setup`](../tester-setup/SKILL.md)). This phase pulls the
-published build and gives it that name. It runs on every update, including
-when no skill changed, because the first update in a project is where the image
-arrives. Skip it on `— dry-run`.
-
-It runs when this machine has a docker client. `tester-agent-cli.js` talks to
-whichever docker host `DOCKER_HOST` or the docker context selects, the same one
-`create-container` will use.
-
-```bash
-TESTER_IMAGE_RESULT="skipped: no docker client on this machine"
-if command -v docker >/dev/null 2>&1; then
-  if TESTER_IMAGE_JSON=$(node .aris/dist/tools/tester-agent-cli.js pull-image); then
-    TESTER_IMAGE_RESULT="$TESTER_IMAGE_JSON"
-  else
-    TESTER_IMAGE_RESULT="failed (reason printed above)"
-  fi
-fi
-```
-
-`pull-image` checks the pulled image's `/opt/aris/TESTER_AGENT.md` against
-this version's template, the same check `deploy` makes, and moves the local
-name only when they match.
-
-| Result | What to tell the user |
-| --- | --- |
-| `"changed": true` | A new build is now `aris-tester-base:latest`. Tester containers made earlier keep running their old image. Recreate one (`docker rm -f <name>`, then `create-container`; the home volume keeps the `claude` login) when `deploy` reports `TESTER_MANUAL_MISMATCH` or the new build is wanted. |
-| `"changed": false` | The local image already was the published build. |
-| `TESTER_MANUAL_MISMATCH` | The published build carries another version's manual; the local image is untouched. The detail says which side is behind: the image workflow has not rebuilt from this version yet, or this ARIS checkout is older than the image (then pass `--source` with the published `sha-` tag that matches it). |
-| `TESTER_IMAGE_PULL_FAILED` | docker could not pull, run or tag the image. The detail carries the command; re-run it by hand to see docker's own output. |
-
-A failure stops this phase only; the skills synced in Phase 4 stay. Do not
-build the image locally or pull from another registry instead.
-
-## Phase 7: Adaptation Analysis
+## Phase 6: Adaptation Analysis
 
 After updating (or after dry-run diff), analyze the project's current progress
 and advise the user on how to adapt to the new skill versions.
 
-### 7a. Read project progress
+### 6a. Read project progress
 
 ```bash
 PROJECT_SLUG=$(basename "$ROOT" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\+/-/g; s/^-//; s/-$//')
@@ -496,7 +456,7 @@ fi
 WIKI_STATUS=$(test -d research-wiki && echo "initialized" || echo "none")
 ```
 
-### 7b. Map updated skills to adaptation actions
+### 6b. Map updated skills to adaptation actions
 
 For each skill in UPDATE_LIST (and ADD_LIST for new capabilities), determine
 the impact on the current project:
@@ -597,7 +557,7 @@ print_adaptation() {
 }
 ```
 
-### 7c. Print final report
+### 6c. Print final report
 
 ```
 === ARIS Update Complete ===
@@ -607,9 +567,8 @@ Updated: $UPDATED skills/agents
 Skipped: ${#LOCAL_MOD_LIST[@]} (locally modified)
 Source:  $ARIS_REPO
 Manifest updated: .aris/installed-skills.txt
-Tester image: $TESTER_IMAGE_RESULT
 
-<adaptation advice from 7b>
+<adaptation advice from 6b>
 ```
 
 ---
@@ -635,8 +594,5 @@ Tester image: $TESTER_IMAGE_RESULT
 5. **Match auto-install copy behavior.** Use the same exclusion list
    (`__pycache__`, `node_modules`, `.git`). Copy `node_modules` unfiltered
    (same as `copyDirUnfiltered` in auto-install).
-6. **Pull the tester base image on every non-dry-run update.** Only through
-   `tester-agent-cli.js pull-image`, which refuses an image whose manual is not
-   this version's.
-7. **Always run adaptation analysis.** Even on `— dry-run` or when nothing
+6. **Always run adaptation analysis.** Even on `— dry-run` or when nothing
    changed, show the project progress and any relevant advice.
