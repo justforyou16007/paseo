@@ -124,12 +124,14 @@ Archive the agent afterwards, including when it failed.
 
 ## Phase 3 — tester and the search gate
 
-This is where the tester container is required. Make it first with
-`create-container`, described in [`/tester-setup`](../tester-setup/SKILL.md)
-under "The container the tester lives in". It uses the base image the owner
-prepared on the docker host and never builds one; if the image is missing, or
-`deploy` reports `TESTER_MANUAL_MISMATCH`, ask the owner to build it with this
-version's manual and stop. Ask the owner to log `claude` in inside the container before
+This is where the tester container is required, and where its base image is
+initialized. First pull the image with `pull-image`, then make the container
+with `create-container`, both described in
+[`/tester-setup`](../tester-setup/SKILL.md) under "The container the tester
+lives in". Pull every time this phase runs, even when the image is already on
+the docker host, so it carries this version's manual. ARIS never builds the
+image; if `pull-image` fails, or `deploy` reports `TESTER_MANUAL_MISMATCH`,
+show the owner the reason and stop. Ask the owner to log `claude` in inside the container before
 `probe`. Collect the site facts with `AskUserQuestion` (one question per fact,
 no guessing):
 

@@ -44,10 +44,9 @@ requests.
 
 ## The container the tester lives in
 
-Make it before step 1. Every tester container comes from one base image the
-owner prepares on the docker host beforehand, `aris-tester-base:latest` unless
-`--image` names another. ARIS never builds, pulls or saves that image. The
-image must:
+Make it before step 1. Every tester container comes from one base image on the
+docker host, `aris-tester-base:latest` unless `--image` names another. Setup
+pulls it; ARIS never builds it. The image must:
 
 - run the Paseo daemon, with the `claude` CLI and a docker client added;
 - have the `paseo` account with uid 1000; `create-container` runs the whole
@@ -60,16 +59,29 @@ image must:
 manual copied from the same commit. `.github/workflows/aris-tester-image.yml`
 publishes it as the public `ghcr.io/justforyou16007/aris-tester-base` on every
 push to `paseo-aris` that changes the Dockerfile or the manual, tagged
-`sha-<first 12 hex of the commit>`, `ubuntu22.04` and `latest`. Pull the build
-that matches the ARIS the research side runs and give it the default name:
+`sha-<first 12 hex of the commit>`, `ubuntu22.04` and `latest`. Pull it
+first:
 
-```bash
-docker pull ghcr.io/justforyou16007/aris-tester-base:latest
-docker tag ghcr.io/justforyou16007/aris-tester-base:latest aris-tester-base:latest
+```text
+tester-agent-cli.js pull-image
 ```
 
-An image built elsewhere has to put the manual in the same way. Outside this
-repository, download it from the matching commit:
+`pull-image` pulls `latest`, checks that its manual is this version's, and
+only then names it `aris-tester-base:latest`. Run it every time, including when
+the local image exists: an image from an older ARIS has another manual and
+`deploy` refuses it. Its failures:
+
+| Reason | What it means |
+| --- | --- |
+| `TESTER_MANUAL_MISMATCH` | The published build carries another version's manual; the local image is untouched. The detail says which side is behind: the image workflow has not rebuilt from this version yet, or this ARIS checkout is older than the image. For the second, pull the build that matches it: `pull-image --source ghcr.io/justforyou16007/aris-tester-base:sha-<commit>`. |
+| `TESTER_IMAGE_PULL_FAILED` | docker could not pull, run or tag the image. The detail carries the command; re-run it by hand to see docker's own output. |
+
+Stop on either. Do not build the image locally or pull from another registry
+instead.
+
+An image built elsewhere skips `pull-image`. It has to put the manual in the
+same way, and you give it the local name yourself or pass `--image`. Outside this repository, download
+the manual from the matching commit:
 
 ```dockerfile
 WORKDIR /opt/aris
@@ -88,7 +100,7 @@ tester-agent-cli.js create-container --name aris-tester
 ```
 
 A base image that is not on the docker host stops `create-container` with
-`TESTER_IMAGE_MISSING`; prepare it and run the command again.
+`TESTER_IMAGE_MISSING`; run `pull-image` and run the command again.
 
 `create-container` runs the image with the host's `/var/run/docker.sock` and a
 named volume (`<name>-home`) mounted as `/home/paseo`, so the `claude` login
@@ -126,7 +138,7 @@ selects. When the tester container lives on another docker host, point
 | Step | Command | What a failure means |
 | --- | --- | --- |
 | 1. Probe | `tester-agent-cli.js probe --container … --user …` | The container is not running or cannot be entered as that account, its Paseo daemon does not answer, it has no `claude` binary, or it cannot reach a docker daemon. Fix the container; do not deploy. |
-| 2. Deploy | `tester-agent-cli.js deploy --input <request> --output <deployment>` | `TESTER_MANUAL_MISMATCH`: the image has no manual, or another version's; rebuild the image and recreate the container. `tester_deploy_failed`: the container layout, the key or the agent could not be created. Nothing downstream is valid. |
+| 2. Deploy | `tester-agent-cli.js deploy --input <request> --output <deployment>` | `TESTER_MANUAL_MISMATCH`: the image has no manual, or another version's; run `pull-image` to get this version's image, then `docker rm -f` the container and run `create-container` again (the home volume keeps the `claude` login). `tester_deploy_failed`: the container layout, the key or the agent could not be created. Nothing downstream is valid. |
 | 3. Declare | `tester-agent-cli.js declare --deployment <deployment> --need-file <need> --output <contract>` | The tester did not return a contract that verifies against its own key, or its runtime declaration or exclusion list was refused (see below). |
 | 4. Emit policy | `search-audit-cli.js emit-policy --contract <contract> --project <path>` | The research side has no blocklist, so the guard would refuse every network call. |
 | 5. Install guard | `search-audit-cli.js install-guard --project <path>` | The hook is not in `.claude/settings.json` and the ledger was never opened. `submit` refuses. |

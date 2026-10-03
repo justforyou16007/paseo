@@ -1,12 +1,17 @@
-import { runTesterCommand, type TesterAgentTransport } from "./tester-agent.js";
+import { runTesterCommand, TESTER_MANUAL_PATH, type TesterAgentTransport } from "./tester-agent.js";
 import { failA1, requireInteger, requireString } from "./workflow-spec.js";
 
 /**
- * Every tester container is made from one base image the owner prepares on
- * the docker host beforehand: the Paseo image with the claude CLI and a docker
- * client added, starting as the `paseo` account. ARIS never builds, pulls or
- * saves it; a missing image stops setup instead.
+ * Every tester container is made from one base image on the docker host: the
+ * Paseo image with the claude CLI and a docker client added, starting as the
+ * `paseo` account. Setup pulls the published build and gives it the local
+ * name; ARIS never builds it. A missing image stops setup instead.
  */
+
+/** Published by `.github/workflows/aris-tester-image.yml`. */
+export const PUBLISHED_TESTER_IMAGE = "ghcr.io/justforyou16007/aris-tester-base:latest";
+/** The local name `create-container` uses unless told otherwise. */
+export const DEFAULT_TESTER_IMAGE = "aris-tester-base:latest";
 
 const IMAGE_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9._/:@-]*$/;
 const DOCKER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
@@ -31,10 +36,10 @@ async function mustRun(
   argv: string[],
   step: string,
   timeoutMs: number,
+  code = "TESTER_CONTAINER_FAILED",
 ): Promise<string> {
   const result = await transport({ kind: "control", argv, timeout_ms: timeoutMs });
-  if (result.code !== 0)
-    failA1("TESTER_CONTAINER_FAILED", `${step} failed: ${argv.join(" ")}`, step);
+  if (result.code !== 0) failA1(code, `${step} failed: ${argv.join(" ")}`, step);
   return result.stdout;
 }
 
@@ -93,7 +98,7 @@ async function socketGroup(
 }
 
 /**
- * Create the tester container from the prepared base image, or start the
+ * Create the tester container from the base image, or start the
  * existing one.
  * A container under that name made from another image is refused rather than
  * reused: it is somebody else's container.
@@ -140,7 +145,7 @@ export async function createTesterContainer(
   if (present.code !== 0)
     failA1(
       "TESTER_IMAGE_MISSING",
-      `${image} is not on this docker host; prepare the tester base image first`,
+      `${image} is not on this docker host; run tester-agent-cli.js pull-image first`,
       "image",
     );
 
@@ -172,4 +177,95 @@ export async function createTesterContainer(
     timeout,
   );
   return result(true);
+}
+
+export interface PullTesterImageInput {
+  /** The published reference to pull. */
+  source: string;
+  /** The local name to give it. */
+  image: string;
+  /** SHA-256 of `templates/tester-agent-bundle/TESTER_AGENT.md` in this version. */
+  manual_sha256: string;
+  timeout_ms: number;
+  transport?: TesterAgentTransport;
+}
+
+export interface PullTesterImageResult {
+  image: string;
+  source: string;
+  /** `sha256:<hex>` image id now under the local name. */
+  id: string;
+  /** False when the local name already pointed at this image. */
+  changed: boolean;
+}
+
+async function imageId(
+  transport: TesterAgentTransport,
+  image: string,
+  timeoutMs: number,
+): Promise<string | null> {
+  const result = await transport({
+    kind: "fetch",
+    argv: ["docker", "image", "inspect", "--format", "{{.Id}}", image],
+    timeout_ms: timeoutMs,
+  });
+  return result.code === 0 ? result.stdout.trim() : null;
+}
+
+/**
+ * Pull the published base image and give it the local name. The local name
+ * moves only after the pulled image's manual proves to be this version's,
+ * because deploy refuses any other; a mismatch leaves the local image as it
+ * was.
+ */
+export async function pullTesterImage(input: PullTesterImageInput): Promise<PullTesterImageResult> {
+  const source = checked(input.source, IMAGE_REFERENCE, "source");
+  const image = checked(input.image, IMAGE_REFERENCE, "image");
+  const expected = requireString(input.manual_sha256, "manual_sha256");
+  const timeout = requireInteger(input.timeout_ms, "timeout_ms", 1000);
+  const transport = input.transport ?? runTesterCommand;
+
+  const before = await imageId(transport, image, timeout);
+  await mustRun(transport, ["docker", "pull", source], "pull", timeout, "TESTER_IMAGE_PULL_FAILED");
+  // Runs as the image's own account with no network; the entrypoint is
+  // replaced, so no daemon starts.
+  const output = await mustRun(
+    transport,
+    [
+      "docker",
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--entrypoint",
+      "sha256sum",
+      source,
+      "--",
+      TESTER_MANUAL_PATH,
+    ],
+    "manual-check",
+    timeout,
+    "TESTER_IMAGE_PULL_FAILED",
+  );
+  const actual = output.trim().split(/\s+/)[0] ?? "";
+  if (actual !== expected)
+    failA1(
+      "TESTER_MANUAL_MISMATCH",
+      `${source} carries manual ${actual || "(none)"}, this ARIS version expects ${expected}: ` +
+        "either the image was not rebuilt from this version yet (push the manual change and wait " +
+        "for the image workflow), or this ARIS checkout is older than the image (update it, or " +
+        "pass --source with the published sha- tag that matches it)",
+      "manual",
+    );
+  const id = await imageId(transport, source, timeout);
+  if (id === null)
+    failA1("TESTER_IMAGE_PULL_FAILED", `inspect failed: docker image inspect ${source}`, "inspect");
+  await mustRun(
+    transport,
+    ["docker", "tag", source, image],
+    "tag",
+    timeout,
+    "TESTER_IMAGE_PULL_FAILED",
+  );
+  return { image, source, id, changed: before !== id };
 }

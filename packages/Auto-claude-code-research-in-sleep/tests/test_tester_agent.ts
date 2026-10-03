@@ -29,7 +29,7 @@ import {
   type TesterAgentTransport,
   type TesterSubmissionContract,
 } from "../src/tools/tester-agent.js";
-import { createTesterContainer } from "../src/tools/tester-image.js";
+import { createTesterContainer, pullTesterImage } from "../src/tools/tester-image.js";
 import {
   validateTesterPublicConclusion,
   validateTesterPublicFeedback,
@@ -827,7 +827,7 @@ assert.ok(runArgv.includes("aris-tester-home:/home/paseo"));
 assert.equal(runArgv.at(-1), "aris-tester-base:latest");
 assert.ok(!containerCommands.some((argv) => argv.includes("root")));
 
-// ARIS never builds the base image: one the owner has not prepared stops here,
+// ARIS never builds the base image: one setup has not pulled stops here,
 // before anything is created.
 const missingCommands: string[][] = [];
 await expectCodeAsync("TESTER_IMAGE_MISSING", () =>
@@ -889,6 +889,89 @@ await expectCodeAsync("TESTER_CONTAINER_TAKEN", () =>
 );
 await expectCodeAsync("INVALID_VALUE", () =>
   createTesterContainer({ image: "aris-tester-base:latest", container: "--privileged", home_volume: "v", timeout_ms: 10_000 }),
+);
+
+// --- setup pulls the published base image ----------------------------------
+
+const MANUAL = "b".repeat(64);
+const SOURCE = "ghcr.io/example/aris-tester-base:latest";
+function pullTransport(log: string[][], manual: string, localId: string | null): TesterAgentTransport {
+  return async (command) => {
+    log.push([...command.argv]);
+    const argv = command.argv;
+    if (argv[1] === "image" && argv.at(-1) === "aris-tester-base:latest")
+      return localId === null ? { code: 1, stdout: "" } : { code: 0, stdout: `${localId}\n` };
+    if (argv[1] === "image") return { code: 0, stdout: "sha256:new\n" };
+    if (argv[1] === "run") return { code: 0, stdout: `${manual}  /opt/aris/TESTER_AGENT.md\n` };
+    return { code: 0, stdout: "" };
+  };
+}
+
+// The manual is checked in the pulled image before the local name moves.
+const pullCommands: string[][] = [];
+const pulled = await pullTesterImage({
+  source: SOURCE,
+  image: "aris-tester-base:latest",
+  manual_sha256: MANUAL,
+  timeout_ms: 10_000,
+  transport: pullTransport(pullCommands, MANUAL, null),
+});
+assert.deepEqual(pulled, {
+  image: "aris-tester-base:latest",
+  source: SOURCE,
+  id: "sha256:new",
+  changed: true,
+});
+assert.deepEqual(
+  pullCommands.map((argv) => argv[1]),
+  ["image", "pull", "run", "image", "tag"],
+);
+const checkArgv = pullCommands[2]!;
+assert.equal(checkArgv[checkArgv.indexOf("--network") + 1], "none");
+assert.deepEqual(checkArgv.slice(-2), ["--", "/opt/aris/TESTER_AGENT.md"]);
+assert.ok(!checkArgv.includes("--user"));
+assert.deepEqual(pullCommands.at(-1), ["docker", "tag", SOURCE, "aris-tester-base:latest"]);
+
+// Pulling the image the local name already has reports no change.
+const same = await pullTesterImage({
+  source: SOURCE,
+  image: "aris-tester-base:latest",
+  manual_sha256: MANUAL,
+  timeout_ms: 10_000,
+  transport: pullTransport([], MANUAL, "sha256:new"),
+});
+assert.equal(same.changed, false);
+
+// Another version's manual: refused, and the local name is never touched.
+const staleCommands: string[][] = [];
+await expectCodeAsync("TESTER_MANUAL_MISMATCH", () =>
+  pullTesterImage({
+    source: SOURCE,
+    image: "aris-tester-base:latest",
+    manual_sha256: MANUAL,
+    timeout_ms: 10_000,
+    transport: pullTransport(staleCommands, "c".repeat(64), "sha256:old"),
+  }),
+);
+assert.ok(!staleCommands.some((argv) => argv[1] === "tag"));
+
+// A failed pull stops before anything runs from the image.
+const failedCommands: string[][] = [];
+await expectCodeAsync("TESTER_IMAGE_PULL_FAILED", () =>
+  pullTesterImage({
+    source: SOURCE,
+    image: "aris-tester-base:latest",
+    manual_sha256: MANUAL,
+    timeout_ms: 10_000,
+    transport: async (command) => {
+      failedCommands.push([...command.argv]);
+      return { code: command.argv[1] === "pull" ? 1 : 0, stdout: "" };
+    },
+  }),
+);
+assert.deepEqual(
+  failedCommands.map((argv) => argv[1]),
+  ["image", "pull"],
 );
 
 fs.rmSync(root, { recursive: true, force: true });
