@@ -29,7 +29,7 @@ one.
 | `project_basics` | CLAUDE.md, RESEARCH_BRIEF.md and a non-empty `research-wiki/` | [`/research-setup`](../research-setup/SKILL.md) |
 | `metric_target` | CLAUDE.md's `## Metric Target` parses | `/research-setup`, or the block in `templates/CLAUDE_MD_TEMPLATE.md` |
 | `experiment_env` | `env.json` says `complete` **and** `scripts/` exists | [`/experiment-env-manager`](../experiment-env-manager/SKILL.md) |
-| `tester_agent` | a valid `.aris/tester-agent-config.json` | [`/tester-setup`](../tester-setup/SKILL.md) steps 1-8 |
+| `tester_agent` | a valid `.aris/tester-agent-config.json` | [`/tester-setup`](../tester-setup/SKILL.md) steps 1-6 |
 | `search_guard` | a policy file **and** a ledger whose chain verifies | `search-audit-cli.js emit-policy` then `install-guard` |
 | `root_charter` | the run has a `run.json` and a `charter.json` | `workflow-tools-cli.js root-setup` |
 
@@ -127,8 +127,9 @@ Archive the agent afterwards, including when it failed.
 This is where the tester container is required. Make it first with
 `create-container`, described in [`/tester-setup`](../tester-setup/SKILL.md)
 under "The container the tester lives in". It uses the base image the owner
-prepared on the docker host and never builds one; if the image is missing, ask
-the owner to prepare it and stop. Ask the owner to log `claude` in inside the container before
+prepared on the docker host and never builds one; if the image is missing, or
+`deploy` reports `TESTER_MANUAL_MISMATCH`, ask the owner to build it with this
+version's manual and stop. Ask the owner to log `claude` in inside the container before
 `probe`. Collect the site facts with `AskUserQuestion` (one question per fact,
 no guessing):
 
@@ -137,7 +138,6 @@ no guessing):
 | tester container name (the account is `paseo`, printed by `create-container`) | create-container, probe, deploy |
 | tester home directory inside the container | deploy |
 | provider and model for the tester agent | deploy |
-| local bundle directory to stage the tester's manual in | prepare-bundle |
 | **the domain / task description in prose** | declare |
 
 The last one decides what the tester will measure, and it is the one place a
@@ -146,7 +146,7 @@ never a benchmark name: what the tester evaluates on is the tester's own
 research decision. Naming a benchmark here is handing the exam paper to the
 person being examined.
 
-Then run the eight steps of [`/tester-setup`](../tester-setup/SKILL.md) in
+Then run the six steps of [`/tester-setup`](../tester-setup/SKILL.md) in
 order. They are not repeated here. Two conventions this skill pins, because
 `emit-config` takes an arbitrary `--output` and the detector has to know where
 to look:
@@ -157,7 +157,7 @@ to look:
 --output for emit-config  .aris/tester-agent-config.json
 ```
 
-Step 8's `root-setup` handoff happens in Phase 5 of this skill, not here — by
+Step 6's `root-setup` handoff happens in Phase 5 of this skill, not here — by
 then the other six items exist.
 
 ### What the tester may send back

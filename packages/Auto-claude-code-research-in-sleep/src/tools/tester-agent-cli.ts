@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,7 +8,6 @@ import { assertSearchAuditForContract } from "./search-policy.js";
 import { A1Error } from "./workflow-spec.js";
 import {
   assertOutermostSubmissionRun,
-  cleanupTesterDeployment,
   declareTesterSubmissionContract,
   deployTesterAgent,
   probeTesterAgentHost,
@@ -40,14 +40,19 @@ function reject(reason: string): void {
   process.exitCode = 1;
 }
 
-/** Templates ship next to `dist`, both in the repository and under `.aris`. */
-function templateDir(name: string): string {
-  return path.resolve(
+/**
+ * The manual this ARIS version expects in the base image. Templates ship next
+ * to `dist`, both in the repository and under `.aris`.
+ */
+function expectedManualSha256(): string {
+  const manual = path.resolve(
     path.dirname(path.dirname(fileURLToPath(import.meta.url))),
     "..",
     "templates",
-    name,
+    "tester-agent-bundle",
+    "TESTER_AGENT.md",
   );
+  return crypto.createHash("sha256").update(fs.readFileSync(manual)).digest("hex");
 }
 
 /**
@@ -121,7 +126,10 @@ program
   .action(async (options: { input: string; output: string }) => {
     try {
       const request = readStateFile(options.input) as unknown as TesterDeploymentRequest;
-      const deployment = await deployTesterAgent({ request });
+      const deployment = await deployTesterAgent({
+        request,
+        manual_sha256: expectedManualSha256(),
+      });
       const record = testerDeploymentRecord(request, deployment);
       writeStateJsonAtomic(options.output, record);
       console.log(
@@ -131,29 +139,14 @@ program
           deployment_path: options.output,
         }),
       );
-    } catch {
-      reject("tester_deploy_failed");
-    }
-  });
-
-program
-  .command("cleanup")
-  .description("Remove the staging areas the deployment created, locally and in the container")
-  .requiredOption("--deployment <path>", "deployment record written by deploy")
-  .option("--local-bundle <path>", "local staging directory to remove as well")
-  .action(async (options: { deployment: string; localBundle?: string }) => {
-    try {
-      const record = readTesterDeploymentRecord(options.deployment);
-      const result = await cleanupTesterDeployment({
-        target: record.endpoint,
-        remote_staging_dir: record.layout.staging_dir,
-        local_bundle_dir: options.localBundle ?? null,
-        request_timeout_ms: record.endpoint.request_timeout_ms,
-      });
-      // Removed paths are recorded; their contents never were.
-      console.log(JSON.stringify({ status: "removed", removed: result.removed }));
-    } catch {
-      reject("tester_cleanup_failed");
+    } catch (error) {
+      // A stale or missing manual is fixed by rebuilding the image, so the
+      // owner is told that; the container's own output is still not printed.
+      reject(
+        error instanceof A1Error && error.code === "TESTER_MANUAL_MISMATCH"
+          ? error.code
+          : "tester_deploy_failed",
+      );
     }
   });
 
@@ -198,31 +191,6 @@ program
       console.log(JSON.stringify({ config_path: options.output, project_id: config.project_id }));
     } catch {
       reject("tester_config_rejected");
-    }
-  });
-
-program
-  .command("prepare-bundle")
-  .description("Materialize the tester's operating manual into the local staging directory")
-  .requiredOption("--output <dir>", "local bundle directory that deploy will push")
-  .action((options: { output: string }) => {
-    try {
-      // deploy pushes exactly one directory, so the manual has to be placed into
-      // that directory rather than pushed separately; cleanup keeps working
-      // because there is still only one local staging path to remove.
-      const source = templateDir("tester-agent-bundle");
-      fs.mkdirSync(options.output, { recursive: true, mode: 0o700 });
-      const copied: string[] = [];
-      for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
-        if (!entry.isFile()) continue;
-        fs.copyFileSync(path.join(source, entry.name), path.join(options.output, entry.name));
-        copied.push(entry.name);
-      }
-      console.log(
-        JSON.stringify({ status: "prepared", bundle_dir: options.output, files: copied }),
-      );
-    } catch {
-      reject("tester_bundle_rejected");
     }
   });
 

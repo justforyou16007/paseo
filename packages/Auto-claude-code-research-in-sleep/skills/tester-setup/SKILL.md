@@ -7,7 +7,7 @@ allowed-tools: Read, Write, Bash(*)
 # Tester Setup
 
 Setup produces the seventh root setup item, `tester_agent_config`. Until it
-exists, no formal outer run can start. Run the eight steps in order; a failed
+exists, no formal outer run can start. Run the six steps in order; a failed
 step is a setup failure, not something to route around.
 
 ## What the boundary actually rests on
@@ -51,7 +51,27 @@ image must:
 
 - be the Paseo image with the `claude` CLI and a docker client added;
 - keep the Paseo image's `paseo` account; `create-container` runs the whole
-  container as that account.
+  container as that account;
+- carry the tester's operating manual at `/opt/aris/TESTER_AGENT.md`, readable by
+  `paseo`, byte for byte this ARIS version's
+  `templates/tester-agent-bundle/TESTER_AGENT.md`.
+
+Put the manual in with the Dockerfile, downloaded from the commit or tag of the
+ARIS version the research side runs:
+
+```dockerfile
+WORKDIR /opt/aris
+ADD --chmod=644 https://raw.githubusercontent.com/<owner>/<repo>/<commit>/packages/Auto-claude-code-research-in-sleep/templates/tester-agent-bundle/TESTER_AGENT.md /opt/aris/TESTER_AGENT.md
+WORKDIR /workspace
+```
+
+Both modes matter. `ADD` saves a downloaded file as mode 600, so without
+`--chmod=644` `paseo` cannot read it. But `--chmod` also applies to the parent
+directories `ADD` creates, and a directory with mode 644 cannot be entered, so
+`WORKDIR` creates `/opt/aris` first with mode 755. The last line restores the
+Paseo image's working directory. Nothing is ever copied into the tester
+container from outside; `deploy` only checks that the manual is there and is
+this version's.
 
 ```text
 tester-agent-cli.js create-container --name aris-tester
@@ -91,18 +111,16 @@ docker's own output.
 selects. When the tester container lives on another docker host, point
 `DOCKER_HOST` or the docker context there; nothing else changes.
 
-## The eight steps
+## The six steps
 
 | Step | Command | What a failure means |
 | --- | --- | --- |
 | 1. Probe | `tester-agent-cli.js probe --container … --user …` | The container is not running or cannot be entered as that account, its Paseo daemon does not answer, it has no `claude` binary, or it cannot reach a docker daemon. Fix the container; do not deploy. |
-| 2. Prepare bundle | `tester-agent-cli.js prepare-bundle --output <local-bundle-dir>` | The tester has no operating manual, so it would be inventing its own procedure. |
-| 3. Deploy | `tester-agent-cli.js deploy --input <request> --output <deployment>` | The container layout, the key or the agent could not be created. Nothing downstream is valid. |
-| 4. Declare | `tester-agent-cli.js declare --deployment <deployment> --need-file <need> --output <contract>` | The tester did not return a contract that verifies against its own key, or its runtime declaration or exclusion list was refused (see below). |
-| 5. Emit policy | `search-audit-cli.js emit-policy --contract <contract> --project <path>` | The research side has no blocklist, so the guard would refuse every network call. |
-| 6. Install guard | `search-audit-cli.js install-guard --project <path>` | The hook is not in `.claude/settings.json` and the ledger was never opened. `submit` refuses. |
-| 7. Clean up | `tester-agent-cli.js cleanup --deployment <deployment> [--local-bundle <dir>]` | The staging areas survive. Re-run; cleanup is idempotent. |
-| 8. Emit config and hand off | `tester-agent-cli.js emit-config …` then `workflow-tools-cli.js root-setup --project <path> --input <path>` with `tester_agent_config` | The contract digest could not be frozen, or the root setup rejects the config; it is not a formal run. |
+| 2. Deploy | `tester-agent-cli.js deploy --input <request> --output <deployment>` | `TESTER_MANUAL_MISMATCH`: the image has no manual, or another version's; rebuild the image and recreate the container. `tester_deploy_failed`: the container layout, the key or the agent could not be created. Nothing downstream is valid. |
+| 3. Declare | `tester-agent-cli.js declare --deployment <deployment> --need-file <need> --output <contract>` | The tester did not return a contract that verifies against its own key, or its runtime declaration or exclusion list was refused (see below). |
+| 4. Emit policy | `search-audit-cli.js emit-policy --contract <contract> --project <path>` | The research side has no blocklist, so the guard would refuse every network call. |
+| 5. Install guard | `search-audit-cli.js install-guard --project <path>` | The hook is not in `.claude/settings.json` and the ledger was never opened. `submit` refuses. |
+| 6. Emit config and hand off | `tester-agent-cli.js emit-config …` then `workflow-tools-cli.js root-setup --project <path> --input <path>` with `tester_agent_config` | The contract digest could not be frozen, or the root setup rejects the config; it is not a formal run. |
 
 The run this hands off to is an Auto Research Loop root, so the root setup
 input carries `mode: "auto_research_loop"`, a positive `max_iterations`, and
@@ -112,21 +130,18 @@ carries no `model_usage_policy`: model choice is prose in CLAUDE.md's
 limit, and `root-setup` refuses a budget in loop mode. `/aris-setup` Phase 5
 writes these into the answers file it assembles from.
 
-Step 2 runs before deploy because `deploy` pushes exactly one directory, the
-`local_bundle_dir` named in the deployment request. Steps 5 and 6 run after the
-contract exists, because the blocklist is part of the contract, and before any
-research starts, because a search that already happened cannot be un-searched.
+Steps 4 and 5 run after the contract exists, because the blocklist is part of
+the contract, and before any research starts, because a search that already
+happened cannot be un-searched.
 
 Deployment input names the site facts — `container`, `container_user` (the
 daemon's account), `remote_home` (the tester's home inside the container),
-`provider`, `local_bundle_dir`, and `public_key_path` for the copied-out public
-key. There are no defaults for any of them. The container paths all derive from
-one home, which is why cleanup can only delete a staging directory this
-deployment created. Deploy never runs as
-root: the host packs the bundle with `tar` and the daemon's account unpacks it
-into staging inside the container, then copies it into the work directory, so
-every file belongs to the tester agent. `docker cp` is not used because it
-writes root-owned files. The host needs `tar`, and so does the image.
+`provider`, and `public_key_path` for the copied-out public key. There are no
+defaults for any of them. The container paths all derive from one home. Deploy
+checks the manual's sha256 first, so an image with the wrong manual gets no key
+and no agent. Then, as the daemon's account, it creates the layout and the
+signing key and starts the agent with the manual as its procedure. Nothing runs
+as root and nothing is written into the container from the host.
 
 ## What the research side may do
 
@@ -250,7 +265,7 @@ distinct facts:
 
 | Refusal | What it means |
 | --- | --- |
-| `SEARCH_AUDIT_MISSING` | There is no ledger, or it has no genesis entry: the guard was never installed. Run steps 5 and 6. |
+| `SEARCH_AUDIT_MISSING` | There is no ledger, or it has no genesis entry: the guard was never installed. Run steps 4 and 5. |
 | `SEARCH_AUDIT_BROKEN` | The chain or the sequence does not hold: written history was edited. |
 | `SEARCH_POLICY_MISMATCH` | The ledger's active policy is not what this contract compiles to: the round was guarded against a different test. Re-run `emit-policy --rotate`, and treat the research done before the rotation as unaudited. |
 

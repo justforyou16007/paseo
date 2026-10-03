@@ -9,7 +9,6 @@ import { createRootRun, createRun } from "../src/tools/run-contract.js";
 import {
   assertOutermostSubmissionRun,
   bindSubmissionToContract,
-  cleanupTesterDeployment,
   declareTesterSubmissionContract,
   deployTesterAgent,
   probeTesterAgentHost,
@@ -18,8 +17,8 @@ import {
   testerAgentSubmissionSha256,
   testerAgentConfigFromDeployment,
   validateTesterSubmissionContract,
-  runTesterCommand,
   testerDeploymentLayout,
+  TESTER_MANUAL_PATH,
   testerSubmissionContractSha256,
   validateTesterDeploymentRecord,
   writeTesterAgentResponse,
@@ -548,45 +547,13 @@ for (const target of [
     }),
   );
 
-// --- 9. cleanup only removes a staging directory this layout produced ------
+// --- 9. deploy builds everything inside the container -------------------
 
+// Nothing is copied into the container. The manual is already in the base
+// image; deploy checks its hash first, then creates the layout and key as the
+// daemon's account, starts the agent and reads back only the public key.
 const layout = testerDeploymentLayout("/srv/aris-tester");
-const localBundle = path.join(root, "bundle");
-fs.mkdirSync(localBundle, { recursive: true });
-const cleaned = await cleanupTesterDeployment({
-  target: { container: "aris-tester", container_user: "paseo" },
-  remote_staging_dir: layout.staging_dir,
-  local_bundle_dir: localBundle,
-  request_timeout_ms: 10_000,
-  transport: async () => ({ code: 0, stdout: "" }),
-});
-assert.deepEqual(cleaned.removed, [`aris-tester:${layout.staging_dir}`, localBundle]);
-assert.equal(fs.existsSync(localBundle), false);
-
-// `/` never reaches the staging rule -- it is not a usable path to begin with.
-for (const [refused, code] of [
-  ["/", "INVALID_PATH"],
-  ["/srv", "TESTER_CLEANUP_REFUSED"],
-  ["/srv/aris-tester", "TESTER_CLEANUP_REFUSED"],
-  ["/srv/aris-tester/work", "TESTER_CLEANUP_REFUSED"],
-  ["/staging", "TESTER_CLEANUP_REFUSED"],
-] as const)
-  await expectCodeAsync(code, () =>
-    cleanupTesterDeployment({
-      target: { container: "aris-tester", container_user: "paseo" },
-      remote_staging_dir: refused,
-      local_bundle_dir: null,
-      request_timeout_ms: 10_000,
-      transport: async () => ({ code: 0, stdout: "" }),
-    }),
-  );
-
-// --- 9b. deploy builds everything inside the container -------------------
-
-// The host packs the bundle with tar and the daemon's account unpacks it into
-// staging, then copies it into the work directory. Every command runs as that
-// account, none as root, and the private key is never read: only the public
-// half comes back out.
+const manualSha256 = crypto.createHash("sha256").update("manual v1").digest("hex");
 const deployCommands: TesterAgentCommand[] = [];
 const deployedKeyPath = path.join(root, "deployed", "tester.pub");
 const deployRequest = {
@@ -595,53 +562,41 @@ const deployRequest = {
   container: "aris-tester",
   container_user: "paseo",
   remote_home: "/home/paseo/aris",
-  local_bundle_dir: localBundle,
   public_key_path: deployedKeyPath,
   provider: "claude/claude-opus-5",
   request_timeout_ms: 10_000,
 };
 const deployLayout = testerDeploymentLayout(deployRequest.remote_home);
-const deployed = await deployTesterAgent({
-  request: deployRequest,
-  transport: async (command) => {
-    deployCommands.push(command);
+const deployTransport =
+  (manualStdout: { code: number; stdout: string }, seen: TesterAgentCommand[]) =>
+  async (command: TesterAgentCommand) => {
+    seen.push(command);
+    if (command.argv.includes("sha256sum")) return manualStdout;
     if (command.argv.includes("run")) return { code: 0, stdout: '{"agentId":"agent-7"}' };
     if (command.argv.at(-1) === deployLayout.public_key_path)
       return { code: 0, stdout: publicKeyPem };
     return { code: 0, stdout: "" };
-  },
+  };
+const deployed = await deployTesterAgent({
+  request: deployRequest,
+  manual_sha256: manualSha256,
+  transport: deployTransport(
+    { code: 0, stdout: `${manualSha256}  ${TESTER_MANUAL_PATH}\n` },
+    deployCommands,
+  ),
 });
 assert.equal(deployed.agent_id, "agent-7");
 assert.equal(deployed.public_key_sha256, publicKeySha256);
 assert.equal(fs.readFileSync(deployedKeyPath, "utf8"), publicKeyPem);
-const [provision, unpack, copy, run, fetchKey, ...extra] = deployCommands;
+const [checkManual, provision, run, fetchKey, ...extra] = deployCommands;
 assert.equal(extra.length, 0);
+assert.deepEqual(checkManual!.argv, [...inContainer, "sha256sum", "--", TESTER_MANUAL_PATH]);
 assert.deepEqual(provision!.argv.slice(0, 5), inContainer);
-assert.deepEqual(unpack!.argv, [
-  "docker",
-  "exec",
-  "--interactive",
-  "--user",
-  "paseo",
-  "aris-tester",
-  "tar",
-  "-x",
-  "-f",
-  "-",
-  "-C",
-  deployLayout.staging_dir,
-]);
-assert.deepEqual(unpack!.stdin_from, ["tar", "-c", "-f", "-", "-C", localBundle, "."]);
-assert.deepEqual(copy!.argv, [
-  ...inContainer,
-  "cp",
-  "-R",
-  `${deployLayout.staging_dir}/.`,
-  `${deployLayout.work_dir}/`,
-]);
 assert.ok(!deployCommands.some((command) => command.argv.includes("root")));
+assert.ok(!deployCommands.some((command) => command.argv.includes("cp")));
 assert.deepEqual(run!.argv.slice(0, 8), [...inContainer, "paseo", "agent", "run"]);
 assert.equal(run!.argv[run!.argv.indexOf("--cwd") + 1], deployLayout.work_dir);
+assert.ok(run!.argv.some((arg) => arg.includes(`Read ${TESTER_MANUAL_PATH}`)));
 assert.deepEqual(fetchKey!.argv, [...inContainer, "cat", "--", deployLayout.public_key_path]);
 // The private key path appears only inside the provisioning script that
 // generates it; no command names it as an argument to read.
@@ -650,44 +605,38 @@ assert.equal(
   false,
 );
 
-// A bundle that could not be unpacked, or copied out of staging, stops the
-// deployment before an agent exists.
-for (const failing of ["tar", "cp"]) {
+// An image without the manual, or with another version's manual, stops the
+// deployment before a key or an agent exists: the fix is rebuilding the image.
+for (const manualResult of [
+  { code: 1, stdout: "" },
+  { code: 0, stdout: `${"0".repeat(64)}  ${TESTER_MANUAL_PATH}\n` },
+]) {
   const attempted: TesterAgentCommand[] = [];
-  await expectCodeAsync("TESTER_DEPLOY_FAILED", () =>
+  await expectCodeAsync("TESTER_MANUAL_MISMATCH", () =>
     deployTesterAgent({
       request: deployRequest,
-      transport: async (command) => {
-        attempted.push(command);
-        return { code: command.argv.includes(failing) ? 1 : 0, stdout: "" };
-      },
+      manual_sha256: manualSha256,
+      transport: deployTransport(manualResult, attempted),
     }),
   );
-  assert.ok(!attempted.some((command) => command.argv.includes("run")));
+  assert.equal(attempted.length, 1);
 }
 
-// The real transport pipes the host command into the container command, and
-// fails when either side fails: a pack that died midway must not pass as a
-// complete bundle just because the unpacking side exited cleanly.
-assert.deepEqual(
-  await runTesterCommand({
-    kind: "fetch",
-    argv: ["cat"],
-    stdin_from: ["printf", "bundle"],
-    timeout_ms: 10_000,
+// A layout that could not be created stops the deployment before an agent exists.
+const unprovisioned: TesterAgentCommand[] = [];
+await expectCodeAsync("TESTER_DEPLOY_FAILED", () =>
+  deployTesterAgent({
+    request: deployRequest,
+    manual_sha256: manualSha256,
+    transport: async (command) => {
+      unprovisioned.push(command);
+      if (command.argv.includes("sha256sum"))
+        return { code: 0, stdout: `${manualSha256}  ${TESTER_MANUAL_PATH}\n` };
+      return { code: command.argv.includes("sh") ? 1 : 0, stdout: "" };
+    },
   }),
-  { code: 0, stdout: "bundle" },
 );
-assert.notEqual(
-  (await runTesterCommand({ kind: "fetch", argv: ["cat"], stdin_from: ["false"], timeout_ms: 10_000 }))
-    .code,
-  0,
-);
-assert.notEqual(
-  (await runTesterCommand({ kind: "fetch", argv: ["false"], stdin_from: ["printf", "x"], timeout_ms: 10_000 }))
-    .code,
-  0,
-);
+assert.ok(!unprovisioned.some((command) => command.argv.includes("run")));
 
 // --- 10. a deployment record cannot smuggle in a foreign layout ------------
 
@@ -701,7 +650,7 @@ assert.deepEqual(validateTesterDeploymentRecord(record).layout, layout);
 expectCode("TESTER_DEPLOYMENT_INVALID", () =>
   validateTesterDeploymentRecord({
     ...record,
-    layout: { ...layout, staging_dir: "/etc" },
+    layout: { ...layout, work_dir: "/etc" },
   }),
 );
 

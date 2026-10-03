@@ -222,7 +222,7 @@ function detectTesterAgent(root: string): SetupStage {
       ready: false,
       evidence: [],
       reason: `no tester agent config at ${path.relative(root, configPath)}`,
-      next: "/aris-setup Phase 3 (the eight steps of ../tester-setup/SKILL.md)",
+      next: "/aris-setup Phase 3 (the six steps of ../tester-setup/SKILL.md)",
     };
   }
   try {

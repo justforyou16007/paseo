@@ -50,7 +50,9 @@ say so in the contract's `usage` notes.
 
 ## Step 3 — Build the cases here
 
-Assemble the case set in this container. Score it here too. Then compute
+Assemble the case set and score it. The cases live in the named volume step 4
+describes, filled by a container you start, because a file in this container's own
+filesystem cannot reach a submission container without being copied. Then compute
 `case_manifest_sha256` over the manifest.
 
 The manifest digest is the only thing about the cases that becomes public. It exists
@@ -68,12 +70,24 @@ container.
 
 `docker` here talks to the host's docker daemon through its socket, so a container
 you start is a sibling of this one, not a child. A bind mount `-v <path>:...` names a
-path on the docker host, not a path in here, so move files with `docker cp` instead:
+path on the docker host, not a path in here. Nothing moves from this container into
+another one: each container gets its files by cloning or downloading them itself,
+into a named volume.
 
-- Keep the cases in a named volume. Fill it once by `docker cp` into a throwaway
-  container that mounts the volume, then mount the volume read-only into each
-  submission container.
-- Copy each artifact in between `docker create` and `docker start`.
+- **Cases.** Build them in a named volume: run the step 3 work in a throwaway
+  container that mounts the volume, clones or downloads the source data, and writes
+  the cases into it. When that work needs tools, write a Dockerfile for the builder
+  image; the cases go into the volume, never into an image. Mount the volume
+  read-only into each submission container.
+- **Artifacts.** Declare in step 6's `submission_fields` where each artifact is
+  fetched from and its sha256. Per submission, a fetch container with network
+  access mounts a fresh volume, clones or downloads the artifact into it, and
+  refuses one whose digest does not match. The submission container then mounts
+  that volume read-only, with no network. Remove the volume once the response is
+  signed.
+- Run every one of these containers as a non-root user, and mount each volume at a
+  directory the image already has, owned by that user. Docker creates a missing
+  mount point owned by root, and the user could not write into it.
 - Never mount the docker socket into a submission container. That would give the
   submitted code control of every container on the host, this one included.
 

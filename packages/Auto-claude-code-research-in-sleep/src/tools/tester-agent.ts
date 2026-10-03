@@ -1122,8 +1122,6 @@ export interface TesterAgentCommand {
   /** `control` drives the remote agent; `fetch` reads one receipt back. */
   kind: "control" | "fetch";
   argv: readonly string[];
-  /** A host command whose stdout is piped into this command's stdin. */
-  stdin_from?: readonly string[];
   timeout_ms: number;
 }
 
@@ -1146,55 +1144,25 @@ export async function runTesterCommand(
 ): Promise<TesterAgentCommandResult> {
   const [file, ...args] = command.argv;
   if (file === undefined) failA1("TESTER_AGENT_UNREACHABLE", "empty tester agent command");
-  const [sourceFile, ...sourceArgs] = command.stdin_from ?? [];
-  if (command.stdin_from !== undefined && sourceFile === undefined)
-    failA1("TESTER_AGENT_UNREACHABLE", "empty tester agent stdin command");
   return new Promise((resolve) => {
-    const source =
-      sourceFile === undefined
-        ? null
-        : spawn(sourceFile, sourceArgs, { stdio: ["ignore", "pipe", "ignore"] });
-    const child = spawn(file, args, { stdio: [source ? "pipe" : "ignore", "pipe", "ignore"] });
+    const child = spawn(file, args, { stdio: ["ignore", "pipe", "ignore"] });
     let stdout = "";
-    // Both processes must exit; the result fails if either one did.
-    let pending = source ? 2 : 1;
-    let failure = 0;
-    let childCode = -1;
+    let settled = false;
     const timer = setTimeout(() => {
       if (!child.killed) child.kill();
-      if (source && !source.killed) source.kill();
     }, command.timeout_ms);
-    const finish = (code: number, isChild: boolean) => {
-      if (isChild) childCode = code;
-      else if (code !== 0) failure = code;
-      pending -= 1;
-      if (pending > 0) return;
+    const settle = (code: number) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      resolve({ code: childCode !== 0 ? childCode : failure, stdout });
+      resolve({ code, stdout });
     };
-    const settleOnce = (isChild: boolean) => {
-      let settled = false;
-      return (code: number) => {
-        if (settled) return;
-        settled = true;
-        finish(code, isChild);
-      };
-    };
-    const settleChild = settleOnce(true);
-    child.stdout?.on("data", (chunk: Buffer) => {
+    child.stdout.on("data", (chunk: Buffer) => {
       // Stop reading long before a runaway remote can fill this process.
       if (stdout.length <= MAX_RECEIPT_BYTES) stdout += chunk.toString("utf8");
     });
-    child.on("error", () => settleChild(-1));
-    child.on("close", (code) => settleChild(code ?? -1));
-    if (source && child.stdin) {
-      const settleSource = settleOnce(false);
-      // A reader that exits early closes the pipe; its own exit code reports it.
-      child.stdin.on("error", () => {});
-      source.stdout.pipe(child.stdin);
-      source.on("error", () => settleSource(-1));
-      source.on("close", (code) => settleSource(code ?? -1));
-    }
+    child.on("error", () => settle(-1));
+    child.on("close", (code) => settle(code ?? -1));
   });
 }
 
@@ -1453,8 +1421,6 @@ export interface TesterDeploymentRequest {
    * container path derives from it.
    */
   remote_home: string;
-  /** Local directory copied into the container's staging area, then removed. */
-  local_bundle_dir: string;
   /** Where the fetched public key is written on this machine. */
   public_key_path: string;
   /** Paseo provider for the tester agent, e.g. `claude/claude-opus-5`. */
@@ -1463,7 +1429,6 @@ export interface TesterDeploymentRequest {
 }
 
 export interface TesterDeploymentLayout {
-  staging_dir: string;
   work_dir: string;
   key_dir: string;
   private_key_path: string;
@@ -1482,7 +1447,6 @@ export function testerDeploymentLayout(remoteHome: string): TesterDeploymentLayo
   const home = normalizedAbsolutePath(remoteHome, "tester_deployment.remote_home");
   const keyDir = path.posix.join(home, "keys");
   return {
-    staging_dir: path.posix.join(home, "staging"),
     work_dir: path.posix.join(home, "work"),
     key_dir: keyDir,
     private_key_path: path.posix.join(keyDir, "tester.key"),
@@ -1502,10 +1466,6 @@ function validateDeploymentRequest(value: TesterDeploymentRequest): TesterDeploy
     project_id: assertIdentifier(value.project_id, "tester_deployment.project_id"),
     ...validateTarget(value, "tester_deployment"),
     remote_home: normalizedAbsolutePath(value.remote_home, "tester_deployment.remote_home"),
-    local_bundle_dir: normalizedAbsolutePath(
-      value.local_bundle_dir,
-      "tester_deployment.local_bundle_dir",
-    ),
     public_key_path: normalizedAbsolutePath(
       value.public_key_path,
       "tester_deployment.public_key_path",
@@ -1514,6 +1474,13 @@ function validateDeploymentRequest(value: TesterDeploymentRequest): TesterDeploy
     request_timeout_ms: timeout,
   };
 }
+
+/**
+ * Where the base image carries the tester's operating manual. Nothing is
+ * copied into the tester container from outside: the owner bakes the manual
+ * into the image, and deploy only checks it is this ARIS version's manual.
+ */
+export const TESTER_MANUAL_PATH = "/opt/aris/TESTER_AGENT.md";
 
 /**
  * The instructions the remote agent runs under. It states the two requests the
@@ -1526,13 +1493,13 @@ export function testerBootstrapPrompt(input: {
 }): string {
   return [
     `You are the ARIS tester for project ${input.project_id} (tester id ${input.tester_id}).`,
-    `Your bundle is in ${input.layout.work_dir}. Write every receipt into ${input.layout.receipt_dir}`,
+    `Your working directory is ${input.layout.work_dir}. Write every receipt into ${input.layout.receipt_dir}`,
     `and sign it with the Ed25519 private key at ${input.layout.private_key_path}.`,
     "",
-    // The procedure is a file in the container rather than text in this prompt so
-    // that it can be revised without redeploying the agent, and so the research
-    // side is not the thing that tells the tester how to build its cases.
-    `Read ${input.layout.work_dir}/TESTER_AGENT.md before answering anything. It is the`,
+    // The procedure is a file baked into the base image rather than text in this
+    // prompt, so the tester can re-read it, and so the research side is not the
+    // thing that tells the tester how to build its cases.
+    `Read ${TESTER_MANUAL_PATH} before answering anything. It is the`,
     "procedure for this role: research the stated domain yourself, choose or design the",
     "evaluation, build the cases here, and declare what the research side may no longer",
     "search for. Follow it step by step.",
@@ -1566,7 +1533,7 @@ async function provisionRemoteLayout(
   const script = [
     "set -e",
     "umask 077",
-    `mkdir -p ${shellQuote(layout.key_dir)} ${shellQuote(layout.receipt_dir)} ${shellQuote(layout.work_dir)} ${shellQuote(layout.staging_dir)}`,
+    `mkdir -p ${shellQuote(layout.key_dir)} ${shellQuote(layout.receipt_dir)} ${shellQuote(layout.work_dir)}`,
     // A redeploy must not replace a key that already signed receipts.
     `if [ ! -f ${shellQuote(layout.private_key_path)} ]; then`,
     `  openssl genpkey -algorithm ed25519 -out ${shellQuote(layout.private_key_path)}`,
@@ -1585,64 +1552,41 @@ async function provisionRemoteLayout(
     failA1("TESTER_DEPLOY_FAILED", "the tester container could not create its layout or key");
 }
 
-/**
- * Push the bundle into the container. The host packs it with `tar` and the
- * daemon's account unpacks it inside the container, so every file belongs to
- * the tester agent without a root step (`docker cp` would write root-owned
- * files). It lands in staging first and is copied into the work directory only
- * once it unpacked whole, so a broken transfer never leaves a partial manual.
- */
-async function pushBundle(
+async function verifyManual(
   target: TesterAgentTarget,
-  localDir: string,
-  layout: TesterDeploymentLayout,
+  manualSha256: string,
   transport: TesterAgentTransport,
   timeoutMs: number,
 ): Promise<void> {
-  const unpacked = await transport({
+  const result = await transport({
     kind: "fetch",
-    argv: [
-      "docker",
-      "exec",
-      "--interactive",
-      "--user",
-      target.container_user,
-      target.container,
-      "tar",
-      "-x",
-      "-f",
-      "-",
-      "-C",
-      layout.staging_dir,
-    ],
-    stdin_from: ["tar", "-c", "-f", "-", "-C", localDir, "."],
+    argv: execArgv(target, ["sha256sum", "--", TESTER_MANUAL_PATH]),
     timeout_ms: timeoutMs,
   });
-  const copied =
-    unpacked.code === 0
-      ? await transport({
-          kind: "fetch",
-          argv: execArgv(target, ["cp", "-R", `${layout.staging_dir}/.`, `${layout.work_dir}/`]),
-          timeout_ms: timeoutMs,
-        })
-      : unpacked;
-  if (copied.code !== 0)
-    failA1("TESTER_DEPLOY_FAILED", "the tester bundle could not be copied into the container");
+  if (result.code !== 0 || result.stdout.trim().split(/\s+/)[0] !== manualSha256)
+    failA1(
+      "TESTER_MANUAL_MISMATCH",
+      `${TESTER_MANUAL_PATH} is missing from the base image or is not this ARIS version's manual; rebuild the image`,
+    );
 }
 
 export async function deployTesterAgent(input: {
   request: TesterDeploymentRequest;
+  /** SHA-256 of `templates/tester-agent-bundle/TESTER_AGENT.md` in this version. */
+  manual_sha256: string;
   transport?: TesterAgentTransport;
 }): Promise<TesterDeploymentResult> {
   const request = validateDeploymentRequest(input.request);
+  const manualSha256 = assertSha256(input.manual_sha256, "tester_deployment.manual_sha256");
   const transport = input.transport ?? runTesterCommand;
   const target: TesterAgentTarget = {
     container: request.container,
     container_user: request.container_user,
   };
   const layout = testerDeploymentLayout(request.remote_home);
+  // Checked first, so an image without the manual creates no key and no agent.
+  await verifyManual(target, manualSha256, transport, request.request_timeout_ms);
   await provisionRemoteLayout(target, layout, transport, request.request_timeout_ms);
-  await pushBundle(target, request.local_bundle_dir, layout, transport, request.request_timeout_ms);
 
   const created = await transport({
     kind: "control",
@@ -1705,44 +1649,8 @@ export async function deployTesterAgent(input: {
 }
 
 /**
- * Remove the staging areas once the agent is running. Only the paths this
- * module created are accepted, and a container path shallow enough to be
- * dangerous is refused outright.
- */
-export async function cleanupTesterDeployment(input: {
-  target: TesterAgentTarget;
-  remote_staging_dir: string;
-  local_bundle_dir: string | null;
-  request_timeout_ms: number;
-  transport?: TesterAgentTransport;
-}): Promise<{ removed: string[] }> {
-  const target = validateTarget(input.target, "tester_cleanup");
-  const staging = normalizedAbsolutePath(
-    input.remote_staging_dir,
-    "tester_cleanup.remote_staging_dir",
-  );
-  if (staging.split("/").filter((part) => part !== "").length < 2 || !staging.endsWith("/staging"))
-    failA1("TESTER_CLEANUP_REFUSED", "refusing to remove a path this deployment did not create");
-  const removed: string[] = [];
-  const result = await (input.transport ?? runTesterCommand)({
-    kind: "fetch",
-    argv: execArgv(target, ["rm", "-rf", "--", staging]),
-    timeout_ms: requireInteger(input.request_timeout_ms, "tester_cleanup.request_timeout_ms", 1000),
-  });
-  if (result.code !== 0)
-    failA1("TESTER_CLEANUP_FAILED", "the container staging area was not removed");
-  removed.push(`${target.container}:${staging}`);
-  if (input.local_bundle_dir !== null) {
-    const local = normalizedAbsolutePath(input.local_bundle_dir, "tester_cleanup.local_bundle_dir");
-    fs.rmSync(local, { recursive: true, force: true });
-    removed.push(local);
-  }
-  return { removed };
-}
-
-/**
  * What a finished deployment leaves on disk: how to reach the tester, and the
- * container paths that cleanup and later redeployments need. It is deliberately
+ * container paths later redeployments need. It is deliberately
  * not a `TesterAgentConfig` yet -- no contract has been declared at this point.
  */
 export interface TesterDeploymentRecord {
@@ -1788,7 +1696,7 @@ export function validateTesterDeploymentRecord(value: unknown): TesterDeployment
     failA1("TESTER_DEPLOYMENT_INVALID", "deployment record needs an endpoint and a layout");
   // Every container path derives from one home directory, so the stored layout is
   // recomputed from it and rejected if it disagrees. A record cannot smuggle in
-  // a staging path that cleanup would then delete.
+  // a receipt or key path outside that home.
   const receiptDir = normalizedAbsolutePath(
     value.layout.receipt_dir,
     "tester_deployment.layout.receipt_dir",
