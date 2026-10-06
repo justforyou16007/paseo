@@ -15,12 +15,10 @@ import {
 /**
  * What a parent promises to judge one dispatched child by.
  *
- * A child never reaches the task's tester. The tester is a scarce resource
- * owned by the root run: every exposure is counted against one task-wide limit,
- * so a child that could call it would spend the whole task's remaining
- * exposures answering a local question. Instead the parent writes an acceptance
- * before it dispatches, and that acceptance is what the child's charter names
- * as its `measurement.tester_ref`.
+ * The parent writes a local acceptance before dispatch, and the child's
+ * charter names it as measurement.tester_ref. Both root and child runs may
+ * use the shared tester facility; a child's acceptance does not control the
+ * root task's incumbent promotion.
  *
  * The parent's run directory holds the file, so the parent is the only writer
  * and the child only ever sees the id inside its own frozen charter. The id is

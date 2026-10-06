@@ -716,8 +716,7 @@ function assertOuterAndFrozenIdentity(
     failA1("IDENTITY_MISMATCH", "workflow spec does not match the outer frozen policy");
   if (
     spec.promotion_tester.tester_id !== frozen.tester_id ||
-    spec.promotion_tester.definition_version !== frozen.tester_version ||
-    spec.promotion_tester.max_exposures_per_task !== frozen.tester_definition.max_exposures_per_task
+    spec.promotion_tester.definition_version !== frozen.tester_version
   )
     failA1("IDENTITY_MISMATCH", "workflow spec tester does not match the outer frozen policy");
   assertLimitsUnchanged(frozen.owner_limits, spec.owner_limits);

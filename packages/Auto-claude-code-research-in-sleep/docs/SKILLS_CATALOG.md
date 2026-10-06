@@ -1,6 +1,6 @@
 # ARIS Skills Catalog
 
-Every skill that ships with ARIS — **88 skills**, grouped by role. The table is
+Every skill that ships with ARIS — **90 skills**, grouped by role. The table is
 the current shipped skill set; add a row in the same change as a new skill.
 
 - Each `Skill` link goes to the canonical `SKILL.md` (the LLM-readable spec).
@@ -20,9 +20,11 @@ End-to-end pipelines that chain many sub-skills. Most users start here.
 
 | Skill                                                                      | Role                                                                                                                                                                                                                                 | Requires                            |
 | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------- |
-| [`/aris-setup`](../skills/aris-setup/SKILL.md) | The single human entry point for project configuration — reports the six setup stages, routes each unfinished one to the skill that finishes it, and seals the root charter | A docker container for the tester (Paseo daemon, `claude`, access to a docker daemon) |
+| [`/aris-setup`](../skills/aris-setup/SKILL.md) | Configure five stages, initialize tester facilities and seal the root charter | Local or SSH benchmark environment |
 | [`/scorer-loop`](../skills/scorer-loop/SKILL.md) | Compare and review scorer revisions within a dedicated outer wave | Frozen scorer update plan; Paseo MCP |
-| [`/tester-setup`](../skills/tester-setup/SKILL.md) | Stand up the tester as an agent on its own machine and emit the config the research side submits against | An ssh-reachable machine running a Paseo daemon and `claude` |
+| [`/tester-setup`](../skills/tester-setup/SKILL.md) | Install pinned benchmark facilities during aris setup | Local or SSH resources |
+| [`/tester-test`](../skills/tester-test/SKILL.md) | Run complete benchmarks with durable jobs and raw evidence | Ready tester facilities |
+| [`/tester-audit`](../skills/tester-audit/SKILL.md) | Independently audit benchmark evidence before Wiki metrics | Paseo MCP; complete test result |
 | [`/research-pipeline`](../skills/research-pipeline/SKILL.md)               | **Full chain** — Workflow 1 → 1.5 → 2 → 3, from research direction to submission-ready paper                                                                                                                                         | Paseo MCP, LaTeX, GPU               |
 | [`/idea-discovery`](../skills/idea-discovery/SKILL.md)                     | **Workflow 1** — research-lit → idea-creator → novelty-check → research-review → research-refine-pipeline                                                                                                                            | Paseo MCP                           |
 | [`/idea-discovery-robot`](../skills/idea-discovery-robot/SKILL.md)         | Workflow 1 adapter for robotics / embodied AI — robotics-aware literature survey + benchmark-anchored ideation                                                                                                                       | Paseo MCP                           |

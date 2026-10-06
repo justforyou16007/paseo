@@ -42,13 +42,12 @@ import {
 } from "./wiki-projector.js";
 import {
   assertOuterWikiScope,
-  assertResearchVisible,
   resolveRunWikiScope,
   runWikiRoot,
   validateWikiScope,
 } from "./wiki-scope.js";
 import { requireRunContract, runOwnedPath } from "./run-contract.js";
-import { readVerifiedTesterFeedback, verifyTesterFeedback } from "./tester-public-receipt.js";
+import { readAuditedTesterResult, evidenceFile } from "./tester-facility.js";
 import { exportResultPackage, planResultExport } from "./result-export.js";
 import { saveResultReview } from "./result-review.js";
 import type { ResultStatus } from "./result-package.js";
@@ -72,6 +71,8 @@ export const WIKI_MODULE_WORKERS = [
   "orchestration-bridge",
   "analyze-results",
   "result-to-claim",
+  "tester-test",
+  "tester-audit",
 ] as const;
 type WikiWorker = (typeof WIKI_MODULE_WORKERS)[number] | "scorer-loop" | "tester";
 
@@ -91,7 +92,7 @@ type WikiManifestIdentity = {
 };
 
 export type WikiWorkerManifest = WikiManifestIdentity &
-  ({ role: "tester" } | ({ role: "module" | "scorer" } & RunWikiBinding));
+  ({ role: "tester" | "module" | "scorer" } & RunWikiBinding);
 
 export function wikiWorkerManifestPath(projectRoot: string, runId: string): string {
   return runOwnedPath(projectRoot, runId, "input-manifest.json");
@@ -116,7 +117,6 @@ function assertInputSnapshot(
   if (hash !== snapshot.sha256 || run.output_hashes[relative] !== hash)
     throw new Error("INPUT_SNAPSHOT_NOT_SEALED");
   const payload: unknown = JSON.parse(bytes.toString("utf8"));
-  assertResearchVisible(payload);
   if (
     !isObject(payload) ||
     payload.input_snapshot_sha256 !== run.identity_material.input_snapshot_sha256
@@ -146,7 +146,7 @@ export function sealWikiWorkerManifest(input: WikiWorkerManifestInput): WikiWork
       input.worker === "tester" ? "tester" : input.worker === "scorer-loop" ? "scorer" : "module";
     if (existing && existing.role !== role) throw new Error("IMMUTABLE_WORKER_MANIFEST_CONFLICT");
     let manifest: WikiWorkerManifest;
-    if (input.worker !== "tester") {
+    {
       assertInputSnapshot(input);
       const wikiRoot = runWikiRoot(input.project_root, input.run_id);
       initializeWikiSchema(wikiRoot);
@@ -157,7 +157,7 @@ export function sealWikiWorkerManifest(input: WikiWorkerManifestInput): WikiWork
         ...base,
         input_snapshot_sha256: requireRunContract(input.project_root, input.run_id)
           .identity_material.input_snapshot_sha256,
-        role: input.worker === "scorer-loop" ? "scorer" : "module",
+        role,
         wiki_root: wikiRoot,
         wiki_head: head,
         input_snapshot: input.input_snapshot ?? null,
@@ -166,11 +166,7 @@ export function sealWikiWorkerManifest(input: WikiWorkerManifestInput): WikiWork
       const actual = eventLogHead(readWikiEventsLocked(wikiRoot).slice(0, head.seq));
       if (canonicalJsonSha256(actual, anyJsonSchema) !== canonicalJsonSha256(head, anyJsonSchema))
         throw new Error("WIKI_HEAD_MISMATCH");
-    } else {
-      if (input.input_snapshot !== undefined) throw new Error("TESTER_MANIFEST_INPUT_FORBIDDEN");
-      manifest = { ...base, role: "tester" };
     }
-    assertResearchVisible(manifest);
     if (
       existing &&
       canonicalJsonSha256(existing, anyJsonSchema) !== canonicalJsonSha256(manifest, anyJsonSchema)
@@ -192,15 +188,12 @@ export function readWikiWorkerManifest(projectRoot: string, runId: string): Wiki
     raw.project_root !== path.resolve(projectRoot) ||
     raw.run_id !== runId ||
     raw.scope !== (raw.role === "scorer" ? `${scope}/scorers/${runId}` : scope) ||
-    (raw.role !== "tester" &&
-      raw.input_snapshot_sha256 !== run.identity_material.input_snapshot_sha256)
+    raw.input_snapshot_sha256 !== run.identity_material.input_snapshot_sha256
   )
     throw new Error("IMMUTABLE_WORKER_MANIFEST_CONFLICT");
-  if (raw.role === "tester") {
-    if (Object.keys(raw).some((key) => !["project_root", "run_id", "scope", "role"].includes(key)))
-      throw new Error("TESTER_MANIFEST_INPUT_FORBIDDEN");
-  } else {
-    if (raw.role !== "module" && raw.role !== "scorer") throw new Error("INVALID_WORKER_IDENTITY");
+  {
+    if (raw.role !== "module" && raw.role !== "scorer" && raw.role !== "tester")
+      throw new Error("INVALID_WORKER_IDENTITY");
     const binding = raw as unknown as WikiWorkerManifestInput;
     assertInputSnapshot(binding);
     if (raw.wiki_root !== runWikiRoot(projectRoot, runId) || !isObject(raw.wiki_head))
@@ -211,7 +204,6 @@ export function readWikiWorkerManifest(projectRoot: string, runId: string): Wiki
     if (canonicalJsonSha256(actual, anyJsonSchema) !== canonicalJsonSha256(head, anyJsonSchema))
       throw new Error("WIKI_HEAD_MISMATCH");
   }
-  assertResearchVisible(raw);
   return raw as unknown as WikiWorkerManifest;
 }
 
@@ -222,16 +214,12 @@ export interface ResearchWikiQueryRequest extends WikiQueryRequest {
 
 /** Public query entry. The projector is a storage primitive, not a worker API. */
 export function queryWiki(wikiRoot: string, request: ResearchWikiQueryRequest) {
-  if (/tester|sanitizer/i.test(request.requester)) throw new Error("WIKI_QUERY_IDENTITY_FORBIDDEN");
   if (request.consumer !== undefined && request.consumer !== "research")
     assertOuterWikiScope(request.scope, request.allow_standalone);
   let bounded = request;
   if (request.manifest_path !== undefined) {
     const raw = readJsonObject(request.manifest_path);
-    if (raw.role === "tester") throw new Error("WIKI_QUERY_IDENTITY_FORBIDDEN");
-    assertResearchVisible(raw);
     const input = raw as unknown as WikiWorkerManifest;
-    if (input.role === "tester") throw new Error("WIKI_QUERY_IDENTITY_FORBIDDEN");
     if (
       canonicalStatePath(wikiWorkerManifestPath(input.project_root, input.run_id)) !==
       canonicalStatePath(request.manifest_path)
@@ -271,7 +259,6 @@ export function queryWiki(wikiRoot: string, request: ResearchWikiQueryRequest) {
     throw new Error("WORKER_MANIFEST_REQUIRED");
   }
   const result = projectQueryWiki(wikiRoot, bounded);
-  assertResearchVisible(result);
   return result;
 }
 
@@ -1076,22 +1063,8 @@ export function addExperiment(
     iteration?: number;
     /** This iteration's metric-gate reading, cross-checked against the dashboard on export. */
     gateMetric?: number;
-    /**
-     * A signed public tester receipt plus the key that verifies it. Tester
-     * numbers may only enter the wiki this way; there is no flag for typing
-     * them in by hand.
-     *
-     * Two forms, both of which verify the signature. The path form is what the
-     * CLI uses and additionally requires the public key to be root-owned and
-     * unwritable by anyone else, which is what stops a run from pointing at a
-     * key it generated itself. The in-memory form exists so this path can be
-     * tested at all: a test process cannot create a root-owned file, and
-     * without it the only thing checking that the wiki is wired to the verifier
-     * would be the type system.
-     */
-    testerReceipt?:
-      | { receipt: string; publicKey: string }
-      | { signed: unknown; publicKey: crypto.KeyObject };
+    testResult?: { result: string; audit: string };
+    runId?: string;
     updateOnExist?: boolean;
   },
 ): void {
@@ -1108,27 +1081,20 @@ export function addExperiment(
   const confidence = options.confidence ?? "medium";
   if (!EXPERIMENT_VERDICTS.has(verdict)) throw new Error(`unknown experiment verdict '${verdict}'`);
   if (!EXPERIMENT_CONFIDENCE.has(confidence)) throw new Error(`unknown confidence '${confidence}'`);
-  const testerEnvelope =
-    options.testerReceipt === undefined
-      ? null
-      : "signed" in options.testerReceipt
-        ? verifyTesterFeedback(options.testerReceipt.signed, options.testerReceipt.publicKey)
-        : readVerifiedTesterFeedback(
-            options.testerReceipt.receipt,
-            options.testerReceipt.publicKey,
-          );
-  // The receipt already names the iteration it judged, so a supplied one is
-  // only allowed to agree with it -- otherwise the export would rank a tester
-  // score against the wrong round.
   if (
-    testerEnvelope !== null &&
-    options.iteration !== undefined &&
-    options.iteration !== testerEnvelope.outer_iteration
+    (options.metrics?.trim() || options.gateMetric !== undefined) &&
+    options.testResult === undefined
   )
-    throw new Error(
-      `experiment iteration ${options.iteration} contradicts the tester receipt's outer_iteration ${testerEnvelope.outer_iteration}`,
-    );
-  const iteration = options.iteration ?? testerEnvelope?.outer_iteration;
+    throw new Error("TESTER_AUDIT_REQUIRED: test metrics need a completed test and passing audit");
+  const tested =
+    options.testResult === undefined
+      ? null
+      : readAuditedTesterResult(options.testResult.result, options.testResult.audit, {
+          run_id: options.runId,
+          iteration: options.iteration,
+          experiment_id: slug,
+        });
+  const iteration = options.iteration ?? tested?.result.request.iteration;
   const subject = `exp:${slug}`;
   let existedBefore = false;
   let reused = false;
@@ -1148,18 +1114,18 @@ export function addExperiment(
           edge.to.startsWith("claim:"),
       )
     ) {
-      // Reuse keeps the page, so a tester receipt the page does not already
+      // Reuse keeps the page, so a tester result the page does not already
       // carry would never reach the Wiki and the export could not rank this
       // iteration by it. Refuse instead of dropping it.
       const page = model.pages.experiment.get(slug);
       if (
-        testerEnvelope !== null &&
-        (page?.data.tester_definition_sha256 !== testerEnvelope.tester_definition_sha256 ||
+        tested !== null &&
+        (page?.data.tester_definition_sha256 !== tested.result.config_sha256 ||
           canonicalJsonSha256(page?.data.tester_metrics ?? null) !==
-            canonicalJsonSha256(testerEnvelope.feedback.metrics))
+            canonicalJsonSha256(tested.result.metrics))
       )
         throw new Error(
-          `TESTER_RECEIPT_TOO_LATE: ${subject} already formed claims without this tester receipt; attach the receipt in the call that first judges the iteration`,
+          `TESTER_RESULT_TOO_LATE: ${subject} already formed claims without this tester result; attach the receipt in the call that first judges the iteration`,
         );
       reused = true;
       return null;
@@ -1188,7 +1154,11 @@ export function addExperiment(
         hardware: options.hardware ?? "",
         duration: options.duration ?? "",
         provenance: options.provenance ?? "",
-        metrics: sanitizeText(options.metrics ?? "", `experiment ${slug}.metrics`, operations),
+        metrics: sanitizeText(
+          tested ? JSON.stringify(tested.result.metrics) : (options.metrics ?? ""),
+          `experiment ${slug}.metrics`,
+          operations,
+        ),
         reasoning: sanitizeText(
           options.reasoning ?? "",
           `experiment ${slug}.reasoning`,
@@ -1197,18 +1167,20 @@ export function addExperiment(
         tags: options.tags ?? [],
         ...(iteration === undefined ? {} : { iteration }),
         ...(options.gateMetric === undefined ? {} : { gate_metric: options.gateMetric }),
-        ...(testerEnvelope === null
+        ...(tested === null
           ? {}
           : {
-              tester_metrics: { ...testerEnvelope.feedback.metrics },
-              tester_definition_sha256: testerEnvelope.tester_definition_sha256,
-              // The coarse verdict is the other half of what the tester is
-              // allowed to say. It is what makes a bad number actionable --
-              // which direction regressed -- without naming a single case.
-              tester_conclusion: testerEnvelope.feedback.conclusion,
-              tester_confidence: testerEnvelope.feedback.confidence,
-              tester_directions: [...testerEnvelope.feedback.directions],
-              tester_advice: [...testerEnvelope.feedback.advice],
+              tester_metrics: { ...tested.result.metrics },
+              tester_definition_sha256: tested.result.config_sha256,
+              test_result_path: path.resolve(options.testResult!.result),
+              test_audit_path: path.resolve(options.testResult!.audit),
+              test_result_sha256: evidenceFile(options.testResult!.result).sha256,
+              test_audit_sha256: evidenceFile(options.testResult!.audit).sha256,
+              tester_run_id: tested.result.request.run_id,
+              benchmark: tested.result.config.benchmark.name,
+              dataset_split: tested.result.config.dataset.split,
+              test_sample_count: tested.result.sample_count,
+              tester_audit_status: tested.audit.status,
             }),
       },
     });
@@ -1457,7 +1429,6 @@ function signalWriteScope(wikiRoot: string, options: SignalWriteOptions): string
   const runScope = resolveRunWikiScope(options.projectRoot, options.runId);
   const manifestPath = wikiWorkerManifestPath(options.projectRoot, options.runId);
   const manifest = fs.existsSync(manifestPath) ? readJsonObject(manifestPath) : null;
-  if (manifest?.role === "tester") throw new Error("WIKI_WRITE_IDENTITY_FORBIDDEN");
   const scope = manifest?.role === "scorer" ? `${runScope}/scorers/${options.runId}` : runScope;
   if (options.scope !== undefined && options.scope !== scope)
     throw new Error("WIKI_SCOPE_CONFLICT");
@@ -1542,7 +1513,6 @@ export function publishSignal(
   const root = path.resolve(wikiRoot);
   assertWikiSchemaSupported(root);
   const scope = signalWriteScope(wikiRoot, options);
-  assertResearchVisible(signal);
   if (options.runId !== undefined && signal.producer.run_id !== options.runId)
     throw new Error("SIGNAL_RUN_CONFLICT");
   assertSignalProducerScope(signal, scope);
@@ -1635,7 +1605,6 @@ export function supersedeSignal(
   if (replacementWithLink.signal_id === signalId) {
     throw new Error(`SIGNAL_ID_CONFLICT: replacement signal must use a new signal_id`);
   }
-  assertResearchVisible(replacementWithLink);
   if (options.runId !== undefined && replacementWithLink.producer.run_id !== options.runId)
     throw new Error("SIGNAL_RUN_CONFLICT");
   assertSignalProducerScope(replacementWithLink, scope);
@@ -2486,8 +2455,9 @@ program
   .option("--tags <list>", "Comma-separated tag list", "")
   .option("--iteration <n>", "Outer loop iteration this experiment belongs to", "")
   .option("--gate-metric <value>", "This iteration's metric-gate reading", "")
-  .option("--tester-feedback <path>", "Signed public tester feedback receipt", "")
-  .option("--tester-public-key <path>", "Public key that verifies the receipt", "")
+  .option("--test-result <path>", "Completed full tester result", "")
+  .option("--test-audit <path>", "Passing tester audit bound to this result", "")
+  .option("--run-id <id>", "Run owning the tested experiment", "")
   .option("--update-on-exist", "Overwrite an existing experiment", false)
   .action(
     (
@@ -2507,15 +2477,16 @@ program
         tags: string;
         iteration: string;
         gateMetric: string;
-        testerFeedback: string;
-        testerPublicKey: string;
+        testResult: string;
+        testAudit: string;
+        runId: string;
         updateOnExist: boolean;
       },
     ) => {
       // A receipt without its key cannot be verified, and a key without a
       // receipt has nothing to verify, so neither half is accepted alone.
-      if (Boolean(options.testerFeedback) !== Boolean(options.testerPublicKey))
-        throw new Error("--tester-feedback and --tester-public-key must be given together");
+      if (Boolean(options.testResult) !== Boolean(options.testAudit))
+        throw new Error("--test-result and --test-audit must be given together");
       addExperiment(wikiRoot, options.slug, {
         title: options.title,
         idea: options.idea,
@@ -2530,8 +2501,9 @@ program
         tags: splitCsv(options.tags),
         iteration: optionalCliInteger(options.iteration, "--iteration", 1),
         gateMetric: optionalCliNumber(options.gateMetric, "--gate-metric"),
-        testerReceipt: options.testerFeedback
-          ? { receipt: options.testerFeedback, publicKey: options.testerPublicKey }
+        runId: options.runId || undefined,
+        testResult: options.testResult
+          ? { result: options.testResult, audit: options.testAudit }
           : undefined,
         updateOnExist: options.updateOnExist,
       });

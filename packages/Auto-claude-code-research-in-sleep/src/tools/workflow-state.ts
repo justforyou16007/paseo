@@ -14,10 +14,10 @@ import {
 } from "./task-setup.js";
 import { validateTesterDefinition, type TesterDefinition } from "./tester-state.js";
 import {
-  testerAgentConfigSha256,
-  validateTesterAgentConfig,
-  type TesterAgentConfig,
-} from "./tester-agent.js";
+  testerFacilityConfigSha256,
+  validateTesterFacilityConfig,
+  type TesterFacilityConfig,
+} from "./tester-facility.js";
 import {
   assertIdentifier,
   assertNoUnknownFields,
@@ -67,8 +67,8 @@ export interface FrozenPolicy {
   model_usage_policy: ModelUsagePolicy;
   tester_definition: TesterDefinition;
   /** Present for production outer runs. Test-only storage fixtures may omit it. */
-  tester_agent_config?: TesterAgentConfig;
-  tester_agent_sha256?: string;
+  tester_facility_config?: TesterFacilityConfig;
+  tester_facility_sha256?: string;
   incumbent: ReturnType<typeof validateIncumbentSnapshot>;
   frozen_at: string;
 }
@@ -90,6 +90,8 @@ export interface AutoResearchFrozenPolicy {
   max_repair_attempts: number;
   /** Deepest child level below the root (depth 0) that may be dispatched. */
   max_depth: number;
+  tester_facility_config: TesterFacilityConfig;
+  tester_facility_sha256: string;
   metric: MetricConfig;
   owner_limits: OwnerLimits;
   max_bundled_positions_per_graph: number;
@@ -112,7 +114,7 @@ export interface FreezeOuterRunInput {
   tester_version: string;
   tester_definition: unknown;
   /** The production outer entry supplies the frozen remote job configuration. */
-  tester_agent_config?: unknown;
+  tester_facility_config?: unknown;
   incumbent_candidate_id: string;
   incumbent_generation: number;
   incumbent: unknown;
@@ -272,7 +274,7 @@ function assertFreezeInputShape(value: unknown): asserts value is FreezeOuterRun
       "tester_id",
       "tester_version",
       "tester_definition",
-      "tester_agent_config",
+      "tester_facility_config",
       "incumbent_candidate_id",
       "incumbent_generation",
       "incumbent",
@@ -290,10 +292,10 @@ export function freezeOuterRun(input: FreezeOuterRunInput): FrozenPolicy {
   const taskSetup = validateTaskSetupDocument(input.task_setup, "task_setup");
   const modelUsagePolicy = validateModelUsagePolicy(input.model_usage_policy, "model_usage_policy");
   const testerDefinition = validateTesterDefinition(input.tester_definition);
-  const testerAgent =
-    input.tester_agent_config === undefined
+  const testerFacility =
+    input.tester_facility_config === undefined
       ? undefined
-      : validateTesterAgentConfig(input.tester_agent_config);
+      : validateTesterFacilityConfig(input.tester_facility_config);
   const incumbent = validateIncumbentSnapshot(input.incumbent);
   assertEmbeddedIdentity(
     taskSetup,
@@ -354,11 +356,11 @@ export function freezeOuterRun(input: FreezeOuterRunInput): FrozenPolicy {
     task_setup: taskSetup,
     model_usage_policy: modelUsagePolicy,
     tester_definition: testerDefinition,
-    ...(testerAgent === undefined
+    ...(testerFacility === undefined
       ? {}
       : {
-          tester_agent_config: testerAgent,
-          tester_agent_sha256: testerAgentConfigSha256(testerAgent),
+          tester_facility_config: testerFacility,
+          tester_facility_sha256: testerFacilityConfigSha256(testerFacility),
         }),
     incumbent,
     frozen_at: new Date().toISOString(),
@@ -456,6 +458,8 @@ function validateAutoResearchFrozenPolicy(
       "max_iterations",
       "max_repair_attempts",
       "max_depth",
+      "tester_facility_config",
+      "tester_facility_sha256",
       "metric",
       "owner_limits",
       "max_bundled_positions_per_graph",
@@ -468,6 +472,9 @@ function validateAutoResearchFrozenPolicy(
   const runId = assertIdentifier(value.outer_run_id, `${location}.outer_run_id`);
   if (value.wiki_scope !== `runs/${runId}`)
     failA1("IDENTITY_MISMATCH", "ARL Wiki scope differs from run id", location);
+  const facility = validateTesterFacilityConfig(value.tester_facility_config);
+  if (value.tester_facility_sha256 !== testerFacilityConfigSha256(facility))
+    failA1("TESTER_CONFIG_CHANGED", "frozen facility hash differs", location);
   const metric = value.metric;
   if (
     !isRecord(metric) ||
@@ -509,6 +516,8 @@ function validateAutoResearchFrozenPolicy(
       0,
     ),
     max_depth: requireInteger(value.max_depth, `${location}.max_depth`, 0),
+    tester_facility_config: facility,
+    tester_facility_sha256: testerFacilityConfigSha256(facility),
     metric: metric as unknown as MetricConfig,
     owner_limits: validateOwnerLimits(value.owner_limits, `${location}.owner_limits`),
     max_bundled_positions_per_graph: requireInteger(
@@ -553,8 +562,8 @@ export function readFrozenPolicy(projectRoot: string, outerRunId: string): Workf
     "task_setup",
     "model_usage_policy",
     "tester_definition",
-    "tester_agent_config",
-    "tester_agent_sha256",
+    "tester_facility_config",
+    "tester_facility_sha256",
     "max_iterations",
     "incumbent",
     "frozen_at",
@@ -586,19 +595,19 @@ export function readFrozenPolicy(projectRoot: string, outerRunId: string): Workf
     `${filePath}.model_usage_policy`,
   );
   const testerDefinition = validateTesterDefinition(parsed.tester_definition);
-  const testerAgent =
-    parsed.tester_agent_config === undefined
+  const testerFacility =
+    parsed.tester_facility_config === undefined
       ? undefined
-      : validateTesterAgentConfig(parsed.tester_agent_config);
-  if ((testerAgent === undefined) !== (parsed.tester_agent_sha256 === undefined))
+      : validateTesterFacilityConfig(parsed.tester_facility_config);
+  if ((testerFacility === undefined) !== (parsed.tester_facility_sha256 === undefined))
     failA1(
       "CORRUPT_FROZEN_POLICY",
       "remote tester config and its hash must be stored together",
       filePath,
     );
   if (
-    testerAgent !== undefined &&
-    testerAgentConfigSha256(testerAgent) !== parsed.tester_agent_sha256
+    testerFacility !== undefined &&
+    testerFacilityConfigSha256(testerFacility) !== parsed.tester_facility_sha256
   )
     failA1(
       "CORRUPT_FROZEN_POLICY",
@@ -686,13 +695,13 @@ export function readFrozenPolicy(projectRoot: string, outerRunId: string): Workf
     task_setup: taskSetup,
     model_usage_policy: modelUsagePolicy,
     tester_definition: testerDefinition,
-    ...(testerAgent === undefined
+    ...(testerFacility === undefined
       ? {}
       : {
-          tester_agent_config: testerAgent,
-          tester_agent_sha256: assertSha256(
-            parsed.tester_agent_sha256,
-            `${filePath}.tester_agent_sha256`,
+          tester_facility_config: testerFacility,
+          tester_facility_sha256: assertSha256(
+            parsed.tester_facility_sha256,
+            `${filePath}.tester_facility_sha256`,
           ),
         }),
     incumbent,
@@ -989,6 +998,9 @@ export function frozenPolicyFingerprint(policy: WorkflowFrozenPolicy): string {
 }
 
 export const OUTER_PHASES = [
+  "tester-test",
+  "tester-audit",
+  "auto-review-loop",
   "init",
   "diagnosis",
   "workset",
@@ -1130,7 +1142,14 @@ export interface OuterBudgetReservation {
   closed_at: string | null;
 }
 
+export interface TesterAssessmentBinding {
+  result_ref: string;
+  result_sha256: string;
+  audit_ref: string | null;
+  audit_sha256: string | null;
+}
 export interface ActiveOuterCycle {
+  tester_assessment?: TesterAssessmentBinding | null;
   outer_iteration: number;
   generation: number;
   wave_id: string;
@@ -1676,6 +1695,7 @@ function validateActiveCycle(value: unknown, location: string): ActiveOuterCycle
       "bridge_success_manifest_ref",
       "bridge_success_manifest_sha256",
       "bridge_failure",
+      "tester_assessment",
     ],
     location,
   );
@@ -1727,7 +1747,26 @@ function validateActiveCycle(value: unknown, location: string): ActiveOuterCycle
       "successful bridge manifest reference and hash must be present together",
       location,
     );
+  let assessment: TesterAssessmentBinding | null = null;
+  if (value.tester_assessment !== undefined && value.tester_assessment !== null) {
+    const v = value.tester_assessment;
+    if (!isRecord(v)) failA1("CORRUPT_WORKFLOW_RUNTIME", "invalid tester assessment", location);
+    assertNoUnknownFields(
+      v,
+      ["result_ref", "result_sha256", "audit_ref", "audit_sha256"],
+      location,
+    );
+    assessment = {
+      result_ref: assertRelativePath(v.result_ref, location),
+      result_sha256: assertSha256(v.result_sha256, location),
+      audit_ref: v.audit_ref === null ? null : assertRelativePath(v.audit_ref, location),
+      audit_sha256: v.audit_sha256 === null ? null : assertSha256(v.audit_sha256, location),
+    };
+    if ((assessment.audit_ref === null) !== (assessment.audit_sha256 === null))
+      failA1("CORRUPT_WORKFLOW_RUNTIME", "audit reference/hash must be present together", location);
+  }
   return {
+    tester_assessment: assessment,
     outer_iteration: requireInteger(value.outer_iteration, `${location}.outer_iteration`, 1),
     generation: requireInteger(value.generation, `${location}.generation`, 1),
     wave_id: assertIdentifier(value.wave_id, `${location}.wave_id`),

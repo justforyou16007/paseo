@@ -109,8 +109,8 @@ function spec() {
     promotion_tester: {
       tester_id: "tester:fixed",
       definition_version: "tester:v1",
-      research_feedback: "fuzzy_advice_only",
-      max_exposures_per_task: 2,
+      research_feedback: "detailed",
+
     },
     wave_policy: {
       max_parallel_modules: 1,
@@ -201,8 +201,8 @@ function testerDefinition(): TesterDefinition {
     case_manifest_sha256: HASH_A,
     seed_manifest_sha256: HASH_B,
     harness_sha256: HASH_A,
-    research_feedback: "fuzzy_advice_only",
-    max_exposures_per_task: 2,
+    research_feedback: "detailed",
+
     comparison: "paired_matching_baseline_vs_finalist",
     gate: {
       primaries: [{ name: "score", direction: "higher_better", improvement: { policy: "relative", minimum_gain: 0.01 } }],
@@ -438,7 +438,7 @@ test("workflow summary keeps tester view public and includes stable outer facts"
     });
     assert.equal(summary.workflow_id, "workflow:evolution");
     assert.deepEqual(summary.tester_runs, []);
-    assert.ok(!Object.hasOwn(summary, "private-result.json"));
+    assert.ok(!Object.hasOwn(summary, "test-result.json"));
     assert.equal(
       readWorkflowSummary({ project_root: fixture.root, outer_run_id: fixture.input.outer_run_id })
         .summary_sha256,

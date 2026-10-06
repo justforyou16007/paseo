@@ -24,8 +24,13 @@
     "roles": [
       {
         "role_id": "main-model",
-        "allowed_modules": ["main"],
-        "allowed_uses": ["generate", "train"],
+        "allowed_modules": [
+          "main"
+        ],
+        "allowed_uses": [
+          "generate",
+          "train"
+        ],
         "judge_targets": [],
         "judge_generation_lag": null,
         "artifact_binding": "previous_promoted",
@@ -35,9 +40,16 @@
       },
       {
         "role_id": "main-judge",
-        "allowed_modules": ["validation-scorer", "promotion-tester"],
-        "allowed_uses": ["judge"],
-        "judge_targets": ["main-model.next"],
+        "allowed_modules": [
+          "validation-scorer",
+          "promotion-tester"
+        ],
+        "allowed_uses": [
+          "judge"
+        ],
+        "judge_targets": [
+          "main-model.next"
+        ],
         "judge_generation_lag": 1,
         "artifact_binding": {
           "source": "previous_promoted",
@@ -73,8 +85,7 @@
   "promotion_tester": {
     "tester_id": "task-final-test",
     "definition_version": "tester:v1",
-    "research_feedback": "fuzzy_advice_only",
-    "max_exposures_per_task": 12
+    "research_feedback": "detailed"
   },
   "wave_policy": {
     "max_parallel_modules": 1,
@@ -111,10 +122,20 @@
       "evolvable": true,
       "version": "main:v1",
       "patch_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-      "inputs": ["task-input@1", "feedback@1"],
-      "input_ports": ["task", "feedback"],
-      "outputs": ["main-model@1"],
-      "write_scope": ["src/main/**"],
+      "inputs": [
+        "task-input@1",
+        "feedback@1"
+      ],
+      "input_ports": [
+        "task",
+        "feedback"
+      ],
+      "outputs": [
+        "main-model@1"
+      ],
+      "write_scope": [
+        "src/main/**"
+      ],
       "local_metric": "main_score",
       "execution": {
         "max_jobs": 1,
@@ -125,7 +146,9 @@
       }
     }
   ],
-  "enabled_module_ids": ["main"],
+  "enabled_module_ids": [
+    "main"
+  ],
   "edges": [],
   "feedback_edges": [
     {

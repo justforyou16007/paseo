@@ -18,7 +18,7 @@
 | 6 | 所有会影响后续判断的落盘都要有独立 verifier | 每个前提文件在写入点解析它的 verifier 回执，回执字段从核实结果取 | 已实现 |
 | 7 | 知识在 run 之间以事件流积累，不是共享可变状态 | Research Wiki 事件 + 投影 | 已实现 |
 | 8 | 最优版本由导出阶段跨轮挑选，不是由某一轮自己宣称 | `result-export` 排名 | 已实现 |
-| 9 | tester 只能说聚合数字和粗粒度方向，说不出测试内容 | tester 的出口是签名的结构化回执，没有放一段话的位置 | 已实现 |
+| 9 | 正式指标先测试再审计 | tester设施部署benchmark，测试和审计保留完整证据 | 已实现 |
 | 10 | Auto Research Loop 以必填轮数和指标目标停机 | root/child charter 启动 Workflow，评审收据进入 cycle summary，停机决定进入结果包 | 代码交接测试通过；现场 agent 派发仍需验证 |
 | 11 | 人配一个项目只需要一条命令，缺什么由检测器指出而不是靠记 | `/aris-setup` 编排六个阶段，`project-setup-cli.js status` 逐段判定并在没配全时退非零 | 已实现 |
 | 12 | 一个 run 的优化对象可以是"这个问题该怎么拆"，而不是某个实验 | 每一代的分解图先落盘再派子，改图要 tester 信号开 wave | 已实现 |
@@ -188,9 +188,9 @@ Wiki 是**事件流 + 投影**，不是共享可变状态。写入是追加事�
 
 三种读写边界：
 
-- **作用域隔离**：`assertResearchVisible` 决定哪些字段能进 Wiki、能被查出来。测试内容相关的字段（`case_id`、`prompt`、`question`、`answer`、`score`、`per_case`、`uri`、`raw_result` 等）在写入时就被拒。
+- **知识作用域**：Wiki保留正常run所有权和快照绑定，tester原始结果可用于分析。
 - **signal 的 kind 不由调用方选**。它由结论唯一决定：`improved` → `observation`，`not_improved` → `failure`，其余 → `constraint`。调用方不能自己指定，否则一个想让自己好看的 worker 会把失败写成观察。
-- **tester 值走签名回执入库**，没有手填的 flag。见 §7。
+- **tester 值经完整测试和独立审计入库**。见 §7。
 
 ---
 
@@ -205,7 +205,7 @@ Wiki 是**事件流 + 投影**，不是共享可变状态。写入是追加事�
 | 前提文件 | 谁核实 | 核实什么 |
 |---|---|---|
 | `result-package.json` | `result-review.ts` 的 `requireApprovedResultReview` | 读回 reviewer 落盘的 verdict，要求它 `approved` 且 `package_sha256` 等于**正要写的这个包**的摘要 |
-| `promotion-commit-intent.json` | `tester-public-receipt.ts` 的验签 | 用配置里钉死摘要的 tester 公钥验签，在 intent 构造之前 |
+| `promotion-commit-intent.json` | `tester-promotion-result.ts` 的测试/审计绑定检查 | 当前完整结果和通过审计、产物摘要及promotion状态一致 |
 
 result package 的摘要绑定是关键：包由输入确定性构造，reviewer 拿着候选能算出和写入方一样的摘要，所以"拿 A 包过审、发 B 包"会因为摘要不匹配被拒（`RESULT_REVIEW_SUBJECT_MISMATCH`）。流程因此是三步：`plan_result_package` 打印摘要 → reviewer `submit_result_review` → `export_result_package` 才写。verdict 一旦落盘不可变。
 
@@ -217,140 +217,19 @@ result package 的摘要绑定是关键：包由输入确定性构造，reviewer
 
 1. **metric-gate**：每轮都过，判这轮有没有提升。便宜、可以反复跑。
 2. **validation gate**：baseline 必须先过硬约束，候选必须跑完整且过硬约束，独立 review 的 verdict 必须是 `approved`。全过之后本 wave 至多产生**一个** finalist（`unique_validation_finalist`）。
-3. **promotion gate + tester**：唯一 finalist 才能原子预留一次 tester exposure。提交给 tester 的两个槽位角色是**显式**的——契约里恰好一个 `reference`（matching baseline）和一个 `candidate`（finalist）。这里不能做成匿名：tester 要给的是 `improved | not_improved | inconclusive` 这种**有方向**的结论，不知道哪个是候选就无从判起，而这个判断权本来就该在 tester 手里。角色**不能按分数决定**，提交前就定死。真正匿名的是**模型身份**——提交体里只有产物摘要和 id，没有模型名；"谁对应哪个模型"只记在本机的 `tester-arm-map.json` 里，不出本机。统计用显式的 `paired_student_t`。一次 `promotion_trial_id` 最多结算一个 exposure。
+3. **promotion gate + tester**：冻结对照和候选身份，用完整测试证据进行paired统计，再独立审计。每个test id绑定唯一请求，重试沿用该请求；新的评测使用新的id，保留试验记录，不再有exposure预算或一次wave只能查询一次的限制。
 
-失败时**同一个 wave 不允许把 runner-up 送进 tester**。这条是整个防自欺设计里最关键的一条：允许换人重试，等于用多次抽样换一次显著，tester 就只是个筛子而不是闸门了。
+## 7. tester设施与评测流程
 
----
+`/aris-setup`在实验环境准备好后调用`/tester-setup`。Setup确定benchmark版本、数据revision/split、样本数、指标及聚合口径、执行位置和产物接口，运行安装、健康检查与smoke测试，成功后记录ready状态和配置/依赖证据摘要。五个setup阶段为项目基础、指标目标、实验环境、tester设施、root charter。
 
-## 7. tester 边界
+后续评测复用设施：`/tester-test`执行完整benchmark，保留样本结果、日志、配置、产物摘要和持久任务状态；`/tester-audit`独立核查协议、评分、覆盖率和可比性。`result-to-claim`提交正式Wiki指标之前必须提供这两步的当前结果和通过审计。Wiki事件写入和结果导出均验证绑定及证据摘要，防止混用迭代或改动后继续采用旧审计。
 
-tester 持有 held-out 测试集。它的公开出口只有两样：
+执行可使用同账户本地环境或SSH资源；安装和测试均由可配置命令完成，可安装真实benchmark及其依赖、部署模型服务。Docker可作为项目自行选定的执行工具，不再是tester边界要求。根run和子run复用同一设施，分别绑定自己的评测请求。
 
-**一、`metrics`**——聚合数值。指标名必须和冻结的 `definition.gate.primaries` 完全一致（双向校验，上限 16 个）。指标可以有多个，不限单个。
+旧的独立用户/容器、tester镜像构建、私有结果通道、公钥签名、网络搜索屏蔽、搜索审计账本和exposure限额已删除。Setup迁移会移除旧search guard及搜索策略文件，保留其他项目hook。原始测试证据允许研究分析和审计读取。正常run所有权、知识快照、预算和独立审查仍按ARIS协议执行。
 
-**二、固定词表的粗判断**：
-
-```
-conclusion:  improved | not_improved | inconclusive
-directions:  long_horizon_stability | tool_use_consistency |
-             safety_regression | cost_efficiency | interface_compatibility
-advice:      increase_long_horizon_consistency | strengthen_tool_use_consistency |
-             review_safety_margin | reduce_cost_variance | tighten_interface_contracts
-```
-
-词表是**枚举，不是自由文本**。这是它能被公开的原因：一个 worker 无法通过精心措辞把 case 的信息编码进去。
-
-### 读写不对称
-
-- **写是封闭的**：只能通过签名验证的公开回执进入实验页，没有手填的 flag。
-- **读是开放的**：进了页之后，它和任何别的测量值一样——query 路径返回它，markdown 投影打印它。`idea-discovery`、bridge repair、result-package 导出看到的是同一份聚合值。
-
-**读它不构成对 held-out 集调参**，因为能让你调参的东西（case、prompt、answer、per-case 分数）从来没进过 Wiki。这不是靠扫一段话找敏感词——tester 的出口是一个签名的结构化 envelope，字段全是 id、摘要、枚举值和一个指标 map，没有能放一段话的位置。进 Wiki 的路径只有一条：`addExperiment` 用配置里钉死摘要的 tester 公钥验签，再把字段从验过的 envelope 拷进实验页。换密钥、改数字后重算自摘要、给回执贴一个它没判过的迭代号，三种都在写入前被拒，`tests/test_result_export.ts` 逐条覆盖。
-
-### 子 ARL 碰不到 tester
-
-递归里只有根那个 run 面对 tester。子 ARL 的验收器是父在派它的时候冻结的：一个指标名、一个方向、一个阈值，存在父这边，子的 charter 只拿到它的 id。子不能把 task tester 的 id 写进自己的 charter——bridge 直接拒——所以没有任何一条路径能让子去问 tester 要一个数。
-
-这条边界也限制 tester 调用：子拿父给的验收器打分，不直接访问 held-out 集。否则增加递归层数就会重复查询同一份测试数据。
-
-### tester 在哪、隔离靠什么
-
-tester 是**一个独立 docker 容器里的 Claude agent**，由容器里自己的 Paseo daemon 管。研究侧只通过 `docker exec` 进这个容器和它打交道（容器里的 paseo 命令直接找自己的 daemon，所以 daemon 端口不用对宿主机公开），能做的只有两件事：**声明一个测试**（给 project id + 领域测试需求，tester 回一份签名的提交契约，说明它要什么格式的产物、怎么跑）、**提交一对产物去测**。
-
-隔离**不靠文件属主**，靠两条事实：
-
-- **私钥从来没离开容器**。密钥对在部署时由容器里的命令生成，只有公钥被拷出来，并在配置里用 sha256 钉死。研究侧可以随便读公钥——公钥本来就是公开的——但签不出一份能过验签的回执。钉死摘要防的是"把公钥换成一把自己生成的钥匙"，这件事以前靠 root 属主挡，现在靠摘要比对挡，而且不需要有人来 sudo。
-- **case 从来没离开容器**。tester 自己生成 case、自己评分，回来的只有一个签名的结构化 envelope。
-
-这两条成立有个前提：容器里的文件在研究侧的文件系统上看不到。tester 的 home 放在容器里或 named volume 里，不要 bind mount 一个研究账号读得到的目录，也不要把研究项目挂进 tester 容器。
-
-被测产物也不在 tester 容器里跑。tester 容器通过挂进来的宿主机 docker socket 为每次提交另起一个新容器，case 只读挂进去。
-
-边界要说清楚，别自欺：研究进程和做 setup 的人同 uid，能用 `docker`，所以它**技术上能 `docker exec` 进 tester 容器**。这套设计不声称挡得住这一条。它声称的是：私钥和 case 都不在研究侧的文件系统上，tester agent 只回答上面那两个请求。
-
-### tester 自己选测什么，ARL 不许去搜同一个
-
-研究侧给 tester 的只有一段领域/任务的**散文描述**，不带 benchmark 名。选哪个 benchmark、用什么
-评测协议、case 怎么造，全由 tester 自己上网调研决定（论文、GitHub、dataset 站）。让研究侧指定测法
-等于让被考的人出卷子，所以这件事必须在 tester 容器里做，手册在 `templates/tester-agent-bundle/TESTER_AGENT.md`。
-
-但这样就开了一个新洞：**tester 用的是公开 benchmark，那个仓库和那篇论文还在网上挂着**。ARL 根本
-不需要碰 tester 容器，搜同一个名字、读同一个附录就够了。私钥不出容器挡不住这条，case 不出
-容器也挡不住——泄漏源不是 tester，是公共互联网。
-
-所以契约里多一个跟着一起签名的字段 `search_exclusions`：tester **真正用到**的 benchmark 名、
-dataset 名、URL、host+路径前缀。研究侧拿它做两件事：
-
-- `search-audit-cli.js emit-policy` 把它编译成 `<project>/.aris/search-policy.json`；
-- `install-guard` 把一个 PreToolUse hook 并进 `<project>/.claude/settings.json`。
-
-hook 判所有**网络形状**的调用：`WebSearch`、`WebFetch`、命令里带网络动词（`curl`/`wget`/
-`git clone`/`pip install`/ARIS 自己那几个 paper fetcher）的 Bash、以及名字看着像检索的 MCP 工具。
-命中屏蔽表的**硬拦**（exit 2），不命中的放行，两种都追加进哈希链账本
-`<project>/.aris/search-audit.jsonl`。判定逻辑是 `search-policy.ts` 里的纯函数
-`decideNetworkCall`，hook 本身只是 stdin/stdout 外壳，所以这套东西不需要真的开一个 Claude 会话
-就能测。
-
-几条不显然的设计：
-
-- **策略文件缺失 = 全拦**，并记一条 `policy_missing`。否则 `rm .aris/search-policy.json` 就是
-  一条免费通道。
-- **账本首行必须是 `install-guard` 写的 genesis**。没有它就分不清"这轮没搜过网"和"拦截器从没装
-  过"，所以 `submit` 直接拒。
-- **屏蔽表从不打印**。skill、提示词、报告都不复述它；模型唯一看到某一条的时机，是它自己已经打出
-  那个词然后被拦下——那时候它知道的东西没有增加。
-- **屏蔽表是双向对抗的**。tester 如果拿 `benchmark`、`reasoning` 这种通用词凑数，ARL 的正常文献
-  调研就被整个掐死了，那不是 tester 的权限。所以契约校验会拒通用词和"不带路径的通用大站"
-  （`TESTER_EXCLUSIONS_OVERBROAD`）。
-
-`submit` 发出去之前查账本，三种拒绝各指一件不同的事：`SEARCH_AUDIT_MISSING`（拦截器没装过）、
-`SEARCH_AUDIT_BROKEN`（链断或 seq 跳号，写过的历史被改过）、`SEARCH_POLICY_MISMATCH`（这轮
-守的不是当前这份契约）。**被拦的次数本身不作废本轮**，只打印出来给人看。
-
-### 这套闸门挡不住什么
-
-照直写，一条都不含糊：
-
-- **它是关键词/域名匹配，不是沙箱。** 换个说法、用同义词、拼错一个字母都能绕过去。它挡的是最省事
-  也最可能发生的那条路——把 benchmark 名字打进搜索框。
-- **benchmark 大概率已经在模型权重里。** 拦住搜索不等于让模型忘掉 HumanEval。
-- **屏蔽表就落在 ARL 这台机器上，同 uid 读得到。**"不给模型看"靠的是没有任何提示词打印它，不是
-  靠权限。补偿是：命令里出现策略文件路径会被记成一条带标记的 `policy_read`。
-- **账本和 ARL 同 uid，tester 不连带签名。** 哈希链只让**篡改已写入的历史**留下断点；从零伪造一份
-  干净账本，本机没有任何办法识别。这是敞口，见 §10。
-
-### 三条使用纪律
-
-- tester 回执**不是证据**——不能给 `analyze-results` 用，不能进 Stage 3 的 review，不能当研究主张的依据。
-- 没有"缺陷清单"字段。tester 说得最细的就是上面那三个词表，不要在任何地方描述成有更细的输入可用。
-- 引用它时写成"tester 报告了什么"，不是"我发现了什么"。
-
-### 这些东西谁来配
-
-上面这套——容器里的 tester、搜索闸门、七项 root setup——以前**没有入口**。实验环境那层有两个入口
-（人走 `/research-setup`，机器走 `auto-research-loop` 第 0b 步和 `experiment-bridge`），但
-`tester-setup` 在自己目录之外没有任何地方引用，`research-setup` 全文
-也不提 tester 和 charter。结果是人配完项目跑 `/auto-research-loop`，撞到一句"charter 缺失"，
-没有东西告诉他接下来该跑什么。
-
-现在入口是 `/aris-setup`，它只负责三件事：顺序、让人确认推断值、以及每个阶段没配好时指到哪。
-判定和装配在 `project-setup-cli.js`：`status` 报六个阶段（项目基础、指标目标、实验环境、
-tester、搜索闸门、root charter），没配全就退非零；`infer` 从已有文件里能读出来的读出来、**每个
-值带着它的来源**，读不出来的进 `needs_owner` 让人答；`assemble` 把答案和推断合成 root-setup
-的输入。
-
-两条设计上不显然的：
-
-- **`assemble` 不封存。** 写 setup 记录的仍然只有 `workflow-tools-cli.js root-setup`。第二条进
-  `setupRootRun` 的路等于第二份它的校验实现。
-- **推不出来的绝不编。** env.json 里没有加速卡型号、显存、配额、墙钟上限和出网白名单，这五样
-  只能问人。编一个进冻结清单，后面 `classifyResourceRequest` 就会把"方案要了清单外的硬件"
-  （研究上的负结果）判成别的东西，而且本机查不出来。
-
-`status` 对搜索闸门只报条数和摘要，一个屏蔽词都不打印，和 §7 前面那条纪律是同一条。
-
----
+设施配置在`.aris/tester-config.json`，setup回执在相邻`.setup.json`；每次测试在`.aris/tester/tests/<test_id>/`，含`job.json`、`benchmark-output.json`、`test-result.json`、`test-audit.json`及日志。配置变更后重新setup；已完成test id不能绑定新请求。
 
 ## 8. 最优版本怎么选出来
 
@@ -391,11 +270,6 @@ tester、搜索闸门、root charter），没配全就退非零；`infer` 从已
 
 ---
 
-## 10. 已知缺口
+## 10. 验证范围
 
-**搜索账本是本机自证的。** 账本和研究进程同 uid，tester 也不连带签名（这是个明确的取舍：连带签名
-要求每次提交都带上账本摘要，把一个本机审计问题变成跨机协议问题）。哈希链能发现"写完之后又改"，
-发现不了"从头就是伪造的"。要关掉这条，唯一的办法是让账本摘要进提交体并由 tester 连带签名，本轮
-没做。
-
-递归桥接按 charter 的显式模式选择无预算计划；其他桥接调用者仍使用原预算计划。`standalone-adapter.ts` 和 `evidence-review` skill 已删除；tester 回执入 Wiki 的路径靠配置里钉死的公钥摘要验签（§7）。
+设施和门禁回归使用小型可重复benchmark fixture验证。本地或SSH真实模型评测需要项目选择benchmark、数据和算力后执行`/aris-setup`；setup准备成功不代表完整评测或独立审计已经通过。

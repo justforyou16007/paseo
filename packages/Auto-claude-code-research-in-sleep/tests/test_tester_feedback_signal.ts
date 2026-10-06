@@ -1,3 +1,4 @@
+import { auditedPromotionFixture } from "./helpers/tester-facility-fixture.js";
 import { resolveRunWikiScope, runWikiRoot } from "../src/tools/wiki-scope.js";
 import { readWikiEvents } from "../src/tools/wiki-event-store.js";
 import assert from "node:assert/strict";
@@ -11,7 +12,7 @@ import {
 } from "../src/tools/tester-feedback-signal.js";
 import { initializeWikiSchema } from "../src/tools/wiki-event-store.js";
 import { queryWiki } from "../src/tools/wiki-projector.js";
-import { commitPromotionForTest } from "../src/tools/workflow-promotion-commit.js";
+import { commitPromotion } from "../src/tools/workflow-promotion-commit.js";
 import {
   advanceOuterPhase,
   beginOuterCycle,
@@ -32,10 +33,10 @@ import {
   makeFixture,
   makeModule,
   prepareTester,
-  publicTesterConclusion,
+  promotionTesterConclusion,
   recover,
-  signTesterConclusion,
-  signTesterFeedback,
+  wrapTesterConclusion,
+  wrapTesterFeedback,
   startFixture,
   validationInputs,
 } from "./test_workflow_runtime.js";
@@ -210,22 +211,13 @@ function runClosedPromotion(fixture: ReturnType<typeof makeFixture>): string {
     evidence_paths: [evidence(fixture.root, "promotion")],
   });
   recover(fixture, "promotion");
-  const conclusion = signTesterConclusion(publicTesterConclusion(fixture, tester.testerRunId));
+  const conclusion = wrapTesterConclusion(promotionTesterConclusion(fixture, tester.testerRunId));
   const feedback = feedbackForTester(fixture, tester.testerRunId, "passed");
-  const signedFeedback = signTesterFeedback(fixture, tester.testerRunId, "passed", feedback);
-  commitPromotionForTest({
+  const signedFeedback = wrapTesterFeedback(fixture, tester.testerRunId, "passed", feedback);
+  commitPromotion({
     ...fixture.identity,
     registry: fixture.registry,
-    signed_tester_public_receipt: {
-      conclusion: conclusion.conclusion,
-      signature: conclusion.signature,
-    },
-    tester_public_key: conclusion.publicKey,
-    signed_tester_feedback: {
-      feedback: signedFeedback.feedback,
-      signature: signedFeedback.signature,
-    },
-    tester_feedback_public_key: signedFeedback.publicKey,
+    tester_result: auditedPromotionFixture(fixture.root, conclusion.conclusion, signedFeedback.feedback),
     evidence_paths: [evidence(fixture.root, "promotion-commit")],
   });
   return tester.testerRunId;

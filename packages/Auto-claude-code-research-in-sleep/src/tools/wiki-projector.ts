@@ -559,14 +559,7 @@ function renderExperiment(page: WikiPage): string {
   return `${lines.join("\n")}\n`;
 }
 
-/**
- * What the tester is allowed to say is aggregate: the metrics its frozen
- * definition declared, and a coarse direction for what regressed. None of that
- * is test content -- no case, prompt, answer or per-case score can reach here,
- * because `sanitizeTesterFeedback` rejects them before the tester signs. So the
- * values are rendered like any other measurement, for a human or a research
- * skill to read.
- */
+/** Render audited measurements and their reproducibility references. */
 function renderComparableMetrics(data: Record<string, unknown>): string[] {
   const testerMetrics = asNumberRecord(data, "tester_metrics");
   const gateMetric = typeof data.gate_metric === "number" ? data.gate_metric : null;
@@ -598,6 +591,13 @@ function renderComparableMetrics(data: Record<string, unknown>): string[] {
     lines.push(`- tester directions: ${directions.map((item) => `\`${item}\``).join(", ")}`);
   if (advice.length > 0)
     lines.push(`- tester advice: ${advice.map((item) => `\`${item}\``).join(", ")}`);
+  if (data.tester_audit_status) {
+    lines.push(`- tester audit: ${asString(data, "tester_audit_status")}`);
+    lines.push(`- benchmark: ${asString(data, "benchmark")} / ${asString(data, "dataset_split")}`);
+    lines.push(`- samples: ${data.test_sample_count}`);
+    lines.push(`- test result: ${asString(data, "test_result_path")}`);
+    lines.push(`- test audit: ${asString(data, "test_audit_path")}`);
+  }
   if (definition) lines.push(`- tester definition: \`${definition}\``);
   lines.push("");
   return lines;

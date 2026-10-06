@@ -30,9 +30,8 @@ export interface RootMeasurement {
 export interface RootSetupReferences {
   task_setup_sha256: string;
   tester_definition_sha256: string;
-  tester_agent_sha256: string;
+  tester_facility_sha256: string;
   validation_thresholds_sha256: string;
-  exposure_limit: number;
   owner_limits_sha256: string;
   resource_inventory_sha256: string;
   baseline_sha256: string;
@@ -86,12 +85,11 @@ export interface RootCharterInput {
   tester_definition?: unknown;
   tester_ref?: string;
   validator_ref?: string;
-  tester_agent_config?: unknown;
+  tester_facility_config?: unknown;
   validation_thresholds?: unknown;
-  exposure_limit: number;
   task_setup_sha256?: string;
   tester_definition_sha256?: string;
-  tester_agent_sha256?: string;
+  tester_facility_sha256?: string;
   validation_thresholds_sha256?: string;
   owner_limits_sha256?: string;
   resource_inventory_ref?: string;
@@ -180,12 +178,12 @@ function setupReferences(
   ownerLimits: Record<string, unknown>,
 ): RootSetupReferences {
   const testerDefinition = input.tester_definition;
-  const testerAgent = input.tester_agent_config;
+  const testerFacility = input.tester_facility_config;
   const thresholds = input.validation_thresholds;
   if (testerDefinition === null)
     failA1("INVALID_VALUE", "tester_definition must not be null", "tester_definition");
-  if (testerAgent === null)
-    failA1("INVALID_VALUE", "tester_agent_config must not be null", "tester_agent_config");
+  if (testerFacility === null)
+    failA1("INVALID_VALUE", "tester_facility_config must not be null", "tester_facility_config");
   if (thresholds === null)
     failA1("INVALID_VALUE", "validation_thresholds must not be null", "validation_thresholds");
   return {
@@ -203,20 +201,15 @@ function setupReferences(
       testerDefinition,
       "root_charter.setup_refs.tester_definition_sha256",
     ),
-    tester_agent_sha256: normalizeReferenceHash(
-      input.tester_agent_sha256,
-      testerAgent,
-      "root_charter.setup_refs.tester_agent_sha256",
+    tester_facility_sha256: normalizeReferenceHash(
+      input.tester_facility_sha256,
+      testerFacility,
+      "root_charter.setup_refs.tester_facility_sha256",
     ),
     validation_thresholds_sha256: normalizeReferenceHash(
       input.validation_thresholds_sha256,
       thresholds,
       "root_charter.setup_refs.validation_thresholds_sha256",
-    ),
-    exposure_limit: requireInteger(
-      input.exposure_limit,
-      "root_charter.setup_refs.exposure_limit",
-      1,
     ),
     owner_limits_sha256: normalizeReferenceHash(
       input.owner_limits_sha256,
@@ -361,7 +354,6 @@ export function createRootCharter(input: RootCharterInput): RootCharter {
       input.constraints === undefined
         ? {
             validation_thresholds_sha256: refs.validation_thresholds_sha256,
-            exposure_limit: refs.exposure_limit,
           }
         : input.constraints,
     input_snapshot_refs:
@@ -479,9 +471,8 @@ export function validateRootCharter(value: unknown, location = "root_charter"): 
     [
       "task_setup_sha256",
       "tester_definition_sha256",
-      "tester_agent_sha256",
+      "tester_facility_sha256",
       "validation_thresholds_sha256",
-      "exposure_limit",
       "owner_limits_sha256",
       "resource_inventory_sha256",
       "baseline_sha256",
@@ -497,15 +488,14 @@ export function validateRootCharter(value: unknown, location = "root_charter"): 
       refs.tester_definition_sha256,
       `${location}.setup_refs.tester_definition_sha256`,
     ),
-    tester_agent_sha256: assertSha256(
-      refs.tester_agent_sha256,
-      `${location}.setup_refs.tester_agent_sha256`,
+    tester_facility_sha256: assertSha256(
+      refs.tester_facility_sha256,
+      `${location}.setup_refs.tester_facility_sha256`,
     ),
     validation_thresholds_sha256: assertSha256(
       refs.validation_thresholds_sha256,
       `${location}.setup_refs.validation_thresholds_sha256`,
     ),
-    exposure_limit: requireInteger(refs.exposure_limit, `${location}.setup_refs.exposure_limit`, 1),
     owner_limits_sha256: assertSha256(
       refs.owner_limits_sha256,
       `${location}.setup_refs.owner_limits_sha256`,

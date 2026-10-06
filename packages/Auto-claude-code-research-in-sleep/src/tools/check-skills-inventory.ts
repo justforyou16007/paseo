@@ -178,7 +178,7 @@ function checkInventory(): string[] {
           `§"Global Agent Rules")`,
       );
     }
-    if (bodyCitesPaseo && !hasPaseoCreate) {
+    if (bodyCitesPaseo && !hasPaseoCreate && !body.includes("**Never spawn a reviewer sub-agent.**")) {
       const rel = path.relative(REPO_ROOT, skillFile);
       failures.push(
         `${rel} cites paseo-subagent-dispatch.md in its body but ` +
@@ -372,10 +372,9 @@ function checkInventory(): string[] {
     "structure-adapters.ts",
     "scorer-wave-runtime.ts",
     "tester-feedback-signal.ts",
-    "tester-agent.ts",
-    "tester-agent-cli.ts",
-    "search-policy.ts",
-    "search-audit-cli.ts",
+    "tester-facility.ts",
+    "tester-promotion-result.ts",
+    "tester-facility-cli.ts",
     "project-setup.ts",
     "project-setup-cli.ts",
   ];
@@ -406,26 +405,8 @@ function checkInventory(): string[] {
     failures,
   );
   require_(
-    fs.existsSync(path.join(REPO_ROOT, "templates", "TESTER_AGENT_CONFIG_TEMPLATE.json")),
-    "the tester agent config template is missing",
-    failures,
-  );
-  // The remote tester designs the test from the manual in this bundle, and the
-  // guard snippet is what the research side's hook is installed from. Either one
-  // missing turns a gate into a no-op, which no skill inventory would notice.
-  require_(
-    fs.existsSync(path.join(REPO_ROOT, "templates", "tester-agent-bundle", "TESTER_AGENT.md")),
-    "the remote tester operating manual is missing",
-    failures,
-  );
-  require_(
-    fs.existsSync(path.join(REPO_ROOT, "templates", "claude-hooks", "search_guard.json")),
-    "the search guard hook snippet is missing",
-    failures,
-  );
-  require_(
-    fs.existsSync(path.join(REPO_ROOT, "src", "templates", "search-guard.ts")),
-    "the search guard hook implementation is missing",
+    fs.existsSync(path.join(REPO_ROOT, "templates", "TESTER_FACILITY_CONFIG_TEMPLATE.json")),
+    "the tester facility config template is missing",
     failures,
   );
   const workflowIntegration = read(
@@ -434,8 +415,7 @@ function checkInventory(): string[] {
   for (const helper of [
     "workflow-cli.js",
     "workflow-tools-cli.js",
-    "tester-agent-cli.js",
-    "search-audit-cli.js",
+    "tester-facility-cli.js",
     "project-setup-cli.js",
   ]) {
     require_(

@@ -50,7 +50,7 @@ test("a retained registry checks the contract again on reads and writes", () => 
 
 function iteration(command: string, root: string, id: string) {
   return spawnSync(process.execPath, [
-    "/home/liu/paseo/node_modules/tsx/dist/cli.mjs",
+    "--import", "tsx",
     fileURLToPath(new URL("../src/tools/iteration-log.ts", import.meta.url)),
     command, root, id, ...(command === "note" ? ["idea", "0"] : []),
   ], { encoding: "utf8" });

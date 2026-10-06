@@ -10,7 +10,8 @@
     "watch": "tsc -p tsconfig.json --watch --preserveWatchOutput",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && ARIS_TEST_DIST=1 npx tsx tests/test_run_state.ts",
-    "test:source": "npx tsx tests/test_run_state.ts"
+    "test:source": "npx tsx tests/test_run_state.ts",
+    "test:tester": "npx tsx tests/test_tester_facility.ts && python3 tests/test_lm_eval_adapter.py"
   },
   "dependencies": {
     "commander": "^15.0.0"

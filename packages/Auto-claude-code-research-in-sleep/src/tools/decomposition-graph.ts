@@ -669,7 +669,7 @@ export function hasDecomposition(projectRoot: string, parentRunId: string): bool
  * Structure only evolves after a whole generation ran, was assembled, and was
  * measured through the parent's tester gate, so the proof that a generation is
  * over is the tester feedback signal the outer committer published for it. One
- * generation burns one exposure and produces one signal, so generation N can
+ * generation burns one testTrial and produces one signal, so generation N can
  * only be proposed once N-1 of them exist.
  *
  * The signal is direction, never score: it says what the fixed tester noticed,

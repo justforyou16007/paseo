@@ -151,8 +151,8 @@ function rawSpec(overrides: Record<string, unknown> = {}): Record<string, unknow
     promotion_tester: {
       tester_id: "tester:fixed",
       definition_version: "tester:v1",
-      research_feedback: "fuzzy_advice_only",
-      max_exposures_per_task: 2,
+      research_feedback: "detailed",
+
     },
     wave_policy: {
       max_parallel_modules: 2,
@@ -263,8 +263,8 @@ function testerDefinition() {
     case_manifest_sha256: HASH_A,
     seed_manifest_sha256: HASH_B,
     harness_sha256: HASH_A,
-    research_feedback: "fuzzy_advice_only",
-    max_exposures_per_task: 2,
+    research_feedback: "detailed",
+
     comparison: "paired_matching_baseline_vs_finalist",
     gate: {
       primaries: [{ name: "score", direction: "higher_better", improvement: { policy: "relative", minimum_gain: 0.01 } }],

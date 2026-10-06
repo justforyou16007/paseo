@@ -158,7 +158,7 @@ export function buildTesterFeedbackSignal(
 
 /**
  * Publish only the already-sanitized tester outcome. This boundary never
- * opens the private result; it requires the terminal promotion intent and
+ * opens the test result; it requires the terminal promotion intent and
  * writes one deterministic signal in the outer run Wiki.
  */
 export function publishTesterFeedbackSignals(

@@ -95,7 +95,7 @@ input, never the parent's live Wiki head. Parent links are checked in
 ```json
 {
   "manifest_path": ".aris/runs/<run_id>/input-manifest.json",
-  "module_query_workers": ["idea-discovery", "idea-creator", "experiment-bridge", "orchestration-bridge", "analyze-results", "result-to-claim"],
+  "module_query_workers": ["idea-discovery", "idea-creator", "experiment-bridge", "orchestration-bridge", "analyze-results", "result-to-claim", "tester-test", "tester-audit"],
   "scorer_query_workers": ["scorer-loop"],
   "tester_query_workers": []
 }
@@ -104,24 +104,20 @@ input, never the parent's live Wiki head. Parent links are checked in
 
 Use `research-wiki.js query --manifest <input-manifest.json>` with the manifest's
 scope and the requesting skill's identity. The public entry rejects another scope, another
-Wiki root, an unsealed head, and tester identities. A scorer gets only its
-`<run scope>/scorers/<run_id>` scope. Tester manifests contain no Wiki root,
-head, or parent input reference. Private tester cases, answers, per-case
-outputs/scores and private Artifact URIs cannot enter public records.
+Wiki root, an unsealed head, and conflicting requester identities. A scorer gets only its
+`<run scope>/scorers/<run_id>` scope. Tester test and audit workers use the same sealed run Wiki binding as other workers. Complete benchmark observations, sample scores and artifact paths can be read for analysis and audit.
 
 ## Independent review
 
 Three things are reviewed from outside the run that produced them: a validation
-comparison between candidates, a scorer revision, and a remote tester's signed
-public result. A research run accepts or rejects its own work inside its own
+comparison between candidates, a scorer revision, and a benchmark result from `/tester-test`. A research run accepts or rejects its own work inside its own
 `auto-review-loop`; nothing else reviews a research run.
 
 A reviewer reads only the evidence its assignment names, keeps the assigned
 reviewer identity for the whole wave, and returns `approved`, `rejected`, or
 `insufficient`. Approval lets a deterministic gate compare evidence; it does not
-select or adopt a candidate. A tester assignment carries no Wiki access, and its
-receipt holds only opaque binding hashes and coarse error categories -- never
-case content, per-case scores, prompts, answers, or private paths.
+select or adopt a candidate. A tester audit independently checks the full result, protocol, scoring, coverage and comparability, and returns a review bound to the result digest.
+
 
 Submit through `workflow-tools-cli.js review-submit` with a submission JSON
 carrying `project_root`, `manifest_run_id`, `command_run_id`, and `receipt`. The

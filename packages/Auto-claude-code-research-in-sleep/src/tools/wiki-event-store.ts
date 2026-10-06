@@ -5,6 +5,7 @@ import { anyJsonSchema, canonicalJsonBytes, canonicalJsonSha256 } from "./canoni
 import { computeWikiCommandId } from "./wiki-command-id.js";
 import { readStateFile, withStateFileLock, writeStateFileAtomic } from "./state-file.js";
 import { validateWikiPayload } from "./wiki-operations.js";
+import { readAuditedTesterResult, evidenceFile } from "./tester-facility.js";
 import { validateWikiScope } from "./wiki-scope.js";
 
 export const WIKI_SCHEMA_VERSION = 2;
@@ -227,6 +228,35 @@ function prepareDelta(delta: WikiDelta, options: WikiAppendOptions): PreparedWik
   // Do this before taking the lock. Apart from making validation cheap for the
   // caller, it prevents a rejected append from repairing an unrelated tail.
   validateDelta(delta);
+  const payload = delta.payload as {
+    operations?: Array<{ op: string; kind?: string; id?: string; data?: Record<string, unknown> }>;
+  };
+  for (const operation of payload.operations ?? []) {
+    if (operation.op !== "upsert_page" || operation.kind !== "experiment" || !operation.data)
+      continue;
+    const data = operation.data;
+    if (!data.tester_metrics && !data.metrics && data.gate_metric === undefined) continue;
+    if (typeof data.test_result_path !== "string" || typeof data.test_audit_path !== "string")
+      throw new Error(
+        "TESTER_AUDIT_REQUIRED: experiment metrics require tested and audited evidence",
+      );
+    const { result } = readAuditedTesterResult(data.test_result_path, data.test_audit_path, {
+      run_id: typeof data.tester_run_id === "string" ? data.tester_run_id : undefined,
+      iteration: typeof data.iteration === "number" ? data.iteration : undefined,
+      experiment_id: operation.id,
+    });
+    if (delta.scope.startsWith("runs/") && delta.scope.split("/")[1] !== result.request.run_id)
+      throw new Error("TESTER_RESULT_BINDING_MISMATCH: Wiki scope differs from the test run");
+    if (
+      canonicalJsonSha256(data.tester_metrics) !== canonicalJsonSha256(result.metrics) ||
+      data.tester_definition_sha256 !== result.config_sha256 ||
+      data.test_result_sha256 !== evidenceFile(data.test_result_path).sha256 ||
+      data.test_audit_sha256 !== evidenceFile(data.test_audit_path).sha256 ||
+      data.tester_audit_status !== "pass" ||
+      data.metrics !== JSON.stringify(result.metrics)
+    )
+      throw new Error("TESTER_METRIC_MISMATCH: Wiki values differ from audited test evidence");
+  }
   const payloadHash = canonicalJsonSha256(delta.payload, anyJsonSchema);
   const computedCommandId = computeWikiCommandId({
     producer_kind: delta.producer_kind,

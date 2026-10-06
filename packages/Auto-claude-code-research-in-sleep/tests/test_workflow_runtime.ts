@@ -15,13 +15,13 @@ import { canonicalJsonBytes } from "../src/tools/canonical-json.js";
 import { createArtifactRegistry, type ArtifactRegistry } from "../src/tools/artifact-registry.js";
 import { buildTesterFeedback, type TesterFeedback } from "../src/tools/tester-feedback.js";
 import {
-  commitPromotionForTest,
+  commitPromotion,
   type PromotionCommitResult,
 } from "../src/tools/workflow-promotion-commit.js";
 import {
   buildTesterDefinition,
   readTesterRunState,
-  recordTesterPrivateResult,
+  recordTesterResult,
   recordTesterReview,
   recordTesterStarted,
   reservePromotionTrial,
@@ -77,11 +77,13 @@ function publishReviewedPackage(root: string, runId: string, input: ResultPackag
 import { createBaselineScope } from "../src/tools/baseline-scope.js";
 import { createResourceInventory } from "../src/tools/resource-inventory.js";
 import { materializeBridgeChildren, planExperimentBridge } from "../src/tools/experiment-bridge.js";
-import { harnessDefinitionSha256, type HarnessDefinition } from "../src/tools/tester-harness.js";
+import { canonicalJsonSha256 as harnessDefinitionSha256 } from "../src/tools/canonical-json.js";
+import { auditedPromotionFixture } from "./helpers/tester-facility-fixture.js";
+type HarnessDefinition = Record<string, unknown>;
 import type {
-  TesterPublicConclusion,
-  TesterPublicFeedbackEnvelope,
-} from "../src/tools/tester-public-receipt.js";
+  TesterPromotionConclusion,
+  TesterPromotionFeedback,
+} from "../src/tools/tester-promotion-result.js";
 import {
   acquireOuterRunLease,
   advanceOuterPhase,
@@ -202,7 +204,6 @@ export function makeFixture(
   root: string,
   executionRoot: string,
   outerRunId: string,
-  testerMaxExposures = 4,
   options: FixtureOptions = {},
 ): Fixture {
   createRootRun({
@@ -270,8 +271,8 @@ export function makeFixture(
       case_manifest_sha256: HASH_C,
       seed_manifest_sha256: HASH_D,
       harness_sha256: harnessSha256,
-      research_feedback: "fuzzy_advice_only",
-      max_exposures_per_task: testerMaxExposures,
+      research_feedback: "detailed",
+
       comparison: "paired_matching_baseline_vs_finalist",
       gate: {
         primaries: [{ name: "tester_score", direction: "higher_better", improvement: { policy: "absolute", minimum_gain: 0.1 } }],
@@ -572,7 +573,7 @@ function testerArm(
 
 function testerReview(fixture: Fixture, testerRunId: string): void {
   const state = readTesterRunState(fixture.root, testerRunId);
-  assert.ok(state.private_result_sha256);
+  assert.ok(state.test_result_sha256);
   const workerRoot = path.join(
     fixture.root,
     ".aris",
@@ -603,7 +604,7 @@ function testerReview(fixture: Fixture, testerRunId: string): void {
     case_manifest_sha256: state.case_manifest_sha256,
     matching_baseline_artifact_sha256: state.matching_baseline_artifact_sha256,
     finalist_artifact_sha256: state.finalist_artifact_sha256,
-    private_result_sha256: state.private_result_sha256,
+    test_result_sha256: state.test_result_sha256,
   };
   const assignment = createReviewAssignment({
     actor: "review_scheduler",
@@ -693,7 +694,7 @@ export function prepareTester(
     model_assignment_sha256: fixture.modelAssignmentSha256,
     input_distribution_sha256: fixture.inputDistributionSha256,
     judge_binding: null,
-    max_exposures_per_task: fixture.tester.max_exposures_per_task,
+
   });
   startTesterRun({
     project_root: fixture.root,
@@ -718,21 +719,21 @@ export function prepareTester(
   const baseline = testerArm(fixture, "matching_baseline", [1, 1, 1.1, 1.1]);
   const finalist = testerArm(fixture, "finalist", finalistScores);
   recordTesterStarted(fixture.root, testerRunId);
-  recordTesterPrivateResult(fixture.root, testerRunId, {
+  recordTesterResult(fixture.root, testerRunId, {
     baseline,
     finalist,
     harness_sha256: fixture.tester.harness_sha256,
     workflow_constraints_passed: true,
   });
   testerReview(fixture, testerRunId);
-  sealWikiWorkerManifest({ project_root: fixture.root, run_id: testerRunId, worker: "tester" });
+
   return { testerRunId, baseline, finalist };
 }
 
-export function publicTesterConclusion(
+export function promotionTesterConclusion(
   fixture: Fixture,
   testerRunId: string,
-): TesterPublicConclusion {
+): TesterPromotionConclusion {
   const state = readTesterRunState(fixture.root, testerRunId);
   assert.equal(state.gate_consumed, true);
   assert.ok(state.gate_status);
@@ -752,41 +753,24 @@ export function publicTesterConclusion(
     input_snapshot_sha256: state.input_snapshot_sha256,
     input_distribution_sha256: state.input_distribution_sha256,
     model_assignment_sha256: state.model_assignment_sha256,
-    private_result_sha256: state.private_result_sha256!,
+    test_result_sha256: state.test_result_sha256!,
     review_receipt_sha256: state.review_receipt_sha256!,
     status: state.gate_status,
   };
 }
 
-export function signTesterConclusion(conclusion: TesterPublicConclusion): {
-  conclusion: TesterPublicConclusion;
-  signature: string;
-  publicKey: crypto.KeyObject;
-} {
-  const keyPair = crypto.generateKeyPairSync("ed25519");
-  const signedBytes = Buffer.concat([
-    Buffer.from("aris-tester-public-conclusion-v1\n"),
-    canonicalJsonBytes(conclusion),
-  ]);
-  return {
-    conclusion,
-    signature: crypto.sign(null, signedBytes, keyPair.privateKey).toString("base64"),
-    publicKey: keyPair.publicKey,
-  };
-}
+export function wrapTesterConclusion(conclusion: TesterPromotionConclusion): { conclusion: TesterPromotionConclusion } { return {conclusion}; }
 
-export function signTesterFeedback(
+export function wrapTesterFeedback(
   fixture: Fixture,
   testerRunId: string,
   status: "passed" | "rejected",
   feedback: TesterFeedback,
 ): {
-  feedback: TesterPublicFeedbackEnvelope;
-  signature: string;
-  publicKey: crypto.KeyObject;
+  feedback: TesterPromotionFeedback;
 } {
   const state = readTesterRunState(fixture.root, testerRunId);
-  const envelope: TesterPublicFeedbackEnvelope = {
+  const envelope: TesterPromotionFeedback = {
     schema_version: 1,
     tester_run_id: state.tester_run_id,
     outer_run_id: state.outer_run_id,
@@ -805,16 +789,7 @@ export function signTesterFeedback(
     tester_conclusion_status: status,
     feedback,
   };
-  const keyPair = crypto.generateKeyPairSync("ed25519");
-  const signedBytes = Buffer.concat([
-    Buffer.from("aris-tester-public-feedback-v1\n"),
-    canonicalJsonBytes(envelope),
-  ]);
-  return {
-    feedback: envelope,
-    signature: crypto.sign(null, signedBytes, keyPair.privateKey).toString("base64"),
-    publicKey: keyPair.publicKey,
-  };
+  return { feedback: envelope };
 }
 
 export function feedbackForTester(
@@ -1219,7 +1194,7 @@ async function testNonRootOwnershipNeedsTerminalCleanup(): Promise<void> {
   }
 }
 
-function testFormalStartRequiresIsolationCheck(): void {
+function testFormalStartRequiresReadyFacility(): void {
   const root = tempDir("aris-workflow-formal-project-");
   const executionRoot = tempDir("aris-workflow-formal-execution-");
   try {
@@ -1229,9 +1204,9 @@ function testFormalStartRequiresIsolationCheck(): void {
         startOuterRun({
           ...fixture.identity,
           freeze_input: fixture.freezeInput,
-          tester_agent_config_path: "",
+          tester_facility_config_path: "",
         }),
-      "TESTER_AGENT_REQUIRED",
+      "TESTER_SETUP_REQUIRED",
     );
     assert.equal(readOuterRunOwnership(executionRoot), null);
   } finally {
@@ -1259,10 +1234,10 @@ function testRecursiveAutoResearchStartWithoutTaskTester(): void {
       outer_run_id: child.run_id,
       max_iterations: 2,
     };
-    const started = startOuterRun({ ...identity, freeze_input: frozen, tester_agent_config_path: "" });
+    const started = startOuterRun({ ...identity, freeze_input: frozen, tester_facility_config_path: "" });
     assert.equal(started.depth, 1);
     assert.equal(started.outer_run_id, child.run_id);
-    const resumed = resumeOuterRun({ ...identity, tester_agent_config_path: "" });
+    const resumed = resumeOuterRun({ ...identity, tester_facility_config_path: "" });
     assert.equal(resumed.outer_run_id, child.run_id);
     assert.equal(readFrozenPolicy(root, child.run_id).max_iterations, 2);
   } finally {
@@ -1458,29 +1433,20 @@ function runClosedCycle(finalistScores: readonly [number, number, number, number
     });
     assert.equal(promotionRecord.result, gateResult.status);
     recover(fixture, "promotion");
-    const signedConclusion = signTesterConclusion(
-      publicTesterConclusion(fixture, tester.testerRunId),
+    const signedConclusion = wrapTesterConclusion(
+      promotionTesterConclusion(fixture, tester.testerRunId),
     );
     const feedback = feedbackForTester(fixture, tester.testerRunId, gateResult.status);
-    const signedFeedback = signTesterFeedback(
+    const signedFeedback = wrapTesterFeedback(
       fixture,
       tester.testerRunId,
       gateResult.status,
       feedback,
     );
-    const promotionCommit: PromotionCommitResult = commitPromotionForTest({
+    const promotionCommit: PromotionCommitResult = commitPromotion({
       ...fixture.identity,
       registry: fixture.registry,
-      signed_tester_public_receipt: {
-        conclusion: signedConclusion.conclusion,
-        signature: signedConclusion.signature,
-      },
-      tester_public_key: signedConclusion.publicKey,
-      signed_tester_feedback: {
-        feedback: signedFeedback.feedback,
-        signature: signedFeedback.signature,
-      },
-      tester_feedback_public_key: signedFeedback.publicKey,
+      tester_result: auditedPromotionFixture(fixture.root, signedConclusion.conclusion, signedFeedback.feedback),
       evidence_paths: [evidence(root, "promotion-commit")],
     });
     assert.equal(promotionCommit.status, gateResult.status === "passed" ? "committed" : "rejected");
@@ -1490,19 +1456,10 @@ function runClosedCycle(finalistScores: readonly [number, number, number, number
       promotionCommit.active_incumbent.candidate_id,
       gateResult.status === "passed" ? "candidate:111" : "candidate:incumbent",
     );
-    const replayedCommit = commitPromotionForTest({
+    const replayedCommit = commitPromotion({
       ...fixture.identity,
       registry: fixture.registry,
-      signed_tester_public_receipt: {
-        conclusion: signedConclusion.conclusion,
-        signature: signedConclusion.signature,
-      },
-      tester_public_key: signedConclusion.publicKey,
-      signed_tester_feedback: {
-        feedback: signedFeedback.feedback,
-        signature: signedFeedback.signature,
-      },
-      tester_feedback_public_key: signedFeedback.publicKey,
+      tester_result: auditedPromotionFixture(fixture.root, signedConclusion.conclusion, signedFeedback.feedback),
       evidence_paths: [evidence(root, "promotion-commit")],
     });
     assert.equal(replayedCommit.replaced, false);
@@ -1576,7 +1533,7 @@ if (
   await testOwnershipAndRecoveryMutex();
   testRuntimeMutationRejectsMissingContractBeforeLeasing();
   await testNonRootOwnershipNeedsTerminalCleanup();
-  testFormalStartRequiresIsolationCheck();
+  testFormalStartRequiresReadyFacility();
   testRecursiveAutoResearchStartWithoutTaskTester();
   const adopted = runClosedCycle([1.4, 1.4, 1.6, 1.6]);
   assert.deepEqual(adopted, {

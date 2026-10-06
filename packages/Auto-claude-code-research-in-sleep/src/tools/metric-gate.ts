@@ -1,6 +1,6 @@
 import { runBudgetExhausted } from "./run-budget.js";
 import { runOwnedPath } from "./run-contract.js";
-import { assertOuterWikiScope, assertResearchVisible } from "./wiki-scope.js";
+import { assertOuterWikiScope } from "./wiki-scope.js";
 import fs from "fs";
 import path from "path";
 import { pathToFileURL } from "url";
@@ -398,7 +398,6 @@ export function readDashboardMetric(root: string, runId: string): DashboardMetri
   const dashPath = dashboardPath(root, runId);
   if (!fs.existsSync(dashPath)) throw new Error(`DASHBOARD_NOT_FOUND: ${dashPath}`);
   const dash = JSON.parse(fs.readFileSync(dashPath, "utf-8")) as Record<string, unknown>;
-  assertResearchVisible(dash);
   const metric = (dash.metric ?? {}) as Record<string, unknown>;
   const direction = metric.direction;
   if (typeof direction !== "string" || !DIRECTIONS.has(direction))
@@ -428,8 +427,6 @@ export function evaluateDashboard(
   } catch (err) {
     fail(`corrupt dashboard at ${dashPath}: ${err}`);
   }
-
-  assertResearchVisible(dash);
   const dashboardModuleId =
     typeof dash.module_id === "string"
       ? dash.module_id

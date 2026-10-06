@@ -1,3 +1,4 @@
+import { checkTesterResult, readAuditedTesterResult, evidenceFile } from "./tester-facility.js";
 import { runBudgetExhausted, settleExecutionReceipt } from "./run-budget.js";
 import { runOwnedPath } from "./run-contract.js";
 import {
@@ -44,10 +45,12 @@ import {
 } from "./validation-gate.js";
 import { readStateFile, withStateFileLock, writeStateJsonAtomic } from "./state-file.js";
 import {
-  readTesterAgentConfig,
-  testerAgentConfigSha256,
-  type TesterAgentConfig,
-} from "./tester-agent.js";
+  testerConfigPath,
+  assertTesterSetupReady,
+  readTesterFacilityConfig,
+  testerFacilityConfigSha256,
+  type TesterFacilityConfig,
+} from "./tester-facility.js";
 import {
   assertWorkflowConnectionsConnected,
   readWorkflowConnectionRecord,
@@ -122,7 +125,7 @@ import { readScorerRunState, scorerRunStatePath } from "./scorer-state.js";
 import { acquireLineageHold, releaseLineageHold } from "./lineage-lock.js";
 import {
   readTesterRunState,
-  readExposureLedger,
+  readTesterTrialLedger,
   testerRunStatePath,
   type TesterRunState,
 } from "./tester-state.js";
@@ -132,7 +135,6 @@ import {
   writeWorkflowStopDecision,
   type StopBudgetSnapshot,
   type StopDecision,
-  type StopExposureSnapshot,
   type StopPolicy,
 } from "./workflow-stop-gate.js";
 
@@ -186,11 +188,11 @@ export interface OuterRunLease {
 
 export interface StartOuterRunInput extends OuterRunIdentity {
   freeze_input: FreezeOuterRunInput;
-  tester_agent_config_path: string;
+  tester_facility_config_path: string;
 }
 
 export interface ResumeOuterRunInput extends OuterRunIdentity {
-  tester_agent_config_path: string;
+  tester_facility_config_path: string;
   freeze_input?: FreezeOuterRunInput;
 }
 
@@ -818,9 +820,6 @@ function assertEvidencePath(
   const absolute = fs.realpathSync(candidate);
   if (!inside(project, absolute) || !fs.statSync(absolute).isFile())
     failA1("OUTER_EVIDENCE_INVALID", "outer evidence must be a file below project_root");
-  const basename = path.basename(absolute);
-  if (basename === "private-result.json" || basename === "private-result.ref.json")
-    failA1("TESTER_PRIVATE_DATA_ACCESSIBLE", "private tester result cannot be outer evidence");
   const ref = path.relative(project, absolute).split(path.sep).join("/");
   return { absolute, ref };
 }
@@ -1417,56 +1416,55 @@ export function withOuterRunLease<T>(
   }
 }
 
-function readRequiredTesterAgentConfig(
+function readRequiredTesterFacilityConfig(
   input: StartOuterRunInput | ResumeOuterRunInput,
   required: boolean,
-): TesterAgentConfig | null {
-  const configPath = input.tester_agent_config_path;
+): TesterFacilityConfig | null {
+  const configPath = input.tester_facility_config_path;
   if (configPath === "") {
     if (required)
-      failA1("TESTER_AGENT_REQUIRED", "formal outer run needs a tester agent config path");
+      failA1("TESTER_SETUP_REQUIRED", "formal outer run needs a tester facility config path");
     return null;
   }
-  // The tester agent config carries the pinned public key used to verify the
-  // response. It is deliberately independent of execution_root: swapping the
-  // tester container is prevented by the frozen config hash below.
-  return readTesterAgentConfig(configPath);
+  // Facility hashes pin the benchmark protocol and environment across resume.
+  assertTesterSetupReady(configPath);
+  return readTesterFacilityConfig(configPath);
 }
 
-function freezeWithTesterAgentConfig(
+function freezeWithTesterFacilityConfig(
   input: StartOuterRunInput | ResumeOuterRunInput,
   freezeInput: FreezeOuterRunInput,
   required: boolean,
 ): FreezeOuterRunInput {
-  const config = readRequiredTesterAgentConfig(input, required);
+  const config = readRequiredTesterFacilityConfig(input, required);
   if (config === null) return freezeInput;
   if (
-    freezeInput.tester_agent_config !== undefined &&
-    testerAgentConfigSha256(freezeInput.tester_agent_config as TesterAgentConfig) !==
-      testerAgentConfigSha256(config)
+    freezeInput.tester_facility_config !== undefined &&
+    testerFacilityConfigSha256(freezeInput.tester_facility_config as TesterFacilityConfig) !==
+      testerFacilityConfigSha256(config)
   )
     failA1(
-      "TESTER_AGENT_CONFIG_CONFLICT",
-      "freeze input tester agent config differs from the supplied config",
+      "TESTER_CONFIG_CHANGED",
+      "freeze input tester facility config differs from the supplied config",
     );
-  return { ...freezeInput, tester_agent_config: config };
+  return { ...freezeInput, tester_facility_config: config };
 }
 
-function assertFrozenTesterAgentConfig(
+function assertFrozenTesterFacilityConfig(
   input: StartOuterRunInput | ResumeOuterRunInput,
   projectRoot: string,
   outerRunId: string,
   required: boolean,
 ): void {
-  const config = readRequiredTesterAgentConfig(input, required);
+  const config = readRequiredTesterFacilityConfig(input, required);
   if (config === null) return;
   const frozen = readLegacyFrozenPolicy(projectRoot, outerRunId);
   if (
-    frozen.tester_agent_config === undefined ||
-    frozen.tester_agent_sha256 === undefined ||
-    frozen.tester_agent_sha256 !== testerAgentConfigSha256(config)
+    frozen.tester_facility_config === undefined ||
+    frozen.tester_facility_sha256 === undefined ||
+    frozen.tester_facility_sha256 !== testerFacilityConfigSha256(config)
   )
-    failA1("TESTER_AGENT_CONFIG_CONFLICT", "resume config does not match the frozen tester agent");
+    failA1("TESTER_CONFIG_CHANGED", "resume config does not match the frozen tester facility");
 }
 
 function validateFreezeIdentity(
@@ -1535,12 +1533,12 @@ function openRunContractForRuntime(input: Required<OuterRunIdentity>): void {
 
 function startOuterRunInternal(
   input: StartOuterRunInput,
-  formalTesterAgent: boolean,
+  formalTesterFacility: boolean,
 ): WorkflowRuntimeState {
   const normalized = normalizedIdentity(input);
   const freezeInput = validateFreezeIdentity(
     input,
-    freezeWithTesterAgentConfig(input, input.freeze_input, formalTesterAgent),
+    freezeWithTesterFacilityConfig(input, input.freeze_input, formalTesterFacility),
   );
   // Check the startup artifacts before validating or saving the frozen input.
   // A duplicate start must not recreate a missing sibling artifact before the
@@ -1596,6 +1594,9 @@ export function startOuterRun(input: StartOuterRunInput): WorkflowRuntimeState {
 
 function autoResearchPolicy(input: Required<OuterRunIdentity>): AutoResearchFrozenPolicy {
   const contract = requireRunContract(input.project_root, input.outer_run_id);
+  const facilityPath = testerConfigPath(input.project_root);
+  assertTesterSetupReady(facilityPath);
+  const facility = readTesterFacilityConfig(facilityPath);
   const rawChildCharter =
     input.depth === 0
       ? null
@@ -1628,6 +1629,8 @@ function autoResearchPolicy(input: Required<OuterRunIdentity>): AutoResearchFroz
   if (input.depth === 0) {
     if (!("task_id" in charter)) failA1("IDENTITY_MISMATCH", "root charter is required");
     const root = readRootCharter(input.project_root, input.outer_run_id);
+    if (root.setup_refs.tester_facility_sha256 !== testerFacilityConfigSha256(facility))
+      failA1("TESTER_CONFIG_CHANGED", "tester setup differs from the root charter");
     const baseline = readBaselineScope(input.project_root, input.outer_run_id);
     const resource = readResourceInventory(input.project_root, input.outer_run_id);
     if (
@@ -1662,6 +1665,11 @@ function autoResearchPolicy(input: Required<OuterRunIdentity>): AutoResearchFroz
   } else {
     if (input.parent_run_id === null) failA1("RUN_DEPTH_MISMATCH", "child needs parent");
     const parent = readFrozenPolicy(input.project_root, input.parent_run_id);
+    if (
+      parent.mode === "auto_research_loop" &&
+      parent.tester_facility_sha256 !== testerFacilityConfigSha256(facility)
+    )
+      failA1("TESTER_CONFIG_CHANGED", "child facilities differ from the parent frozen policy");
     if (parent.mode !== "auto_research_loop")
       failA1("IDENTITY_MISMATCH", "child parent is not ARL");
     if (
@@ -1694,6 +1702,8 @@ function autoResearchPolicy(input: Required<OuterRunIdentity>): AutoResearchFroz
     baseline_sha256: charter.baseline_sha256,
     resource_inventory_sha256: charter.resource_inventory_sha256,
     input_snapshot_sha256: contract.identity_material.input_snapshot_sha256,
+    tester_facility_config: facility,
+    tester_facility_sha256: testerFacilityConfigSha256(facility),
     wiki_scope: resolveRunWikiScope(input.project_root, input.outer_run_id),
     max_iterations: charter.max_iterations,
     max_repair_attempts: maxRepairAttempts,
@@ -1745,17 +1755,17 @@ export function resumeAutoResearchRun(input: OuterRunIdentity): WorkflowRuntimeS
   } else {
     saveAutoResearchFrozenPolicy(normalized.project_root, policy);
   }
-  return resumeOuterRunInternal({ ...input, tester_agent_config_path: "" }, false);
+  return resumeOuterRunInternal({ ...input, tester_facility_config_path: "" }, false);
 }
 
-/** Used only by storage/transition tests; production start always requires a tester agent. */
+/** Used only by storage/transition tests; production start requires prepared tester facilities. */
 export function startOuterRunForTest(
-  input: Omit<StartOuterRunInput, "tester_agent_config_path"> & {
-    tester_agent_config_path?: string;
+  input: Omit<StartOuterRunInput, "tester_facility_config_path"> & {
+    tester_facility_config_path?: string;
   },
 ): WorkflowRuntimeState {
   return startOuterRunInternal(
-    { ...input, tester_agent_config_path: input.tester_agent_config_path ?? "" },
+    { ...input, tester_facility_config_path: input.tester_facility_config_path ?? "" },
     false,
   );
 }
@@ -2076,8 +2086,8 @@ function testerMappingPath(
 }
 
 function testerArmMappingFromState(state: TesterRunState): OuterTesterArmMapping {
-  // This is deliberately explicit. The outer layer never examines private
-  // scores or lets an ordering comparison decide which model is baseline.
+  // Preserve the declared baseline/candidate roles rather than inferring
+  // either role from the measured score ordering.
   return {
     schema_version: 1,
     tester_run_id: state.tester_run_id,
@@ -3046,6 +3056,112 @@ export function beginOuterCycle(input: BeginOuterCycleInput): WorkflowRuntimeSta
 }
 
 export const startOuterCycle = beginOuterCycle;
+
+export function advanceAutoResearchPhase(
+  input: PhaseAdvanceInput & { test_result_path?: string; test_audit_path?: string },
+): WorkflowRuntimeState {
+  return withRuntimeMutation(input, (state, normalized) => {
+    const policy = readFrozenPolicy(normalized.project_root, normalized.outer_run_id);
+    if (policy.mode !== "auto_research_loop")
+      failA1("INVALID_VALUE", "tester stages require ARL mode");
+    const cycle = currentCycle(state);
+    const allowed: Record<string, string> = {
+      workset: "tester-test",
+      "auto-review-loop": "tester-test",
+      "tester-test": "tester-audit",
+      "tester-audit": "auto-review-loop",
+    };
+    // Replaying a completed transition validates evidence again without changing history.
+    const replay = state.current_phase === input.to_phase;
+    if (
+      !replay &&
+      (state.current_phase !== input.from_phase || allowed[input.from_phase] !== input.to_phase)
+    )
+      failA1("OUTER_PHASE_ORDER", "tester stages must run test then audit before review");
+    let assessment = cycle.tester_assessment ?? null;
+    const evidencePaths = [...input.evidence_paths];
+    if (input.to_phase === "tester-test") {
+      if (
+        cycle.bridge_success_receipt_ref == null ||
+        cycle.bridge_failure?.status === "pending" ||
+        cycle.bridge_failure?.status === "exhausted"
+      )
+        failA1("BRIDGE_SUCCESS_REQUIRED", "tester assessment needs completed bridge evidence");
+      if (!replay) assessment = null;
+    } else if (input.to_phase === "tester-audit") {
+      const resultPath = requireString(input.test_result_path, "test_result_path"),
+        result = checkTesterResult(resultPath);
+      if (
+        result.request.run_id !== normalized.outer_run_id ||
+        result.request.iteration !== cycle.outer_iteration ||
+        result.config_sha256 !== policy.tester_facility_sha256
+      )
+        failA1(
+          "TESTER_RESULT_BINDING_MISMATCH",
+          "assessment differs from owning run, iteration or facility",
+        );
+      const file = assertEvidencePath(normalized.project_root, resultPath);
+      if (replay && assessment?.result_sha256 !== hashBytes(file.absolute))
+        failA1("IMMUTABLE_CONFLICT", "recorded test result changed");
+      assessment = {
+        result_ref: file.ref,
+        result_sha256: hashBytes(file.absolute),
+        audit_ref: null,
+        audit_sha256: null,
+      };
+      evidencePaths.push(file.absolute);
+    } else if (input.to_phase === "auto-review-loop") {
+      if (assessment === null)
+        failA1("TESTER_AUDIT_REQUIRED", "record a complete test before audit");
+      const resultPath = path.resolve(normalized.project_root, assessment.result_ref),
+        auditPath = requireString(input.test_audit_path, "test_audit_path");
+      if (hashBytes(resultPath) !== assessment.result_sha256)
+        failA1("IMMUTABLE_CONFLICT", "recorded test result changed");
+      readAuditedTesterResult(resultPath, auditPath, {
+        run_id: normalized.outer_run_id,
+        iteration: cycle.outer_iteration,
+      });
+      const file = assertEvidencePath(normalized.project_root, auditPath);
+      if (replay && assessment.audit_sha256 !== hashBytes(file.absolute))
+        failA1("IMMUTABLE_CONFLICT", "recorded audit changed");
+      assessment = { ...assessment, audit_ref: file.ref, audit_sha256: hashBytes(file.absolute) };
+      evidencePaths.push(resultPath, file.absolute);
+    } else failA1("OUTER_PHASE_ORDER", "unsupported tester stage");
+    if (replay) return { state, result: state };
+    const evidence = hashOuterEvidence(normalized.project_root, [
+      ...new Set(evidencePaths.map((file) => path.resolve(normalized.project_root, file))),
+    ]);
+    const next = {
+      ...state,
+      current_phase: input.to_phase,
+      active_cycle: { ...cycle, tester_assessment: assessment },
+      phase_history: openPhase(closePhase(state, evidence), input.to_phase, cycle),
+      updated_at: now(),
+    };
+    return { state: next, result: next };
+  });
+}
+function assertAutoResearchAssessment(
+  projectRoot: string,
+  runId: string,
+  cycle: ActiveOuterCycle,
+): string[] {
+  const assessment = cycle.tester_assessment;
+  if (!assessment || !assessment.audit_ref || !assessment.audit_sha256)
+    failA1(
+      "TESTER_AUDIT_REQUIRED",
+      "complete test and passing audit are required before review completion",
+    );
+  const result = path.resolve(projectRoot, assessment.result_ref),
+    audit = path.resolve(projectRoot, assessment.audit_ref);
+  if (
+    hashBytes(result) !== assessment.result_sha256 ||
+    hashBytes(audit) !== assessment.audit_sha256
+  )
+    failA1("IMMUTABLE_CONFLICT", "recorded tester evidence changed");
+  readAuditedTesterResult(result, audit, { run_id: runId, iteration: cycle.outer_iteration });
+  return [result, audit];
+}
 
 export function advanceOuterPhase(input: PhaseAdvanceInput): WorkflowRuntimeState {
   return withRuntimeMutation(input, (state, normalized) => {
@@ -4060,7 +4176,7 @@ export function recordAutoResearchInsufficient(
     )
       return { state, result: state };
     if (
-      state.current_phase !== "workset" ||
+      state.current_phase !== "auto-review-loop" ||
       cycle.bridge_success_receipt_ref == null ||
       cycle.bridge_success_manifest_ref == null
     )
@@ -4127,7 +4243,7 @@ export function recordAutoResearchInsufficient(
   });
 }
 
-/** Close an ARL iteration from its review receipt, without invoking the tester workflow gates. */
+/** Close an ARL iteration only after complete testing, passing audit and review. */
 export function completeAutoResearchCycle(
   input: CompleteAutoResearchCycleInput,
 ): WorkflowRuntimeState {
@@ -4150,12 +4266,17 @@ export function completeAutoResearchCycle(
           return { state, result: state };
       }
     }
-    if (state.current_phase !== "workset")
-      failA1("OUTER_PHASE_ORDER", "ARL review can close only the active bridge workset");
+    if (state.current_phase !== "auto-review-loop")
+      failA1("OUTER_PHASE_ORDER", "ARL review requires completed tester test and audit phases");
     // The review judges this iteration's whole output, so every child the
     // bridge dispatched has to have published its result first.
     requireCollectedChildren(normalized.project_root, normalized.outer_run_id);
     const cycle = currentCycle(state);
+    const testerEvidence = assertAutoResearchAssessment(
+      normalized.project_root,
+      normalized.outer_run_id,
+      cycle,
+    );
     if (cycle.bridge_success_receipt_ref === null || cycle.bridge_success_receipt_ref === undefined)
       failA1("BRIDGE_SUCCESS_REQUIRED", "ARL review needs a recorded successful bridge");
     if (cycle.bridge_failure?.status === "pending" || cycle.bridge_failure?.status === "exhausted")
@@ -4179,6 +4300,24 @@ export function completeAutoResearchCycle(
       !isRecord(value.dashboard_patch)
     )
       failA1("INVALID_EXECUTION_RECEIPT", "ARL review receipt identity or status is invalid");
+    if (!isRecord(value.summary))
+      failA1("TESTER_AUDIT_REQUIRED", "review must return the final tested and audited assessment");
+    const finalResult = requireString(
+      value.summary.test_result_path,
+      "review.summary.test_result_path",
+    );
+    const finalAudit = requireString(
+      value.summary.test_audit_path,
+      "review.summary.test_audit_path",
+    );
+    if (
+      path.resolve(finalResult) !== testerEvidence[0] ||
+      path.resolve(finalAudit) !== testerEvidence[1]
+    )
+      failA1(
+        "TESTER_RESULT_BINDING_MISMATCH",
+        "record the final review assessment before completing this iteration",
+      );
     const patch = value.dashboard_patch;
     if (patch["last_review.verdict"] === "insufficient")
       failA1(
@@ -4195,7 +4334,7 @@ export function completeAutoResearchCycle(
         : metricValue <=
           policy.metric.target + Math.abs(policy.metric.target) * policy.metric.tolerance;
     const evidence = hashOuterEvidence(normalized.project_root, [
-      ...new Set([...input.evidence_paths, receipt.absolute]),
+      ...new Set([...input.evidence_paths, receipt.absolute, ...testerEvidence]),
     ]);
     const summary: OuterCycleSummary = {
       schema_version: 1,
@@ -4267,22 +4406,6 @@ export function recordWorkflowStopDecision(input: RecordStopDecisionInput): Stop
     } else if (stopPolicy.mode === "auto_research_loop") {
       failA1("INVALID_VALUE", "a frozen Auto Research Loop requires its iteration stop policy");
     }
-    const exposure: StopExposureSnapshot =
-      policy.mode === "auto_research_loop"
-        ? { max_exposures_per_task: 0, reserved: 0, settled: 0, released: 0 }
-        : (() => {
-            const ledger = readExposureLedger(
-              normalized.project_root,
-              policy.task_id,
-              policy.tester_definition.max_exposures_per_task,
-            );
-            return {
-              max_exposures_per_task: ledger.max_exposures_per_task,
-              reserved: ledger.exposures.filter((item) => item.status === "reserved").length,
-              settled: ledger.exposures.filter((item) => item.status === "settled").length,
-              released: ledger.exposures.filter((item) => item.status === "released").length,
-            };
-          })();
     const budgetPolicy = input.budget
       ? { limit: input.budget.limit, unit: input.budget.unit }
       : stopPolicy.max_outer_budget;
@@ -4305,7 +4428,6 @@ export function recordWorkflowStopDecision(input: RecordStopDecisionInput): Stop
       outer_run_id: normalized.outer_run_id,
       policy: stopPolicy,
       cycle_summaries: state.cycle_history,
-      exposure,
       budget,
       outer_iteration: state.outer_iteration,
     });
@@ -4419,14 +4541,19 @@ export function resumeOuterRun(input: ResumeOuterRunInput): WorkflowRuntimeState
 
 function resumeOuterRunInternal(
   input: ResumeOuterRunInput,
-  formalTesterAgent: boolean,
+  formalTesterFacility: boolean,
 ): WorkflowRuntimeState {
   const normalized = normalizedIdentity(input);
-  if (formalTesterAgent) {
-    readRequiredTesterAgentConfig(input, true);
+  if (formalTesterFacility) {
+    readRequiredTesterFacilityConfig(input, true);
     const statePath = workflowRuntimePath(normalized.project_root, normalized.outer_run_id);
     if (fs.existsSync(statePath))
-      assertFrozenTesterAgentConfig(input, normalized.project_root, normalized.outer_run_id, true);
+      assertFrozenTesterFacilityConfig(
+        input,
+        normalized.project_root,
+        normalized.outer_run_id,
+        true,
+      );
   }
   const scopedRun = normalized.scope_path !== "/";
   const owner = scopedRun ? null : readOuterRunOwnership(normalized.execution_root);
@@ -4449,7 +4576,7 @@ function resumeOuterRunInternal(
       if (input.freeze_input !== undefined) {
         const freezeInput = validateFreezeIdentity(
           input,
-          freezeWithTesterAgentConfig(input, input.freeze_input, formalTesterAgent),
+          freezeWithTesterFacilityConfig(input, input.freeze_input, formalTesterFacility),
         );
         freezeOuterRun(freezeInput);
         saveFrozenPolicy(freezeInput);
@@ -4483,12 +4610,12 @@ function resumeOuterRunInternal(
 }
 
 export function resumeOuterRunForTest(
-  input: Omit<ResumeOuterRunInput, "tester_agent_config_path"> & {
-    tester_agent_config_path?: string;
+  input: Omit<ResumeOuterRunInput, "tester_facility_config_path"> & {
+    tester_facility_config_path?: string;
   },
 ): WorkflowRuntimeState {
   return resumeOuterRunInternal(
-    { ...input, tester_agent_config_path: input.tester_agent_config_path ?? "" },
+    { ...input, tester_facility_config_path: input.tester_facility_config_path ?? "" },
     false,
   );
 }

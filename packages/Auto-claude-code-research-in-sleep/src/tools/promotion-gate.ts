@@ -9,7 +9,7 @@ import {
   assertTesterArmsComparable as assertStoredTesterArmsComparable,
   consumeTesterGate,
   normalizeTesterArmResult,
-  readStoredTesterPrivateResult,
+  readStoredTesterResult,
   readStoredTesterReview,
   readTesterRunState,
   readTesterFinalistStatus,
@@ -286,22 +286,22 @@ export function consumePromotionGate(input: {
     state.wave_id,
     state.finalist_artifact_sha256,
   );
-  if (!resultStatusPolicy(finalistStatus).consumes_tester_exposure)
+  if (!resultStatusPolicy(finalistStatus).requires_tester)
     failA1("TESTER_NOT_ALLOWED", "non-executable results cannot enter promotion testing");
-  const privateResult = readStoredTesterPrivateResult(input.project_root, input.tester_run_id);
+  const testResult = readStoredTesterResult(input.project_root, input.tester_run_id);
   const review = readStoredTesterReview(input.project_root, input.tester_run_id);
   if (review.verdict !== "approved")
     failA1("TESTER_REVIEW_REJECTED", "promotion gate requires an approved tester review");
   const definition = validateTesterDefinition(input.definition);
-  if (definition.definition_sha256 !== privateResult.tester_definition_sha256)
+  if (definition.definition_sha256 !== testResult.tester_definition_sha256)
     failA1(
       "TESTER_DEFINITION_MISMATCH",
-      "promotion gate definition differs from the sealed private result",
+      "promotion gate definition differs from the sealed test result",
     );
-  if (privateResult.harness_sha256 !== definition.harness_sha256)
+  if (testResult.harness_sha256 !== definition.harness_sha256)
     failA1("HARNESS_MISMATCH", "promotion gate harness differs from the sealed definition");
-  if (review.subject.private_result_sha256 !== state.private_result_sha256)
-    failA1("PRIVATE_RESULT_HASH_MISMATCH", "review does not approve the stored private result");
+  if (review.subject.test_result_sha256 !== state.test_result_sha256)
+    failA1("TEST_RESULT_HASH_MISMATCH", "review does not approve the stored test result");
   const normalizeSuppliedArm = (value: TesterArmResult, location: string): TesterArmResult => {
     try {
       return normalizeTesterArmResult(value, location, definition);
@@ -315,43 +315,43 @@ export function consumePromotionGate(input: {
           state.status === "passed" || state.status === "rejected"
             ? "TESTER_GATE_CONFLICT"
             : "TESTER_ARMS_MISMATCH",
-          "promotion gate inputs differ from the sealed private result bundle",
+          "promotion gate inputs differ from the sealed test result bundle",
         );
       throw error;
     }
   };
   const suppliedBaseline = normalizeSuppliedArm(input.baseline, "promotion.baseline");
   const suppliedFinalist = normalizeSuppliedArm(input.finalist, "promotion.finalist");
-  assertStoredTesterArmsComparable(privateResult.baseline, privateResult.finalist);
+  assertStoredTesterArmsComparable(testResult.baseline, testResult.finalist);
   if (
-    canonicalJsonString(suppliedBaseline) !== canonicalJsonString(privateResult.baseline) ||
-    canonicalJsonString(suppliedFinalist) !== canonicalJsonString(privateResult.finalist) ||
-    input.workflow_constraints_passed !== privateResult.workflow_constraints_passed
+    canonicalJsonString(suppliedBaseline) !== canonicalJsonString(testResult.baseline) ||
+    canonicalJsonString(suppliedFinalist) !== canonicalJsonString(testResult.finalist) ||
+    input.workflow_constraints_passed !== testResult.workflow_constraints_passed
   )
     failA1(
       state.status === "passed" || state.status === "rejected"
         ? "TESTER_GATE_CONFLICT"
         : "TESTER_ARMS_MISMATCH",
-      "promotion gate inputs differ from the sealed private result bundle",
+      "promotion gate inputs differ from the sealed test result bundle",
     );
   const result = evaluatePromotionGate({
-    definition: privateResult.tester_definition,
-    baseline: privateResult.baseline,
-    finalist: privateResult.finalist,
-    workflow_constraints_passed: privateResult.workflow_constraints_passed,
+    definition: testResult.tester_definition,
+    baseline: testResult.baseline,
+    finalist: testResult.finalist,
+    workflow_constraints_passed: testResult.workflow_constraints_passed,
   });
   const binding: TesterGateBinding = {
-    tester_version: privateResult.tester_version,
-    tester_definition_sha256: privateResult.tester_definition_sha256,
-    harness_sha256: privateResult.harness_sha256,
-    case_manifest_sha256: privateResult.case_manifest_sha256,
-    seed_manifest_sha256: privateResult.seed_manifest_sha256,
-    input_distribution_sha256: privateResult.input_distribution_sha256,
-    matching_baseline_artifact_sha256: privateResult.baseline.artifact_sha256,
-    finalist_artifact_sha256: privateResult.finalist.artifact_sha256,
-    judge_binding_id: privateResult.judge_binding?.binding_id ?? null,
-    judge_binding: privateResult.judge_binding,
-    model_assignment_sha256: privateResult.model_assignment_sha256,
+    tester_version: testResult.tester_version,
+    tester_definition_sha256: testResult.tester_definition_sha256,
+    harness_sha256: testResult.harness_sha256,
+    case_manifest_sha256: testResult.case_manifest_sha256,
+    seed_manifest_sha256: testResult.seed_manifest_sha256,
+    input_distribution_sha256: testResult.input_distribution_sha256,
+    matching_baseline_artifact_sha256: testResult.baseline.artifact_sha256,
+    finalist_artifact_sha256: testResult.finalist.artifact_sha256,
+    judge_binding_id: testResult.judge_binding?.binding_id ?? null,
+    judge_binding: testResult.judge_binding,
+    model_assignment_sha256: testResult.model_assignment_sha256,
   };
   consumeTesterGate(input.project_root, input.tester_run_id, result.status, binding);
   return result;

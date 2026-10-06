@@ -11,7 +11,7 @@ import { resolveRunWikiScope } from "../src/tools/wiki-scope.js";
 import { childIndexPath, readDispatchStructure } from "../src/tools/child-index.js";
 import { recordDecompositionGraph } from "../src/tools/decomposition-graph.js";
 
-const TSX_CLI = "/home/liu/paseo/node_modules/tsx/dist/cli.mjs";
+const TSX_CLI = "--import";
 const MERGE_TS = path.resolve("src/tools/dashboard-merge.ts");
 
 function sha256(value: string | Buffer): string {
@@ -174,7 +174,7 @@ function makeReceipt(
 function merge(root: string, runId: string, receiptPath: string): string {
   return execFileSync(
     process.execPath,
-    [TSX_CLI, MERGE_TS, "apply", "--root", root, "--run-id", runId, "--receipt", receiptPath],
+    [TSX_CLI, "tsx", MERGE_TS, "apply", "--root", root, "--run-id", runId, "--receipt", receiptPath],
     { encoding: "utf8", stdio: "pipe" },
   );
 }

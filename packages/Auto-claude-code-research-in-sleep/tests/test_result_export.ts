@@ -1,3 +1,6 @@
+import {auditedResultFixture,facilityConfig} from "./helpers/tester-facility-fixture.js";
+import {appendHistoricalWikiFixture} from "./helpers/wiki-history-fixture.js";
+import {testerFacilityConfigSha256,evidenceFile} from "../src/tools/tester-facility.js";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -13,7 +16,6 @@ import {
 import { saveResultReview } from "../src/tools/result-review.js";
 import { addExperiment } from "../src/tools/research-wiki.js";
 import { buildTesterFeedback } from "../src/tools/tester-feedback.js";
-import type { TesterPublicFeedbackEnvelope } from "../src/tools/tester-public-receipt.js";
 import { canonicalJsonBytes } from "../src/tools/canonical-json.js";
 import crypto from "node:crypto";
 import { readResultPackage } from "../src/tools/result-package.js";
@@ -57,7 +59,9 @@ interface ExperimentInput {
 }
 
 function appendExperiment(wikiRoot: string, input: ExperimentInput): void {
-  const result = appendWikiEvent(wikiRoot, {
+  const projectRoot=path.resolve(wikiRoot,"../../../../");
+  const binding=input.tester_metrics?auditedResultFixture(projectRoot,{schema_version:1,test_id:input.id,run_id:RUN_ID,iteration:input.iteration,experiment_id:input.id,artifact:{ref:"fixture-model",sha256:"a".repeat(64)},mode:"full"},input.tester_metrics,undefined,JSON.parse(fs.readFileSync(path.join(projectRoot,"facility-definition.json"),"utf8"))):null;
+  const result = appendHistoricalWikiFixture(wikiRoot, {
     producer_kind: "result-export-test",
     scope: SCOPE,
     subject_id: `exp:${input.id}`,
@@ -71,6 +75,7 @@ function appendExperiment(wikiRoot: string, input: ExperimentInput): void {
           id: input.id,
           data: {
             title: input.id,
+            ...(binding?{test_result_path:binding.result_path,test_audit_path:binding.audit_path,test_result_sha256:evidenceFile(binding.result_path).sha256,test_audit_sha256:evidenceFile(binding.audit_path).sha256,tester_audit_status:"pass",tester_run_id:RUN_ID}:{}),
             idea_id: input.idea_id ?? "",
             verdict: "yes",
             confidence: "high",
@@ -149,8 +154,8 @@ function testerDefinition(primaries: TesterPrimaryMetric[]): TesterDefinition {
     case_manifest_sha256: "a".repeat(64),
     seed_manifest_sha256: "b".repeat(64),
     harness_sha256: "c".repeat(64),
-    research_feedback: "fuzzy_advice_only",
-    max_exposures_per_task: 4,
+    research_feedback: "detailed",
+
     comparison: "paired_matching_baseline_vs_finalist",
     gate: {
       primaries,
@@ -189,9 +194,11 @@ function setup(
   });
   const wikiRoot = runWikiRoot(root, RUN_ID);
   initializeWikiSchema(wikiRoot);
-  const definition = testerDefinition(primaries);
+  const config=facilityConfig(root);config.metrics=primaries.map(m=>({name:m.name,direction:m.direction,aggregation:"mean"}));
+  const definition={...testerDefinition(primaries),definition_sha256:testerFacilityConfigSha256(config)};
+  fs.writeFileSync(path.join(root,"facility-definition.json"),JSON.stringify(config));
   activeDefinitionSha = definition.definition_sha256;
-  return { wikiRoot, definition, definitionPath: writeTesterDefinition(root, definition) };
+  return { wikiRoot, definition, definitionPath: path.join(root,"facility-definition.json") };
 }
 
 const REVIEWER = "reviewer-1";
@@ -449,7 +456,7 @@ test("metrics recorded under a different tester definition are refused", () => {
           run_id: RUN_ID,
           tester_definition_path: definitionPath,
         }),
-      /TESTER_DEFINITION_MISMATCH/,
+      /TESTER_METRIC_MISMATCH/,
     );
   } finally {
     cleanup(root);
@@ -474,7 +481,7 @@ test("a recorded metric set that is not the declared one is refused", () => {
           run_id: RUN_ID,
           tester_definition_path: definitionPath,
         }),
-      /TESTER_METRIC_SET_MISMATCH/,
+      /TESTER_METRIC_MISMATCH/,
     );
   } finally {
     cleanup(root);
@@ -730,230 +737,6 @@ test("a reviewer cannot change its verdict after the fact", () => {
       () => saveResultReview(root, { ...base, verdict: "rejected" }),
       /IMMUTABLE_CONFLICT/,
     );
-  } finally {
-    cleanup(root);
-  }
-});
-
-/**
- * A tester's signed public feedback envelope, plus the key that verifies it.
- * The envelope's contents are fixed shapes -- ids, digests, enum values and a
- * metric map -- because there is nowhere in it for a sentence to go. That is
- * the actual reason a tester cannot leak case content into the wiki: not a
- * scan of its prose for forbidden words, but that it has no prose channel.
- */
-const TESTER_FEEDBACK_INPUT = {
-  schema_version: 1,
-  task_id: "task:export",
-  task_setup_revision: "setup:export",
-  input_snapshot_sha256: "1".repeat(64),
-  promotion_trial_id: "promotion:export",
-  tester_version: "v1",
-  conclusion: "improved",
-  directions: ["long_horizon_stability"],
-  advice: ["increase_long_horizon_consistency"],
-  confidence: "high",
-  metrics: { score: 0.9 },
-} as const;
-
-function signedTesterFeedback(): {
-  signed: { feedback: TesterPublicFeedbackEnvelope; signature: string };
-  publicKey: crypto.KeyObject;
-  otherPublicKey: crypto.KeyObject;
-} {
-  const feedback = buildTesterFeedback({
-    ...TESTER_FEEDBACK_INPUT,
-    directions: [...TESTER_FEEDBACK_INPUT.directions],
-    advice: [...TESTER_FEEDBACK_INPUT.advice],
-    metrics: { ...TESTER_FEEDBACK_INPUT.metrics },
-  });
-  const envelope: TesterPublicFeedbackEnvelope = {
-    schema_version: 1,
-    tester_run_id: "tester-run",
-    outer_run_id: "outer-run",
-    task_id: "task:export",
-    promotion_trial_id: "promotion:export",
-    outer_iteration: 1,
-    generation: 1,
-    wave_id: "wave:export",
-    tester_definition_sha256: activeDefinitionSha,
-    harness_sha256: "2".repeat(64),
-    matching_baseline_artifact_sha256: "3".repeat(64),
-    finalist_artifact_sha256: "4".repeat(64),
-    input_snapshot_sha256: "1".repeat(64),
-    input_distribution_sha256: "5".repeat(64),
-    tester_version: "v1",
-    tester_conclusion_status: "passed",
-    feedback,
-  };
-  const bytes = Buffer.concat([
-    Buffer.from("aris-tester-public-feedback-v1\n"),
-    canonicalJsonBytes(envelope),
-  ]);
-  const keyPair = crypto.generateKeyPairSync("ed25519");
-  return {
-    signed: {
-      feedback: envelope,
-      signature: crypto.sign(null, bytes, keyPair.privateKey).toString("base64"),
-    },
-    publicKey: keyPair.publicKey,
-    otherPublicKey: crypto.generateKeyPairSync("ed25519").publicKey,
-  };
-}
-
-test("tester numbers enter the wiki only through a verified envelope", () => {
-  const root = tmpDir();
-  try {
-    const { wikiRoot } = setup(root);
-    const { signed, publicKey } = signedTesterFeedback();
-    addExperiment(wikiRoot, "exp-signed", {
-      verdict: "yes",
-      confidence: "high",
-      testerReceipt: { signed, publicKey },
-    });
-    const page = readWikiModel(wikiRoot).pages.experiment.get("exp-signed");
-    assert.notEqual(page, undefined);
-    // Every tester field on the page was copied off the verified envelope.
-    // There is no flag that writes any of them directly.
-    assert.deepEqual({ ...(page?.data.tester_metrics as Record<string, number>) }, { score: 0.9 });
-    assert.equal(page?.data.tester_conclusion, "improved");
-    assert.equal(page?.data.tester_confidence, "high");
-    assert.deepEqual(page?.data.tester_directions, ["long_horizon_stability"]);
-    assert.deepEqual(page?.data.tester_advice, ["increase_long_horizon_consistency"]);
-    assert.equal(page?.data.iteration, 1);
-  } finally {
-    cleanup(root);
-  }
-});
-
-test("a tester envelope signed by the wrong key never reaches the wiki", () => {
-  const root = tmpDir();
-  try {
-    const { wikiRoot } = setup(root);
-    const { signed, otherPublicKey } = signedTesterFeedback();
-    assert.throws(
-      () =>
-        addExperiment(wikiRoot, "exp-forged", {
-          verdict: "yes",
-          confidence: "high",
-          testerReceipt: { signed, publicKey: otherPublicKey },
-        }),
-      /TESTER_SIGNATURE_INVALID/,
-    );
-    assert.equal(readWikiModel(wikiRoot).pages.experiment.has("exp-forged"), false);
-  } finally {
-    cleanup(root);
-  }
-});
-
-test("editing a tester's numbers after it signed them invalidates the envelope", () => {
-  const root = tmpDir();
-  try {
-    const { wikiRoot } = setup(root);
-    const { signed, publicKey } = signedTesterFeedback();
-    // The producing run wants a better number than the tester gave it. It can
-    // rebuild the feedback so its self-digest agrees with the new number, but
-    // the signature is over the whole envelope, and it does not hold the key.
-    const tampered = {
-      ...signed,
-      feedback: {
-        ...signed.feedback,
-        feedback: buildTesterFeedback({
-          ...TESTER_FEEDBACK_INPUT,
-          directions: [...TESTER_FEEDBACK_INPUT.directions],
-          advice: [...TESTER_FEEDBACK_INPUT.advice],
-          metrics: { score: 0.99 },
-        }),
-      },
-    };
-    assert.throws(
-      () =>
-        addExperiment(wikiRoot, "exp-tampered", {
-          verdict: "yes",
-          confidence: "high",
-          testerReceipt: { signed: tampered, publicKey },
-        }),
-      /TESTER_SIGNATURE_INVALID/,
-    );
-  } finally {
-    cleanup(root);
-  }
-});
-
-test("an iteration that contradicts the tester receipt is refused", () => {
-  const root = tmpDir();
-  try {
-    const { wikiRoot } = setup(root);
-    const { signed, publicKey } = signedTesterFeedback();
-    // The envelope names the round it judged. Letting the caller relabel it
-    // would file a tester score against an iteration it never saw.
-    assert.throws(
-      () =>
-        addExperiment(wikiRoot, "exp-mislabelled", {
-          verdict: "yes",
-          confidence: "high",
-          iteration: 7,
-          testerReceipt: { signed, publicKey },
-        }),
-      /contradicts the tester receipt/,
-    );
-  } finally {
-    cleanup(root);
-  }
-});
-
-test("a reused experiment refuses a tester receipt it did not form its claims with", () => {
-  const root = tmpDir();
-  try {
-    const { wikiRoot } = setup(root);
-    const { signed, publicKey } = signedTesterFeedback();
-    const formClaim = (slug: string) =>
-      appendWikiEvent(wikiRoot, {
-        producer_kind: "result-export-test",
-        scope: SCOPE,
-        subject_id: `exp:${slug}`,
-        evidence_bundle_id: `bundle:${slug}-claim`,
-        payload: {
-          context: CONTEXT,
-          operations: [
-            {
-              op: "upsert_edge",
-              edge: { from: `exp:${slug}`, to: "claim:c", type: "supports", evidence: "0.9" },
-            },
-          ],
-        },
-      });
-
-    // Judged without the receipt, then a claim formed: the receipt can no
-    // longer attach, so it is refused rather than dropped.
-    addExperiment(wikiRoot, "exp-late", { verdict: "yes", confidence: "high", iteration: 1 });
-    formClaim("exp-late");
-    assert.throws(
-      () =>
-        addExperiment(wikiRoot, "exp-late", {
-          verdict: "yes",
-          confidence: "high",
-          testerReceipt: { signed, publicKey },
-          updateOnExist: true,
-        }),
-      /TESTER_RECEIPT_TOO_LATE/,
-    );
-
-    // Judged with the receipt: repeating the same call reuses the page.
-    addExperiment(wikiRoot, "exp-ontime", {
-      verdict: "yes",
-      confidence: "high",
-      testerReceipt: { signed, publicKey },
-    });
-    formClaim("exp-ontime");
-    addExperiment(wikiRoot, "exp-ontime", {
-      verdict: "yes",
-      confidence: "high",
-      testerReceipt: { signed, publicKey },
-      updateOnExist: true,
-    });
-    const page = readWikiModel(wikiRoot).pages.experiment.get("exp-ontime");
-    assert.deepEqual({ ...(page?.data.tester_metrics as Record<string, number>) }, { score: 0.9 });
   } finally {
     cleanup(root);
   }

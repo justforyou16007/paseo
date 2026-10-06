@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import { sealWikiWorkerManifest } from "./research-wiki.js";
 import { requireRunContract, runOwnedPath, type RunRecord } from "./run-contract.js";
@@ -26,7 +27,7 @@ import {
   requireString,
 } from "./workflow-spec.js";
 
-export type ExposureStatus = "reserved" | "settled" | "released";
+export type TesterTrialStatus = "reserved" | "settled" | "released";
 export type TesterRunStatus =
   | "queued"
   | "running"
@@ -121,8 +122,7 @@ export interface TesterDefinition {
   case_manifest_sha256: string;
   seed_manifest_sha256: string;
   harness_sha256: string;
-  research_feedback: "fuzzy_advice_only";
-  max_exposures_per_task: number;
+  research_feedback: "detailed";
   comparison: "paired_matching_baseline_vs_finalist";
   gate: TesterGateDefinition;
   scoring: Array<{
@@ -133,9 +133,9 @@ export interface TesterDefinition {
   definition_sha256: string;
 }
 
-export interface ExposureRecord {
+export interface TesterTrialRecord {
   promotion_trial_id: string;
-  status: ExposureStatus;
+  status: TesterTrialStatus;
   outer_run_id: string;
   wave_id: string;
   tester_id: string;
@@ -153,19 +153,18 @@ export interface ExposureRecord {
   judge_binding: TesterJudgeBinding | null;
   tester_run_id: string | null;
   tester_started: boolean;
-  private_result_sha256: string | null;
+  test_result_sha256: string | null;
   feedback_event_id: string | null;
   reserved_at: string;
   settled_at: string | null;
   released_at: string | null;
 }
 
-export interface ExposureLedger {
+export interface TesterTrialLedger {
   schema_version: 1;
   task_id: string;
-  max_exposures_per_task: number;
   ledger_revision: string;
-  exposures: ExposureRecord[];
+  test_trials: TesterTrialRecord[];
 }
 
 export interface PromotionReservationInput {
@@ -188,7 +187,6 @@ export interface PromotionReservationInput {
   judge_binding?: TesterJudgeBinding | null;
   /** Kept only to reject stale callers that still try to provide an id alone. */
   judge_binding_id?: string | null;
-  max_exposures_per_task: number;
 }
 
 export interface TesterRunState {
@@ -218,7 +216,7 @@ export interface TesterRunState {
   model_assignment_sha256: string;
   status: TesterRunStatus;
   attempt: number;
-  private_result_sha256: string | null;
+  test_result_sha256: string | null;
   review_id: string | null;
   reviewer_worker_id: string | null;
   review_receipt_sha256: string | null;
@@ -227,7 +225,7 @@ export interface TesterRunState {
   updated_at: string;
 }
 
-export interface TesterPrivateResultBundle {
+export interface TesterResultBundle {
   schema_version: 1;
   tester_run_id: string;
   task_id: string;
@@ -269,8 +267,8 @@ function taskDirectory(projectRoot: string, taskId: string): string {
   );
 }
 
-export function exposureLedgerPath(projectRoot: string, taskId: string): string {
-  return path.join(taskDirectory(projectRoot, taskId), "tester-exposure-state.json");
+export function testerTrialLedgerPath(projectRoot: string, taskId: string): string {
+  return path.join(taskDirectory(projectRoot, taskId), "tester-trial-state.json");
 }
 
 function testerDirectory(projectRoot: string, testerId: string, version: string): string {
@@ -304,8 +302,8 @@ export function testerDashboardPath(projectRoot: string, testerRunId: string): s
   return runOwnedPath(projectRoot, testerRunId, "dashboard.json");
 }
 
-export function testerPrivateResultPath(projectRoot: string, testerRunId: string): string {
-  return runOwnedPath(projectRoot, testerRunId, "private-result.json");
+export function testerResultPath(projectRoot: string, testerRunId: string): string {
+  return runOwnedPath(projectRoot, testerRunId, "test-result.json");
 }
 
 function judgeBindingIdentity(binding: Omit<TesterJudgeBinding, "binding_id">): string {
@@ -511,7 +509,7 @@ function validateImprovement(value: unknown, location: string): TesterPrimaryMet
 /**
  * The tester's declared metric set. It is frozen into `definition_sha256`, so
  * this list is also the whitelist of numbers the tester is ever allowed to
- * publish: anything not named here stays private.
+ * publish as formal metrics; raw measurements remain readable.
  */
 function validatePrimaries(value: unknown): TesterPrimaryMetric[] {
   const location = "tester.gate.primaries";
@@ -647,7 +645,6 @@ export function validateTesterDefinition(value: unknown): TesterDefinition {
     "seed_manifest_sha256",
     "harness_sha256",
     "research_feedback",
-    "max_exposures_per_task",
     "comparison",
     "gate",
     "scoring",
@@ -658,12 +655,12 @@ export function validateTesterDefinition(value: unknown): TesterDefinition {
   if (
     value.schema_version !== 1 ||
     value.immutable !== true ||
-    value.research_feedback !== "fuzzy_advice_only" ||
+    value.research_feedback !== "detailed" ||
     value.comparison !== "paired_matching_baseline_vs_finalist"
   )
     failA1(
       "INVALID_TESTER_DEFINITION",
-      "tester must be immutable, paired, and fuzzy-feedback-only",
+      "tester must be immutable, paired, and configured for detailed feedback",
     );
   const gate = validateGate(value.gate);
   const definition: TesterDefinition = {
@@ -675,12 +672,8 @@ export function validateTesterDefinition(value: unknown): TesterDefinition {
     case_manifest_sha256: assertSha256(value.case_manifest_sha256, "tester.case_manifest_sha256"),
     seed_manifest_sha256: assertSha256(value.seed_manifest_sha256, "tester.seed_manifest_sha256"),
     harness_sha256: assertSha256(value.harness_sha256, "tester.harness_sha256"),
-    research_feedback: "fuzzy_advice_only",
-    max_exposures_per_task: requireInteger(
-      value.max_exposures_per_task,
-      "tester.max_exposures_per_task",
-      1,
-    ),
+    research_feedback: "detailed",
+
     comparison: "paired_matching_baseline_vs_finalist",
     gate,
     scoring: validateScoring(value.scoring),
@@ -697,7 +690,6 @@ export function validateTesterDefinition(value: unknown): TesterDefinition {
       seed_manifest_sha256: definition.seed_manifest_sha256,
       harness_sha256: definition.harness_sha256,
       research_feedback: definition.research_feedback,
-      max_exposures_per_task: definition.max_exposures_per_task,
       comparison: definition.comparison,
       gate: definition.gate,
       scoring: definition.scoring,
@@ -1012,10 +1004,10 @@ function sameJson(left: unknown, right: unknown): boolean {
   return canonicalJsonString(left) === canonicalJsonString(right);
 }
 
-function expectedPrivateIdentity(
+function expectedResultIdentity(
   state: TesterRunState,
   definition: TesterDefinition,
-): Omit<TesterPrivateResultBundle, "baseline" | "finalist" | "workflow_constraints_passed"> {
+): Omit<TesterResultBundle, "baseline" | "finalist" | "workflow_constraints_passed"> {
   return {
     schema_version: 1,
     tester_run_id: state.tester_run_id,
@@ -1076,11 +1068,11 @@ function normalizeCaseManifest(
     manifest.case_manifest_sha256 !== state.case_manifest_sha256 ||
     manifest.seed_manifest_sha256 !== state.seed_manifest_sha256
   )
-    failA1("IDENTITY_MISMATCH", "private result case manifest differs from the frozen tester");
+    failA1("IDENTITY_MISMATCH", "test result case manifest differs from the frozen tester");
   return manifest;
 }
 
-function requirePrivateIdentityField(
+function requireResultIdentityField(
   value: Record<string, unknown>,
   field: string,
   expected: string | number,
@@ -1088,7 +1080,7 @@ function requirePrivateIdentityField(
   location: string,
 ): void {
   if (value[field] === undefined) {
-    if (!allowOmitted) failA1("CORRUPT_PRIVATE_RESULT", `missing '${field}'`, location);
+    if (!allowOmitted) failA1("CORRUPT_TEST_RESULT", `missing '${field}'`, location);
     return;
   }
   const actual =
@@ -1096,16 +1088,16 @@ function requirePrivateIdentityField(
       ? requireInteger(value[field], `${location}.${field}`, 1)
       : assertIdentifier(value[field], `${location}.${field}`);
   if (actual !== expected)
-    failA1("IDENTITY_MISMATCH", `private result '${field}' differs from tester state`, location);
+    failA1("IDENTITY_MISMATCH", `test result '${field}' differs from tester state`, location);
 }
 
-function normalizePrivateResult(
+function normalizeTestResult(
   value: unknown,
   state: TesterRunState,
   definition: TesterDefinition,
   allowOmittedIdentity: boolean,
-): TesterPrivateResultBundle {
-  if (!isRecord(value)) failA1("CORRUPT_PRIVATE_RESULT", "private result must be an object");
+): TesterResultBundle {
+  if (!isRecord(value)) failA1("CORRUPT_TEST_RESULT", "test result must be an object");
   const allowed = [
     "schema_version",
     "tester_run_id",
@@ -1135,148 +1127,148 @@ function normalizePrivateResult(
     "finalist",
   ];
   for (const key of Object.keys(value))
-    if (!allowed.includes(key)) failA1("UNKNOWN_FIELD", `unknown private result field '${key}'`);
+    if (!allowed.includes(key)) failA1("UNKNOWN_FIELD", `unknown test result field '${key}'`);
   if (value.schema_version !== undefined && value.schema_version !== 1)
-    failA1("CORRUPT_PRIVATE_RESULT", "private result schema_version must be 1");
+    failA1("CORRUPT_TEST_RESULT", "test result schema_version must be 1");
   if (value.schema_version === undefined && !allowOmittedIdentity)
-    failA1("CORRUPT_PRIVATE_RESULT", "private result schema_version is required");
-  const identity = expectedPrivateIdentity(state, definition);
-  requirePrivateIdentityField(
+    failA1("CORRUPT_TEST_RESULT", "test result schema_version is required");
+  const identity = expectedResultIdentity(state, definition);
+  requireResultIdentityField(
     value,
     "tester_run_id",
     identity.tester_run_id,
     allowOmittedIdentity,
-    "private result",
+    "test result",
   );
-  requirePrivateIdentityField(
+  requireResultIdentityField(
     value,
     "task_id",
     identity.task_id,
     allowOmittedIdentity,
-    "private result",
+    "test result",
   );
-  requirePrivateIdentityField(
+  requireResultIdentityField(
     value,
     "outer_run_id",
     identity.outer_run_id,
     allowOmittedIdentity,
-    "private result",
+    "test result",
   );
-  requirePrivateIdentityField(
+  requireResultIdentityField(
     value,
     "outer_iteration",
     identity.outer_iteration,
     allowOmittedIdentity,
-    "private result",
+    "test result",
   );
-  requirePrivateIdentityField(
+  requireResultIdentityField(
     value,
     "wave_id",
     identity.wave_id,
     allowOmittedIdentity,
-    "private result",
+    "test result",
   );
-  requirePrivateIdentityField(
+  requireResultIdentityField(
     value,
     "generation",
     identity.generation,
     allowOmittedIdentity,
-    "private result",
+    "test result",
   );
-  requirePrivateIdentityField(
+  requireResultIdentityField(
     value,
     "promotion_trial_id",
     identity.promotion_trial_id,
     allowOmittedIdentity,
-    "private result",
+    "test result",
   );
-  requirePrivateIdentityField(
+  requireResultIdentityField(
     value,
     "task_setup_revision",
     identity.task_setup_revision,
     allowOmittedIdentity,
-    "private result",
+    "test result",
   );
-  requirePrivateIdentityField(
+  requireResultIdentityField(
     value,
     "tester_id",
     identity.tester_id,
     allowOmittedIdentity,
-    "private result",
+    "test result",
   );
-  requirePrivateIdentityField(
+  requireResultIdentityField(
     value,
     "tester_version",
     identity.tester_version,
     allowOmittedIdentity,
-    "private result",
+    "test result",
   );
-  requirePrivateIdentityField(
+  requireResultIdentityField(
     value,
     "tester_definition_sha256",
     identity.tester_definition_sha256,
     allowOmittedIdentity,
-    "private result",
+    "test result",
   );
   if (value.harness_sha256 === undefined)
-    failA1("CORRUPT_PRIVATE_RESULT", "private result harness_sha256 is required");
-  const harnessSha256 = assertSha256(value.harness_sha256, "private result.harness_sha256");
+    failA1("CORRUPT_TEST_RESULT", "test result harness_sha256 is required");
+  const harnessSha256 = assertSha256(value.harness_sha256, "test result.harness_sha256");
   if (harnessSha256 !== state.harness_sha256 || harnessSha256 !== definition.harness_sha256)
-    failA1("HARNESS_MISMATCH", "private result harness does not match the frozen tester");
-  requirePrivateIdentityField(
+    failA1("HARNESS_MISMATCH", "test result harness does not match the frozen tester");
+  requireResultIdentityField(
     value,
     "case_manifest_id",
     identity.case_manifest_id,
     allowOmittedIdentity,
-    "private result",
+    "test result",
   );
-  requirePrivateIdentityField(
+  requireResultIdentityField(
     value,
     "case_manifest_sha256",
     identity.case_manifest_sha256,
     allowOmittedIdentity,
-    "private result",
+    "test result",
   );
-  requirePrivateIdentityField(
+  requireResultIdentityField(
     value,
     "seed_manifest_sha256",
     identity.seed_manifest_sha256,
     allowOmittedIdentity,
-    "private result",
+    "test result",
   );
-  requirePrivateIdentityField(
+  requireResultIdentityField(
     value,
     "input_snapshot_sha256",
     identity.input_snapshot_sha256,
     allowOmittedIdentity,
-    "private result",
+    "test result",
   );
-  requirePrivateIdentityField(
+  requireResultIdentityField(
     value,
     "input_distribution_sha256",
     identity.input_distribution_sha256,
     allowOmittedIdentity,
-    "private result",
+    "test result",
   );
-  requirePrivateIdentityField(
+  requireResultIdentityField(
     value,
     "model_assignment_sha256",
     identity.model_assignment_sha256,
     allowOmittedIdentity,
-    "private result",
+    "test result",
   );
   if (value.wave_kind !== undefined && value.wave_kind !== state.wave_kind)
-    failA1("IDENTITY_MISMATCH", "private result wave kind differs from tester state");
+    failA1("IDENTITY_MISMATCH", "test result wave kind differs from tester state");
   if (value.wave_kind === undefined && !allowOmittedIdentity)
-    failA1("CORRUPT_PRIVATE_RESULT", "private result wave_kind is required");
+    failA1("CORRUPT_TEST_RESULT", "test result wave_kind is required");
   const testerDefinition =
     value.tester_definition === undefined
       ? definition
       : validateTesterDefinition(value.tester_definition);
   if (value.tester_definition === undefined && !allowOmittedIdentity)
-    failA1("CORRUPT_PRIVATE_RESULT", "private result tester_definition is required");
+    failA1("CORRUPT_TEST_RESULT", "test result tester_definition is required");
   if (testerDefinition.definition_sha256 !== state.tester_definition_sha256)
-    failA1("IDENTITY_MISMATCH", "private result tester definition differs from tester state");
+    failA1("IDENTITY_MISMATCH", "test result tester definition differs from tester state");
   const caseManifest =
     value.case_manifest === undefined
       ? {
@@ -1284,37 +1276,34 @@ function normalizePrivateResult(
           case_manifest_sha256: state.case_manifest_sha256,
           seed_manifest_sha256: state.seed_manifest_sha256,
         }
-      : normalizeCaseManifest(value.case_manifest, state, "private result.case_manifest");
+      : normalizeCaseManifest(value.case_manifest, state, "test result.case_manifest");
   if (value.case_manifest === undefined && !allowOmittedIdentity)
-    failA1("CORRUPT_PRIVATE_RESULT", "private result case_manifest is required");
+    failA1("CORRUPT_TEST_RESULT", "test result case_manifest is required");
   if (caseManifest.case_manifest_id !== definition.case_manifest_id)
-    failA1(
-      "IDENTITY_MISMATCH",
-      "private result case manifest id differs from the tester definition",
-    );
+    failA1("IDENTITY_MISMATCH", "test result case manifest id differs from the tester definition");
   const rawJudgeBinding =
     value.judge_binding === undefined ? state.judge_binding : value.judge_binding;
   if (value.judge_binding === undefined && !allowOmittedIdentity)
-    failA1("CORRUPT_PRIVATE_RESULT", "private result judge_binding is required");
+    failA1("CORRUPT_TEST_RESULT", "test result judge_binding is required");
   const binding = resolveJudgeBinding(
     definition,
     rawJudgeBinding,
     state.task_setup_revision,
     state.matching_baseline_artifact_sha256,
     state.finalist_artifact_sha256,
-    "private result.judge_binding",
+    "test result.judge_binding",
   );
   if (!sameJson(binding, state.judge_binding))
-    failA1("IDENTITY_MISMATCH", "private result judge binding differs from tester state");
+    failA1("IDENTITY_MISMATCH", "test result judge binding differs from tester state");
   if (
     value.workflow_constraints_passed !== undefined &&
     typeof value.workflow_constraints_passed !== "boolean"
   )
     failA1("INVALID_TESTER_RESULT", "workflow_constraints_passed must be boolean");
   if (value.workflow_constraints_passed === undefined)
-    failA1("INVALID_TESTER_RESULT", "private result must include workflow constraints result");
-  const baseline = normalizeTesterArmResult(value.baseline, "private result.baseline", definition);
-  const finalist = normalizeTesterArmResult(value.finalist, "private result.finalist", definition);
+    failA1("INVALID_TESTER_RESULT", "test result must include workflow constraints result");
+  const baseline = normalizeTesterArmResult(value.baseline, "test result.baseline", definition);
+  const finalist = normalizeTesterArmResult(value.finalist, "test result.finalist", definition);
   assertTesterArmsComparable(baseline, finalist);
   const expectedBindingId = judgeBindingId(binding);
   for (const arm of [baseline, finalist]) {
@@ -1328,7 +1317,7 @@ function normalizePrivateResult(
       arm.judge_binding_id !== expectedBindingId ||
       arm.model_assignment_sha256 !== state.model_assignment_sha256
     )
-      failA1("TESTER_ARMS_MISMATCH", "private result arm does not match frozen tester state");
+      failA1("TESTER_ARMS_MISMATCH", "test result arm does not match frozen tester state");
   }
   if (baseline.artifact_sha256 !== state.matching_baseline_artifact_sha256)
     failA1("TESTER_ARMS_MISMATCH", "matching baseline result is not the reserved artifact");
@@ -1358,25 +1347,18 @@ function normalizePrivateResult(
   };
 }
 
-export function testerPrivateResultSha256(value: TesterPrivateResultBundle): string {
-  return canonicalJsonSha256(value, undefined, { schemaVersion: "tester-private-result-v1" });
+export function testerResultSha256(value: TesterResultBundle): string {
+  return canonicalJsonSha256(value, undefined, { schemaVersion: "tester-test-result-v1" });
 }
 
 export function saveTesterDefinition(projectRoot: string, value: unknown): TesterDefinition {
   const definition = validateTesterDefinition(value);
   const filePath = testerDefinitionPath(projectRoot, definition.tester_id, definition.version);
-  const privateCaseManifestPath = path.join(
-    path.dirname(filePath),
-    "private-case-manifest.ref.json",
-  );
+  const caseManifestPath = path.join(path.dirname(filePath), "case-manifest.ref.json");
 
-  function validatePrivateCaseManifestRef(value: unknown): void {
+  function validateCaseManifestRef(value: unknown): void {
     if (!isRecord(value))
-      failA1(
-        "IMMUTABLE_CONFLICT",
-        "private case manifest reference must be an object",
-        privateCaseManifestPath,
-      );
+      failA1("IMMUTABLE_CONFLICT", "case manifest reference must be an object", caseManifestPath);
     const allowed = [
       "schema_version",
       "case_manifest_id",
@@ -1387,8 +1369,8 @@ export function saveTesterDefinition(projectRoot: string, value: unknown): Teste
       if (!allowed.includes(key))
         failA1(
           "IMMUTABLE_CONFLICT",
-          `unknown private case manifest reference field '${key}'`,
-          privateCaseManifestPath,
+          `unknown case manifest reference field '${key}'`,
+          caseManifestPath,
         );
     if (
       value.schema_version !== 1 ||
@@ -1398,12 +1380,12 @@ export function saveTesterDefinition(projectRoot: string, value: unknown): Teste
     )
       failA1(
         "IMMUTABLE_CONFLICT",
-        "private case manifest reference does not match the frozen tester definition",
-        privateCaseManifestPath,
+        "case manifest reference does not match the frozen tester definition",
+        caseManifestPath,
       );
-    assertIdentifier(value.case_manifest_id, `${privateCaseManifestPath}.case_manifest_id`);
-    assertSha256(value.case_manifest_sha256, `${privateCaseManifestPath}.case_manifest_sha256`);
-    assertSha256(value.seed_manifest_sha256, `${privateCaseManifestPath}.seed_manifest_sha256`);
+    assertIdentifier(value.case_manifest_id, `${caseManifestPath}.case_manifest_id`);
+    assertSha256(value.case_manifest_sha256, `${caseManifestPath}.case_manifest_sha256`);
+    assertSha256(value.seed_manifest_sha256, `${caseManifestPath}.seed_manifest_sha256`);
   }
 
   return withStateFileLock(filePath, () => {
@@ -1411,16 +1393,15 @@ export function saveTesterDefinition(projectRoot: string, value: unknown): Teste
       const existing = validateTesterDefinition(readStateFile(filePath));
       if (existing.definition_sha256 !== definition.definition_sha256)
         failA1("IMMUTABLE_CONFLICT", `tester version '${definition.version}' cannot be changed`);
-    } else if (fs.existsSync(privateCaseManifestPath)) {
+    } else if (fs.existsSync(caseManifestPath)) {
       // A reference without its definition cannot be silently adopted. It may
       // belong to a different immutable version that was only partly written.
-      validatePrivateCaseManifestRef(readStateFile(privateCaseManifestPath));
+      validateCaseManifestRef(readStateFile(caseManifestPath));
     }
     if (!fs.existsSync(filePath)) writeStateJsonAtomic(filePath, definition);
-    if (fs.existsSync(privateCaseManifestPath))
-      validatePrivateCaseManifestRef(readStateFile(privateCaseManifestPath));
+    if (fs.existsSync(caseManifestPath)) validateCaseManifestRef(readStateFile(caseManifestPath));
     else
-      writeStateJsonAtomic(privateCaseManifestPath, {
+      writeStateJsonAtomic(caseManifestPath, {
         schema_version: 1,
         case_manifest_id: definition.case_manifest_id,
         case_manifest_sha256: definition.case_manifest_sha256,
@@ -1430,8 +1411,9 @@ export function saveTesterDefinition(projectRoot: string, value: unknown): Teste
   });
 }
 
-function validateExposure(value: unknown, location: string): ExposureRecord {
-  if (!isRecord(value)) failA1("CORRUPT_EXPOSURE_LEDGER", "exposure must be an object", location);
+function validateTesterTrial(value: unknown, location: string): TesterTrialRecord {
+  if (!isRecord(value))
+    failA1("CORRUPT_TESTER_TRIAL_LEDGER", "testTrial must be an object", location);
   const allowed = [
     "promotion_trial_id",
     "status",
@@ -1452,7 +1434,7 @@ function validateExposure(value: unknown, location: string): ExposureRecord {
     "judge_binding",
     "tester_run_id",
     "tester_started",
-    "private_result_sha256",
+    "test_result_sha256",
     "feedback_event_id",
     "reserved_at",
     "settled_at",
@@ -1460,10 +1442,10 @@ function validateExposure(value: unknown, location: string): ExposureRecord {
   ];
   for (const key of Object.keys(value))
     if (!allowed.includes(key))
-      failA1("UNKNOWN_FIELD", `unknown exposure field '${key}'`, location);
+      failA1("UNKNOWN_FIELD", `unknown testTrial field '${key}'`, location);
   if (value.status !== "reserved" && value.status !== "settled" && value.status !== "released")
-    failA1("CORRUPT_EXPOSURE_LEDGER", "invalid exposure status", location);
-  const record: ExposureRecord = {
+    failA1("CORRUPT_TESTER_TRIAL_LEDGER", "invalid testTrial status", location);
+  const record: TesterTrialRecord = {
     promotion_trial_id: assertIdentifier(
       value.promotion_trial_id,
       `${location}.promotion_trial_id`,
@@ -1519,10 +1501,10 @@ function validateExposure(value: unknown, location: string): ExposureRecord {
         ? null
         : assertIdentifier(value.tester_run_id, `${location}.tester_run_id`),
     tester_started: requireBoolean(value.tester_started, `${location}.tester_started`),
-    private_result_sha256:
-      value.private_result_sha256 === null
+    test_result_sha256:
+      value.test_result_sha256 === null
         ? null
-        : assertSha256(value.private_result_sha256, `${location}.private_result_sha256`),
+        : assertSha256(value.test_result_sha256, `${location}.test_result_sha256`),
     feedback_event_id:
       value.feedback_event_id === null
         ? null
@@ -1537,32 +1519,32 @@ function validateExposure(value: unknown, location: string): ExposureRecord {
   };
   if (record.status === "reserved" && (record.settled_at !== null || record.released_at !== null))
     failA1(
-      "CORRUPT_EXPOSURE_LEDGER",
-      "reserved exposure cannot have a terminal timestamp",
+      "CORRUPT_TESTER_TRIAL_LEDGER",
+      "reserved testTrial cannot have a terminal timestamp",
       location,
     );
   if (
     record.status === "reserved" &&
     (record.tester_started ||
-      record.private_result_sha256 !== null ||
+      record.test_result_sha256 !== null ||
       record.feedback_event_id !== null)
   )
     failA1(
-      "CORRUPT_EXPOSURE_LEDGER",
-      "reserved exposure cannot contain observed tester facts",
+      "CORRUPT_TESTER_TRIAL_LEDGER",
+      "reserved testTrial cannot contain observed tester facts",
       location,
     );
   if (record.status === "settled" && (record.settled_at === null || record.released_at !== null))
-    failA1("CORRUPT_EXPOSURE_LEDGER", "settled exposure timestamps are invalid", location);
+    failA1("CORRUPT_TESTER_TRIAL_LEDGER", "settled testTrial timestamps are invalid", location);
   if (
     record.status === "settled" &&
     !record.tester_started &&
-    record.private_result_sha256 === null &&
+    record.test_result_sha256 === null &&
     record.feedback_event_id === null
   )
     failA1(
-      "CORRUPT_EXPOSURE_LEDGER",
-      "settled exposure must show a started tester, private result, or feedback event",
+      "CORRUPT_TESTER_TRIAL_LEDGER",
+      "settled testTrial must show a started tester, test result, or feedback event",
       location,
     );
   if (
@@ -1570,99 +1552,87 @@ function validateExposure(value: unknown, location: string): ExposureRecord {
     (record.released_at === null ||
       record.settled_at !== null ||
       record.tester_started ||
-      record.private_result_sha256 !== null ||
+      record.test_result_sha256 !== null ||
       record.feedback_event_id !== null)
   )
-    failA1("CORRUPT_EXPOSURE_LEDGER", "released exposure must be untouched", location);
+    failA1("CORRUPT_TESTER_TRIAL_LEDGER", "released testTrial must be untouched", location);
   if (record.judge_binding_id !== judgeBindingId(record.judge_binding))
     failA1(
-      "CORRUPT_EXPOSURE_LEDGER",
+      "CORRUPT_TESTER_TRIAL_LEDGER",
       "judge binding id does not match its frozen binding",
       location,
     );
   return record;
 }
 
-function emptyLedger(taskId: string, maxExposures: number): ExposureLedger {
+function emptyLedger(taskId: string): TesterTrialLedger {
   return {
     schema_version: 1,
     task_id: taskId,
-    max_exposures_per_task: maxExposures,
     ledger_revision: "ledger-v1",
-    exposures: [],
+    test_trials: [],
   };
 }
 
-function loadLedger(projectRoot: string, taskId: string, maxExposures: number): ExposureLedger {
-  const filePath = exposureLedgerPath(projectRoot, taskId);
-  if (!fs.existsSync(filePath)) return emptyLedger(taskId, maxExposures);
+function loadLedger(projectRoot: string, taskId: string): TesterTrialLedger {
+  const filePath = testerTrialLedgerPath(projectRoot, taskId);
+  if (!fs.existsSync(filePath)) return emptyLedger(taskId);
   const parsed = readStateFile(filePath);
   if (!isRecord(parsed) || parsed.schema_version !== 1 || parsed.task_id !== taskId)
-    failA1("CORRUPT_EXPOSURE_LEDGER", "exposure ledger identity is invalid", filePath);
-  const ledgerMax = requireInteger(
-    parsed.max_exposures_per_task,
-    `${filePath}.max_exposures_per_task`,
-    1,
+    failA1("CORRUPT_TESTER_TRIAL_LEDGER", "testTrial ledger identity is invalid", filePath);
+  if (!Array.isArray(parsed.test_trials))
+    failA1("CORRUPT_TESTER_TRIAL_LEDGER", "test_trials must be an array", filePath);
+  const test_trials = parsed.test_trials.map((testTrial, index) =>
+    validateTesterTrial(testTrial, `${filePath}.test_trials[${index}]`),
   );
-  if (ledgerMax !== maxExposures)
-    failA1("EXPOSURE_POLICY_CONFLICT", "task exposure limit cannot change inside one ledger");
-  if (!Array.isArray(parsed.exposures))
-    failA1("CORRUPT_EXPOSURE_LEDGER", "exposures must be an array", filePath);
-  const exposures = parsed.exposures.map((exposure, index) =>
-    validateExposure(exposure, `${filePath}.exposures[${index}]`),
-  );
-  if (new Set(exposures.map((exposure) => exposure.promotion_trial_id)).size !== exposures.length)
-    failA1("CORRUPT_EXPOSURE_LEDGER", "promotion trial ids must be unique", filePath);
-  const boundRuns = exposures
-    .map((exposure) => exposure.tester_run_id)
+  if (
+    new Set(test_trials.map((testTrial) => testTrial.promotion_trial_id)).size !==
+    test_trials.length
+  )
+    failA1("CORRUPT_TESTER_TRIAL_LEDGER", "promotion trial ids must be unique", filePath);
+  const boundRuns = test_trials
+    .map((testTrial) => testTrial.tester_run_id)
     .filter((runId): runId is string => runId !== null);
   if (new Set(boundRuns).size !== boundRuns.length)
-    failA1("CORRUPT_EXPOSURE_LEDGER", "tester run ids must be unique", filePath);
+    failA1("CORRUPT_TESTER_TRIAL_LEDGER", "tester run ids must be unique", filePath);
   return {
     schema_version: 1,
     task_id: taskId,
-    max_exposures_per_task: ledgerMax,
     ledger_revision: assertIdentifier(parsed.ledger_revision, `${filePath}.ledger_revision`),
-    exposures,
+    test_trials,
   };
 }
 
-function writeLedger(filePath: string, ledger: ExposureLedger): void {
+function writeLedger(filePath: string, ledger: TesterTrialLedger): void {
   writeStateJsonAtomic(filePath, ledger);
 }
 
-function exposureCount(ledger: ExposureLedger): number {
-  return ledger.exposures.filter(
-    (exposure) => exposure.status === "reserved" || exposure.status === "settled",
-  ).length;
-}
-
 function bindTesterRun(
-  exposure: ExposureRecord,
+  testTrial: TesterTrialRecord,
   testerRunId: string,
   inputDistributionSha256: string,
   binding: TesterJudgeBinding | null,
 ): void {
-  if (exposure.status === "released")
-    failA1("EXPOSURE_TERMINAL", "a released exposure cannot bind a tester run");
-  if (exposure.tester_run_id !== null && exposure.tester_run_id !== testerRunId)
+  if (testTrial.status === "released")
+    failA1("TESTER_TRIAL_TERMINAL", "a released testTrial cannot bind a tester run");
+  if (testTrial.tester_run_id !== null && testTrial.tester_run_id !== testerRunId)
     failA1("TESTER_ONCE_PER_WAVE", "a promotion trial can have only one tester run");
-  if (exposure.input_distribution_sha256 !== inputDistributionSha256)
+  if (testTrial.input_distribution_sha256 !== inputDistributionSha256)
     failA1("IDENTITY_MISMATCH", "tester input distribution differs from its reservation");
-  if (exposure.judge_binding_id !== judgeBindingId(binding))
+  if (testTrial.judge_binding_id !== judgeBindingId(binding))
     failA1("IDENTITY_MISMATCH", "tester judge binding differs from its reservation");
-  if (!sameJson(exposure.judge_binding, binding))
+  if (!sameJson(testTrial.judge_binding, binding))
     failA1("IDENTITY_MISMATCH", "tester judge binding facts differ from its reservation");
-  exposure.tester_run_id = testerRunId;
+  testTrial.tester_run_id = testerRunId;
 }
 
-function markExposureObserved(exposure: ExposureRecord): void {
-  if (exposure.status === "released")
-    failA1("EXPOSURE_TERMINAL", "released exposure cannot receive tester facts");
-  exposure.tester_started = true;
-  if (exposure.status === "reserved") {
-    exposure.status = "settled";
-    exposure.settled_at ??= new Date().toISOString();
+function markTrialObserved(testTrial: TesterTrialRecord): void {
+  if (testTrial.status === "released")
+    failA1("TESTER_TRIAL_TERMINAL", "released testTrial cannot receive tester facts");
+  testTrial.tester_started = true;
+  if (testTrial.status === "reserved") {
+    testTrial.status = "settled";
+    testTrial.settled_at ??= new Date().toISOString();
   }
 }
 
@@ -1700,25 +1670,15 @@ export function readTesterFinalistStatus(
   failA1("TESTER_FINALIST_MISMATCH", "tester artifact must belong to the selected finalist");
 }
 
-export function reservePromotionTrial(input: PromotionReservationInput): ExposureRecord {
-  // Exposures are counted against one task-wide limit, so only the run that
-  // owns the task may spend them. A dispatched run has a parent, is judged by
-  // the acceptance that parent wrote for it, and reports back through its
-  // result package; letting it reserve here would spend the task's remaining
-  // exposures on a question its parent never asked.
-  if (requireRunContract(input.project_root, input.outer_run_id).parent_run_id !== null)
-    failA1(
-      "CHILD_TESTER_FORBIDDEN",
-      "a dispatched run is judged by its parent's acceptance and cannot reserve tester exposure",
-    );
+export function reservePromotionTrial(input: PromotionReservationInput): TesterTrialRecord {
   const status = readTesterFinalistStatus(
     input.project_root,
     input.outer_run_id,
     input.wave_id,
     input.finalist_artifact_sha256,
   );
-  if (!resultStatusPolicy(status).consumes_tester_exposure)
-    failA1("TESTER_NOT_ALLOWED", "non-executable results cannot reserve tester exposure");
+  if (!resultStatusPolicy(status).requires_tester)
+    failA1("TESTER_NOT_ALLOWED", "non-executable results cannot reserve tester testTrial");
   const frozen = readLegacyFrozenPolicy(input.project_root, input.outer_run_id);
   if (
     frozen.task_id !== input.task_id ||
@@ -1749,8 +1709,6 @@ export function reservePromotionTrial(input: PromotionReservationInput): Exposur
   );
   if (input.matching_baseline_artifact_sha256 === input.finalist_artifact_sha256)
     failA1("MATCHING_BASELINE_REQUIRED", "matching baseline and finalist artifacts must differ");
-  if (!Number.isInteger(input.max_exposures_per_task) || input.max_exposures_per_task < 1)
-    failA1("INVALID_TESTER_DEFINITION", "max exposure must be positive");
   const definitionPath = testerDefinitionPath(input.project_root, testerId, testerVersion);
   if (!fs.existsSync(definitionPath))
     failA1("TESTER_DEFINITION_NOT_FOUND", `tester definition does not exist at ${definitionPath}`);
@@ -1761,8 +1719,7 @@ export function reservePromotionTrial(input: PromotionReservationInput): Exposur
     definition.definition_sha256 !== input.tester_definition_sha256 ||
     definition.harness_sha256 !== input.harness_sha256 ||
     definition.case_manifest_sha256 !== input.case_manifest_sha256 ||
-    definition.seed_manifest_sha256 !== input.seed_manifest_sha256 ||
-    definition.max_exposures_per_task !== input.max_exposures_per_task
+    definition.seed_manifest_sha256 !== input.seed_manifest_sha256
   )
     failA1(
       "IDENTITY_MISMATCH",
@@ -1791,10 +1748,12 @@ export function reservePromotionTrial(input: PromotionReservationInput): Exposur
     input.judge_binding_id !== judgeBindingId(binding)
   )
     failA1("IDENTITY_MISMATCH", "judge_binding_id does not match the frozen judge binding");
-  const filePath = exposureLedgerPath(input.project_root, taskId);
+  const filePath = testerTrialLedgerPath(input.project_root, taskId);
   return withStateFileLock(filePath, () => {
-    const ledger = loadLedger(input.project_root, taskId, input.max_exposures_per_task);
-    const existing = ledger.exposures.find((exposure) => exposure.promotion_trial_id === trialId);
+    const ledger = loadLedger(input.project_root, taskId);
+    const existing = ledger.test_trials.find(
+      (testTrial) => testTrial.promotion_trial_id === trialId,
+    );
     if (existing) {
       const same =
         existing.outer_run_id === outerRunId &&
@@ -1813,19 +1772,11 @@ export function reservePromotionTrial(input: PromotionReservationInput): Exposur
         existing.judge_binding_id === judgeBindingId(binding) &&
         sameJson(existing.judge_binding, binding);
       if (!same)
-        failA1("EXPOSURE_CONFLICT", `promotion trial '${trialId}' has different semantics`);
+        failA1("TESTER_TRIAL_CONFLICT", `promotion trial '${trialId}' has different semantics`);
       return existing;
     }
-    if (
-      ledger.exposures.some(
-        (exposure) => exposure.outer_run_id === outerRunId && exposure.wave_id === waveId,
-      )
-    )
-      failA1("TESTER_ONCE_PER_WAVE", "one wave may reserve only one tester trial");
-    if (exposureCount(ledger) >= ledger.max_exposures_per_task)
-      failA1("TESTER_EXPOSURE_EXHAUSTED", "task exposure limit is exhausted");
     const now = new Date().toISOString();
-    const exposure: ExposureRecord = {
+    const testTrial: TesterTrialRecord = {
       promotion_trial_id: trialId,
       status: "reserved",
       outer_run_id: outerRunId,
@@ -1845,33 +1796,35 @@ export function reservePromotionTrial(input: PromotionReservationInput): Exposur
       judge_binding: binding,
       tester_run_id: null,
       tester_started: false,
-      private_result_sha256: null,
+      test_result_sha256: null,
       feedback_event_id: null,
       reserved_at: now,
       settled_at: null,
       released_at: null,
     };
-    ledger.exposures.push(exposure);
+    ledger.test_trials.push(testTrial);
     writeLedger(filePath, ledger);
-    return exposure;
+    return testTrial;
   });
 }
 
-function updateExposure(
+function updateTesterTrial(
   projectRoot: string,
   taskId: string,
   trialId: string,
-  update: (exposure: ExposureRecord, ledger: ExposureLedger) => void,
-  maxExposures: number,
-): ExposureRecord {
-  const filePath = exposureLedgerPath(projectRoot, taskId);
+  update: (testTrial: TesterTrialRecord, ledger: TesterTrialLedger) => void,
+): TesterTrialRecord {
+  const filePath = testerTrialLedgerPath(projectRoot, taskId);
   return withStateFileLock(filePath, () => {
-    const ledger = loadLedger(projectRoot, taskId, maxExposures);
-    const exposure = ledger.exposures.find((candidate) => candidate.promotion_trial_id === trialId);
-    if (!exposure) failA1("EXPOSURE_NOT_FOUND", `promotion trial '${trialId}' is not reserved`);
-    update(exposure, ledger);
+    const ledger = loadLedger(projectRoot, taskId);
+    const testTrial = ledger.test_trials.find(
+      (candidate) => candidate.promotion_trial_id === trialId,
+    );
+    if (!testTrial)
+      failA1("TESTER_TRIAL_NOT_FOUND", `promotion trial '${trialId}' is not reserved`);
+    update(testTrial, ledger);
     writeLedger(filePath, ledger);
-    return exposure;
+    return testTrial;
   });
 }
 
@@ -1879,51 +1832,37 @@ export function markTesterStarted(
   projectRoot: string,
   taskId: string,
   trialId: string,
-  maxExposures: number,
-): ExposureRecord {
-  return updateExposure(
-    projectRoot,
-    taskId,
-    trialId,
-    (exposure) => {
-      if (exposure.status === "released")
-        failA1("EXPOSURE_TERMINAL", "tester cannot start after exposure is released");
-      if (
-        exposure.status === "settled" &&
-        !exposure.tester_started &&
-        exposure.private_result_sha256 === null &&
-        exposure.feedback_event_id === null
-      )
-        failA1("EXPOSURE_TERMINAL", "tester cannot start an untouched settled exposure");
-      markExposureObserved(exposure);
-    },
-    maxExposures,
-  );
+): TesterTrialRecord {
+  return updateTesterTrial(projectRoot, taskId, trialId, (testTrial) => {
+    if (testTrial.status === "released")
+      failA1("TESTER_TRIAL_TERMINAL", "tester cannot start after testTrial is released");
+    if (
+      testTrial.status === "settled" &&
+      !testTrial.tester_started &&
+      testTrial.test_result_sha256 === null &&
+      testTrial.feedback_event_id === null
+    )
+      failA1("TESTER_TRIAL_TERMINAL", "tester cannot start an untouched settled testTrial");
+    markTrialObserved(testTrial);
+  });
 }
 
-export function sealPrivateTesterResult(
+export function sealTesterResult(
   projectRoot: string,
   taskId: string,
   trialId: string,
-  privateResultSha256: string,
-  maxExposures: number,
-): ExposureRecord {
-  const resultHash = assertSha256(privateResultSha256, "private_result_sha256");
-  return updateExposure(
-    projectRoot,
-    taskId,
-    trialId,
-    (exposure) => {
-      if (exposure.status === "released")
-        failA1("EXPOSURE_TERMINAL", "released exposure cannot receive a private result");
-      if (!exposure.tester_started)
-        failA1("EXPOSURE_STATE_ORDER", "private result requires a started tester");
-      if (exposure.private_result_sha256 !== null && exposure.private_result_sha256 !== resultHash)
-        failA1("EXPOSURE_CONFLICT", "private result for a trial cannot change");
-      exposure.private_result_sha256 = resultHash;
-    },
-    maxExposures,
-  );
+  testResultSha256: string,
+): TesterTrialRecord {
+  const resultHash = assertSha256(testResultSha256, "test_result_sha256");
+  return updateTesterTrial(projectRoot, taskId, trialId, (testTrial) => {
+    if (testTrial.status === "released")
+      failA1("TESTER_TRIAL_TERMINAL", "released testTrial cannot receive a test result");
+    if (!testTrial.tester_started)
+      failA1("TESTER_TRIAL_STATE_ORDER", "test result requires a started tester");
+    if (testTrial.test_result_sha256 !== null && testTrial.test_result_sha256 !== resultHash)
+      failA1("TESTER_TRIAL_CONFLICT", "test result for a trial cannot change");
+    testTrial.test_result_sha256 = resultHash;
+  });
 }
 
 export function recordTesterFeedbackEvent(
@@ -1931,101 +1870,79 @@ export function recordTesterFeedbackEvent(
   taskId: string,
   trialId: string,
   feedbackEventId: string,
-  maxExposures: number,
-): ExposureRecord {
+): TesterTrialRecord {
   const eventId = assertIdentifier(feedbackEventId, "feedback_event_id");
-  return updateExposure(
-    projectRoot,
-    taskId,
-    trialId,
-    (exposure) => {
-      if (exposure.status === "released")
-        failA1("EXPOSURE_TERMINAL", "released exposure cannot receive feedback");
-      if (exposure.feedback_event_id !== null && exposure.feedback_event_id !== eventId)
-        failA1("EXPOSURE_CONFLICT", "feedback event for a trial cannot change");
-      if (!exposure.tester_started && exposure.private_result_sha256 === null)
-        failA1("EXPOSURE_STATE_ORDER", "feedback requires an observed tester trial");
-      exposure.feedback_event_id = eventId;
-    },
-    maxExposures,
-  );
+  return updateTesterTrial(projectRoot, taskId, trialId, (testTrial) => {
+    if (testTrial.status === "released")
+      failA1("TESTER_TRIAL_TERMINAL", "released testTrial cannot receive feedback");
+    if (testTrial.feedback_event_id !== null && testTrial.feedback_event_id !== eventId)
+      failA1("TESTER_TRIAL_CONFLICT", "feedback event for a trial cannot change");
+    if (!testTrial.tester_started && testTrial.test_result_sha256 === null)
+      failA1("TESTER_TRIAL_STATE_ORDER", "feedback requires an observed tester trial");
+    testTrial.feedback_event_id = eventId;
+  });
 }
 
-export function settleExposure(
+export function settleTesterTrial(
   projectRoot: string,
   taskId: string,
   trialId: string,
-  maxExposures: number,
-): ExposureRecord {
-  return updateExposure(
-    projectRoot,
-    taskId,
-    trialId,
-    (exposure) => {
-      if (exposure.status === "settled") return;
-      if (exposure.status === "released")
-        failA1("EXPOSURE_TERMINAL", "released exposure cannot be settled");
-      if (
-        !exposure.tester_started &&
-        exposure.private_result_sha256 === null &&
-        exposure.feedback_event_id === null
-      )
-        failA1(
-          "EXPOSURE_STATE_ORDER",
-          "an untouched reservation cannot be settled without a tester result or feedback event",
-        );
-      exposure.status = "settled";
-      exposure.settled_at = new Date().toISOString();
-    },
-    maxExposures,
-  );
+): TesterTrialRecord {
+  return updateTesterTrial(projectRoot, taskId, trialId, (testTrial) => {
+    if (testTrial.status === "settled") return;
+    if (testTrial.status === "released")
+      failA1("TESTER_TRIAL_TERMINAL", "released testTrial cannot be settled");
+    if (
+      !testTrial.tester_started &&
+      testTrial.test_result_sha256 === null &&
+      testTrial.feedback_event_id === null
+    )
+      failA1(
+        "TESTER_TRIAL_STATE_ORDER",
+        "an untouched reservation cannot be settled without a tester result or feedback event",
+      );
+    testTrial.status = "settled";
+    testTrial.settled_at = new Date().toISOString();
+  });
 }
 
-export function releaseExposure(
+export function releaseTesterTrial(
   projectRoot: string,
   taskId: string,
   trialId: string,
-  maxExposures: number,
   parentWaveStatus: "failed_irrecoverable" | "abandoned",
-): ExposureRecord {
-  return updateExposure(
-    projectRoot,
-    taskId,
-    trialId,
-    (exposure) => {
-      if (exposure.status === "released") return;
-      if (exposure.status === "settled")
-        failA1("EXPOSURE_TERMINAL", "settled exposure cannot be released");
-      if (
-        exposure.tester_started ||
-        exposure.private_result_sha256 !== null ||
-        exposure.feedback_event_id !== null
-      )
-        failA1(
-          "EXPOSURE_RELEASE_FORBIDDEN",
-          "started or observed tester trials must settle, never release",
-        );
-      if (parentWaveStatus !== "failed_irrecoverable" && parentWaveStatus !== "abandoned")
-        failA1(
-          "EXPOSURE_RELEASE_FORBIDDEN",
-          "only an irrecoverable parent wave or explicit abandonment can release a reservation",
-        );
-      exposure.status = "released";
-      exposure.released_at = new Date().toISOString();
-    },
-    maxExposures,
-  );
+): TesterTrialRecord {
+  return updateTesterTrial(projectRoot, taskId, trialId, (testTrial) => {
+    if (testTrial.status === "released") return;
+    if (testTrial.status === "settled")
+      failA1("TESTER_TRIAL_TERMINAL", "settled testTrial cannot be released");
+    if (
+      testTrial.tester_started ||
+      testTrial.test_result_sha256 !== null ||
+      testTrial.feedback_event_id !== null
+    )
+      failA1(
+        "TESTER_TRIAL_RELEASE_FORBIDDEN",
+        "started or observed tester trials must settle, never release",
+      );
+    if (parentWaveStatus !== "failed_irrecoverable" && parentWaveStatus !== "abandoned")
+      failA1(
+        "TESTER_TRIAL_RELEASE_FORBIDDEN",
+        "only an irrecoverable parent wave or explicit abandonment can release a reservation",
+      );
+    testTrial.status = "released";
+    testTrial.released_at = new Date().toISOString();
+  });
 }
 
-export function recoverExposureLedger(input: {
+export function recoverTesterTrialLedger(input: {
   project_root: string;
   task_id: string;
-  max_exposures_per_task: number;
   trials: ReadonlyMap<
     string,
     {
       tester_started: boolean;
-      private_result_sha256: string | null;
+      test_result_sha256: string | null;
       feedback_event_id: string | null;
       parent_wave_status:
         | "running"
@@ -2034,58 +1951,64 @@ export function recoverExposureLedger(input: {
         | "abandoned";
     }
   >;
-}): ExposureLedger {
-  const filePath = exposureLedgerPath(input.project_root, input.task_id);
+}): TesterTrialLedger {
+  const filePath = testerTrialLedgerPath(input.project_root, input.task_id);
   return withStateFileLock(filePath, () => {
-    const ledger = loadLedger(input.project_root, input.task_id, input.max_exposures_per_task);
-    for (const exposure of ledger.exposures) {
-      const trial = input.trials.get(exposure.promotion_trial_id);
+    const ledger = loadLedger(input.project_root, input.task_id);
+    for (const testTrial of ledger.test_trials) {
+      const trial = input.trials.get(testTrial.promotion_trial_id);
       if (!trial) continue;
-      if (exposure.status === "released") {
+      if (testTrial.status === "released") {
         if (
           trial.tester_started ||
-          trial.private_result_sha256 !== null ||
+          trial.test_result_sha256 !== null ||
           trial.feedback_event_id !== null
         )
-          failA1("EXPOSURE_CONFLICT", "released exposure has observed trial facts");
+          failA1("TESTER_TRIAL_CONFLICT", "released testTrial has observed trial facts");
         continue;
       }
-      if (trial.private_result_sha256 !== null && exposure.private_result_sha256 === null)
-        exposure.private_result_sha256 = assertSha256(
-          trial.private_result_sha256,
-          "trial.private_result_sha256",
+      if (trial.test_result_sha256 !== null && testTrial.test_result_sha256 === null)
+        testTrial.test_result_sha256 = assertSha256(
+          trial.test_result_sha256,
+          "trial.test_result_sha256",
         );
       if (
-        trial.private_result_sha256 !== null &&
-        exposure.private_result_sha256 !== null &&
-        exposure.private_result_sha256 !== trial.private_result_sha256
+        trial.test_result_sha256 !== null &&
+        testTrial.test_result_sha256 !== null &&
+        testTrial.test_result_sha256 !== trial.test_result_sha256
       )
-        failA1("EXPOSURE_CONFLICT", "recovery found a different private result for the same trial");
-      if (trial.feedback_event_id !== null && exposure.feedback_event_id === null)
-        exposure.feedback_event_id = assertIdentifier(
+        failA1(
+          "TESTER_TRIAL_CONFLICT",
+          "recovery found a different test result for the same trial",
+        );
+      if (trial.feedback_event_id !== null && testTrial.feedback_event_id === null)
+        testTrial.feedback_event_id = assertIdentifier(
           trial.feedback_event_id,
           "trial.feedback_event_id",
         );
       if (
         trial.feedback_event_id !== null &&
-        exposure.feedback_event_id !== null &&
-        exposure.feedback_event_id !== trial.feedback_event_id
+        testTrial.feedback_event_id !== null &&
+        testTrial.feedback_event_id !== trial.feedback_event_id
       )
-        failA1("EXPOSURE_CONFLICT", "recovery found a different feedback event for the same trial");
-      exposure.tester_started = exposure.tester_started || trial.tester_started;
+        failA1(
+          "TESTER_TRIAL_CONFLICT",
+          "recovery found a different feedback event for the same trial",
+        );
+      testTrial.tester_started = testTrial.tester_started || trial.tester_started;
       if (
-        exposure.tester_started ||
-        exposure.private_result_sha256 !== null ||
-        exposure.feedback_event_id !== null
+        testTrial.tester_started ||
+        testTrial.test_result_sha256 !== null ||
+        testTrial.feedback_event_id !== null
       ) {
-        exposure.status = "settled";
-        exposure.settled_at ??= new Date().toISOString();
+        testTrial.status = "settled";
+        testTrial.settled_at ??= new Date().toISOString();
       } else if (
         trial.parent_wave_status === "failed_irrecoverable" ||
         trial.parent_wave_status === "abandoned"
       ) {
-        exposure.status = "released";
-        exposure.released_at ??= new Date().toISOString();
+        testTrial.status = "released";
+        testTrial.released_at ??= new Date().toISOString();
       }
     }
     writeLedger(filePath, ledger);
@@ -2093,42 +2016,35 @@ export function recoverExposureLedger(input: {
   });
 }
 
-export function savePrivateResultReference(
+export function saveResultReference(
   projectRoot: string,
   testerRunId: string,
-  privateResultSha256: string,
+  testResultSha256: string,
 ): string {
-  const hash = assertSha256(privateResultSha256, "private_result_sha256");
-  const filePath = path.join(
-    testerRunDirectory(projectRoot, testerRunId),
-    "private-result.ref.json",
-  );
+  const hash = assertSha256(testResultSha256, "test_result_sha256");
+  const filePath = path.join(testerRunDirectory(projectRoot, testerRunId), "test-result.ref.json");
   withStateFileLock(filePath, () => {
     const reference = {
       schema_version: 1,
-      private_result_id: `private-result:sha256:${hash}`,
-      private_result_sha256: hash,
+      test_result_id: `test-result:sha256:${hash}`,
+      test_result_sha256: hash,
     };
     if (fs.existsSync(filePath)) {
       const existing = readStateFile(filePath);
       if (!isRecord(existing))
-        failA1(
-          "CORRUPT_PRIVATE_RESULT_REF",
-          "private result reference must be an object",
-          filePath,
-        );
-      const allowed = ["schema_version", "private_result_id", "private_result_sha256"];
+        failA1("CORRUPT_TEST_RESULT_REF", "test result reference must be an object", filePath);
+      const allowed = ["schema_version", "test_result_id", "test_result_sha256"];
       for (const key of Object.keys(existing))
         if (!allowed.includes(key))
-          failA1("CORRUPT_PRIVATE_RESULT_REF", `unknown private result field '${key}'`, filePath);
+          failA1("CORRUPT_TEST_RESULT_REF", `unknown test result field '${key}'`, filePath);
       if (
         existing.schema_version !== 1 ||
-        existing.private_result_id !== reference.private_result_id ||
-        existing.private_result_sha256 !== reference.private_result_sha256
+        existing.test_result_id !== reference.test_result_id ||
+        existing.test_result_sha256 !== reference.test_result_sha256
       )
-        failA1("IMMUTABLE_CONFLICT", "private result reference cannot change", filePath);
-      assertIdentifier(existing.private_result_id, `${filePath}.private_result_id`);
-      assertSha256(existing.private_result_sha256, `${filePath}.private_result_sha256`);
+        failA1("IMMUTABLE_CONFLICT", "test result reference cannot change", filePath);
+      assertIdentifier(existing.test_result_id, `${filePath}.test_result_id`);
+      assertSha256(existing.test_result_sha256, `${filePath}.test_result_sha256`);
       return;
     }
     writeStateJsonAtomic(filePath, reference);
@@ -2136,71 +2052,67 @@ export function savePrivateResultReference(
   return filePath;
 }
 
-function privateResultReferencePath(projectRoot: string, testerRunId: string): string {
-  return path.join(testerRunDirectory(projectRoot, testerRunId), "private-result.ref.json");
+function testResultReferencePath(projectRoot: string, testerRunId: string): string {
+  return path.join(testerRunDirectory(projectRoot, testerRunId), "test-result.ref.json");
 }
 
-function validatePrivateResultReference(
-  value: unknown,
-  expectedHash: string,
-  filePath: string,
-): void {
+function validateTestResultReference(value: unknown, expectedHash: string, filePath: string): void {
   if (!isRecord(value))
-    failA1("CORRUPT_PRIVATE_RESULT_REF", "private result reference must be an object", filePath);
-  const allowed = ["schema_version", "private_result_id", "private_result_sha256"];
+    failA1("CORRUPT_TEST_RESULT_REF", "test result reference must be an object", filePath);
+  const allowed = ["schema_version", "test_result_id", "test_result_sha256"];
   for (const key of Object.keys(value))
     if (!allowed.includes(key))
-      failA1("CORRUPT_PRIVATE_RESULT_REF", `unknown private result field '${key}'`, filePath);
+      failA1("CORRUPT_TEST_RESULT_REF", `unknown test result field '${key}'`, filePath);
   if (
     value.schema_version !== 1 ||
-    value.private_result_id !== `private-result:sha256:${expectedHash}` ||
-    value.private_result_sha256 !== expectedHash
+    value.test_result_id !== `test-result:sha256:${expectedHash}` ||
+    value.test_result_sha256 !== expectedHash
   )
     failA1(
-      "PRIVATE_RESULT_HASH_MISMATCH",
-      "private result reference does not match the bundle",
+      "TEST_RESULT_HASH_MISMATCH",
+      "test result reference does not match the bundle",
       filePath,
     );
-  assertIdentifier(value.private_result_id, `${filePath}.private_result_id`);
-  assertSha256(value.private_result_sha256, `${filePath}.private_result_sha256`);
+  assertIdentifier(value.test_result_id, `${filePath}.test_result_id`);
+  assertSha256(value.test_result_sha256, `${filePath}.test_result_sha256`);
 }
 
-export function readStoredTesterPrivateResult(
+export function readStoredTesterResult(
   projectRoot: string,
   testerRunId: string,
-): TesterPrivateResultBundle {
+): TesterResultBundle {
   const state = readTesterState(projectRoot, assertIdentifier(testerRunId, "tester_run_id"));
-  if (state.private_result_sha256 === null)
-    failA1("PRIVATE_RESULT_NOT_SEALED", "tester run has no sealed private result");
+  if (state.test_result_sha256 === null)
+    failA1("TEST_RESULT_NOT_SEALED", "tester run has no sealed test result");
   if (
     state.status !== "sealed" &&
     state.status !== "reviewed" &&
     state.status !== "passed" &&
     state.status !== "rejected"
   )
-    failA1("PRIVATE_RESULT_NOT_SEALED", "private result cannot be consumed before sealing");
+    failA1("TEST_RESULT_NOT_SEALED", "test result cannot be consumed before sealing");
   const definition = readTesterDefinitionForRun(projectRoot, state);
-  const filePath = testerPrivateResultPath(projectRoot, state.tester_run_id);
+  const filePath = testerResultPath(projectRoot, state.tester_run_id);
   if (!fs.existsSync(filePath))
-    failA1("PRIVATE_RESULT_NOT_FOUND", `private result does not exist at ${filePath}`);
-  let bundle: TesterPrivateResultBundle;
+    failA1("TEST_RESULT_NOT_FOUND", `test result does not exist at ${filePath}`);
+  let bundle: TesterResultBundle;
   try {
-    bundle = normalizePrivateResult(readStateFile(filePath), state, definition, false);
+    bundle = normalizeTestResult(readStateFile(filePath), state, definition, false);
   } catch (error) {
     const code =
       typeof error === "object" && error !== null && "code" in error
         ? (error as { code?: unknown }).code
         : undefined;
     if (code === "AGGREGATE_MISMATCH" || code === "PRIMARY_SCORE_MISMATCH")
-      failA1("PRIVATE_RESULT_HASH_MISMATCH", "stored private result differs from tester state");
+      failA1("TEST_RESULT_HASH_MISMATCH", "stored test result differs from tester state");
     throw error;
   }
-  const hash = testerPrivateResultSha256(bundle);
-  if (hash !== state.private_result_sha256)
-    failA1("PRIVATE_RESULT_HASH_MISMATCH", "stored private result differs from tester state");
-  const referencePath = privateResultReferencePath(projectRoot, state.tester_run_id);
+  const hash = testerResultSha256(bundle);
+  if (hash !== state.test_result_sha256)
+    failA1("TEST_RESULT_HASH_MISMATCH", "stored test result differs from tester state");
+  const referencePath = testResultReferencePath(projectRoot, state.tester_run_id);
   if (fs.existsSync(referencePath))
-    validatePrivateResultReference(readStateFile(referencePath), hash, referencePath);
+    validateTestResultReference(readStateFile(referencePath), hash, referencePath);
   return bundle;
 }
 
@@ -2216,8 +2128,7 @@ function testerDashboardValue(state: TesterRunState): Record<string, unknown> {
   };
   if (state.input_distribution_sha256 !== null)
     hashes.input_distribution_sha256 = state.input_distribution_sha256;
-  if (state.private_result_sha256 !== null)
-    hashes.private_result_sha256 = state.private_result_sha256;
+  if (state.test_result_sha256 !== null) hashes.test_result_sha256 = state.test_result_sha256;
   if (state.judge_binding_id !== null) hashes.judge_binding_id = state.judge_binding_id;
   return {
     schema_version: 1,
@@ -2242,19 +2153,6 @@ function writeTesterDashboard(projectRoot: string, state: TesterRunState): void 
     testerDashboardPath(projectRoot, state.tester_run_id),
     testerDashboardValue(state),
   );
-}
-
-/**
- * The promotion trial only observes two sealed artifacts. A tester run that owns
- * child runs would be producing data or training inside the measurement window,
- * so the tester contract must stay childless.
- */
-function assertTesterOwnsNoChildRuns(contract: RunRecord): void {
-  if (contract.child_run_ids.length > 0)
-    failA1(
-      "TESTER_CHILD_RUN_FORBIDDEN",
-      "a tester run cannot own child runs: the test phase produces no data and trains nothing",
-    );
 }
 
 export function startTesterRun(input: {
@@ -2286,7 +2184,6 @@ export function startTesterRun(input: {
     failA1("TESTER_ROOT_ONLY", "only the root run may create a tester");
   if (contract.parent_run_id !== parent.run_id || !parent.child_run_ids.includes(testerRunId))
     failA1("IDENTITY_MISMATCH", "tester must be registered under its root contract");
-  assertTesterOwnsNoChildRuns(contract);
   const filePath = testerRunStatePath(input.project_root, testerRunId);
   const taskId = assertIdentifier(input.task_id, "task_id");
   const outerRunId = assertIdentifier(input.outer_run_id, "outer_run_id");
@@ -2335,34 +2232,34 @@ export function startTesterRun(input: {
     input.judge_binding_id !== judgeBindingId(requestedJudgeBinding)
   )
     failA1("IDENTITY_MISMATCH", "judge_binding_id does not match the frozen judge binding");
-  const ledgerFile = exposureLedgerPath(input.project_root, taskId);
+  const ledgerFile = testerTrialLedgerPath(input.project_root, taskId);
   return withStateFileLock(ledgerFile, () =>
     withStateFileLock(filePath, () => {
-      const ledger = loadLedger(input.project_root, taskId, tester.max_exposures_per_task);
-      const exposure = ledger.exposures.find(
+      const ledger = loadLedger(input.project_root, taskId);
+      const testTrial = ledger.test_trials.find(
         (candidate) => candidate.promotion_trial_id === trialId,
       );
-      if (!exposure) failA1("EXPOSURE_NOT_RESERVED", "tester run needs a reserved exposure");
+      if (!testTrial) failA1("TESTER_TRIAL_NOT_RESERVED", "tester run needs a reserved testTrial");
       if (
-        exposure.outer_run_id !== outerRunId ||
-        exposure.wave_id !== waveId ||
-        exposure.tester_id !== tester.tester_id ||
-        exposure.tester_version !== tester.version ||
-        exposure.tester_definition_sha256 !== tester.definition_sha256 ||
-        exposure.harness_sha256 !== requestedHarnessSha256 ||
-        exposure.task_setup_revision !== taskSetupRevision ||
-        exposure.case_manifest_sha256 !== tester.case_manifest_sha256 ||
-        exposure.seed_manifest_sha256 !== tester.seed_manifest_sha256 ||
-        exposure.finalist_artifact_sha256 !== finalistHash ||
-        exposure.matching_baseline_artifact_sha256 !== baselineHash ||
-        exposure.model_assignment_sha256 !== assignmentHash ||
-        exposure.input_distribution_sha256 !== requestedInputDistributionSha256 ||
-        exposure.judge_binding_id !== judgeBindingId(requestedJudgeBinding) ||
-        !sameJson(exposure.judge_binding, requestedJudgeBinding)
+        testTrial.outer_run_id !== outerRunId ||
+        testTrial.wave_id !== waveId ||
+        testTrial.tester_id !== tester.tester_id ||
+        testTrial.tester_version !== tester.version ||
+        testTrial.tester_definition_sha256 !== tester.definition_sha256 ||
+        testTrial.harness_sha256 !== requestedHarnessSha256 ||
+        testTrial.task_setup_revision !== taskSetupRevision ||
+        testTrial.case_manifest_sha256 !== tester.case_manifest_sha256 ||
+        testTrial.seed_manifest_sha256 !== tester.seed_manifest_sha256 ||
+        testTrial.finalist_artifact_sha256 !== finalistHash ||
+        testTrial.matching_baseline_artifact_sha256 !== baselineHash ||
+        testTrial.model_assignment_sha256 !== assignmentHash ||
+        testTrial.input_distribution_sha256 !== requestedInputDistributionSha256 ||
+        testTrial.judge_binding_id !== judgeBindingId(requestedJudgeBinding) ||
+        !sameJson(testTrial.judge_binding, requestedJudgeBinding)
       )
-        failA1("IDENTITY_MISMATCH", "tester run does not match its frozen exposure reservation");
-      const frozenInputDistributionSha256 = exposure.input_distribution_sha256;
-      const frozenJudgeBinding = exposure.judge_binding;
+        failA1("IDENTITY_MISMATCH", "tester run does not match its frozen testTrial reservation");
+      const frozenInputDistributionSha256 = testTrial.input_distribution_sha256;
+      const frozenJudgeBinding = testTrial.judge_binding;
       if (fs.existsSync(filePath)) {
         const existing = validateTesterRunState(readStateFile(filePath), testerRunId, filePath);
         if (
@@ -2388,18 +2285,32 @@ export function startTesterRun(input: {
           existing.model_assignment_sha256 !== assignmentHash
         )
           failA1("IDENTITY_MISMATCH", "tester run retry changed its frozen identity");
-        bindTesterRun(exposure, testerRunId, frozenInputDistributionSha256, frozenJudgeBinding);
+        bindTesterRun(testTrial, testerRunId, frozenInputDistributionSha256, frozenJudgeBinding);
         writeLedger(ledgerFile, ledger);
         sealWikiWorkerManifest({
           project_root: input.project_root,
           run_id: testerRunId,
           worker: "tester",
+          input_snapshot:
+            requireRunContract(input.project_root, testerRunId).parent_run_id === null
+              ? null
+              : {
+                  ref: runOwnedPath(input.project_root, testerRunId, "input-snapshot.json"),
+                  sha256: crypto
+                    .createHash("sha256")
+                    .update(
+                      fs.readFileSync(
+                        runOwnedPath(input.project_root, testerRunId, "input-snapshot.json"),
+                      ),
+                    )
+                    .digest("hex"),
+                },
         });
         writeTesterDashboard(input.project_root, existing);
         return existing;
       }
-      if (exposure.status !== "reserved")
-        failA1("EXPOSURE_NOT_RESERVED", "tester run needs a reserved exposure");
+      if (testTrial.status !== "reserved")
+        failA1("TESTER_TRIAL_NOT_RESERVED", "tester run needs a reserved testTrial");
       const now = new Date().toISOString();
       const state: TesterRunState = {
         schema_version: 1,
@@ -2428,7 +2339,7 @@ export function startTesterRun(input: {
         model_assignment_sha256: assignmentHash,
         status: "queued",
         attempt: 0,
-        private_result_sha256: null,
+        test_result_sha256: null,
         review_id: null,
         reviewer_worker_id: null,
         review_receipt_sha256: null,
@@ -2436,12 +2347,26 @@ export function startTesterRun(input: {
         gate_status: null,
         updated_at: now,
       };
-      bindTesterRun(exposure, testerRunId, frozenInputDistributionSha256, frozenJudgeBinding);
+      bindTesterRun(testTrial, testerRunId, frozenInputDistributionSha256, frozenJudgeBinding);
       writeLedger(ledgerFile, ledger);
       sealWikiWorkerManifest({
         project_root: input.project_root,
         run_id: testerRunId,
         worker: "tester",
+        input_snapshot:
+          requireRunContract(input.project_root, testerRunId).parent_run_id === null
+            ? null
+            : {
+                ref: runOwnedPath(input.project_root, testerRunId, "input-snapshot.json"),
+                sha256: crypto
+                  .createHash("sha256")
+                  .update(
+                    fs.readFileSync(
+                      runOwnedPath(input.project_root, testerRunId, "input-snapshot.json"),
+                    ),
+                  )
+                  .digest("hex"),
+              },
       });
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
       writeStateJsonAtomic(filePath, state);
@@ -2473,28 +2398,28 @@ function writeTesterStateAndDashboard(
   writeTesterDashboard(projectRoot, state);
 }
 
-function assertExposureMatchesState(exposure: ExposureRecord, state: TesterRunState): void {
+function assertTrialMatchesState(testTrial: TesterTrialRecord, state: TesterRunState): void {
   if (
-    exposure.promotion_trial_id !== state.promotion_trial_id ||
-    exposure.outer_run_id !== state.outer_run_id ||
-    exposure.wave_id !== state.wave_id ||
-    exposure.tester_id !== state.tester_id ||
-    exposure.tester_version !== state.tester_version ||
-    exposure.tester_definition_sha256 !== state.tester_definition_sha256 ||
-    exposure.harness_sha256 !== state.harness_sha256 ||
-    exposure.task_setup_revision !== state.task_setup_revision ||
-    exposure.case_manifest_sha256 !== state.case_manifest_sha256 ||
-    exposure.seed_manifest_sha256 !== state.seed_manifest_sha256 ||
-    exposure.matching_baseline_artifact_sha256 !== state.matching_baseline_artifact_sha256 ||
-    exposure.finalist_artifact_sha256 !== state.finalist_artifact_sha256 ||
-    exposure.model_assignment_sha256 !== state.model_assignment_sha256 ||
-    exposure.input_distribution_sha256 !== state.input_distribution_sha256 ||
-    exposure.judge_binding_id !== state.judge_binding_id ||
-    !sameJson(exposure.judge_binding, state.judge_binding)
+    testTrial.promotion_trial_id !== state.promotion_trial_id ||
+    testTrial.outer_run_id !== state.outer_run_id ||
+    testTrial.wave_id !== state.wave_id ||
+    testTrial.tester_id !== state.tester_id ||
+    testTrial.tester_version !== state.tester_version ||
+    testTrial.tester_definition_sha256 !== state.tester_definition_sha256 ||
+    testTrial.harness_sha256 !== state.harness_sha256 ||
+    testTrial.task_setup_revision !== state.task_setup_revision ||
+    testTrial.case_manifest_sha256 !== state.case_manifest_sha256 ||
+    testTrial.seed_manifest_sha256 !== state.seed_manifest_sha256 ||
+    testTrial.matching_baseline_artifact_sha256 !== state.matching_baseline_artifact_sha256 ||
+    testTrial.finalist_artifact_sha256 !== state.finalist_artifact_sha256 ||
+    testTrial.model_assignment_sha256 !== state.model_assignment_sha256 ||
+    testTrial.input_distribution_sha256 !== state.input_distribution_sha256 ||
+    testTrial.judge_binding_id !== state.judge_binding_id ||
+    !sameJson(testTrial.judge_binding, state.judge_binding)
   )
-    failA1("IDENTITY_MISMATCH", "tester exposure does not match its run state");
-  if (exposure.tester_run_id !== null && exposure.tester_run_id !== state.tester_run_id)
-    failA1("TESTER_ONCE_PER_WAVE", "tester exposure is bound to another run");
+    failA1("IDENTITY_MISMATCH", "tester testTrial does not match its run state");
+  if (testTrial.tester_run_id !== null && testTrial.tester_run_id !== state.tester_run_id)
+    failA1("TESTER_ONCE_PER_WAVE", "tester testTrial is bound to another run");
 }
 
 function validateTesterRunState(
@@ -2530,7 +2455,7 @@ function validateTesterRunState(
     "model_assignment_sha256",
     "status",
     "attempt",
-    "private_result_sha256",
+    "test_result_sha256",
     "review_id",
     "reviewer_worker_id",
     "review_receipt_sha256",
@@ -2629,10 +2554,10 @@ function validateTesterRunState(
     ),
     status: value.status as TesterRunStatus,
     attempt: requireInteger(value.attempt, `${filePath}.attempt`, 0),
-    private_result_sha256:
-      value.private_result_sha256 === null
+    test_result_sha256:
+      value.test_result_sha256 === null
         ? null
-        : assertSha256(value.private_result_sha256, `${filePath}.private_result_sha256`),
+        : assertSha256(value.test_result_sha256, `${filePath}.test_result_sha256`),
     review_id:
       value.review_id === null ? null : assertIdentifier(value.review_id, `${filePath}.review_id`),
     reviewer_worker_id:
@@ -2656,13 +2581,9 @@ function validateTesterRunState(
       state.status === "reviewed" ||
       state.status === "passed" ||
       state.status === "rejected") &&
-    state.private_result_sha256 === null
+    state.test_result_sha256 === null
   )
-    failA1(
-      "CORRUPT_TESTER_STATE",
-      "sealed or terminal tester state needs a private result",
-      filePath,
-    );
+    failA1("CORRUPT_TESTER_STATE", "sealed or terminal tester state needs a test result", filePath);
   if (
     (state.status === "reviewed" || state.status === "passed" || state.status === "rejected") &&
     state.review_id === null
@@ -2725,8 +2646,8 @@ export function transitionTesterState(
       );
     if (nextStatus === "passed" || nextStatus === "rejected")
       failA1("TESTER_GATE_REQUIRED", "terminal tester state must be written by the promotion gate");
-    if (nextStatus === "sealed" && state.private_result_sha256 === null)
-      failA1("TESTER_STATE_ORDER", "sealed tester state requires a private result");
+    if (nextStatus === "sealed" && state.test_result_sha256 === null)
+      failA1("TESTER_STATE_ORDER", "sealed tester state requires a test result");
     if (nextStatus === "reviewed" && state.review_id === null)
       failA1("TESTER_STATE_ORDER", "reviewed tester state requires a review receipt");
     const next: TesterRunState = {
@@ -2747,26 +2668,25 @@ export function transitionTesterState(
 
   const current = readTesterState(projectRoot, testerRunId);
   const definition = readTesterDefinitionForRun(projectRoot, current);
-  const ledgerFile = exposureLedgerPath(projectRoot, current.task_id);
+  const ledgerFile = testerTrialLedgerPath(projectRoot, current.task_id);
   return withStateFileLock(ledgerFile, () =>
     withStateFileLock(filePath, () => {
       const state = readTesterState(projectRoot, testerRunId);
-      const ledger = loadLedger(projectRoot, state.task_id, definition.max_exposures_per_task);
-      const exposure = ledger.exposures.find(
+      const ledger = loadLedger(projectRoot, state.task_id);
+      const testTrial = ledger.test_trials.find(
         (candidate) => candidate.promotion_trial_id === state.promotion_trial_id,
       );
-      if (!exposure) failA1("EXPOSURE_NOT_FOUND", "tester run has no exposure reservation");
-      assertExposureMatchesState(exposure, state);
-      if (exposure.status === "released")
-        failA1("EXPOSURE_TERMINAL", "released exposure cannot start");
-      assertTesterOwnsNoChildRuns(requireRunContract(projectRoot, testerRunId));
+      if (!testTrial) failA1("TESTER_TRIAL_NOT_FOUND", "tester run has no testTrial reservation");
+      assertTrialMatchesState(testTrial, state);
+      if (testTrial.status === "released")
+        failA1("TESTER_TRIAL_TERMINAL", "released testTrial cannot start");
       bindTesterRun(
-        exposure,
+        testTrial,
         state.tester_run_id,
         state.input_distribution_sha256,
         state.judge_binding,
       );
-      markExposureObserved(exposure);
+      markTrialObserved(testTrial);
       writeLedger(ledgerFile, ledger);
       return transition(state);
     }),
@@ -2805,10 +2725,10 @@ function readTesterDefinitionForRun(projectRoot: string, state: TesterRunState):
   return validated;
 }
 
-export function recordTesterPrivateResult(
+export function recordTesterResult(
   projectRoot: string,
   testerRunId: string,
-  privateResultValue: unknown,
+  testResultValue: unknown,
 ): TesterRunState {
   const statePath = testerRunStatePath(projectRoot, testerRunId);
   const current = readTesterState(projectRoot, testerRunId);
@@ -2820,65 +2740,56 @@ export function recordTesterPrivateResult(
     "rejected",
   ];
   if (!allowedStatuses.includes(current.status))
-    failA1("TESTER_STATE_ORDER", "private result requires an observed tester run");
+    failA1("TESTER_STATE_ORDER", "test result requires an observed tester run");
   const definition = readTesterDefinitionForRun(projectRoot, current);
-  const bundle = normalizePrivateResult(privateResultValue, current, definition, true);
-  const hash = testerPrivateResultSha256(bundle);
-  const ledgerPath = exposureLedgerPath(projectRoot, current.task_id);
+  const bundle = normalizeTestResult(testResultValue, current, definition, true);
+  const hash = testerResultSha256(bundle);
+  const ledgerPath = testerTrialLedgerPath(projectRoot, current.task_id);
   return withStateFileLock(ledgerPath, () =>
     withStateFileLock(statePath, () => {
       const state = readTesterState(projectRoot, testerRunId);
       if (!allowedStatuses.includes(state.status))
-        failA1("TESTER_STATE_ORDER", "private result requires an observed tester run");
+        failA1("TESTER_STATE_ORDER", "test result requires an observed tester run");
       const currentDefinition = readTesterDefinitionForRun(projectRoot, state);
-      const normalizedBundle = normalizePrivateResult(
-        privateResultValue,
-        state,
-        currentDefinition,
-        true,
-      );
-      const normalizedHash = testerPrivateResultSha256(normalizedBundle);
+      const normalizedBundle = normalizeTestResult(testResultValue, state, currentDefinition, true);
+      const normalizedHash = testerResultSha256(normalizedBundle);
       if (normalizedHash !== hash)
-        failA1("PRIVATE_RESULT_CONFLICT", "private result changed while it was being sealed");
-      if (state.private_result_sha256 !== null && state.private_result_sha256 !== hash)
-        failA1("PRIVATE_RESULT_CONFLICT", "private result for a tester run cannot change");
-      const privatePath = testerPrivateResultPath(projectRoot, testerRunId);
-      if (fs.existsSync(privatePath)) {
-        const existingBundle = normalizePrivateResult(
-          readStateFile(privatePath),
+        failA1("TEST_RESULT_CONFLICT", "test result changed while it was being sealed");
+      if (state.test_result_sha256 !== null && state.test_result_sha256 !== hash)
+        failA1("TEST_RESULT_CONFLICT", "test result for a tester run cannot change");
+      const resultPath = testerResultPath(projectRoot, testerRunId);
+      if (fs.existsSync(resultPath)) {
+        const existingBundle = normalizeTestResult(
+          readStateFile(resultPath),
           state,
           currentDefinition,
           false,
         );
-        if (testerPrivateResultSha256(existingBundle) !== hash)
-          failA1("PRIVATE_RESULT_CONFLICT", "private result file cannot change", privatePath);
+        if (testerResultSha256(existingBundle) !== hash)
+          failA1("TEST_RESULT_CONFLICT", "test result file cannot change", resultPath);
       } else {
-        writeStateJsonAtomic(privatePath, normalizedBundle);
+        writeStateJsonAtomic(resultPath, normalizedBundle);
       }
-      const ledger = loadLedger(
-        projectRoot,
-        state.task_id,
-        currentDefinition.max_exposures_per_task,
-      );
-      const exposure = ledger.exposures.find(
+      const ledger = loadLedger(projectRoot, state.task_id);
+      const testTrial = ledger.test_trials.find(
         (candidate) => candidate.promotion_trial_id === state.promotion_trial_id,
       );
-      if (!exposure) failA1("EXPOSURE_NOT_FOUND", "tester run has no exposure reservation");
-      assertExposureMatchesState(exposure, state);
-      if (exposure.status === "released")
-        failA1("EXPOSURE_TERMINAL", "released exposure cannot receive a private result");
+      if (!testTrial) failA1("TESTER_TRIAL_NOT_FOUND", "tester run has no testTrial reservation");
+      assertTrialMatchesState(testTrial, state);
+      if (testTrial.status === "released")
+        failA1("TESTER_TRIAL_TERMINAL", "released testTrial cannot receive a test result");
       bindTesterRun(
-        exposure,
+        testTrial,
         state.tester_run_id,
         state.input_distribution_sha256,
         state.judge_binding,
       );
-      markExposureObserved(exposure);
-      if (exposure.private_result_sha256 !== null && exposure.private_result_sha256 !== hash)
-        failA1("PRIVATE_RESULT_CONFLICT", "private result for a trial cannot change");
-      exposure.private_result_sha256 = hash;
+      markTrialObserved(testTrial);
+      if (testTrial.test_result_sha256 !== null && testTrial.test_result_sha256 !== hash)
+        failA1("TEST_RESULT_CONFLICT", "test result for a trial cannot change");
+      testTrial.test_result_sha256 = hash;
       writeLedger(ledgerPath, ledger);
-      savePrivateResultReference(projectRoot, testerRunId, hash);
+      saveResultReference(projectRoot, testerRunId, hash);
       if (state.status !== "running") {
         writeTesterDashboard(projectRoot, state);
         return state;
@@ -2886,7 +2797,7 @@ export function recordTesterPrivateResult(
       const next: TesterRunState = {
         ...state,
         status: "sealed",
-        private_result_sha256: hash,
+        test_result_sha256: hash,
         updated_at: new Date().toISOString(),
       };
       writeTesterStateAndDashboard(projectRoot, statePath, next);
@@ -2906,14 +2817,11 @@ export function recordTesterReview(
   if (review.verdict !== "approved")
     failA1("TESTER_REVIEW_REJECTED", "a tester gate needs an approved tester review");
   const testerRun = assertIdentifier(testerRunId, "tester_run_id");
-  const privateResult = readStoredTesterPrivateResult(projectRoot, testerRun);
-  if (review.subject.private_result_sha256 !== testerPrivateResultSha256(privateResult))
-    failA1(
-      "PRIVATE_RESULT_HASH_MISMATCH",
-      "tester review does not identify the stored private result",
-    );
-  if (privateResult.tester_run_id !== testerRun)
-    failA1("IDENTITY_MISMATCH", "private result does not belong to the reviewed tester run");
+  const testResult = readStoredTesterResult(projectRoot, testerRun);
+  if (review.subject.test_result_sha256 !== testerResultSha256(testResult))
+    failA1("TEST_RESULT_HASH_MISMATCH", "tester review does not identify the stored test result");
+  if (testResult.tester_run_id !== testerRun)
+    failA1("IDENTITY_MISMATCH", "test result does not belong to the reviewed tester run");
   const statePath = testerRunStatePath(projectRoot, testerRunId);
   return withStateFileLock(statePath, () => {
     const state = readTesterState(projectRoot, testerRun);
@@ -2925,9 +2833,9 @@ export function recordTesterReview(
       state.status !== "passed" &&
       state.status !== "rejected"
     )
-      failA1("TESTER_STATE_ORDER", "tester review requires sealed private results");
-    if (state.private_result_sha256 === null)
-      failA1("TESTER_STATE_ORDER", "tester review requires sealed private results");
+      failA1("TESTER_STATE_ORDER", "tester review requires sealed test results");
+    if (state.test_result_sha256 === null)
+      failA1("TESTER_STATE_ORDER", "tester review requires sealed test results");
     if (
       review.reviewed_run_id !== testerRunId ||
       review.outer_iteration !== state.outer_iteration ||
@@ -2940,12 +2848,12 @@ export function recordTesterReview(
       review.subject.matching_baseline_artifact_sha256 !==
         state.matching_baseline_artifact_sha256 ||
       review.subject.finalist_artifact_sha256 !== state.finalist_artifact_sha256 ||
-      review.subject.private_result_sha256 !== state.private_result_sha256
+      review.subject.test_result_sha256 !== state.test_result_sha256
     )
       failA1("IDENTITY_MISMATCH", "tester review does not match the run");
-    if (privateResult.tester_definition_sha256 !== state.tester_definition_sha256)
-      failA1("IDENTITY_MISMATCH", "reviewed private result does not match the tester definition");
-    savePrivateResultReference(projectRoot, testerRunId, state.private_result_sha256);
+    if (testResult.tester_definition_sha256 !== state.tester_definition_sha256)
+      failA1("IDENTITY_MISMATCH", "reviewed test result does not match the tester definition");
+    saveResultReference(projectRoot, testerRunId, state.test_result_sha256);
     if (state.status !== "sealed") {
       writeTesterDashboard(projectRoot, state);
       return state;
@@ -2985,12 +2893,9 @@ export function readStoredTesterReview(
   const review = readStoredReviewReceipt(projectRoot, readStateFile(reviewPath));
   if (review.reviewed_run_kind !== "tester")
     failA1("REVIEW_TYPE_MISMATCH", "stored tester review has the wrong run kind");
-  const privateResult = readStoredTesterPrivateResult(projectRoot, state.tester_run_id);
-  if (review.subject.private_result_sha256 !== testerPrivateResultSha256(privateResult))
-    failA1(
-      "PRIVATE_RESULT_HASH_MISMATCH",
-      "tester review does not identify the stored private result",
-    );
+  const testResult = readStoredTesterResult(projectRoot, state.tester_run_id);
+  if (review.subject.test_result_sha256 !== testerResultSha256(testResult))
+    failA1("TEST_RESULT_HASH_MISMATCH", "tester review does not identify the stored test result");
   if (
     review.review_id !== state.review_id ||
     review.reviewer_worker_id !== state.reviewer_worker_id ||
@@ -3004,7 +2909,7 @@ export function readStoredTesterReview(
     review.subject.case_manifest_sha256 !== state.case_manifest_sha256 ||
     review.subject.matching_baseline_artifact_sha256 !== state.matching_baseline_artifact_sha256 ||
     review.subject.finalist_artifact_sha256 !== state.finalist_artifact_sha256 ||
-    review.subject.private_result_sha256 !== state.private_result_sha256 ||
+    review.subject.test_result_sha256 !== state.test_result_sha256 ||
     canonicalJsonSha256(review, undefined, { schemaVersion: "tester-review-receipt-v1" }) !==
       state.review_receipt_sha256
   )
@@ -3029,7 +2934,7 @@ export interface TesterGateBinding {
 function assertGateBindingMatchesState(
   binding: TesterGateBinding,
   state: TesterRunState,
-  exposure: ExposureRecord,
+  testTrial: TesterTrialRecord,
 ): void {
   assertIdentifier(binding.tester_version, "gate.tester_version");
   assertSha256(binding.tester_definition_sha256, "gate.tester_definition_sha256");
@@ -3058,42 +2963,42 @@ function assertGateBindingMatchesState(
     binding.model_assignment_sha256 !== state.model_assignment_sha256
   )
     failA1("TESTER_ARMS_MISMATCH", "promotion gate input does not match the frozen tester run");
-  if (exposure.input_distribution_sha256 !== binding.input_distribution_sha256)
+  if (testTrial.input_distribution_sha256 !== binding.input_distribution_sha256)
     failA1(
       "TESTER_ARMS_MISMATCH",
       "promotion gate input distribution differs from the reservation",
     );
-  if (exposure.judge_binding_id !== binding.judge_binding_id)
+  if (testTrial.judge_binding_id !== binding.judge_binding_id)
     failA1("TESTER_ARMS_MISMATCH", "promotion gate judge binding differs from the reservation");
-  if (!sameJson(exposure.judge_binding, binding.judge_binding))
+  if (!sameJson(testTrial.judge_binding, binding.judge_binding))
     failA1("TESTER_ARMS_MISMATCH", "promotion gate judge facts differ from the reservation");
   if (
-    exposure.harness_sha256 !== binding.harness_sha256 ||
-    exposure.matching_baseline_artifact_sha256 !== binding.matching_baseline_artifact_sha256 ||
-    exposure.finalist_artifact_sha256 !== binding.finalist_artifact_sha256 ||
-    exposure.model_assignment_sha256 !== binding.model_assignment_sha256
+    testTrial.harness_sha256 !== binding.harness_sha256 ||
+    testTrial.matching_baseline_artifact_sha256 !== binding.matching_baseline_artifact_sha256 ||
+    testTrial.finalist_artifact_sha256 !== binding.finalist_artifact_sha256 ||
+    testTrial.model_assignment_sha256 !== binding.model_assignment_sha256
   )
     failA1("TESTER_ARMS_MISMATCH", "promotion gate artifacts differ from the reservation");
 }
 
-function settleObservedExposure(exposure: ExposureRecord, state: TesterRunState): void {
-  if (exposure.status === "released")
-    failA1("EXPOSURE_TERMINAL", "released exposure cannot settle");
-  if (exposure.tester_run_id !== null && exposure.tester_run_id !== state.tester_run_id)
-    failA1("TESTER_ONCE_PER_WAVE", "exposure is bound to another tester run");
-  exposure.tester_run_id = state.tester_run_id;
-  exposure.tester_started = true;
-  if (state.private_result_sha256 !== null) {
+function settleObservedTrial(testTrial: TesterTrialRecord, state: TesterRunState): void {
+  if (testTrial.status === "released")
+    failA1("TESTER_TRIAL_TERMINAL", "released testTrial cannot settle");
+  if (testTrial.tester_run_id !== null && testTrial.tester_run_id !== state.tester_run_id)
+    failA1("TESTER_ONCE_PER_WAVE", "testTrial is bound to another tester run");
+  testTrial.tester_run_id = state.tester_run_id;
+  testTrial.tester_started = true;
+  if (state.test_result_sha256 !== null) {
     if (
-      exposure.private_result_sha256 !== null &&
-      exposure.private_result_sha256 !== state.private_result_sha256
+      testTrial.test_result_sha256 !== null &&
+      testTrial.test_result_sha256 !== state.test_result_sha256
     )
-      failA1("EXPOSURE_CONFLICT", "state and exposure contain different private results");
-    exposure.private_result_sha256 = state.private_result_sha256;
+      failA1("TESTER_TRIAL_CONFLICT", "state and testTrial contain different test results");
+    testTrial.test_result_sha256 = state.test_result_sha256;
   }
-  if (exposure.status === "reserved") {
-    exposure.status = "settled";
-    exposure.settled_at ??= new Date().toISOString();
+  if (testTrial.status === "reserved") {
+    testTrial.status = "settled";
+    testTrial.settled_at ??= new Date().toISOString();
   }
 }
 
@@ -3106,27 +3011,27 @@ export function consumeTesterGate(
   const runId = assertIdentifier(testerRunId, "tester_run_id");
   if (result !== "passed" && result !== "rejected")
     failA1("INVALID_TESTER_RESULT", "promotion gate result must be passed or rejected");
-  readStoredTesterPrivateResult(projectRoot, runId);
+  readStoredTesterResult(projectRoot, runId);
   readStoredTesterReview(projectRoot, runId);
   const statePath = testerRunStatePath(projectRoot, runId);
   const initialState = readTesterState(projectRoot, runId);
   const definition = readTesterDefinitionForRun(projectRoot, initialState);
-  const ledgerPath = exposureLedgerPath(projectRoot, initialState.task_id);
+  const ledgerPath = testerTrialLedgerPath(projectRoot, initialState.task_id);
   return withStateFileLock(ledgerPath, () =>
     withStateFileLock(statePath, () => {
       const state = readTesterState(projectRoot, runId);
-      const ledger = loadLedger(projectRoot, state.task_id, definition.max_exposures_per_task);
-      const exposure = ledger.exposures.find(
+      const ledger = loadLedger(projectRoot, state.task_id);
+      const testTrial = ledger.test_trials.find(
         (candidate) => candidate.promotion_trial_id === state.promotion_trial_id,
       );
-      if (!exposure) failA1("EXPOSURE_NOT_FOUND", "tester run has no exposure reservation");
-      assertExposureMatchesState(exposure, state);
-      assertGateBindingMatchesState(binding, state, exposure);
+      if (!testTrial) failA1("TESTER_TRIAL_NOT_FOUND", "tester run has no testTrial reservation");
+      assertTrialMatchesState(testTrial, state);
+      assertGateBindingMatchesState(binding, state, testTrial);
 
       if (state.status === "passed" || state.status === "rejected") {
         if (state.gate_status !== result)
           failA1("TESTER_GATE_CONFLICT", "a tester run cannot change its consumed gate result");
-        settleObservedExposure(exposure, state);
+        settleObservedTrial(testTrial, state);
         writeLedger(ledgerPath, ledger);
         writeTesterDashboard(projectRoot, state);
         return state;
@@ -3143,7 +3048,7 @@ export function consumeTesterGate(
       // State is the durable decision. If the process stops before the ledger
       // write, the same gate result above repairs the reservation on retry.
       writeStateJsonAtomic(statePath, updated);
-      settleObservedExposure(exposure, updated);
+      settleObservedTrial(testTrial, updated);
       writeLedger(ledgerPath, ledger);
       writeTesterDashboard(projectRoot, updated);
       return updated;
@@ -3168,10 +3073,6 @@ export function retryTesterInfrastructure(
   return transitionTesterState(projectRoot, testerRunId, "retryable_infra_failure");
 }
 
-export function readExposureLedger(
-  projectRoot: string,
-  taskId: string,
-  maxExposures: number,
-): ExposureLedger {
-  return loadLedger(projectRoot, assertIdentifier(taskId, "task_id"), maxExposures);
+export function readTesterTrialLedger(projectRoot: string, taskId: string): TesterTrialLedger {
+  return loadLedger(projectRoot, assertIdentifier(taskId, "task_id"));
 }

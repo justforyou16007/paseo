@@ -122,7 +122,7 @@ test("workflow CLI rejects a missing canonical contract instead of defaulting id
       "--import", "tsx", path.join(process.cwd(), "src/tools/workflow-cli.ts"),
       "start", "--execution-root", root, "--project", root, "--run", "missing",
       "--freeze", path.join(root, "freeze.json"),
-      "--tester-agent-config", path.join(root, "tester-agent.json"),
+      "--tester-config", path.join(root, "tester-facility.json"),
     ], { encoding: "utf8" });
     for (const result of [workflowCommand(root, "missing"), start]) {
       assert.equal(result.status, 1);

@@ -22,17 +22,17 @@ import {
   buildTesterJudgeBinding,
   buildTesterDefinition,
   markTesterStarted,
-  readExposureLedger,
-  recordTesterPrivateResult,
-  recoverExposureLedger,
+  readTesterTrialLedger,
+  recordTesterResult,
+  recoverTesterTrialLedger,
   recordTesterReview,
   recordTesterStarted,
   recordTesterFeedbackEvent,
   reservePromotionTrial as reserveStoredPromotionTrial,
-  releaseExposure,
+  releaseTesterTrial,
   saveTesterDefinition,
-  sealPrivateTesterResult,
-  settleExposure,
+  sealTesterResult,
+  settleTesterTrial,
   startTesterRun,
   type ExposureRecord,
   type TesterDefinition,
@@ -210,8 +210,8 @@ function rawSpec(overrides: Record<string, unknown> = {}): Record<string, unknow
     promotion_tester: {
       tester_id: "tester:final",
       definition_version: "tester:v1",
-      research_feedback: "fuzzy_advice_only",
-      max_exposures_per_task: 4,
+      research_feedback: "detailed",
+
     },
     wave_policy: {
       max_parallel_modules: 2,
@@ -417,8 +417,8 @@ function testerDefinition(): TesterDefinition {
     case_manifest_sha256: HASH,
     seed_manifest_sha256: HASH_B,
     harness_sha256: HASH_C,
-    research_feedback: "fuzzy_advice_only",
-    max_exposures_per_task: 4,
+    research_feedback: "detailed",
+
     comparison: "paired_matching_baseline_vs_finalist",
     gate: {
       primaries: [{ name: "tester_score", direction: "higher_better", improvement: { policy: "relative", minimum_gain: 0.1 } }],
@@ -1288,7 +1288,7 @@ test("tester只运行一次matching baseline/finalist，exposure三态和崩溃�
       model_assignment_sha256: HASH_C,
       input_distribution_sha256: HASH_B,
       judge_binding: testerJudgeBinding(),
-      max_exposures_per_task: tester.max_exposures_per_task,
+
     };
     reservePromotionTrial({ ...common, promotion_trial_id: "promotion:1" });
     const second = reservePromotionTrial({
@@ -1299,27 +1299,24 @@ test("tester只运行一次matching baseline/finalist，exposure三态和崩溃�
       finalist_artifact_sha256: "d".repeat(64),
     });
     assert.equal(second.status, "reserved");
-    markTesterStarted(root, "task:model-factory", "promotion:1", tester.max_exposures_per_task);
-    sealPrivateTesterResult(
+    markTesterStarted(root, "task:model-factory", "promotion:1",);
+    sealTesterResult(
       root,
       "task:model-factory",
       "promotion:1",
       HASH_C,
-      tester.max_exposures_per_task,
     );
     recordTesterFeedbackEvent(
       root,
       "task:model-factory",
       "promotion:1",
       "feedback:event-1",
-      tester.max_exposures_per_task,
     );
-    settleExposure(root, "task:model-factory", "promotion:1", tester.max_exposures_per_task);
-    releaseExposure(
+    settleTesterTrial(root, "task:model-factory", "promotion:1",);
+    releaseTesterTrial(
       root,
       "task:model-factory",
       "promotion:2",
-      tester.max_exposures_per_task,
       "failed_irrecoverable",
     );
     reservePromotionTrial({
@@ -1329,16 +1326,16 @@ test("tester只运行一次matching baseline/finalist，exposure三态和崩溃�
       outer_run_id: "outer-3",
       finalist_artifact_sha256: "e".repeat(64),
     });
-    const recovered = recoverExposureLedger({
+    const recovered = recoverTesterTrialLedger({
       project_root: root,
       task_id: "task:model-factory",
-      max_exposures_per_task: tester.max_exposures_per_task,
+
       trials: new Map([
         [
           "promotion:3",
           {
             tester_started: false,
-            private_result_sha256: null,
+            test_result_sha256: null,
             feedback_event_id: "feedback:event-3",
             parent_wave_status: "running",
           },
@@ -1346,27 +1343,25 @@ test("tester只运行一次matching baseline/finalist，exposure三态和崩溃�
       ]),
     });
     assert.equal(
-      recovered.exposures.find((exposure) => exposure.promotion_trial_id === "promotion:3")?.status,
+      recovered.test_trials.find((exposure) => exposure.promotion_trial_id === "promotion:3")?.status,
       "settled",
     );
     assert.equal(
-      readExposureLedger(
+      readTesterTrialLedger(
         root,
         "task:model-factory",
-        tester.max_exposures_per_task,
-      ).exposures.filter((exposure) => exposure.status === "settled").length,
+      ).test_trials.filter((exposure) => exposure.status === "settled").length,
       2,
     );
     expectCode(
       () =>
-        releaseExposure(
+        releaseTesterTrial(
           root,
           "task:model-factory",
           "promotion:1",
-          tester.max_exposures_per_task,
           "failed_irrecoverable",
         ),
-      "EXPOSURE_TERMINAL",
+      "TESTER_TRIAL_TERMINAL",
     );
     reservePromotionTrial({
       ...common,
@@ -1576,7 +1571,7 @@ test("promotion gate消费一次且tester反馈只发布模糊结论", () => {
   assert.equal(sanitizeTesterFeedback(feedback).conclusion, "not_improved");
   expectCode(
     () => sanitizeTesterFeedback({ ...feedback, case_id: "case:secret" }),
-    "PRIVATE_EVIDENCE_LEAK",
+    "UNKNOWN_FIELD",
   );
   const gateRoot = tempDir();
   try {
@@ -1599,7 +1594,7 @@ test("promotion gate消费一次且tester反馈只发布模糊结论", () => {
       model_assignment_sha256: HASH_C,
       input_distribution_sha256: HASH_B,
       judge_binding: testerJudgeBinding(),
-      max_exposures_per_task: tester.max_exposures_per_task,
+
       promotion_trial_id: "promotion:gate",
     });
     createChildContract(gateRoot, "outer-gate", "tester-run-gate", "gate");
@@ -1624,7 +1619,7 @@ test("promotion gate消费一次且tester反馈只发布模糊结论", () => {
       judge_binding: testerJudgeBinding(),
     });
     recordTesterStarted(gateRoot, "tester-run-gate");
-    const privateResultState = recordTesterPrivateResult(gateRoot, "tester-run-gate", {
+    const testResultState = recordTesterResult(gateRoot, "tester-run-gate", {
       schema_version: 1,
       tester_run_id: "tester-run-gate",
       task_id: "task:model-factory",
@@ -1709,7 +1704,7 @@ test("promotion gate消费一次且tester反馈只发布模糊结论", () => {
         case_manifest_sha256: HASH,
         matching_baseline_artifact_sha256: HASH,
         finalist_artifact_sha256: HASH_B,
-        private_result_sha256: privateResultState.private_result_sha256,
+        test_result_sha256: testResultState.test_result_sha256,
       },
       reviewer_worker_id: "reviewer-gate",
       evidence_bundle_id: "evidence:tester-gate",
@@ -1820,11 +1815,10 @@ test("promotion gate消费一次且tester反馈只发布模糊结论", () => {
       gateFeedback.feedback_event_id,
     );
     assert.equal(
-      readExposureLedger(
+      readTesterTrialLedger(
         gateRoot,
         "task:model-factory",
-        tester.max_exposures_per_task,
-      ).exposures.find((exposure) => exposure.promotion_trial_id === "promotion:gate")
+      ).test_trials.find((exposure) => exposure.promotion_trial_id === "promotion:gate")
         ?.feedback_event_id,
       gateFeedback.feedback_event_id,
     );

@@ -140,6 +140,15 @@ const PAGE_DATA_KEYS: Record<WikiPageKind, readonly string[]> = {
     "iteration",
     "gate_metric",
     "tester_metrics",
+    "test_result_path",
+    "test_audit_path",
+    "test_result_sha256",
+    "test_audit_sha256",
+    "tester_run_id",
+    "benchmark",
+    "dataset_split",
+    "test_sample_count",
+    "tester_audit_status",
     "tester_definition_sha256",
     "tester_conclusion",
     "tester_confidence",
@@ -456,7 +465,34 @@ function validatePageData(
         ],
         location,
       );
-      assertOptionalStrings(data, ["tester_definition_sha256"], location);
+      assertOptionalStrings(
+        data,
+        [
+          "tester_definition_sha256",
+          "test_result_path",
+          "test_audit_path",
+          "test_result_sha256",
+          "test_audit_sha256",
+          "tester_run_id",
+          "benchmark",
+          "dataset_split",
+          "tester_audit_status",
+        ],
+        location,
+      );
+      for (const field of ["test_result_sha256", "test_audit_sha256"])
+        if (data[field] !== undefined && !/^[0-9a-f]{64}$/.test(String(data[field])))
+          throw new Error(`${location}.${field} must be a sha256 digest`);
+      if (
+        data.tester_audit_status !== undefined &&
+        !["pass", "warn", "fail"].includes(String(data.tester_audit_status))
+      )
+        throw new Error(`${location}.tester_audit_status is invalid`);
+      if (
+        data.sample_count !== undefined &&
+        (!Number.isInteger(data.sample_count) || (data.sample_count as number) < 1)
+      )
+        throw new Error(`${location}.sample_count must be positive`);
       if (data.tags !== undefined) assertStringArray(data.tags, `${location}.tags`);
       if (data.idea_id !== undefined && data.idea_id !== "")
         assertNodeId(data.idea_id as string, `${location}.idea_id`);
@@ -480,10 +516,7 @@ function validatePageData(
         !/^[0-9a-f]{64}$/.test(data.tester_definition_sha256 as string)
       )
         throw new Error(`${location}.tester_definition_sha256 must be a sha256 hex digest`);
-      // The tester's coarse verdict travels with its numbers. Only the shape is
-      // checked here, the same way `tester_metrics` is: the fixed vocabularies
-      // live in `tester-feedback.ts` and are enforced when the tester signs the
-      // feedback, and only a signature-verified envelope reaches this page.
+      // Descriptive feedback stays readable; publication checks live in the event store.
       assertOptionalStrings(data, ["tester_conclusion", "tester_confidence"], location);
       for (const field of ["tester_directions", "tester_advice"] as const) {
         if (data[field] === undefined) continue;

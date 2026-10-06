@@ -25,6 +25,7 @@ import type { FreezeOuterRunInput } from "./workflow-state.js";
 import type { StopPolicy } from "./workflow-stop-gate.js";
 import {
   advanceOuterPhase,
+  advanceAutoResearchPhase,
   beginOuterCycle,
   compileOuterCandidate,
   completeOuterCycle,
@@ -127,6 +128,9 @@ function evidence(options: EvidenceOptions): string[] {
 
 function phase(value: string): OuterPhase {
   const phases: readonly OuterPhase[] = [
+    "tester-test",
+    "tester-audit",
+    "auto-review-loop",
     "init",
     "diagnosis",
     "workset",
@@ -166,9 +170,9 @@ function freezeInput(filePath: string): FreezeOuterRunInput {
   return document(filePath) as unknown as FreezeOuterRunInput;
 }
 
-function testerAgentOption(command: Command): Command {
+function testerFacilityOption(command: Command): Command {
   return command.option(
-    "--tester-agent-config <path>",
+    "--tester-config <path>",
     "remote tester configuration for legacy depth-0 tester workflows",
   );
 }
@@ -179,17 +183,17 @@ const runOptions = (command: Command): Command =>
     .requiredOption("--project <path>", "research project root")
     .requiredOption("--run <id>", "run id");
 
-const start = testerAgentOption(
+const start = testerFacilityOption(
   runOptions(program.command("start"))
     .option("--freeze <path>", "frozen tester workflow input")
     .option("--charter <path>", "Auto Research Loop charter.json"),
 );
 start.action(
   (
-    options: IdentityOptions & { freeze?: string; charter?: string; testerAgentConfig?: string },
+    options: IdentityOptions & { freeze?: string; charter?: string; testerFacilityConfig?: string },
   ) => {
     if (options.charter !== undefined) {
-      if (options.freeze !== undefined || options.testerAgentConfig !== undefined)
+      if (options.freeze !== undefined || options.testerFacilityConfig !== undefined)
         failA1("INVALID_VALUE", "ARL charter start cannot accept tester or freeze options");
       const expected = runOwnedPath(options.project, options.run, "charter.json");
       if (path.resolve(options.charter) !== expected)
@@ -202,7 +206,7 @@ start.action(
     const input: StartOuterRunInput = {
       ...base,
       freeze_input: freezeInput(options.freeze),
-      tester_agent_config_path: options.testerAgentConfig ?? "",
+      tester_facility_config_path: options.testerFacilityConfig ?? "",
     };
     print(startOuterRun(input));
   },
@@ -275,7 +279,7 @@ program
     },
   );
 
-const resume = testerAgentOption(
+const resume = testerFacilityOption(
   runOptions(program.command("resume"))
     .option(
       "--freeze <path>",
@@ -285,10 +289,10 @@ const resume = testerAgentOption(
 );
 resume.action(
   (
-    options: IdentityOptions & { freeze?: string; charter?: string; testerAgentConfig?: string },
+    options: IdentityOptions & { freeze?: string; charter?: string; testerFacilityConfig?: string },
   ) => {
     if (options.charter !== undefined) {
-      if (options.freeze !== undefined || options.testerAgentConfig !== undefined)
+      if (options.freeze !== undefined || options.testerFacilityConfig !== undefined)
         failA1("INVALID_VALUE", "ARL charter resume cannot accept tester or freeze options");
       const expected = runOwnedPath(options.project, options.run, "charter.json");
       if (path.resolve(options.charter) !== expected)
@@ -299,7 +303,7 @@ resume.action(
     const base = identity(options);
     const input: ResumeOuterRunInput = {
       ...base,
-      tester_agent_config_path: options.testerAgentConfig ?? "",
+      tester_facility_config_path: options.testerFacilityConfig ?? "",
       ...(options.freeze === undefined ? {} : { freeze_input: freezeInput(options.freeze) }),
     };
     print(resumeOuterRun(input));
@@ -334,6 +338,31 @@ runOptions(
       evidence_paths: evidence(options),
     }),
   ),
+);
+
+runOptions(
+  program
+    .command("tester-phase")
+    .requiredOption("--from <phase>")
+    .requiredOption("--to <phase>")
+    .requiredOption("--evidence <paths...>")
+    .option("--test-result <path>")
+    .option("--test-audit <path>"),
+).action(
+  (
+    o: IdentityOptions &
+      EvidenceOptions & { from: string; to: string; testResult?: string; testAudit?: string },
+  ) =>
+    print(
+      advanceAutoResearchPhase({
+        ...identity(o),
+        from_phase: phase(o.from),
+        to_phase: phase(o.to),
+        evidence_paths: evidence(o),
+        test_result_path: o.testResult,
+        test_audit_path: o.testAudit,
+      }),
+    ),
 );
 
 runOptions(
@@ -591,20 +620,16 @@ runOptions(
   program
     .command("promotion-commit")
     .requiredOption("--registry-run-id <id>", "artifact registry run containing sealed outputs")
-    .requiredOption("--tester-receipt <path>", "signed public tester conclusion")
-    .requiredOption("--public-key <path>", "root-owned tester conclusion public key")
-    .requiredOption("--feedback-receipt <path>", "signed public tester feedback")
-    .requiredOption("--feedback-public-key <path>", "root-owned tester feedback public key")
+    .requiredOption("--test-result <path>", "completed tester result")
+    .requiredOption("--test-audit <path>", "passing tester audit")
     .requiredOption("--evidence <paths...>", "promotion commit evidence"),
 ).action(
   (
     options: IdentityOptions &
       EvidenceOptions & {
         registryRunId: string;
-        testerReceipt: string;
-        publicKey: string;
-        feedbackReceipt: string;
-        feedbackPublicKey: string;
+        testResult: string;
+        testAudit: string;
       },
   ) => {
     const base = identity(options);
@@ -615,14 +640,7 @@ runOptions(
           base.project_root,
           assertIdentifier(options.registryRunId, "registry_run_id"),
         ),
-        tester_public_receipt: {
-          receipt_path: requireString(options.testerReceipt, "tester_receipt"),
-          public_key_path: requireString(options.publicKey, "public_key"),
-        },
-        tester_feedback_receipt: {
-          receipt_path: requireString(options.feedbackReceipt, "feedback_receipt"),
-          public_key_path: requireString(options.feedbackPublicKey, "feedback_public_key"),
-        },
+        tester_result: { result_path: options.testResult, audit_path: options.testAudit },
         evidence_paths: evidence(options),
       }),
     );
@@ -633,20 +651,16 @@ runOptions(
   program
     .command("promotion-recover")
     .requiredOption("--registry-run-id <id>", "artifact registry run containing sealed outputs")
-    .requiredOption("--tester-receipt <path>", "signed public tester conclusion")
-    .requiredOption("--public-key <path>", "root-owned tester conclusion public key")
-    .requiredOption("--feedback-receipt <path>", "signed public tester feedback")
-    .requiredOption("--feedback-public-key <path>", "root-owned tester feedback public key")
+    .requiredOption("--test-result <path>", "completed tester result")
+    .requiredOption("--test-audit <path>", "passing tester audit")
     .option("--evidence <paths...>", "original promotion commit evidence"),
 ).action(
   (
     options: IdentityOptions &
       EvidenceOptions & {
         registryRunId: string;
-        testerReceipt: string;
-        publicKey: string;
-        feedbackReceipt: string;
-        feedbackPublicKey: string;
+        testResult: string;
+        testAudit: string;
       },
   ) => {
     const base = identity(options);
@@ -656,14 +670,7 @@ runOptions(
         base.project_root,
         assertIdentifier(options.registryRunId, "registry_run_id"),
       ),
-      tester_public_receipt: {
-        receipt_path: requireString(options.testerReceipt, "tester_receipt"),
-        public_key_path: requireString(options.publicKey, "public_key"),
-      },
-      tester_feedback_receipt: {
-        receipt_path: requireString(options.feedbackReceipt, "feedback_receipt"),
-        public_key_path: requireString(options.feedbackPublicKey, "feedback_public_key"),
-      },
+      tester_result: { result_path: options.testResult, audit_path: options.testAudit },
       ...(options.evidence === undefined ? {} : { evidence_paths: evidence(options) }),
     };
     print(recoverPromotionCommit(input));

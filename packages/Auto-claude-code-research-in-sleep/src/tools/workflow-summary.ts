@@ -63,7 +63,7 @@ export interface ScorerRunSummary {
   candidate_result_sha256: string | null;
 }
 
-/** Public tester view. It intentionally contains no cases, observations, or private result URI. */
+/** Tester promotion summary; complete evidence remains in the facility result. */
 export interface TesterRunSummary {
   tester_run_id: string;
   outer_iteration: number;

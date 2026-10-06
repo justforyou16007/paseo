@@ -181,7 +181,7 @@ export interface BridgeStatusRoute {
   failure_code: "RESOURCE_SCOPE_ALIGNMENT_REQUIRED" | "INFRA_UNAVAILABLE" | null;
   enters_validation: boolean;
   counts_for_stop_gate: boolean;
-  consumes_tester_exposure: boolean;
+  requires_tester: boolean;
 }
 
 export interface BridgePositionResult {
@@ -616,10 +616,9 @@ function validateBridgeInputs(input: ExperimentBridgeInput): {
     // not allowed to touch, and the parent answers for what its children do.
     if (position.charter?.optimizable_scope !== undefined)
       assertOptimizableScopeSubset(charter.optimizable_scope, position.charter.optimizable_scope);
-    // A child is judged by an acceptance its parent writes, never by the task
-    // tester: tester exposures are counted against one task-wide limit, so a
-    // child that could name the tester would spend the whole task's remaining
-    // exposures on a local question. The bridge fills tester_ref in itself.
+    // The parent freezes its child's local acceptance before dispatch.
+    // Facility tests are shared, while the acceptance's identity and ownership
+    // cannot be substituted by a caller-selected task promotion gate.
     const measurement = position.charter?.measurement as Record<string, unknown> | undefined;
     if (isRecord(measurement) && measurement.tester_ref !== undefined)
       failA1(
@@ -1185,24 +1184,12 @@ function validatePlanStatusRoute(value: unknown, location: string): BridgeStatus
     failA1("INVALID_EXPANSION", "bridge status route must be an object", location);
   assertNoUnknownFields(
     value,
-    [
-      "status",
-      "failure_code",
-      "enters_validation",
-      "counts_for_stop_gate",
-      "consumes_tester_exposure",
-    ],
+    ["status", "failure_code", "enters_validation", "counts_for_stop_gate", "requires_tester"],
     location,
   );
   requirePlanFields(
     value,
-    [
-      "status",
-      "failure_code",
-      "enters_validation",
-      "counts_for_stop_gate",
-      "consumes_tester_exposure",
-    ],
+    ["status", "failure_code", "enters_validation", "counts_for_stop_gate", "requires_tester"],
     location,
   );
   const status = validateResultStatus(value.status, `${location}.status`);
@@ -1219,7 +1206,7 @@ function validatePlanStatusRoute(value: unknown, location: string): BridgeStatus
   if (
     value.enters_validation !== policy.enters_validation ||
     value.counts_for_stop_gate !== policy.counts_for_stop_gate ||
-    value.consumes_tester_exposure !== policy.consumes_tester_exposure
+    value.requires_tester !== policy.requires_tester
   )
     failA1(
       "INVALID_EXPANSION",
@@ -1234,10 +1221,7 @@ function validatePlanStatusRoute(value: unknown, location: string): BridgeStatus
       value.counts_for_stop_gate,
       `${location}.counts_for_stop_gate`,
     ),
-    consumes_tester_exposure: requireBoolean(
-      value.consumes_tester_exposure,
-      `${location}.consumes_tester_exposure`,
-    ),
+    requires_tester: requireBoolean(value.requires_tester, `${location}.requires_tester`),
   };
 }
 
@@ -2198,7 +2182,7 @@ export function decideWave(input: {
     .map((result) => result.candidate_id!)
     .sort(compareIdentityStrings);
   const testerCandidateIds = results
-    .filter((result) => result.route.consumes_tester_exposure && result.candidate_id !== null)
+    .filter((result) => result.route.requires_tester && result.candidate_id !== null)
     .map((result) => result.candidate_id!)
     .sort(compareIdentityStrings);
   const candidatePositionIds = results

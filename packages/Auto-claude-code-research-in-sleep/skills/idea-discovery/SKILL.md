@@ -58,7 +58,7 @@ live head, a direct-mode query pack used as a substitute, or an unlisted file is
 not an input to a dispatched run.
 
 The run may read the frozen brief and local source files and may write only
-under its declared `output_dir`/workspace scope. It must not read tester-private
+under its declared `output_dir`/workspace scope. It may read pinned benchmark evidence but must not read another run’s
 results, incumbent state, or another run's workspace.
 
 ### Work and child dispatch

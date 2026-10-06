@@ -44,7 +44,7 @@ import {
 import { writeStateJsonAtomic } from "../src/tools/state-file.js";
 
 const require = createRequire(import.meta.url);
-const TSX_CLI = require.resolve("tsx/cli");
+const TSX_CLI = "--import";
 const PACKAGE_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 
 const HASH_A = "a".repeat(64);
@@ -184,8 +184,8 @@ function freezeInput(projectRoot: string, runId: string): FreezeOuterRunInput {
     case_manifest_sha256: HASH_A,
     seed_manifest_sha256: HASH_B,
     harness_sha256: HASH_C,
-    research_feedback: "fuzzy_advice_only",
-    max_exposures_per_task: 4,
+    research_feedback: "detailed",
+
     comparison: "paired_matching_baseline_vs_finalist",
     gate: {
       primaries: [{ name: "score", direction: "higher_better", improvement: { policy: "absolute", minimum_gain: 0.1 } }],
@@ -586,7 +586,7 @@ function createRootRuntimeBridgeFixture(): RuntimeBridgeFixture {
     exposure_limit: 4,
     task_setup_sha256: HASH_A,
     tester_definition_sha256: HASH_B,
-    tester_agent_sha256: HASH_C,
+    tester_facility_sha256: HASH_C,
     validation_thresholds_sha256: HASH_A,
     owner_limits_sha256: HASH_B,
     policy_revision: POLICY_REVISION,
@@ -690,7 +690,7 @@ function runBridgeHandoff(fixture: RuntimeBridgeFixture, label: string): AutoRes
   const prep = spawnSync(
     process.execPath,
     [
-      TSX_CLI,
+      TSX_CLI, "tsx",
       cliPath,
       "bridge-input",
       "--execution-root",
@@ -768,7 +768,7 @@ function runBridgeHandoff(fixture: RuntimeBridgeFixture, label: string): AutoRes
   const expand = spawnSync(
     process.execPath,
     [
-      TSX_CLI,
+      TSX_CLI, "tsx",
       cliPath,
       "bridge-expand",
       "--execution-root",

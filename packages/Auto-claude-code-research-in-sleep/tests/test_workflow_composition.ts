@@ -77,8 +77,8 @@ function workflowSpec(
     promotion_tester: {
       tester_id: fixture.tester.tester_id,
       definition_version: fixture.tester.version,
-      research_feedback: "fuzzy_advice_only",
-      max_exposures_per_task: fixture.tester.max_exposures_per_task,
+      research_feedback: "detailed",
+
     },
     wave_policy: {
       max_parallel_modules: 2,

@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "mode": "tester_facility",
+  "tester_id": "benchmark-test",
+  "project_id": "research-project",
+  "version": "v1",
+  "benchmark": {
+    "name": "YOUR_BENCHMARK",
+    "source": "YOUR_PINNED_BENCHMARK_SOURCE",
+    "revision": "PINNED_COMMIT"
+  },
+  "dataset": {
+    "name": "YOUR_DATASET",
+    "revision": "PINNED_DATA_REVISION",
+    "split": "test",
+    "expected_samples": 1000
+  },
+  "metrics": [
+    {
+      "name": "accuracy",
+      "direction": "higher_better",
+      "aggregation": "mean"
+    }
+  ],
+  "execution": {
+    "kind": "local",
+    "cwd": "/absolute/path/to/evaluation",
+    "env": {}
+  },
+  "setup": [
+    {
+      "argv": [
+        "bash",
+        "scripts/setup-benchmark.sh"
+      ],
+      "timeout_ms": 3600000
+    }
+  ],
+  "healthcheck": {
+    "argv": [
+      "bash",
+      "scripts/check-benchmark.sh"
+    ],
+    "timeout_ms": 60000
+  },
+  "smoke": {
+    "argv": [
+      "bash",
+      "scripts/evaluate.sh",
+      "--smoke"
+    ],
+    "timeout_ms": 300000
+  },
+  "test": {
+    "argv": [
+      "bash",
+      "scripts/evaluate.sh"
+    ],
+    "timeout_ms": 86400000
+  },
+  "evidence_files": [
+    "scripts/evaluate.sh",
+    "scripts/check-benchmark.sh",
+    "evaluation-config.json",
+    "data-manifest.json"
+  ]
+}

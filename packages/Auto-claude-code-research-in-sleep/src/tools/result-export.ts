@@ -1,3 +1,4 @@
+import { canonicalJsonSha256 } from "./canonical-json.js";
 /**
  * Exporting a run's best iteration as its result package.
  *
@@ -49,6 +50,13 @@ import {
 } from "./result-package.js";
 import { requireRunContract, runOwnedPath } from "./run-contract.js";
 import { readStateFile } from "./state-file.js";
+import {
+  readTesterFacilityConfig,
+  testerFacilityConfigSha256,
+  readAuditedTesterResult,
+  evidenceFile,
+  testerConfigPath,
+} from "./tester-facility.js";
 import { validateTesterDefinition, type TesterPrimaryMetric } from "./tester-state.js";
 import { eventLogHead, readWikiEvents } from "./wiki-event-store.js";
 import { readWikiModel, type WikiPage } from "./wiki-projector.js";
@@ -101,7 +109,7 @@ export interface ResultExportPlan {
   ranked: ExportCandidate[];
 }
 
-function candidateFromPage(page: WikiPage): ExportCandidate | null {
+function candidateFromPage(page: WikiPage, runId: string): ExportCandidate | null {
   const data = page.data;
   // An experiment without an iteration cannot be lined up against the metric
   // history, so it is not a candidate rather than a zero-scored one.
@@ -112,6 +120,21 @@ function candidateFromPage(page: WikiPage): ExportCandidate | null {
     !Array.isArray(data.tester_metrics)
       ? (data.tester_metrics as Record<string, number>)
       : null;
+  if (testerMetrics !== null && data.tester_audit_status !== "pass") return null;
+  if (testerMetrics !== null) {
+    const { result } = readAuditedTesterResult(
+      String(data.test_result_path),
+      String(data.test_audit_path),
+      { iteration: data.iteration as number, experiment_id: page.id, run_id: runId },
+    );
+    if (
+      canonicalJsonSha256(testerMetrics) !== canonicalJsonSha256(result.metrics) ||
+      data.tester_definition_sha256 !== result.config_sha256 ||
+      data.test_result_sha256 !== evidenceFile(String(data.test_result_path)).sha256 ||
+      data.test_audit_sha256 !== evidenceFile(String(data.test_audit_path)).sha256
+    )
+      failA1("TESTER_METRIC_MISMATCH", "Wiki page differs from its audited benchmark result");
+  }
   return {
     page_id: page.id,
     iteration: data.iteration,
@@ -159,30 +182,32 @@ function readPrimaries(
 ) {
   const judged = candidates.filter((candidate) => candidate.tester_metrics !== null);
   if (judged.length === 0) return null;
-  if (input.tester_definition_path === undefined)
-    failA1(
-      "TESTER_DEFINITION_REQUIRED",
-      "the wiki records tester metrics, so the frozen tester definition is needed to rank by them",
-      "result_export.tester_definition_path",
-    );
-  const definitionPath = path.resolve(input.project_root, input.tester_definition_path);
+  const definitionPath = path.resolve(
+    input.project_root,
+    input.tester_definition_path ?? testerConfigPath(input.project_root),
+  );
   if (!fs.existsSync(definitionPath))
     failA1(
-      "TESTER_DEFINITION_NOT_FOUND",
-      `tester definition does not exist at ${definitionPath}`,
-      "result_export.tester_definition_path",
+      "TESTER_DEFINITION_REQUIRED",
+      "tester facility configuration is required for benchmark ranking",
     );
-  const definition = validateTesterDefinition(readStateFile(definitionPath));
-  const declared = definition.gate.primaries;
+  const rawDefinition = readStateFile<Record<string, unknown>>(definitionPath);
+  const facility =
+    rawDefinition.mode === "tester_facility" ? readTesterFacilityConfig(definitionPath) : null;
+  const legacy = facility === null ? validateTesterDefinition(rawDefinition) : null;
+  const declared = facility ? facility.metrics : legacy!.gate.primaries;
+  const definitionHash = facility
+    ? testerFacilityConfigSha256(facility)
+    : legacy!.definition_sha256;
   const declaredNames = declared.map((primary) => primary.name).sort();
   for (const candidate of judged) {
     // A page whose metrics came from a different tester version cannot be
     // compared against these ones, so the whole export stops rather than
     // silently ranking across two definitions.
-    if (candidate.tester_definition_sha256 !== definition.definition_sha256)
+    if (candidate.tester_definition_sha256 !== definitionHash)
       failA1(
         "TESTER_DEFINITION_MISMATCH",
-        `experiment ${candidate.page_id} was judged by tester definition ${candidate.tester_definition_sha256 ?? "(none recorded)"}, not ${definition.definition_sha256}`,
+        `experiment ${candidate.page_id} was judged by tester definition ${candidate.tester_definition_sha256 ?? "(none recorded)"}, not ${definitionHash}`,
         "result_export.tester_definition_path",
       );
     const recorded = Object.keys(candidate.tester_metrics ?? {}).sort();
@@ -193,14 +218,14 @@ function readPrimaries(
         "result_export.tester_definition_path",
       );
   }
-  return { definition, declared, judged };
+  return { definition: facility ?? legacy, declared, judged };
 }
 
 /** True when `left` is at least as good everywhere and strictly better once. */
 function dominates(
   left: ExportCandidate,
   right: ExportCandidate,
-  primaries: readonly TesterPrimaryMetric[],
+  primaries: readonly Pick<TesterPrimaryMetric, "name" | "direction">[],
 ): boolean {
   let strictlyBetterSomewhere = false;
   for (const primary of primaries) {
@@ -245,7 +270,7 @@ function betterOnGate(
  */
 export function rankCandidates(
   candidates: readonly ExportCandidate[],
-  primaries: readonly TesterPrimaryMetric[] | null,
+  primaries: readonly Pick<TesterPrimaryMetric, "name" | "direction">[] | null,
   gateDirection: "higher_better" | "lower_better",
 ): ExportCandidate[] {
   const withinLayer = (left: ExportCandidate, right: ExportCandidate): number =>
@@ -371,7 +396,7 @@ export function planResultExport(input: Omit<ResultExportInput, "review">): Resu
 
   const model = readWikiModel(wikiRoot);
   const allCandidates = [...model.pages.experiment.values()]
-    .map(candidateFromPage)
+    .map((page) => candidateFromPage(page, input.run_id))
     .filter((candidate): candidate is ExportCandidate => candidate !== null);
   const failure = failedStop(projectRoot, input.run_id);
   if (failure !== null && input.status !== undefined && input.status !== "failed")
@@ -518,8 +543,7 @@ export function planResultExport(input: Omit<ResultExportInput, "review">): Resu
 
   const localMetrics: Record<string, number> = {};
   for (const [name, value] of Object.entries(winner.tester_metrics ?? {}))
-    // Prefixed so a declared name that looks like private tester data
-    // (`tester_scores`, say) cannot trip the private-key screen downstream.
+    // Prefix benchmark metric names to distinguish them from the gate metric.
     localMetrics[`primary.${name}`] = value;
   if (winner.gate_metric !== null) localMetrics.metric_gate = winner.gate_metric;
   localMetrics.winning_iteration = winner.iteration;

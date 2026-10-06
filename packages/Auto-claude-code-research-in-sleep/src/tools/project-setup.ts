@@ -1,42 +1,16 @@
-/**
- * The state detector behind `/aris-setup`: what a project still has to
- * configure before `/auto-research-loop` can start a formal run, what can be
- * read off files that already exist, and how the owner's answers become the
- * one JSON `workflow-tools-cli.js root-setup` expects.
- *
- * Why this exists at all: the experiment-environment layer already has two
- * entries (a human through `/research-setup`, a machine through the loop's
- * step 0b), but the long-horizon layer -- the tester agent, the search gate and
- * the root charter -- had none. Nothing referenced `tester-setup` from outside
- * its own directory, so a person who finished `/research-setup` and ran
- * `/auto-research-loop` hit "charter missing" with nothing telling them which
- * commands produce one.
- *
- * Three rules this module keeps:
- *
- *  - It detects, it does not seal. `assembleRootSetupInput` builds the input
- *    document and stops there; `setupRootRun` stays the single writer of the
- *    root setup record.
- *  - Every inferred value carries the file and field it came from, because a
- *    value the owner cannot trace is a value the owner cannot check.
- *  - Anything the sources do not actually contain goes to `needs_owner`. There
- *    is no third category and nothing is defaulted into existence: an invented
- *    GPU model or quota would be sealed into the run's frozen inventory and
- *    then misclassify every resource failure for the rest of the run.
- *
- * The blocklist discipline from `skills/tester-setup/SKILL.md` applies here
- * too: the search-guard stage reports counts and digests, never a term.
- */
-
+/** Detect and assemble project basics, execution resources, reusable tester facilities and root setup. */
 import fs from "node:fs";
 import path from "node:path";
 
 import { readMetricConfig } from "./metric-gate.js";
 import { rootCharterPath } from "./root-charter.js";
-import { searchAuditPath, searchPolicyPath, verifySearchAudit } from "./search-policy.js";
 import type { RootSetupInput, RootSetupItem } from "./task-setup.js";
 import { SetupIncompleteError, collectMissingSetupItems } from "./task-setup.js";
-import { validateTesterAgentConfig } from "./tester-agent.js";
+import {
+  validateTesterFacilityConfig,
+  testerFacilityConfigSha256,
+  assertTesterSetupReady,
+} from "./tester-facility.js";
 import { failA1, isRecord } from "./workflow-spec.js";
 
 // ---------------------------------------------------------------------------
@@ -61,21 +35,9 @@ export function experimentSkillDir(projectRoot: string): string {
   return path.join(projectRoot, ".claude", "skills", `run-${projectSlug(projectRoot)}-experiment`);
 }
 
-/**
- * `tester-agent-cli.js emit-config` takes an arbitrary `--output`, so there was
- * no canonical location to look in. `/aris-setup` pins these three and passes
- * them as the `--output` arguments in its Phase 3.
- */
-export function testerDeploymentPath(projectRoot: string): string {
-  return path.join(projectRoot, ".aris", "tester-deployment.json");
-}
-
-export function testerContractPath(projectRoot: string): string {
-  return path.join(projectRoot, ".aris", "tester-submission-contract.json");
-}
-
-export function testerAgentConfigPath(projectRoot: string): string {
-  return path.join(projectRoot, ".aris", "tester-agent-config.json");
+/** Canonical configuration written by tester-facility setup. */
+export function testerConfigPath(projectRoot: string): string {
+  return path.join(projectRoot, ".aris", "tester-config.json");
 }
 
 export function globalSetupStatePath(projectRoot: string): string {
@@ -90,8 +52,7 @@ export const SETUP_STAGES = [
   "project_basics",
   "metric_target",
   "experiment_env",
-  "tester_agent",
-  "search_guard",
+  "tester_facility",
   "root_charter",
 ] as const;
 
@@ -213,84 +174,39 @@ function detectExperimentEnv(root: string): SetupStage {
   };
 }
 
-function detectTesterAgent(root: string): SetupStage {
-  const configPath = testerAgentConfigPath(root);
+function detectTesterFacility(root: string): SetupStage {
+  const configPath = testerConfigPath(root);
   const raw = readJsonFile(configPath);
   if (raw === undefined) {
     return {
-      id: "tester_agent",
+      id: "tester_facility",
       ready: false,
       evidence: [],
-      reason: `no tester agent config at ${path.relative(root, configPath)}`,
-      next: "/aris-setup Phase 3 (the six steps of ../tester-setup/SKILL.md)",
+      reason: `no tester facility config at ${path.relative(root, configPath)}`,
+      next: "/aris-setup Phase 3: /tester-setup",
     };
   }
   try {
-    const config = validateTesterAgentConfig(raw);
+    const config = validateTesterFacilityConfig(raw);
+    assertTesterSetupReady(configPath);
     return {
-      id: "tester_agent",
+      id: "tester_facility",
       ready: true,
       evidence: [path.relative(root, configPath)],
       detail: {
         tester_id: config.tester_id,
         project_id: config.project_id,
-        container: config.container,
-        submission_contract_sha256: config.submission_contract_sha256,
+        benchmark: config.benchmark.name,
+        config_sha256: testerFacilityConfigSha256(config),
       },
     };
   } catch (error) {
     return {
-      id: "tester_agent",
+      id: "tester_facility",
       ready: false,
       evidence: [],
-      reason: `tester agent config is invalid: ${(error as Error).message}`,
-      next: "re-run tester-agent-cli.js emit-config",
-    };
-  }
-}
-
-/**
- * Presence, counts and digests only. The policy file's `targets` are never read
- * into the report: the one moment a model is supposed to see a blocked term is
- * after it has already typed that term and been refused, when knowing it adds
- * nothing it did not have.
- */
-function detectSearchGuard(root: string): SetupStage {
-  const policyPath = searchPolicyPath(root);
-  const auditFile = searchAuditPath(root);
-  if (!fs.existsSync(policyPath)) {
-    return {
-      id: "search_guard",
-      ready: false,
-      evidence: [],
-      reason: "no search policy: every network call would be blocked as policy_missing",
-      next: "search-audit-cli.js emit-policy --contract <contract> --project <root>",
-      blocked_by: ["tester_agent"],
-    };
-  }
-  try {
-    const summary = verifySearchAudit(root);
-    return {
-      id: "search_guard",
-      ready: true,
-      evidence: [path.relative(root, policyPath), path.relative(root, auditFile)],
-      detail: {
-        ledger_entries: summary.entries,
-        blocked: summary.blocked,
-        allowed: summary.allowed,
-        active_policy_sha256: summary.active_policy_sha256,
-      },
-    };
-  } catch (error) {
-    // A missing or broken ledger is not "no searches happened" -- it is a guard
-    // that was never installed or a history that was edited afterwards.
-    return {
-      id: "search_guard",
-      ready: false,
-      evidence: [path.relative(root, policyPath)],
-      reason: `search ledger unusable: ${(error as Error).message}`,
-      next: "search-audit-cli.js install-guard --project <root>",
-      blocked_by: ["tester_agent"],
+      reason: `tester facility config is invalid: ${(error as Error).message}`,
+      next: "re-run tester-facility-cli.js setup",
     };
   }
 }
@@ -331,7 +247,7 @@ function detectRootCharter(
     evidence: [],
     reason,
     next: "project-setup-cli.js assemble … then workflow-tools-cli.js root-setup --project <root> --input <path>",
-    blocked_by: ["tester_agent", "experiment_env"],
+    blocked_by: ["tester_facility", "experiment_env"],
     missing_items: missingItems,
   };
 }
@@ -359,8 +275,7 @@ export function detectSetupStages(options: DetectOptions): SetupStatus {
     detectProjectBasics(root),
     detectMetricTarget(root),
     detectExperimentEnv(root),
-    detectTesterAgent(root),
-    detectSearchGuard(root),
+    detectTesterFacility(root),
     detectRootCharter(root, runId, missingItems),
   ];
 
@@ -541,65 +456,55 @@ function inferBaseline(root: string, out: SetupInference): void {
 }
 
 function inferTesterItems(root: string, out: SetupInference): void {
-  const configPath = testerAgentConfigPath(root);
+  const configPath = testerConfigPath(root);
   const raw = readJsonFile(configPath);
   if (raw === undefined) {
     out.needs_owner.push({
-      item: "tester_agent",
+      item: "tester_facility",
       field: "(whole item)",
-      why: `no ${path.relative(root, configPath)}; it is produced by tester-agent-cli.js emit-config, not by hand`,
+      why: `no ${path.relative(root, configPath)}; it is produced by tester-facility-cli.js setup, not by hand`,
     });
     out.needs_owner.push({
       item: "tester",
       field: "tester_id, version",
-      why: "the tester definition names the deployed tester, which does not exist yet",
+      why: "the tester definition names the configured tester, which does not exist yet",
     });
     return;
   }
   try {
-    const config = validateTesterAgentConfig(raw);
-    out.inferred.tester_agent = {
+    const config = validateTesterFacilityConfig(raw);
+    assertTesterSetupReady(configPath);
+    out.inferred.tester_facility = {
       value: config,
       source: path.relative(root, configPath),
     };
     out.inferred.tester = {
       value: {
         tester_id: config.tester_id,
-        version: config.submission_contract_sha256.slice(0, 12),
+        version: config.version,
       },
-      source: `${path.relative(root, configPath)} (tester_id, submission_contract_sha256)`,
+      source: `${path.relative(root, configPath)} (tester_id, version)`,
     };
   } catch (error) {
     out.needs_owner.push({
-      item: "tester_agent",
+      item: "tester_facility",
       field: "(whole item)",
       why: `${path.relative(root, configPath)} is invalid: ${(error as Error).message}`,
     });
     out.needs_owner.push({
       item: "tester",
       field: "tester_id, version",
-      why: "the tester agent config it would be read from is invalid",
+      why: "the tester facility config it would be read from is invalid",
     });
   }
 }
 
 /**
- * `exposure` and `limits` have no source at all. They are printed with a
+ * `testTrial` and `limits` have no source at all. They are printed with a
  * conservative default and an explicit "no source" so the owner is confirming a
  * number rather than accepting one that looks derived.
  */
-function inferOwnerOnlyItems(out: SetupInference): void {
-  out.needs_owner.push({
-    item: "exposure",
-    field: "exposure_limit",
-    why: "how many times this run may reach the tester is a policy decision; nothing on disk implies it (suggested: 1)",
-  });
-  out.needs_owner.push({
-    item: "limits",
-    field: "owner_limits",
-    why: "graph size and per-candidate compute ceilings are owner policy; nothing on disk implies them",
-  });
-}
+function inferOwnerOnlyItems(out: SetupInference): void {}
 
 export function inferSetupItems(projectRoot: string): SetupInference {
   const root = path.resolve(projectRoot);
@@ -634,9 +539,8 @@ function mergeValue(base: unknown, override: unknown): unknown {
 /** The keys `collectMissingSetupItems` accepts for each item, canonical first. */
 const ITEM_FIELD: Record<RootSetupItem, string> = {
   tester: "tester_definition",
-  tester_agent: "tester_agent_config",
+  tester_facility: "tester_facility_config",
   thresholds: "validation_thresholds",
-  exposure: "exposure_limit",
   limits: "owner_limits",
   resource: "resource_inventory",
   baseline: "baseline_scope",
@@ -645,9 +549,8 @@ const ITEM_FIELD: Record<RootSetupItem, string> = {
 /** Both spellings of each item, so an answers file may use either. */
 const ITEM_ALIASES: Record<RootSetupItem, readonly string[]> = {
   tester: ["tester_definition", "tester"],
-  tester_agent: ["tester_agent_config", "tester_agent"],
+  tester_facility: ["tester_facility_config", "tester_facility"],
   thresholds: ["validation_thresholds", "thresholds"],
-  exposure: ["exposure_limit", "exposure"],
   limits: ["owner_limits", "limits"],
   resource: ["resource_inventory", "resource"],
   baseline: ["baseline_scope", "baseline"],

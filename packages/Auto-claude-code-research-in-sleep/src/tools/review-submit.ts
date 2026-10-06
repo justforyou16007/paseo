@@ -84,7 +84,7 @@ export interface TesterReviewReceipt extends ReviewReceiptBase {
     case_manifest_sha256: string;
     matching_baseline_artifact_sha256: string;
     finalist_artifact_sha256: string;
-    private_result_sha256: string;
+    test_result_sha256: string;
   };
 }
 
@@ -268,16 +268,6 @@ function commonReceipt(value: unknown): ReviewReceiptBase {
   };
 }
 
-function validateOpaqueEvidenceRefs(refs: readonly string[]): void {
-  for (const reference of refs) {
-    if (
-      /(case[_ -]?id|prompt|question|answer|score|uri|file|private|result\s*[:=])/i.test(reference)
-    ) {
-      failA1("PRIVATE_EVIDENCE_LEAK", "tester review evidence refs must remain opaque");
-    }
-  }
-}
-
 function commonSubject(
   value: unknown,
   allowed: readonly string[],
@@ -362,7 +352,7 @@ function normalizeReviewSubject(
       "case_manifest_sha256",
       "matching_baseline_artifact_sha256",
       "finalist_artifact_sha256",
-      "private_result_sha256",
+      "test_result_sha256",
     ],
     "review.subject",
   );
@@ -384,9 +374,9 @@ function normalizeReviewSubject(
       subject.finalist_artifact_sha256,
       "review.subject.finalist_artifact_sha256",
     ),
-    private_result_sha256: assertSha256(
-      subject.private_result_sha256,
-      "review.subject.private_result_sha256",
+    test_result_sha256: assertSha256(
+      subject.test_result_sha256,
+      "review.subject.test_result_sha256",
     ),
   };
 }
@@ -460,7 +450,6 @@ export function validateReviewReceipt(value: unknown): ReviewReceipt {
     base.review_stage,
     base.subject,
   ) as TesterReviewReceipt["subject"];
-  validateOpaqueEvidenceRefs(base.evidence_refs);
   return {
     ...base,
     reviewed_run_kind: "tester",

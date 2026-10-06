@@ -1,3 +1,4 @@
+import { auditedPromotionFixture } from "./helpers/tester-facility-fixture.js";
 import { enterPromotion } from "./helpers/promotion-fixture.js";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -9,17 +10,17 @@ import {
   feedbackForTester,
   makeFixture,
   prepareTester,
-  publicTesterConclusion,
+  promotionTesterConclusion,
   recover,
-  signTesterFeedback,
-  signTesterConclusion,
+  wrapTesterFeedback,
+  wrapTesterConclusion,
   writeJson,
   type Fixture,
 } from "./test_workflow_runtime.js";
 import {
-  commitPromotionForTest,
-  preparePromotionCommitForTest,
-  recoverPromotionCommitForTest,
+  commitPromotion,
+  preparePromotionCommit,
+  recoverPromotionCommit,
 } from "../src/tools/workflow-promotion-commit.js";
 import {
   markOuterChildTerminal,
@@ -30,7 +31,7 @@ import {
   reserveOuterBudget,
 } from "../src/tools/workflow-runtime.js";
 import { consumePromotionGate } from "../src/tools/promotion-gate.js";
-import { readExposureLedger } from "../src/tools/tester-state.js";
+import { readTesterTrialLedger } from "../src/tools/tester-state.js";
 
 function expectCode(fn: () => unknown, code: string): void {
   assert.throws(fn, (error: unknown) => {
@@ -81,8 +82,8 @@ function reachPromotion(
 }
 
 function commitInput(fixture: Fixture, testerRunId: string) {
-  const signed = signTesterConclusion(publicTesterConclusion(fixture, testerRunId));
-  const receipt = { conclusion: signed.conclusion, signature: signed.signature };
+  const signed = wrapTesterConclusion(promotionTesterConclusion(fixture, testerRunId));
+  const receipt = { conclusion: signed.conclusion };
   return {
     signed,
     receipt,
@@ -106,22 +107,16 @@ function run(): void {
   try {
     const input = commitInput(crash.fixture, crash.testerRunId);
     const feedback = feedbackForTester(crash.fixture, crash.testerRunId, crash.result);
-    const signedFeedback = signTesterFeedback(
+    const signedFeedback = wrapTesterFeedback(
       crash.fixture,
       crash.testerRunId,
       crash.result,
       feedback,
     );
-    const prepared = preparePromotionCommitForTest({
+    const prepared = preparePromotionCommit({
       ...crash.fixture.identity,
       registry: crash.fixture.registry,
-      signed_tester_public_receipt: input.receipt,
-      tester_public_key: input.signed.publicKey,
-      signed_tester_feedback: {
-        feedback: signedFeedback.feedback,
-        signature: signedFeedback.signature,
-      },
-      tester_feedback_public_key: signedFeedback.publicKey,
+      tester_result: auditedPromotionFixture(crash.fixture.root, input.signed.conclusion, signedFeedback.feedback),
       evidence_paths: [evidence(crash.fixture.root, "commit-evidence")],
     });
     assert.equal(prepared.status, "prepared");
@@ -145,16 +140,10 @@ function run(): void {
       "candidate:incumbent",
     );
 
-    const recovered = recoverPromotionCommitForTest({
+    const recovered = recoverPromotionCommit({
       ...crash.fixture.identity,
       registry: crash.fixture.registry,
-      signed_tester_public_receipt: input.receipt,
-      tester_public_key: input.signed.publicKey,
-      signed_tester_feedback: {
-        feedback: signedFeedback.feedback,
-        signature: signedFeedback.signature,
-      },
-      tester_feedback_public_key: signedFeedback.publicKey,
+      tester_result: auditedPromotionFixture(crash.fixture.root, input.signed.conclusion, signedFeedback.feedback),
     });
     assert.equal(recovered.status, "committed");
     assert.equal(recovered.replaced, true);
@@ -166,23 +155,16 @@ function run(): void {
       ),
       true,
     );
-    const ledger = readExposureLedger(
+    const ledger = readTesterTrialLedger(
       crash.fixture.root,
       crash.fixture.freezeInput.task_id,
-      crash.fixture.tester.max_exposures_per_task,
     );
-    const exposure = ledger.exposures.find((item) => item.promotion_trial_id === "promotion:fixed");
+    const exposure = ledger.test_trials.find((item) => item.promotion_trial_id === "promotion:fixed");
     assert.equal(exposure?.status, "settled");
-    const replay = recoverPromotionCommitForTest({
+    const replay = recoverPromotionCommit({
       ...crash.fixture.identity,
       registry: crash.fixture.registry,
-      signed_tester_public_receipt: input.receipt,
-      tester_public_key: input.signed.publicKey,
-      signed_tester_feedback: {
-        feedback: signedFeedback.feedback,
-        signature: signedFeedback.signature,
-      },
-      tester_feedback_public_key: signedFeedback.publicKey,
+      tester_result: auditedPromotionFixture(crash.fixture.root, input.signed.conclusion, signedFeedback.feedback),
     });
     assert.equal(replay.replaced, false);
     assert.equal(replay.intent.intent_sha256, recovered.intent.intent_sha256);
@@ -196,23 +178,17 @@ function run(): void {
   try {
     const input = commitInput(conflict.fixture, conflict.testerRunId);
     const feedback = feedbackForTester(conflict.fixture, conflict.testerRunId, conflict.result);
-    const signedFeedback = signTesterFeedback(
+    const signedFeedback = wrapTesterFeedback(
       conflict.fixture,
       conflict.testerRunId,
       conflict.result,
       feedback,
     );
     const evidencePath = evidence(conflict.fixture.root, "commit-evidence");
-    preparePromotionCommitForTest({
+    preparePromotionCommit({
       ...conflict.fixture.identity,
       registry: conflict.fixture.registry,
-      signed_tester_public_receipt: input.receipt,
-      tester_public_key: input.signed.publicKey,
-      signed_tester_feedback: {
-        feedback: signedFeedback.feedback,
-        signature: signedFeedback.signature,
-      },
-      tester_feedback_public_key: signedFeedback.publicKey,
+      tester_result: auditedPromotionFixture(conflict.fixture.root, input.signed.conclusion, signedFeedback.feedback),
       evidence_paths: [evidencePath],
     });
     writeJson(
@@ -234,16 +210,10 @@ function run(): void {
     );
     expectCode(
       () =>
-        recoverPromotionCommitForTest({
+        recoverPromotionCommit({
           ...conflict.fixture.identity,
           registry: conflict.fixture.registry,
-          signed_tester_public_receipt: input.receipt,
-          tester_public_key: input.signed.publicKey,
-          signed_tester_feedback: {
-            feedback: signedFeedback.feedback,
-            signature: signedFeedback.signature,
-          },
-          tester_feedback_public_key: signedFeedback.publicKey,
+      tester_result: auditedPromotionFixture(conflict.fixture.root, input.signed.conclusion, signedFeedback.feedback),
         }),
       "PROMOTION_PARENT_CONFLICT",
     );
@@ -271,22 +241,16 @@ function run(): void {
   try {
     const input = commitInput(rejected.fixture, rejected.testerRunId);
     const feedback = feedbackForTester(rejected.fixture, rejected.testerRunId, rejected.result);
-    const signedFeedback = signTesterFeedback(
+    const signedFeedback = wrapTesterFeedback(
       rejected.fixture,
       rejected.testerRunId,
       rejected.result,
       feedback,
     );
-    const result = commitPromotionForTest({
+    const result = commitPromotion({
       ...rejected.fixture.identity,
       registry: rejected.fixture.registry,
-      signed_tester_public_receipt: input.receipt,
-      tester_public_key: input.signed.publicKey,
-      signed_tester_feedback: {
-        feedback: signedFeedback.feedback,
-        signature: signedFeedback.signature,
-      },
-      tester_feedback_public_key: signedFeedback.publicKey,
+      tester_result: auditedPromotionFixture(rejected.fixture.root, input.signed.conclusion, signedFeedback.feedback),
       evidence_paths: [evidence(rejected.fixture.root, "commit-evidence")],
     });
     assert.equal(result.status, "rejected");

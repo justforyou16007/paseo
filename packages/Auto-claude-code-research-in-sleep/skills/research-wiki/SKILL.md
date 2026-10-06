@@ -434,13 +434,13 @@ EXP_NODE_OK = (node "$WIKI_SCRIPT" add_experiment research-wiki/ --slug <exp_id>
   --idea idea:<active_idea> --verdict <yes|partial|no> --confidence <high|medium|low> \
   --metrics <...> --reasoning <...> --provenance <run dir> \
   --iteration <outer iteration> --gate-metric <this iteration's gate reading> \
-  [--tester-feedback <signed public receipt> --tester-public-key <key>] \
+  --test-result "<test-result.json>" --test-audit "<test-audit.json>" --run-id "<owning run>" \
   --update-on-exist) succeeded
   # writes page + idea--tested_by-->exp edge + rebuilds index/query_pack
-  # --metrics is prose for a reader. --iteration / --gate-metric / --tester-* are the
+  # Formal metrics are copied from audited tester evidence. --iteration / --gate-metric / --tester-* are the
   # structured fields `export_result_package` ranks on; a page without --iteration is
-  # not a candidate there. The tester flags come as a pair and only through a
-  # signature-verified receipt.
+  # not a candidate there. Result and audit paths are mandatory for formal metrics.
+
 
 # Record empirical support as EDGES ONLY, and ONLY if EXP_NODE_OK — never overwrite the
 # claim's `status`. A claim's `status` is the PROOF axis (verified / sound-modulo-imports
@@ -538,7 +538,7 @@ The system suggests but does not auto-trigger. User decides.
 - **query_pack.md is hard-budgeted** at 8000 chars. Deterministic generation, not open-ended summarization.
 - **Append to log.md for every mutation.** The log is the audit trail.
 - **Reviewer independence applies.** When the wiki is read by cross-model review skills, pass file paths only — do not summarize wiki content for the reviewer.
-- **Tester values enter write-restricted, read-open.** They reach an experiment page solely through a signature-verified public receipt - there is no flag for typing them in - and once there they behave like any other measurement: the query path returns them and the markdown projection prints the numbers, the coarse conclusion, directions and advice next to the definition digest. The boundary the tester defends is test content, not readability: cases, prompts, answers, per-case scores and private URIs are rejected before the receipt is signed and again at the Wiki write, so a reader gets aggregates it cannot tune a single case against.
+- **Formal metrics require test and audit.** Run `/tester-test` then `/tester-audit`; submit their paths together. Metrics are copied from the current passing result. Raw evidence stays available for analysis; no tester-specific content filtering is applied.
 
 ## Acknowledgements
 

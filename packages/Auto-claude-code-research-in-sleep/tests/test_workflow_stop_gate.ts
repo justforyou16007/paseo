@@ -62,7 +62,6 @@ function basePolicy(): StopPolicy {
     outer_run_id: "outer-stop-test",
     policy: { mode: "auto_research_loop", max_iterations: 3, target: { name: "score", direction: "higher_better", value: 0.8 } },
     cycle_summaries: [noBudgetCycle],
-    exposure: { max_exposures_per_task: 0, reserved: 0, settled: 0, released: 0 },
   });
   assert.equal(decision.reason, "no_proposal");
   assert.equal(decision.budget_remaining, null);
@@ -94,7 +93,6 @@ function basePolicy(): StopPolicy {
       policy: { mode: "auto_research_loop", max_iterations: 3, target: { name: "score", direction: "higher_better", value: 0.8 } },
       cycle_summaries: [failedCycle],
       outer_iteration: 3,
-      exposure: { max_exposures_per_task: 0, reserved: 0, settled: 0, released: 0 },
     });
     assert.equal(decision.decision, "stop");
     assert.equal(decision.reason, "bridge_failed");
@@ -125,13 +123,11 @@ function basePolicy(): StopPolicy {
     outer_run_id: "outer-stop-test",
     policy,
     cycle_summaries: [first, second],
-    exposure: { max_exposures_per_task: 4, reserved: 1, settled: 1, released: 0 },
   });
   const reversed = evaluateWorkflowStopGate({
     outer_run_id: "outer-stop-test",
     policy,
     cycle_summaries: [second, first],
-    exposure: { max_exposures_per_task: 4, reserved: 1, settled: 1, released: 0 },
   });
   assert.equal(forward.decision, "continue");
   assert.equal(forward.reason, "continue");
@@ -143,7 +139,6 @@ function basePolicy(): StopPolicy {
     outer_run_id: "outer-stop-test",
     policy: { target: { name: "score", direction: "higher_better", value: 1 } },
     cycle_summaries: [cycle(1, { target_reached: true })],
-    exposure: { max_exposures_per_task: 4, reserved: 0, settled: 0, released: 0 },
   });
   assert.equal(reached.decision, "stop");
   assert.equal(reached.reason, "target_reached");
@@ -152,7 +147,6 @@ function basePolicy(): StopPolicy {
     outer_run_id: "outer-stop-test",
     policy: basePolicy(),
     cycle_summaries: [cycle(1, { target_reached: true })],
-    exposure: { max_exposures_per_task: 4, reserved: 0, settled: 0, released: 0 },
   });
   assert.equal(unconfiguredTarget.reason, "continue");
 
@@ -161,7 +155,6 @@ function basePolicy(): StopPolicy {
     policy: { max_outer_budget: { amount: 2, unit: "gpu_hours" } },
     cycle_summaries: [cycle(1)],
     budget: { limit: 2, reserved: 0, consumed: 2, released: 0, unit: "gpu_hours" },
-    exposure: { max_exposures_per_task: 4, reserved: 0, settled: 0, released: 0 },
   });
   assert.equal(budget.reason, "outer_budget_exhausted");
 
@@ -169,15 +162,13 @@ function basePolicy(): StopPolicy {
     outer_run_id: "outer-stop-test",
     policy: basePolicy(),
     cycle_summaries: [cycle(1)],
-    exposure: { max_exposures_per_task: 2, reserved: 0, settled: 2, released: 0 },
   });
-  assert.equal(exposure.reason, "tester_exposure_exhausted");
+  assert.equal(exposure.reason, "continue");
 
   const noFinalist = evaluateWorkflowStopGate({
     outer_run_id: "outer-stop-test",
     policy: { max_no_finalist_cycles: 2 },
     cycle_summaries: [cycle(1), cycle(2)],
-    exposure: { max_exposures_per_task: 4, reserved: 0, settled: 0, released: 0 },
   });
   assert.equal(noFinalist.reason, "no_finalist");
   assert.equal(noFinalist.no_finalist_streak, 2);
@@ -188,7 +179,6 @@ function basePolicy(): StopPolicy {
         outer_run_id: "outer-stop-test",
         policy: { max_outer_budget: { amount: 2, unit: "gpu_hours" } },
         cycle_summaries: [cycle(1)],
-        exposure: { max_exposures_per_task: 4, reserved: 0, settled: 0, released: 0 },
       }),
     "STOP_BUDGET_SNAPSHOT_REQUIRED",
   );
@@ -203,7 +193,6 @@ function basePolicy(): StopPolicy {
       policy: {  },
       cycle_summaries: [cycle(1)],
       outer_iteration: 1,
-      exposure: { max_exposures_per_task: 4, reserved: 0, settled: 0, released: 0 },
     });
     writeWorkflowStopDecision(root, "outer-stop-test", 1, decision);
     assert.deepEqual(readWorkflowStopDecision(root, "outer-stop-test", 1), decision);

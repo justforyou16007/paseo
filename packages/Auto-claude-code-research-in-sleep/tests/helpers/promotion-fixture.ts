@@ -26,7 +26,7 @@ import {
   reconcileOuterChildren,
 } from "../../src/tools/workflow-runtime.js";
 
-/** Reach the real validation gate without creating a tester or reserving exposure. */
+/** Reach the real validation gate without creating a tester or reserving a trial. */
 export function enterPromotion(fixture: Fixture, waveId = "wave:fixed"): void {
   startFixture(fixture);
   recover(fixture, "init");
@@ -152,7 +152,6 @@ export function makePromotionFixture(input: PromotionFixtureInput): Fixture {
     input.project_root,
     path.join(input.project_root, "fixture-execution", input.outer_run_id),
     input.outer_run_id,
-    input.tester?.max_exposures_per_task ?? 4,
     {
       ...input,
       workflow_id: input.workflow_id ?? `workflow:${input.task_id ?? "task:fixed"}`,

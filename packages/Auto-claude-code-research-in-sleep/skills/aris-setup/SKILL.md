@@ -1,6 +1,6 @@
 ---
 name: aris-setup
-description: 'The single human entry point for configuring an ARIS project end to end. Reports which of the six setup stages are done, routes each unfinished one to the skill or command that finishes it, infers the root setup items that existing files already answer, asks for the ones no file contains, and seals the root charter. Use when the user says "配置项目", "setup my project", "aris setup", "全局设置", "初始化整个项目", or when /auto-research-loop stopped because the root charter is missing.'
+description: 'The single human entry point for configuring an ARIS project end to end. Reports which of the five setup stages are done, routes each unfinished one to the skill or command that finishes it, infers the root setup items that existing files already answer, asks for the ones no file contains, and seals the root charter. Use when the user says "配置项目", "setup my project", "aris setup", "全局设置", "初始化整个项目", or when /auto-research-loop stopped because the root charter is missing.'
 allowed-tools: Read, Write, Bash(*), AskUserQuestion, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__archive_agent, mcp__paseo__create_heartbeat, mcp__paseo__delete_heartbeat
 ---
 
@@ -12,35 +12,19 @@ allowed-tools: Read, Write, Bash(*), AskUserQuestion, mcp__paseo__create_agent, 
 
 # ARIS Setup
 
-A project is ready for a formal run when six things exist. `/research-setup`
-builds the first two and delegates the third. The last three — the tester agent
-in its own docker container, the search guard compiled from its contract, and the root
-charter — had no entry point at all: nothing outside `skills/tester-setup/`
-referenced them, so `/auto-research-loop` stopped on a missing charter with no
-instruction on how to produce one. This skill is that instruction.
+A formal run needs project basics, a metric target, the experiment environment, reusable tester facilities and a root charter. Configure all five stages; skip stages whose persisted evidence is still ready.
 
-It owns three things and nothing else: **the order**, **the confirmation of
-inferred values**, and **where to go when a stage is not ready**. Every
-procedure it points at stays where it already lives; this file never restates
-one.
-
-| Stage | Ready when | Who makes it ready |
+| Stage | Ready when | Owner |
 | --- | --- | --- |
-| `project_basics` | CLAUDE.md, RESEARCH_BRIEF.md and a non-empty `research-wiki/` | [`/research-setup`](../research-setup/SKILL.md) |
-| `metric_target` | CLAUDE.md's `## Metric Target` parses | `/research-setup`, or the block in `templates/CLAUDE_MD_TEMPLATE.md` |
-| `experiment_env` | `env.json` says `complete` **and** `scripts/` exists | [`/experiment-env-manager`](../experiment-env-manager/SKILL.md) |
-| `tester_agent` | a valid `.aris/tester-agent-config.json` | [`/tester-setup`](../tester-setup/SKILL.md) steps 1-6 |
-| `search_guard` | a policy file **and** a ledger whose chain verifies | `search-audit-cli.js emit-policy` then `install-guard` |
-| `root_charter` | the run has a `run.json` and a `charter.json` | `workflow-tools-cli.js root-setup` |
-
-Every project that goes through this skill configures all six. There is no
-branch that skips the tester: a run whose acceptance is judged by the thing
-being judged is not a formal run, so a project with no tester container fails at
-Phase 3 rather than getting a downgraded configuration.
+| project_basics | CLAUDE.md, RESEARCH_BRIEF.md and research-wiki exist | /research-setup |
+| metric_target | Metric Target parses | /research-setup |
+| experiment_env | environment manager reports complete and scripts exist | /experiment-env-manager |
+| tester_facility | tester-config.json has a matching ready setup receipt and unchanged evidence | /tester-setup |
+| root_charter | run.json and charter.json exist | root-setup |
 
 ## Resolving the helpers
 
-`project-setup-cli.js`, `tester-agent-cli.js`, `search-audit-cli.js` and
+`project-setup-cli.js`, `tester-facility-cli.js` and
 `workflow-tools-cli.js` resolve only through the shared
 [integration contract](../shared-references/integration-contract.md)
 (`.aris/dist` for installed projects, `dist` for development). A missing or
@@ -122,73 +106,17 @@ mismatch here means the loop would not find what the env-manager wrote.
 then re-run `status` — env.json is the authority, not the child's report.
 Archive the agent afterwards, including when it failed.
 
-## Phase 3 — tester and the search gate
+## Phase 3 — tester facilities
 
-This is where the tester container is required, and where its base image is
-initialized. First pull the image with `pull-image`, then make the container
-with `create-container`, both described in
-[`/tester-setup`](../tester-setup/SKILL.md) under "The container the tester
-lives in". Pull every time this phase runs, even when the image is already on
-the docker host, so it carries this version's manual. ARIS never builds the
-image; if `pull-image` fails, or `deploy` reports `TESTER_MANUAL_MISMATCH`,
-show the owner the reason and stop. Ask the owner to log `claude` in inside the container before
-`probe`. Collect the site facts with `AskUserQuestion` (one question per fact,
-no guessing):
+Dispatch `/tester-setup` through Paseo after Phase 2 finishes. Pass the research brief, metric target, confirmed benchmark/protocol needs and execution resources. An explicit benchmark name is accepted. Use the existing execution account; Docker is optional.
 
-| Answer | Used by |
-| --- | --- |
-| tester container name (the account is `paseo`, printed by `create-container`) | create-container, probe, deploy |
-| tester home directory inside the container | deploy |
-| provider and model for the tester agent | deploy |
-| **the domain / task description in prose** | declare |
+Wait with the dispatch watchdog, collect the setup receipt, archive the worker, then rerun `status`. Require a valid `.aris/tester-config.json`, matching `.setup.json` and verified installation evidence. Failure stops setup at this phase. Do not mark the project ready based on the worker's prose.
 
-The last one decides what the tester will measure, and it is the one place a
-mistake is invisible later. Write a description of the *domain and the task*,
-never a benchmark name: what the tester evaluates on is the tester's own
-research decision. Naming a benchmark here is handing the exam paper to the
-person being examined.
+On upgrade remove prior ARIS search hooks with `tester-facility-cli.js migrate --project "$ROOT"`; it preserves unrelated hooks. Root setup receives `tester_facility_config` from the installed config. There are no tester deployment/public-key/contract files or search policy stages.
 
-Then run the six steps of [`/tester-setup`](../tester-setup/SKILL.md) in
-order. They are not repeated here. Two conventions this skill pins, because
-`emit-config` takes an arbitrary `--output` and the detector has to know where
-to look:
+Subsequent iterations dispatch `/tester-test` and `/tester-audit`; they reuse these facilities and never repeat the interactive setup. See [tester-facility.md](../shared-references/tester-facility.md).
 
-```text
---output for deploy       .aris/tester-deployment.json
---output for declare      .aris/tester-submission-contract.json
---output for emit-config  .aris/tester-agent-config.json
-```
-
-Step 6's `root-setup` handoff happens in Phase 5 of this skill, not here — by
-then the other six items exist.
-
-### What the tester may send back
-
-The response schema exposes coarse `error_analysis`, a signed conclusion, a
-signed feedback envelope, and the aggregate value of each metric named in the
-frozen `gate.primaries`. It has no defect-list field; do not promise that output
-until its producer and validator exist. Declared metrics and fixed coarse
-feedback are not experiment evidence and cannot be fed into analysis, evidence
-review or a research claim.
-
-That boundary is not enforced by prose. It is two functions, and a response they
-did not pass never reaches disk:
-
-`validateTesterAgentResponse` in `src/tools/tester-agent.ts` and
-`sanitizeTesterFeedback` in `src/tools/tester-feedback.ts`.
-
-What they refuse — case content, answers, prompts, per-case output and scores,
-private observations, fine-grained categories, private URIs — is listed in
-[`/tester-setup`](../tester-setup/SKILL.md) under "What comes back". It is not
-repeated here.
-
-**Never print the blocklist.** `emit-policy` reports counts and a digest;
-`status` reports counts and a digest. Do not read `.aris/search-policy.json`
-into the conversation, do not summarize it, do not name an entry in a report.
-The only moment a model is meant to see one of those terms is after it has
-already typed it and been refused — at which point knowing it adds nothing.
-
-## Phase 4 — the five owner items
+## Phase 4 — remaining owner items
 
 ```bash
 node "$SETUP_CLI" infer --project "$ROOT"
@@ -238,9 +166,9 @@ node "$SETUP_CLI" assemble --project "$ROOT" \
 ```
 
 `setupRootRun` — the function the sealing command calls — writes nothing until
-all seven setup items are present:
+all six setup items are present:
 
-`tester`, `tester_agent`, `thresholds`, `exposure`, `limits`, `resource`, `baseline`
+`tester`, `tester_facility`, `thresholds`, `limits`, `resource`, `baseline`
 
 `collectMissingSetupItems` returns the complete missing list in one response, so
 a `SETUP_INCOMPLETE` failure names every gap at once. Go back to Phase 4 for all
@@ -271,24 +199,10 @@ Re-run `status --run-id "$RUN_ID"` and require `blocking: []`.
 
 ## Phase 6 — hand off
 
-Print the six stages with their evidence, and the next command:
+Print the five stages with their evidence, and the next command:
 
 ```text
 /auto-research-loop
 ```
 
-Do not print the blocklist, its size, or any term in it. Counts and the policy
-digest are the whole public surface.
-
-## What this does not do
-
-- It does not reproduce the baseline. `/auto-research-loop` iteration 1 does
-  that through the normal pipeline.
-- It does not decide what the tester measures. That is researched inside the tester
-  container, from `templates/tester-agent-bundle/TESTER_AGENT.md`.
-- It does not seal anything itself. `root-setup` writes the setup record;
-  `emit-policy` and `install-guard` write the search gate; this skill only
-  orders them and carries the owner's answers between them.
-- It does not decide the model rule. Phase 5 writes the owner's words into
-  CLAUDE.md's `## Model Usage`; it does not fill in roles the owner did not
-  name.
+The handoff reuses the tested facilities. Ordinary runtime repairs do not repeat `/aris-setup`; protocol changes require a new setup version and a new run when its root charter is sealed.

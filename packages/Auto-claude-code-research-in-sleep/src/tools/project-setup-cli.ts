@@ -12,8 +12,7 @@
  * keeps one gate instead of two implementations of the same validation.
  *
  * `status` exits non-zero while anything is unconfigured, so a shell step can
- * gate on it. It prints counts and digests for the search guard and never a
- * blocked term -- same rule as `search-audit-cli.js`.
+ * gate on it. It reports readiness and configuration sources.
  */
 import fs from "node:fs";
 import path from "node:path";

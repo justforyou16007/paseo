@@ -550,7 +550,7 @@ function defaultSummary(value: ResultPackage): string {
     `status: ${value.status}`,
     `outputs: ${outputs}`,
     `run: ${value.run_id}`,
-    "This summary contains no private tester cases, prompts, or raw outputs.",
+    "Complete tester evidence is referenced by the audited benchmark result.",
   ].join("\n");
 }
 
@@ -746,13 +746,13 @@ export function readResultPackage(projectRoot: string, runId: string): ResultPac
 export function resultStatusPolicy(status: ResultStatus): {
   enters_validation: boolean;
   counts_for_stop_gate: boolean;
-  consumes_tester_exposure: boolean;
+  requires_tester: boolean;
 } {
   if (status === "succeeded")
-    return { enters_validation: true, counts_for_stop_gate: false, consumes_tester_exposure: true };
+    return { enters_validation: true, counts_for_stop_gate: false, requires_tester: true };
   if (status === "failed")
-    return { enters_validation: true, counts_for_stop_gate: true, consumes_tester_exposure: true };
-  return { enters_validation: false, counts_for_stop_gate: false, consumes_tester_exposure: false };
+    return { enters_validation: true, counts_for_stop_gate: true, requires_tester: true };
+  return { enters_validation: false, counts_for_stop_gate: false, requires_tester: false };
 }
 
 export const classifyResultStatus = resultStatusPolicy;

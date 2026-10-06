@@ -46,29 +46,6 @@ export function runWikiRoot(projectRoot: string, runId: string): string {
   return runOwnedPath(projectRoot, runId, "wiki");
 }
 
-/** Reject private tester structures before they reach public storage or query output. */
-export function assertResearchVisible(value: unknown): void {
-  if (Array.isArray(value)) {
-    value.forEach(assertResearchVisible);
-  } else if (value !== null && typeof value === "object") {
-    for (const [key, item] of Object.entries(value)) {
-      if (
-        /^(tester|tester_(?:cases?|answers?|outputs?|scores?|results?|private)(?:_.*)?|private_(?:artifact_(?:uri|path|ref)|uri|results?|path)|case_(?:answers?|outputs?|scores?)|per_case_.*|raw_tester_.*)$/i.test(
-          key,
-        )
-      ) {
-        throw new Error("TESTER_PRIVATE_DATA_FORBIDDEN");
-      }
-      assertResearchVisible(item);
-    }
-  } else if (
-    typeof value === "string" &&
-    /(?:tester-private:|private-artifact:|\/tester-private\/)/i.test(value)
-  ) {
-    throw new Error("TESTER_PRIVATE_DATA_FORBIDDEN");
-  }
-}
-
 export function assertOuterWikiScope(scope: string, allowStandalone = false): void {
   validateWikiScope(scope);
   if (scope === "standalone" || allowStandalone)

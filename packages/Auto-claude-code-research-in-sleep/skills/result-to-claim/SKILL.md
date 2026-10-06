@@ -1,6 +1,6 @@
 ---
 name: result-to-claim
-description: 'Judge whether experiment results support a claim, then write what survives into the run''s own Wiki scope as evidence-backed signals. Never runs the metric gate, adopts an incumbent, or reads tester-private results.'
+description: 'Judge whether experiment results support a claim, then write what survives into the run''s own Wiki scope as evidence-backed signals. Never runs the metric gate, adopts an incumbent, or runs testing itself.'
 argument-hint: [experiment-description-or-wandb-run]
 allowed-tools: Bash(*), Read, Grep, Glob, Write, Edit, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__archive_agent, mcp__paseo__create_heartbeat, mcp__paseo__delete_heartbeat
 
@@ -27,7 +27,7 @@ manifest names the run, its Wiki scope, and the sealed head to read from.
 The verdict on the run's own evidence is not made here. A run accepts or rejects
 its own experimental evidence inside its own `auto-review-loop`; this skill turns
 evidence that already passed into knowledge. It never runs `metric-gate`, creates
-a promotion decision, adopts an incumbent, or reads tester-private results.
+a promotion decision, adopts an incumbent, or runs testing itself.
 
 ## Scoped knowledge write
 
@@ -35,8 +35,7 @@ A dispatched run writes only into its own Wiki scope. Read the sealed manifest
 and query entry described in
 [the shared read boundary](../shared-references/worker-manifest.md#worker-behavior-on-startup);
 the committer binds Signal writes to `--project-root` and `--run-id` and rejects
-a conflicting scope. Never read tester-private observations, tester logs,
-incumbent state, another run's files, or an unpinned Wiki tail. Do not use a
+a conflicting scope. Read audited tester observations and logs for the current run. Do not read another run's files or an unpinned Wiki tail. Do not use a
 worker-supplied aggregate when the per-case evidence behind it is absent.
 
 Verify every referenced evidence file before using it. Missing, stale,
@@ -116,6 +115,10 @@ Experiments produce numbers; this gate decides what those numbers _mean_. Collec
 - When results are ambiguous and you need an objective second opinion
 
 ### Workflow
+
+### Required tester handoff
+
+Require `test_result_path` and `test_audit_path` from `/tester-test` and `/tester-audit` for the current run, iteration and experiment. Validate them through the facility helper before collecting results or spending a claim-review call. Read raw and per-sample test evidence when judging claims. A missing or nonpassing audit returns a failed receipt; the orchestrator dispatches the two tester skills first. Do not run setup or fabricate a reviewer judgment here.
 
 ### Step 1: Collect Results
 
@@ -247,26 +250,9 @@ Extract structured fields from Codex response:
 - confidence: high | medium | low
 ```
 
-### Step 3.5: Check Experiment Integrity (if audit exists)
+### Step 3.5: Check Tester Audit
 
-The experiment audit is required when the project enables experiment-integrity
-checking. A missing requested audit blocks claim generation.
-
-```
-if EXPERIMENT_AUDIT.json exists:
-    read integrity_status from file
-    attach to verdict output:
-        integrity_status: pass | warn | fail
-
-    if integrity_status in {"warn", "fail"}:
-        append to the failed receipt: "experiment audit did not PASS; see EXPERIMENT_AUDIT.md"
-        stop claim generation. Do not lower confidence and continue with a
-        claim that depends on an unresolved integrity result.
-else:
-    fail the claim phase with a missing-audit receipt
-```
-
-See `shared-references/experiment-integrity.md` for the full integrity protocol.
+Revalidate the current `test_result_path` and `test_audit_path` before claim publication. Require status `pass` and the same run, iteration, experiment, configuration and result digest. `/tester-audit` owns the independent benchmark integrity review; use its findings and complete raw evidence in the verdict. A missing, changed, `warn` or `fail` audit returns a failed receipt and blocks claims based on those metrics. An additional experiment audit requested by the project must also pass.
 
 ### Step 4: Route Based on Verdict
 
@@ -338,7 +324,7 @@ if research-wiki/ exists:
     #    point FROM exp:<id>, so this operation must succeed before edges are written.
     #    An exp:<id> that already supports or invalidates a claim has formed its claims
     #    and is reused as is: add_experiment prints "Experiment reused:", writes nothing
-    #    and leaves its edges alone. Skip step 2 for it. A tester receipt the reused page
+    #    and leaves its edges alone. Skip step 2 for it. A tester result the reused page
     #    does not already carry is refused (TESTER_RECEIPT_TOO_LATE), so pass the
     #    receipt in the call that first judges the iteration.
     node "$WIKI_SCRIPT" add_experiment research-wiki/ \
@@ -348,7 +334,7 @@ if research-wiki/ exists:
       --metrics "<key metrics>" --reasoning "<one-line why this verdict>" \
       --provenance "<EXPERIMENT_AUDIT.md / run dir>" \
       --iteration "<outer iteration>" --gate-metric "<this iteration's gate reading>" \
-      [--tester-feedback "<signed public receipt>" --tester-public-key "<key>"] \
+      --run-id "<owning run>" --test-result "<test-result.json>" --test-audit "<test-audit.json>" \
       --update-on-exist || exit 1
 
     # The last three flags are what makes this iteration comparable to the others
@@ -358,10 +344,9 @@ if research-wiki/ exists:
     #   --gate-metric    the same number the dashboard received for this iteration.
     #                    The export cross-checks the two and fails on a mismatch
     #                    rather than picking a side.
-    #   --tester-*       both flags or neither. Tester numbers enter the wiki only
-    #                    through a signature-verified public receipt; there is no
-    #                    flag for typing them in. The receipt names the iteration
-    #                    it judged, so it must agree with --iteration.
+    #   --test-result / --test-audit are mandatory for metric publication. The
+    #   helper copies metrics from current passing audited evidence and verifies
+    #   the run, iteration and experiment binding.
 
     # 2. Record empirical support as EDGES ONLY. Never edit the
     #    claim page's `status`: that is the PROOF axis (verified / refuted / unproven /

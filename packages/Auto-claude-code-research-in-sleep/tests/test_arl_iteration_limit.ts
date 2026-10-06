@@ -73,7 +73,6 @@ try {
   const base = {
     outer_run_id: runId,
     policy: { mode: "auto_research_loop" as const, max_iterations: 2, target: { name: "score", direction: "higher_better" as const, value: 0.9 } },
-    exposure: { max_exposures_per_task: 1, reserved: 0, settled: 1, released: 0 },
   };
   assert.equal(evaluateWorkflowStopGate({ ...base, cycle_summaries: [cycle(1)] }).reason, "continue");
   assert.equal(evaluateWorkflowStopGate({ ...base, cycle_summaries: [cycle(1), cycle(2)] }).reason, "iteration_cap");

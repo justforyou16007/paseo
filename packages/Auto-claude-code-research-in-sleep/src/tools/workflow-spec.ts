@@ -178,8 +178,7 @@ export interface WorkflowScorerReference {
 export interface WorkflowPromotionTesterReference {
   tester_id: string;
   definition_version: string;
-  research_feedback: "fuzzy_advice_only";
-  max_exposures_per_task: number;
+  research_feedback: "detailed";
 }
 
 export interface WorkflowSpec {
@@ -886,13 +885,13 @@ function parseTesterReference(value: unknown, location: string): WorkflowPromoti
   if (!isRecord(value)) failA1("INVALID_VALUE", "promotion_tester must be an object", location);
   assertNoUnknownFields(
     value,
-    ["tester_id", "definition_version", "research_feedback", "max_exposures_per_task"],
+    ["tester_id", "definition_version", "research_feedback"],
     location,
   );
-  if (value.research_feedback !== "fuzzy_advice_only")
+  if (value.research_feedback !== "detailed")
     failA1(
       "INVALID_FEEDBACK_TYPE",
-      "tester feedback must be fuzzy_advice_only",
+      "tester feedback must be detailed",
       `${location}.research_feedback`,
     );
   return {
@@ -901,12 +900,8 @@ function parseTesterReference(value: unknown, location: string): WorkflowPromoti
       value.definition_version,
       `${location}.definition_version`,
     ),
-    research_feedback: "fuzzy_advice_only",
-    max_exposures_per_task: requireInteger(
-      value.max_exposures_per_task,
-      `${location}.max_exposures_per_task`,
-      1,
-    ),
+    research_feedback: "detailed",
+
   };
 }
 

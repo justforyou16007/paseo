@@ -23,23 +23,21 @@ import {
   type TesterFeedback,
 } from "./tester-feedback.js";
 import {
-  readExposureLedger,
+  readTesterTrialLedger,
   recordTesterFeedbackEvent,
   readTesterRunState,
-  settleExposure,
+  settleTesterTrial,
   testerRunStatePath,
-  type ExposureRecord,
+  type TesterTrialRecord,
   type TesterRunState,
 } from "./tester-state.js";
 import {
-  readVerifiedTesterConclusion,
-  readVerifiedTesterFeedback,
-  validateTesterPublicConclusion,
-  verifyTesterFeedback,
-  verifyTesterConclusion,
-  type TesterPublicFeedbackEnvelope,
-  type TesterPublicConclusion,
-} from "./tester-public-receipt.js";
+  readAuditedTesterConclusion,
+  readAuditedTesterFeedback,
+  validateTesterPromotionConclusion,
+  type TesterPromotionFeedback,
+  type TesterPromotionConclusion,
+} from "./tester-promotion-result.js";
 import {
   hashOuterEvidence,
   readOuterPromotionGateRecord,
@@ -72,45 +70,18 @@ import {
   requireString,
 } from "./workflow-spec.js";
 
-export interface TesterPublicReceiptReference {
-  receipt_path: string;
-  public_key_path: string;
+export interface AuditedTesterResultReference {
+  result_path: string;
+  audit_path: string;
 }
-
-export interface TesterPublicFeedbackReceiptReference {
-  receipt_path: string;
-  public_key_path: string;
-}
-
 export interface PromotionCommitInput extends OuterRunIdentity {
   registry: ArtifactRegistry;
-  tester_public_receipt: TesterPublicReceiptReference;
-  tester_feedback_receipt: TesterPublicFeedbackReceiptReference;
+  tester_result: AuditedTesterResultReference;
   evidence_paths: readonly string[];
 }
-
 export interface RecoverPromotionCommitInput extends OuterRunIdentity {
   registry: ArtifactRegistry;
-  tester_public_receipt: TesterPublicReceiptReference;
-  tester_feedback_receipt: TesterPublicFeedbackReceiptReference;
-  evidence_paths?: readonly string[];
-}
-
-export interface PromotionCommitTestInput extends OuterRunIdentity {
-  registry: ArtifactRegistry;
-  signed_tester_public_receipt: unknown;
-  tester_public_key: crypto.KeyObject;
-  signed_tester_feedback: unknown;
-  tester_feedback_public_key: crypto.KeyObject;
-  evidence_paths: readonly string[];
-}
-
-export interface RecoverPromotionCommitTestInput extends OuterRunIdentity {
-  registry: ArtifactRegistry;
-  signed_tester_public_receipt: unknown;
-  tester_public_key: crypto.KeyObject;
-  signed_tester_feedback: unknown;
-  tester_feedback_public_key: crypto.KeyObject;
+  tester_result: AuditedTesterResultReference;
   evidence_paths?: readonly string[];
 }
 
@@ -147,7 +118,7 @@ interface PromotionIntentFacts {
     tester_state_sha256: string;
     evidence_sha256: string;
   };
-  tester_conclusion: TesterPublicConclusion;
+  tester_conclusion: TesterPromotionConclusion;
   tester_receipt_sha256: string;
   tester_feedback_receipt_sha256: string;
   tester_arm_mapping: OuterTesterArmMapping;
@@ -222,97 +193,63 @@ function inside(root: string, target: string): boolean {
   return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
-function publicReceiptPath(projectRoot: string, requestedPath: string): string {
+function testerResultFilePath(projectRoot: string, requestedPath: string): string {
   const project = fs.realpathSync(projectRoot);
   const candidate = path.isAbsolute(requestedPath)
     ? requestedPath
     : path.resolve(project, requestedPath);
   if (!fs.existsSync(candidate))
-    failA1(
-      "TESTER_PUBLIC_RECEIPT_REQUIRED",
-      `tester public receipt does not exist at ${candidate}`,
-    );
+    failA1("TESTER_RESULT_REQUIRED", `tester result does not exist at ${candidate}`);
   const resolved = fs.realpathSync(candidate);
   if (!inside(project, resolved) || !fs.statSync(resolved).isFile())
-    failA1(
-      "TESTER_PUBLIC_RECEIPT_REQUIRED",
-      "tester public receipt must be a file below project_root",
-    );
-  const basename = path.basename(resolved);
-  if (basename === "private-result.json" || basename === "private-result.ref.json")
-    failA1(
-      "TESTER_PRIVATE_DATA_ACCESSIBLE",
-      "private tester result cannot be used as a public receipt",
-    );
+    failA1("TESTER_RESULT_REQUIRED", "tester result must be a file below project_root");
   return resolved;
 }
 
 interface ReadTesterConclusionResult {
-  conclusion: TesterPublicConclusion;
+  conclusion: TesterPromotionConclusion;
   receipt_sha256: string;
 }
 
 interface ReadTesterFeedbackResult {
   feedback: TesterFeedback;
-  envelope: TesterPublicFeedbackEnvelope;
+  envelope: TesterPromotionFeedback;
   receipt_sha256: string;
 }
 
 function readTesterConclusion(
   projectRoot: string,
-  reference: TesterPublicReceiptReference,
+  reference: AuditedTesterResultReference,
 ): ReadTesterConclusionResult {
-  const receiptPath = publicReceiptPath(
+  const receiptPath = testerResultFilePath(
     projectRoot,
-    requireString(reference.receipt_path, "receipt_path"),
+    requireString(reference.result_path, "receipt_path"),
   );
-  const publicKeyPath = requireString(reference.public_key_path, "public_key_path");
   return {
-    conclusion: readVerifiedTesterConclusion(receiptPath, publicKeyPath),
+    conclusion: readAuditedTesterConclusion({
+      result_path: receiptPath,
+      audit_path: path.resolve(projectRoot, reference.audit_path),
+    }),
     receipt_sha256: hashFile(receiptPath),
   };
 }
 
 function readTesterFeedback(
   projectRoot: string,
-  reference: TesterPublicFeedbackReceiptReference,
+  reference: AuditedTesterResultReference,
 ): ReadTesterFeedbackResult {
-  const receiptPath = publicReceiptPath(
+  const receiptPath = testerResultFilePath(
     projectRoot,
-    requireString(reference.receipt_path, "feedback_receipt_path"),
+    requireString(reference.result_path, "feedback_receipt_path"),
   );
-  const publicKeyPath = requireString(reference.public_key_path, "feedback_public_key_path");
-  const envelope = readVerifiedTesterFeedback(receiptPath, publicKeyPath);
+  const envelope = readAuditedTesterFeedback({
+    result_path: receiptPath,
+    audit_path: path.resolve(projectRoot, reference.audit_path),
+  });
   return {
     feedback: envelope.feedback,
     envelope,
     receipt_sha256: hashFile(receiptPath),
-  };
-}
-
-function readTestTesterConclusion(
-  signedReceipt: unknown,
-  publicKey: crypto.KeyObject,
-): ReadTesterConclusionResult {
-  return {
-    conclusion: verifyTesterConclusion(signedReceipt, publicKey),
-    receipt_sha256: canonicalJsonSha256(signedReceipt, undefined, {
-      schemaVersion: "tester-public-receipt-v1",
-    }),
-  };
-}
-
-function readTestTesterFeedback(
-  signedReceipt: unknown,
-  publicKey: crypto.KeyObject,
-): ReadTesterFeedbackResult {
-  const envelope = verifyTesterFeedback(signedReceipt, publicKey);
-  return {
-    feedback: envelope.feedback,
-    envelope,
-    receipt_sha256: canonicalJsonSha256(signedReceipt, undefined, {
-      schemaVersion: "tester-public-feedback-v1",
-    }),
   };
 }
 
@@ -617,7 +554,7 @@ function validateIntent(value: unknown, filePath: string): PromotionCommitIntent
     wave_kind: value.wave_kind,
     validation,
     promotion,
-    tester_conclusion: validateTesterPublicConclusion(value.tester_conclusion),
+    tester_conclusion: validateTesterPromotionConclusion(value.tester_conclusion),
     tester_receipt_sha256: assertSha256(
       value.tester_receipt_sha256,
       `${filePath}.tester_receipt_sha256`,
@@ -703,8 +640,8 @@ function buildIntent(facts: PromotionIntentFacts): PromotionCommitIntent {
 }
 
 /**
- * The intent exists only because a tester's signed conclusion was read and its
- * signature checked, so the acceptance it records is already on the facts: the
+ * The intent exists only because a tester's audited conclusion was read and its
+ * audit binding checked, so the acceptance it records is already on the facts: the
  * run asking for the promotion produced it, the tester run ruled on it, and the
  * receipt hash names the document that ruling came in.
  */
@@ -882,7 +819,7 @@ function expectedActiveIncumbent(
 }
 
 function assertTesterConclusionMatches(
-  conclusion: TesterPublicConclusion,
+  conclusion: TesterPromotionConclusion,
   tester: TesterRunState,
   cycle: ActiveOuterCycle,
   mapping: OuterTesterArmMapping,
@@ -903,7 +840,7 @@ function assertTesterConclusionMatches(
     conclusion.input_snapshot_sha256 !== tester.input_snapshot_sha256 ||
     conclusion.input_distribution_sha256 !== tester.input_distribution_sha256 ||
     conclusion.model_assignment_sha256 !== tester.model_assignment_sha256 ||
-    conclusion.private_result_sha256 !== tester.private_result_sha256 ||
+    conclusion.test_result_sha256 !== tester.test_result_sha256 ||
     conclusion.review_receipt_sha256 !== tester.review_receipt_sha256 ||
     conclusion.status !== promotionResult ||
     tester.outer_iteration !== cycle.outer_iteration ||
@@ -916,7 +853,7 @@ function assertTesterConclusionMatches(
   )
     failA1(
       "TESTER_PUBLIC_RECEIPT_MISMATCH",
-      "signed tester conclusion does not match the public run state",
+      "audited tester conclusion does not match the public run state",
     );
   if (
     mapping.tester_run_id !== tester.tester_run_id ||
@@ -933,36 +870,36 @@ function assertTesterConclusionMatches(
   )
     failA1(
       "TESTER_ARM_MAPPING_REQUIRED",
-      "tester arm mapping does not match the signed tester state",
+      "tester arm mapping does not match the audited tester state",
     );
 }
 
 function assertExposureMatches(
-  exposure: ExposureRecord,
+  testTrial: TesterTrialRecord,
   tester: TesterRunState,
-  conclusion: TesterPublicConclusion,
+  conclusion: TesterPromotionConclusion,
 ): void {
   if (
-    exposure.status === "released" ||
-    exposure.promotion_trial_id !== tester.promotion_trial_id ||
-    exposure.outer_run_id !== tester.outer_run_id ||
-    exposure.wave_id !== tester.wave_id ||
-    exposure.tester_version !== tester.tester_version ||
-    exposure.tester_definition_sha256 !== tester.tester_definition_sha256 ||
-    exposure.harness_sha256 !== tester.harness_sha256 ||
-    exposure.task_setup_revision !== tester.task_setup_revision ||
-    exposure.case_manifest_sha256 !== tester.case_manifest_sha256 ||
-    exposure.seed_manifest_sha256 !== tester.seed_manifest_sha256 ||
-    exposure.matching_baseline_artifact_sha256 !== tester.matching_baseline_artifact_sha256 ||
-    exposure.finalist_artifact_sha256 !== tester.finalist_artifact_sha256 ||
-    exposure.model_assignment_sha256 !== tester.model_assignment_sha256 ||
-    exposure.input_distribution_sha256 !== tester.input_distribution_sha256 ||
-    exposure.judge_binding_id !== tester.judge_binding_id ||
-    exposure.tester_run_id !== tester.tester_run_id ||
-    !exposure.tester_started ||
-    exposure.private_result_sha256 !== conclusion.private_result_sha256
+    testTrial.status === "released" ||
+    testTrial.promotion_trial_id !== tester.promotion_trial_id ||
+    testTrial.outer_run_id !== tester.outer_run_id ||
+    testTrial.wave_id !== tester.wave_id ||
+    testTrial.tester_version !== tester.tester_version ||
+    testTrial.tester_definition_sha256 !== tester.tester_definition_sha256 ||
+    testTrial.harness_sha256 !== tester.harness_sha256 ||
+    testTrial.task_setup_revision !== tester.task_setup_revision ||
+    testTrial.case_manifest_sha256 !== tester.case_manifest_sha256 ||
+    testTrial.seed_manifest_sha256 !== tester.seed_manifest_sha256 ||
+    testTrial.matching_baseline_artifact_sha256 !== tester.matching_baseline_artifact_sha256 ||
+    testTrial.finalist_artifact_sha256 !== tester.finalist_artifact_sha256 ||
+    testTrial.model_assignment_sha256 !== tester.model_assignment_sha256 ||
+    testTrial.input_distribution_sha256 !== tester.input_distribution_sha256 ||
+    testTrial.judge_binding_id !== tester.judge_binding_id ||
+    testTrial.tester_run_id !== tester.tester_run_id ||
+    !testTrial.tester_started ||
+    testTrial.test_result_sha256 !== conclusion.test_result_sha256
   )
-    failA1("EXPOSURE_CONFLICT", "tester exposure does not match its signed public conclusion");
+    failA1("TESTER_TRIAL_CONFLICT", "tester testTrial does not match its audited conclusion");
 }
 
 function assertParentRegistryFacts(
@@ -1026,8 +963,8 @@ function assertEvidenceHash(
 }
 
 function feedbackForCommit(
-  envelope: TesterPublicFeedbackEnvelope,
-  conclusion: TesterPublicConclusion,
+  envelope: TesterPromotionFeedback,
+  conclusion: TesterPromotionConclusion,
   tester: TesterRunState,
   status: "passed" | "rejected",
   frozen: FrozenPolicy,
@@ -1056,7 +993,10 @@ function feedbackForCommit(
     (status === "passed" && feedback.conclusion !== "improved") ||
     (status === "rejected" && feedback.conclusion === "improved")
   )
-    failA1("TESTER_FEEDBACK_NOT_READY", "sanitized tester feedback does not match the signed gate");
+    failA1(
+      "TESTER_FEEDBACK_NOT_READY",
+      "sanitized tester feedback does not match the audited gate",
+    );
   return feedback;
 }
 
@@ -1158,7 +1098,7 @@ interface PreparedCommit {
   activeIncumbent: IncumbentSnapshot;
   expectedActiveIncumbent: IncumbentSnapshot;
   tester: TesterRunState;
-  exposure: ExposureRecord;
+  testTrial: TesterTrialRecord;
   frozen: FrozenPolicy;
   cycle: ActiveOuterCycle;
   testerFeedback: TesterFeedback;
@@ -1248,18 +1188,14 @@ function prepareCommit(
     tester.harness_sha256 !== frozen.tester_definition.harness_sha256
   )
     failA1("IDENTITY_MISMATCH", "tester public state differs from the frozen policy");
-  const ledger = readExposureLedger(
-    normalized.project_root,
-    frozen.task_id,
-    frozen.tester_definition.max_exposures_per_task,
+  const ledger = readTesterTrialLedger(normalized.project_root, frozen.task_id);
+  const trialMatches = ledger.test_trials.filter(
+    (testTrial) => testTrial.promotion_trial_id === tester.promotion_trial_id,
   );
-  const exposureMatches = ledger.exposures.filter(
-    (exposure) => exposure.promotion_trial_id === tester.promotion_trial_id,
-  );
-  if (exposureMatches.length !== 1)
-    failA1("EXPOSURE_NOT_FOUND", "promotion commit requires one matching tester exposure");
-  const exposure = exposureMatches[0]!;
-  assertExposureMatches(exposure, tester, options.testerConclusion.conclusion);
+  if (trialMatches.length !== 1)
+    failA1("TESTER_TRIAL_NOT_FOUND", "promotion commit requires one matching tester testTrial");
+  const testTrial = trialMatches[0]!;
+  assertExposureMatches(testTrial, tester, options.testerConclusion.conclusion);
   if (tester.finalist_artifact_sha256 === tester.matching_baseline_artifact_sha256)
     failA1("MATCHING_BASELINE_REQUIRED", "tester baseline and finalist artifacts must differ");
   const baselineArtifactId = assertParentRegistryFacts(
@@ -1384,7 +1320,7 @@ function prepareCommit(
     activeIncumbent,
     expectedActiveIncumbent: expectedActive,
     tester,
-    exposure,
+    testTrial,
     frozen,
     cycle,
     testerFeedback,
@@ -1410,30 +1346,27 @@ function applyPreparedCommit(
     prepared.tester.task_id,
     prepared.tester.promotion_trial_id,
     feedback.feedback_event_id,
-    prepared.frozen.tester_definition.max_exposures_per_task,
   );
-  settleExposure(
+  settleTesterTrial(
     normalized.project_root,
     prepared.tester.task_id,
     prepared.tester.promotion_trial_id,
-    prepared.frozen.tester_definition.max_exposures_per_task,
   );
-  const afterFeedbackLedger = readExposureLedger(
+  const afterFeedbackLedger = readTesterTrialLedger(
     normalized.project_root,
     prepared.tester.task_id,
-    prepared.frozen.tester_definition.max_exposures_per_task,
   );
-  const afterFeedback = afterFeedbackLedger.exposures.find(
-    (exposure) => exposure.promotion_trial_id === prepared.tester.promotion_trial_id,
+  const afterFeedback = afterFeedbackLedger.test_trials.find(
+    (testTrial) => testTrial.promotion_trial_id === prepared.tester.promotion_trial_id,
   );
   if (!afterFeedback)
-    failA1("EXPOSURE_NOT_FOUND", "promotion exposure disappeared while committing");
+    failA1("TESTER_TRIAL_NOT_FOUND", "promotion testTrial disappeared while committing");
   assertExposureMatches(afterFeedback, prepared.tester, intent.tester_conclusion);
   if (
     afterFeedback.status !== "settled" ||
     afterFeedback.feedback_event_id !== feedback.feedback_event_id
   )
-    failA1("EXPOSURE_CONFLICT", "promotion exposure was not settled by its feedback event");
+    failA1("TESTER_TRIAL_CONFLICT", "promotion testTrial was not settled by its feedback event");
 
   let active = readActiveIncumbent(normalized.project_root, prepared.frozen.workflow_id);
   let replaced = false;
@@ -1527,28 +1460,8 @@ function commitWithConclusion(
 }
 
 export function preparePromotionCommit(input: PromotionCommitInput): PromotionCommitIntent {
-  const conclusion = readTesterConclusion(input.project_root, input.tester_public_receipt);
-  const testerFeedback = readTesterFeedback(input.project_root, input.tester_feedback_receipt);
-  const result = commitWithConclusion(input, input.registry, {
-    testerConclusion: conclusion,
-    testerFeedback,
-    evidencePaths: input.evidence_paths,
-    execute: false,
-  });
-  return result.intent;
-}
-
-export function preparePromotionCommitForTest(
-  input: PromotionCommitTestInput,
-): PromotionCommitIntent {
-  const conclusion = readTestTesterConclusion(
-    input.signed_tester_public_receipt,
-    input.tester_public_key,
-  );
-  const testerFeedback = readTestTesterFeedback(
-    input.signed_tester_feedback,
-    input.tester_feedback_public_key,
-  );
+  const conclusion = readTesterConclusion(input.project_root, input.tester_result);
+  const testerFeedback = readTesterFeedback(input.project_root, input.tester_result);
   const result = commitWithConclusion(input, input.registry, {
     testerConclusion: conclusion,
     testerFeedback,
@@ -1559,8 +1472,8 @@ export function preparePromotionCommitForTest(
 }
 
 export function commitPromotion(input: PromotionCommitInput): PromotionCommitResult {
-  const conclusion = readTesterConclusion(input.project_root, input.tester_public_receipt);
-  const testerFeedback = readTesterFeedback(input.project_root, input.tester_feedback_receipt);
+  const conclusion = readTesterConclusion(input.project_root, input.tester_result);
+  const testerFeedback = readTesterFeedback(input.project_root, input.tester_result);
   return commitWithConclusion(input, input.registry, {
     testerConclusion: conclusion,
     testerFeedback,
@@ -1575,9 +1488,9 @@ export function recoverPromotionCommit(input: RecoverPromotionCommitInput): Prom
     outer_iteration: readOuterRunStateIteration(input),
   });
   // The intent records what was accepted, but it is not an authority by itself:
-  // a recovery must re-verify both signed public receipts with their root-owned keys.
-  const conclusion = readTesterConclusion(input.project_root, input.tester_public_receipt);
-  const testerFeedback = readTesterFeedback(input.project_root, input.tester_feedback_receipt);
+  // a recovery must re-verify the current passing audit and its result evidence.
+  const conclusion = readTesterConclusion(input.project_root, input.tester_result);
+  const testerFeedback = readTesterFeedback(input.project_root, input.tester_result);
   return commitWithConclusion(input, input.registry, {
     testerConclusion: conclusion,
     testerFeedback,
@@ -1591,46 +1504,6 @@ function readOuterRunStateIteration(input: OuterRunIdentity): number {
   if (state.active_cycle === null)
     failA1("OUTER_CYCLE_REQUIRED", "promotion recovery needs an active cycle");
   return state.active_cycle.outer_iteration;
-}
-
-export function commitPromotionForTest(input: PromotionCommitTestInput): PromotionCommitResult {
-  const conclusion = readTestTesterConclusion(
-    input.signed_tester_public_receipt,
-    input.tester_public_key,
-  );
-  const testerFeedback = readTestTesterFeedback(
-    input.signed_tester_feedback,
-    input.tester_feedback_public_key,
-  );
-  return commitWithConclusion(input, input.registry, {
-    testerConclusion: conclusion,
-    testerFeedback,
-    evidencePaths: input.evidence_paths,
-    execute: true,
-  });
-}
-
-export function recoverPromotionCommitForTest(
-  input: RecoverPromotionCommitTestInput,
-): PromotionCommitResult {
-  readPromotionCommitIntent({
-    ...input,
-    outer_iteration: readOuterRunStateIteration(input),
-  });
-  const conclusion = readTestTesterConclusion(
-    input.signed_tester_public_receipt,
-    input.tester_public_key,
-  );
-  const testerFeedback = readTestTesterFeedback(
-    input.signed_tester_feedback,
-    input.tester_feedback_public_key,
-  );
-  return commitWithConclusion(input, input.registry, {
-    testerConclusion: conclusion,
-    testerFeedback,
-    evidencePaths: input.evidence_paths,
-    execute: true,
-  });
 }
 
 export const executePromotionCommit = commitPromotion;

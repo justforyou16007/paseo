@@ -22,10 +22,13 @@ import {
   type ModelUsagePolicy,
 } from "./workflow-spec.js";
 import {
-  validateTesterAgentConfig,
-  testerAgentConfigSha256,
-  type TesterAgentConfig,
-} from "./tester-agent.js";
+  readTesterFacilityConfig,
+  assertTesterSetupReady,
+  testerConfigPath,
+  validateTesterFacilityConfig,
+  testerFacilityConfigSha256,
+  type TesterFacilityConfig,
+} from "./tester-facility.js";
 import { validateTesterDefinition } from "./tester-state.js";
 import {
   createBaselineScope,
@@ -628,9 +631,8 @@ export function createRegistryForTaskSetup(projectRoot: string, runId: string): 
 /** The setup fields whose owner confirmation can be reused on re-entry. */
 export const ROOT_SETUP_ITEMS = [
   "tester",
-  "tester_agent",
+  "tester_facility",
   "thresholds",
-  "exposure",
   "limits",
   "resource",
   "baseline",
@@ -688,12 +690,10 @@ export interface RootSetupInput {
   baseline_scope?: unknown;
   tester_definition?: unknown;
   tester?: unknown;
-  tester_agent_config?: unknown;
-  tester_agent?: unknown;
+  tester_facility_config?: unknown;
+  tester_facility?: unknown;
   validation_thresholds?: unknown;
   thresholds?: unknown;
-  exposure_limit?: unknown;
-  exposure?: unknown;
   owner_limits?: unknown;
   limits?: unknown;
   resource_inventory?: unknown;
@@ -767,25 +767,21 @@ function confirmationHashesFromPendingDraft(
       schemaVersion: "setup-tester-confirmation-v1",
     });
   }
-  const testerAgentValue = setupInputValue(draft, ["tester_agent_config", "tester_agent"]);
-  if (testerAgentValue !== undefined) {
-    hashes.tester_agent = canonicalJsonSha256(normalizeTesterAgent(testerAgentValue), undefined, {
-      schemaVersion: "setup-tester-agent-confirmation-v1",
-    });
+  const testerFacilityValue = setupInputValue(draft, ["tester_facility_config", "tester_facility"]);
+  if (testerFacilityValue !== undefined) {
+    hashes.tester_facility = canonicalJsonSha256(
+      normalizeTesterFacility(testerFacilityValue),
+      undefined,
+      {
+        schemaVersion: "setup-tester-facility-confirmation-v1",
+      },
+    );
   }
   const thresholdValue = setupInputValue(draft, ["validation_thresholds", "thresholds"]);
   if (thresholdValue !== undefined) {
     hashes.thresholds = canonicalJsonSha256(normalizeThresholds(thresholdValue), undefined, {
       schemaVersion: "setup-threshold-confirmation-v1",
     });
-  }
-  const exposureValue = setupInputValue(draft, ["exposure_limit", "exposure"]);
-  if (exposureValue !== undefined) {
-    hashes.exposure = canonicalJsonSha256(
-      { exposure: normalizeExposure(exposureValue) },
-      undefined,
-      { schemaVersion: "setup-exposure-confirmation-v1" },
-    );
   }
   const limitsValue = setupInputValue(draft, ["owner_limits", "limits"]);
   const pendingLimits =
@@ -840,9 +836,8 @@ export function collectMissingSetupItems(input: unknown): RootSetupItem[] {
   if (!isRecord(input)) failA1("INVALID_VALUE", "root setup input must be an object", "setup");
   const checks: Array<[RootSetupItem, readonly string[]]> = [
     ["tester", ["tester_definition", "tester"]],
-    ["tester_agent", ["tester_agent_config", "tester_agent"]],
+    ["tester_facility", ["tester_facility_config", "tester_facility"]],
     ["thresholds", ["validation_thresholds", "thresholds"]],
-    ["exposure", ["exposure_limit", "exposure"]],
     ["limits", ["owner_limits", "limits"]],
     ["resource", ["resource_inventory", "resource"]],
     ["baseline", ["baseline_scope", "baseline"]],
@@ -957,20 +952,15 @@ function normalizeTester(value: unknown): JsonObject {
   };
 }
 
-function normalizeTesterAgent(value: unknown): JsonObject {
-  const config = requireObject(value, "tester_agent_config");
-  return validateTesterAgentConfig(config) as unknown as JsonObject;
-}
-
-function normalizeExposure(value: unknown): number {
-  return requireInteger(value, "exposure_limit", 1);
+function normalizeTesterFacility(value: unknown): JsonObject {
+  const config = requireObject(value, "tester_facility_config");
+  return validateTesterFacilityConfig(config) as unknown as JsonObject;
 }
 
 function setupConfirmationHashes(
   tester: JsonObject,
-  testerAgent: JsonObject,
+  testerFacility: JsonObject,
   thresholds: JsonObject,
-  exposure: number,
   limits: JsonObject,
   resource: ResourceInventory,
   baseline: BaselineScope,
@@ -979,14 +969,11 @@ function setupConfirmationHashes(
     tester: canonicalJsonSha256(tester, undefined, {
       schemaVersion: "setup-tester-confirmation-v1",
     }),
-    tester_agent: canonicalJsonSha256(testerAgent, undefined, {
-      schemaVersion: "setup-tester-agent-confirmation-v1",
+    tester_facility: canonicalJsonSha256(testerFacility, undefined, {
+      schemaVersion: "setup-tester-facility-confirmation-v1",
     }),
     thresholds: canonicalJsonSha256(thresholds, undefined, {
       schemaVersion: "setup-threshold-confirmation-v1",
-    }),
-    exposure: canonicalJsonSha256({ exposure }, undefined, {
-      schemaVersion: "setup-exposure-confirmation-v1",
     }),
     limits: canonicalJsonSha256(limits, undefined, {
       schemaVersion: "setup-limits-confirmation-v1",
@@ -1284,12 +1271,10 @@ function setupInputAllowedFields(): string[] {
     "baseline_scope",
     "tester_definition",
     "tester",
-    "tester_agent_config",
-    "tester_agent",
+    "tester_facility_config",
+    "tester_facility",
     "validation_thresholds",
     "thresholds",
-    "exposure_limit",
-    "exposure",
     "owner_limits",
     "limits",
     "resource_inventory",
@@ -1373,13 +1358,18 @@ export function setupRootRun(input: RootSetupInput): RootSetupResult {
   const workflowId = assertIdentifier(input.workflow_id, "setup.workflow_id");
   const setupRevision = assertIdentifier(input.setup_revision, "setup.setup_revision");
   const tester = normalizeTester(setupInputValue(input, ["tester_definition", "tester"]));
-  const testerAgent = normalizeTesterAgent(
-    setupInputValue(input, ["tester_agent_config", "tester_agent"]),
+  const testerFacility = normalizeTesterFacility(
+    setupInputValue(input, ["tester_facility_config", "tester_facility"]),
   );
+  assertTesterSetupReady(testerConfigPath(projectRoot));
+  if (
+    testerFacilityConfigSha256(readTesterFacilityConfig(testerConfigPath(projectRoot))) !==
+    testerFacilityConfigSha256(testerFacility as unknown as TesterFacilityConfig)
+  )
+    failA1("TESTER_CONFIG_CHANGED", "root setup must use the facilities prepared by /aris-setup");
   const thresholds = normalizeThresholds(
     setupInputValue(input, ["validation_thresholds", "thresholds"]),
   );
-  const exposure = normalizeExposure(setupInputValue(input, ["exposure_limit", "exposure"]));
   const ownerLimits = normalizeOwnerLimitsForRoot(
     setupInputValue(input, ["owner_limits", "limits"]),
   );
@@ -1411,9 +1401,8 @@ export function setupRootRun(input: RootSetupInput): RootSetupResult {
     );
   const confirmationHashes = setupConfirmationHashes(
     tester,
-    testerAgent,
+    testerFacility,
     thresholds,
-    exposure,
     ownerLimits,
     validatedResource,
     validatedBaseline,
@@ -1476,14 +1465,15 @@ export function setupRootRun(input: RootSetupInput): RootSetupResult {
     resource_inventory: validatedResource,
     owner_limits: ownerLimits,
     tester_definition: tester,
-    tester_agent_config: testerAgent,
+    tester_facility_config: testerFacility,
     validation_thresholds: thresholds,
-    exposure_limit: exposure,
     task_setup_sha256: taskSetupSha256,
     tester_definition_sha256: canonicalJsonSha256(tester, undefined, {
       schemaVersion: "tester-definition-v1",
     }),
-    tester_agent_sha256: testerAgentConfigSha256(testerAgent as unknown as TesterAgentConfig),
+    tester_facility_sha256: testerFacilityConfigSha256(
+      testerFacility as unknown as TesterFacilityConfig,
+    ),
     validation_thresholds_sha256: canonicalJsonSha256(thresholds, undefined, {
       schemaVersion: "validation-thresholds-v1",
     }),

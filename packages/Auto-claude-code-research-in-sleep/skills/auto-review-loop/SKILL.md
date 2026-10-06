@@ -148,7 +148,7 @@ writes a repair receipt with `summary.repair_status`, leaves
   "status": "done",
   "error": null,
   "primary_output": "AUTO_REVIEW.md",
-  "summary": { "rounds": 2, "final_score": 7.0, "final_verdict": "ready", "analysis_verdict": "pass" },
+  "summary": { "rounds": 2, "final_score": 7.0, "final_verdict": "ready", "analysis_verdict": "pass", "test_result_path": "<canonical test-result.json>", "test_audit_path": "<canonical test-audit.json>" },
   "dashboard_patch": {
     "last_review.verdict": "ready",
     "last_review.score": 7,
@@ -684,10 +684,17 @@ For the ordinary quality-review purpose, continue with the following steps.
    - Comparability fields, so the iteration can be ranked against the others when
      the run exports its result package: the outer `iteration` number, this
      iteration's final gate metric value (the same number written to the
-     dashboard), and - only when this iteration was submitted to the tester - the
-     signed public receipt path plus the public key that verifies it. Step 5 of
-     `/result-to-claim` passes them straight through to `add_experiment`. An
-     iteration recorded without them is invisible to the export.
+     dashboard), and the current passing `test_result_path` and `test_audit_path`.
+     Return the final canonical paths as `summary.test_result_path` and
+     `summary.test_audit_path` in the outer receipt. The orchestrator records
+     refreshed assessment phases before completing this iteration.
+     Before dispatching result-to-claim, execute `/tester-test` → `/tester-audit`
+     if no current audited result is bound to the final artifact. Any fixes or
+     new measurements in review rounds invalidate earlier artifact bindings.
+     Dispatch the two skills through Paseo with their normal manifests and
+     watchdogs, and stop publication on missing or nonpassing receipts.
+     Step 5 passes both canonical paths through to `add_experiment`.
+
 
    The worker manifest is required for this dispatch. If `/result-to-claim`
    fails or its output is missing, the outer receipt is failed.

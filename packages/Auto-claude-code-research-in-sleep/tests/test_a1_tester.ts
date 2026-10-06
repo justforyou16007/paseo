@@ -7,20 +7,20 @@ import path from "node:path";
 import {
   buildTesterDefinition,
   buildTesterJudgeBinding,
-  exposureLedgerPath,
-  readExposureLedger,
+  testerTrialLedgerPath,
+  readTesterTrialLedger,
   readTesterRunState,
-  recordTesterPrivateResult,
+  recordTesterResult,
   recordTesterReview,
   recordTesterStarted,
-  releaseExposure,
+  releaseTesterTrial,
   reservePromotionTrial,
   retryTesterInfrastructure,
   saveTesterDefinition,
   startTesterRun,
   testerDashboardPath,
   testerDefinitionPath,
-  testerPrivateResultPath,
+  testerResultPath,
   type TesterJudgeBinding,
   type TesterDefinition,
 } from "../src/tools/tester-state.js";
@@ -74,12 +74,12 @@ function cleanup(root: string): void {
 
 function expectCode(fn: () => unknown, code: string): void {
   assert.throws(fn, (error: unknown) => {
-    assert.equal((error as { code?: string }).code, code);
+    assert.equal((error as { code?: string }).code, code, (error as Error).message);
     return true;
   });
 }
 
-function tester(version = "tester:v1", maxExposuresPerTask = 4): TesterDefinition {
+function tester(version = "tester:v1"): TesterDefinition {
   return buildTesterDefinition({
     schema_version: 1,
     tester_id: "tester:fixed",
@@ -89,8 +89,8 @@ function tester(version = "tester:v1", maxExposuresPerTask = 4): TesterDefinitio
     case_manifest_sha256: HASH_A,
     seed_manifest_sha256: HASH_B,
     harness_sha256: HASH_E,
-    research_feedback: "fuzzy_advice_only",
-    max_exposures_per_task: maxExposuresPerTask,
+    research_feedback: "detailed",
+
     comparison: "paired_matching_baseline_vs_finalist",
     gate: {
       primaries: [{ name: "tester_score", direction: "higher_better", improvement: { policy: "relative", minimum_gain: 0.1 } }],
@@ -163,7 +163,7 @@ function reserve(root: string, setup: TrialSetup): void {
     model_assignment_sha256: setup.modelAssignmentSha256,
     input_distribution_sha256: setup.inputDistributionSha256,
     judge_binding: setup.judgeBinding,
-    max_exposures_per_task: setup.tester.max_exposures_per_task,
+
   });
 }
 
@@ -253,8 +253,8 @@ function writeTesterReview(root: string, setup: TrialSetup, runId: string) {
   fs.mkdirSync(path.dirname(evidencePath), { recursive: true });
   fs.writeFileSync(evidencePath, evidence);
   const evidenceSha256 = crypto.createHash("sha256").update(evidence).digest("hex");
-  const privateResultSha256 = readTesterRunState(root, runId).private_result_sha256;
-  assert.notEqual(privateResultSha256, null);
+  const testResultSha256 = readTesterRunState(root, runId).test_result_sha256;
+  assert.notEqual(testResultSha256, null);
   fs.writeFileSync(
     path.join(workerRoot, "input-manifest.json"),
     `${JSON.stringify(
@@ -298,7 +298,7 @@ function writeTesterReview(root: string, setup: TrialSetup, runId: string) {
       case_manifest_sha256: setup.tester.case_manifest_sha256,
       matching_baseline_artifact_sha256: HASH_C,
       finalist_artifact_sha256: HASH_D,
-      private_result_sha256: privateResultSha256,
+      test_result_sha256: testResultSha256,
     },
     reviewer_worker_id: "reviewer:1",
     evidence_bundle_id: "evidence:tester-1",
@@ -343,7 +343,7 @@ function readyRun(root: string, setup: TrialSetup, runId = "tester-run-1") {
   recordTesterStarted(root, runId);
   const baseline = arm(setup, "matching_baseline", 0.5);
   const finalist = arm(setup, "finalist", 0.6);
-  recordTesterPrivateResult(root, runId, {
+  recordTesterResult(root, runId, {
     baseline,
     finalist,
     harness_sha256: setup.tester.harness_sha256,
@@ -360,14 +360,14 @@ function sealedRun(root: string, setup: TrialSetup, runId = "tester-run-1") {
   recordTesterStarted(root, runId);
   const baseline = arm(setup, "matching_baseline", 0.5);
   const finalist = arm(setup, "finalist", 0.6);
-  const privateResult = {
+  const testResult = {
     baseline,
     finalist,
     harness_sha256: setup.tester.harness_sha256,
     workflow_constraints_passed: true,
   };
-  recordTesterPrivateResult(root, runId, privateResult);
-  return { baseline, finalist, privateResult };
+  recordTesterResult(root, runId, testResult);
+  return { baseline, finalist, testResult };
 }
 
 function setup(
@@ -413,14 +413,14 @@ function deterministicTester(version = "tester:deterministic"): TesterDefinition
   });
 }
 
-test("固定 tester definition 和 private case ref 只能同 hash 重放并可修复缺失 ref", () => {
+test("固定 tester definition 和 case ref 只能同 hash 重放并可修复缺失 ref", () => {
   const root = tempDir();
   try {
     const fixed = tester();
     saveTesterDefinition(root, fixed);
     const refPath = path.join(
       path.dirname(testerDefinitionPath(root, fixed.tester_id, fixed.version)),
-      "private-case-manifest.ref.json",
+      "case-manifest.ref.json",
     );
     fs.rmSync(refPath);
     saveTesterDefinition(root, fixed);
@@ -612,10 +612,10 @@ test("一个 trial 只绑定一个 tester run，同 run 重试幂等并同步 da
     assert.equal(dashboard.phase, "running");
     assert.equal(JSON.stringify(dashboard).includes("case:1"), false);
     assert.equal(JSON.stringify(dashboard).includes("tester_score"), false);
-    assert.equal(JSON.stringify(dashboard).includes("private-result.ref"), false);
-    const ledger = readExposureLedger(root, current.taskId, current.tester.max_exposures_per_task);
+    assert.equal(JSON.stringify(dashboard).includes("test-result.ref"), false);
+    const ledger = readTesterTrialLedger(root, current.taskId,);
     assert.equal(
-      ledger.exposures.filter((exposure) => exposure.tester_run_id === "tester-run-1").length,
+      ledger.test_trials.filter((trial) => trial.tester_run_id === "tester-run-1").length,
       1,
     );
   } finally {
@@ -623,7 +623,7 @@ test("一个 trial 只绑定一个 tester run，同 run 重试幂等并同步 da
   }
 });
 
-test("基础设施重试保持语义且不新增 exposure，私有结果 ref 缺失时可恢复", () => {
+test("基础设施重试保持请求语义和同一trial，结果ref缺失时可恢复", () => {
   const root = tempDir();
   try {
     const current = setup();
@@ -635,23 +635,23 @@ test("基础设施重试保持语义且不新增 exposure，私有结果 ref 缺
     const resumed = recordTesterStarted(root, "tester-run-1");
     assert.equal(resumed.status, "running");
     assert.equal(resumed.attempt, 1);
-    const before = readExposureLedger(root, current.taskId, current.tester.max_exposures_per_task);
+    const before = readTesterTrialLedger(root, current.taskId,);
     const baseline = arm(current, "matching_baseline", 0.5);
     const finalist = arm(current, "finalist", 0.6);
-    const privateResult = {
+    const testResult = {
       baseline,
       finalist,
       harness_sha256: current.tester.harness_sha256,
       workflow_constraints_passed: true,
     };
-    recordTesterPrivateResult(root, "tester-run-1", privateResult);
-    fs.rmSync(path.join(root, ".aris", "runs", "tester-run-1", "private-result.ref.json"));
-    const sealed = recordTesterPrivateResult(root, "tester-run-1", privateResult);
+    recordTesterResult(root, "tester-run-1", testResult);
+    fs.rmSync(path.join(root, ".aris", "runs", "tester-run-1", "test-result.ref.json"));
+    const sealed = recordTesterResult(root, "tester-run-1", testResult);
     assert.equal(sealed.status, "sealed");
-    const after = readExposureLedger(root, current.taskId, current.tester.max_exposures_per_task);
-    assert.equal(after.exposures.length, before.exposures.length);
+    const after = readTesterTrialLedger(root, current.taskId,);
+    assert.equal(after.test_trials.length, before.test_trials.length);
     assert.equal(
-      fs.existsSync(path.join(root, ".aris", "runs", "tester-run-1", "private-result.ref.json")),
+      fs.existsSync(path.join(root, ".aris", "runs", "tester-run-1", "test-result.ref.json")),
       true,
     );
   } finally {
@@ -659,38 +659,31 @@ test("基础设施重试保持语义且不新增 exposure，私有结果 ref 缺
   }
 });
 
-test("exposure 以 task_id 累计，released 不占额度且切换 setup/tester/outer 不清零", () => {
+test("trial记录跨setup保留，新的评测不受旧exposure限额约束", () => {
   const root = tempDir();
   try {
-    const first = setup(tester("tester:v1", 1), "promotion:1", "outer-1", "wave-1");
+    const first = setup(tester("tester:v1"), "promotion:1", "outer-1", "wave-1");
     saveTesterDefinition(root, first.tester);
     reserve(root, first);
-    releaseExposure(root, first.taskId, first.trialId, 1, "failed_irrecoverable");
+    releaseTesterTrial(root, first.taskId, first.trialId, "failed_irrecoverable");
 
-    const second = setup(tester("tester:v2", 1), "promotion:2", "outer-2", "wave-2");
+    const second = setup(tester("tester:v2"), "promotion:2", "outer-2", "wave-2");
     saveTesterDefinition(root, second.tester);
     reserve(root, second);
     start(root, second, "tester-run-2");
     recordTesterStarted(root, "tester-run-2");
-    recordTesterPrivateResult(root, "tester-run-2", {
+    recordTesterResult(root, "tester-run-2", {
       baseline: arm(second, "matching_baseline", 0.5),
       finalist: arm(second, "finalist", 0.6),
       harness_sha256: second.tester.harness_sha256,
       workflow_constraints_passed: true,
     });
-    const ledger = readExposureLedger(root, first.taskId, 1);
-    assert.equal(ledger.exposures.filter((exposure) => exposure.status === "released").length, 1);
-    assert.equal(ledger.exposures.filter((exposure) => exposure.status === "settled").length, 1);
-    expectCode(
-      () =>
-        reserve(root, {
-          ...second,
-          trialId: "promotion:3",
-          outerRunId: "outer-3",
-          waveId: "wave:3",
-        }),
-      "TESTER_EXPOSURE_EXHAUSTED",
-    );
+    const ledger = readTesterTrialLedger(root, first.taskId);
+    assert.equal(ledger.test_trials.filter((trial) => trial.status === "released").length, 1);
+    assert.equal(ledger.test_trials.filter((trial) => trial.status === "settled").length, 1);
+    reserve(root, {...second,trialId:"promotion:3",outerRunId:"outer-3",waveId:"wave:3"});
+    assert.equal(readTesterTrialLedger(root,first.taskId).test_trials.length,3);
+
   } finally {
     cleanup(root);
   }
@@ -747,15 +740,15 @@ test("state 已进入终态但账本尚未 settle 时，同结果重试补结算
       workflow_constraints_passed: true,
     });
     assert.equal(passed.status, "passed");
-    const ledgerPath = exposureLedgerPath(root, current.taskId);
+    const ledgerPath = testerTrialLedgerPath(root, current.taskId);
     const ledger = JSON.parse(fs.readFileSync(ledgerPath, "utf8")) as {
-      exposures: Array<Record<string, unknown>>;
+      test_trials: Array<Record<string, unknown>>;
     };
-    ledger.exposures[0]!.status = "reserved";
-    ledger.exposures[0]!.tester_started = false;
-    ledger.exposures[0]!.private_result_sha256 = null;
-    ledger.exposures[0]!.feedback_event_id = null;
-    ledger.exposures[0]!.settled_at = null;
+    ledger.test_trials[0]!.status = "reserved";
+    ledger.test_trials[0]!.tester_started = false;
+    ledger.test_trials[0]!.test_result_sha256 = null;
+    ledger.test_trials[0]!.feedback_event_id = null;
+    ledger.test_trials[0]!.settled_at = null;
     fs.writeFileSync(ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`);
     const replay = consumePromotionGate({
       project_root: root,
@@ -767,7 +760,7 @@ test("state 已进入终态但账本尚未 settle 时，同结果重试补结算
     });
     assert.equal(replay.status, "passed");
     assert.equal(
-      readExposureLedger(root, current.taskId, current.tester.max_exposures_per_task).exposures[0]!
+      readTesterTrialLedger(root, current.taskId,).test_trials[0]!
         .status,
       "settled",
     );
@@ -788,7 +781,7 @@ test("state 已进入终态但账本尚未 settle 时，同结果重试补结算
   }
 });
 
-test("sanitizer 只允许固定粗粒度反馈，发布和账本事件可幂等恢复", () => {
+test("反馈schema验证与明确建议，发布和账本事件可幂等恢复", () => {
   const root = tempDir();
   try {
     const current = setup();
@@ -817,11 +810,11 @@ test("sanitizer 只允许固定粗粒度反馈，发布和账本事件可幂等�
     });
     expectCode(
       () => sanitizeTesterFeedback({ ...feedback, caseId: "case:secret" }),
-      "PRIVATE_EVIDENCE_LEAK",
+      "UNKNOWN_FIELD",
     );
     expectCode(
       () => sanitizeTesterFeedback({ ...feedback, exact_sample: "secret" }),
-      "PRIVATE_EVIDENCE_LEAK",
+      "UNKNOWN_FIELD",
     );
     expectCode(
       () =>
@@ -847,7 +840,7 @@ test("sanitizer 只允许固定粗粒度反馈，发布和账本事件可幂等�
     });
     assert.equal(replay.feedback_event_id, published.feedback_event_id);
     assert.equal(
-      readExposureLedger(root, current.taskId, current.tester.max_exposures_per_task).exposures[0]!
+      readTesterTrialLedger(root, current.taskId,).test_trials[0]!
         .status,
       "settled",
     );
@@ -873,14 +866,14 @@ test("审核后调用方替换 arm 分数，gate 只信任封存 bundle", () => 
         }),
       "TESTER_ARMS_MISMATCH",
     );
-    const privatePath = testerPrivateResultPath(root, "tester-run-1");
-    const privateResult = JSON.parse(fs.readFileSync(privatePath, "utf8")) as Record<
+    const resultPath = testerResultPath(root, "tester-run-1");
+    const testResult = JSON.parse(fs.readFileSync(resultPath, "utf8")) as Record<
       string,
       unknown
     >;
-    const storedFinalist = privateResult.finalist as Record<string, unknown>;
+    const storedFinalist = testResult.finalist as Record<string, unknown>;
     (storedFinalist.metrics as Record<string, number>).tester_score = 0.9;
-    fs.writeFileSync(privatePath, `${JSON.stringify(privateResult, null, 2)}\n`);
+    fs.writeFileSync(resultPath, `${JSON.stringify(testResult, null, 2)}\n`);
     expectCode(
       () =>
         consumePromotionGate({
@@ -891,7 +884,7 @@ test("审核后调用方替换 arm 分数，gate 只信任封存 bundle", () => 
           finalist,
           workflow_constraints_passed: true,
         }),
-      "PRIVATE_RESULT_HASH_MISMATCH",
+      "TEST_RESULT_HASH_MISMATCH",
     );
   } finally {
     cleanup(root);
@@ -907,8 +900,8 @@ test("arm 指标与 observation 均值分叉或 model assignment hash 缺失不�
     // value that does not come back out of the observations is a fork.
     expectCode(
       () =>
-        recordTesterPrivateResult(root, "tester-run-1", {
-          ...sealed.privateResult,
+        recordTesterResult(root, "tester-run-1", {
+          ...sealed.testResult,
           baseline: { ...sealed.baseline, metrics: { tester_score: 0.9 } },
         }),
       "AGGREGATE_MISMATCH",
@@ -917,8 +910,8 @@ test("arm 指标与 observation 均值分叉或 model assignment hash 缺失不�
     // missing one is not a partial result it could still rule on.
     expectCode(
       () =>
-        recordTesterPrivateResult(root, "tester-run-1", {
-          ...sealed.privateResult,
+        recordTesterResult(root, "tester-run-1", {
+          ...sealed.testResult,
           baseline: {
             ...sealed.baseline,
             metrics: {},
@@ -934,8 +927,8 @@ test("arm 指标与 observation 均值分叉或 model assignment hash 缺失不�
     void ignoredHash;
     expectCode(
       () =>
-        recordTesterPrivateResult(root, "tester-run-1", {
-          ...sealed.privateResult,
+        recordTesterResult(root, "tester-run-1", {
+          ...sealed.testResult,
           finalist: missingModel,
         }),
       "MODEL_ASSIGNMENT_REQUIRED",
@@ -1129,15 +1122,15 @@ test("反馈文件已落盘但账本未结算时恢复只补事件和结算一�
       finalist,
       workflow_constraints_passed: true,
     });
-    const ledgerPath = exposureLedgerPath(root, current.taskId);
+    const ledgerPath = testerTrialLedgerPath(root, current.taskId);
     const ledger = JSON.parse(fs.readFileSync(ledgerPath, "utf8")) as {
-      exposures: Array<Record<string, unknown>>;
+      test_trials: Array<Record<string, unknown>>;
     };
-    ledger.exposures[0]!.status = "reserved";
-    ledger.exposures[0]!.tester_started = false;
-    ledger.exposures[0]!.private_result_sha256 = null;
-    ledger.exposures[0]!.feedback_event_id = null;
-    ledger.exposures[0]!.settled_at = null;
+    ledger.test_trials[0]!.status = "reserved";
+    ledger.test_trials[0]!.tester_started = false;
+    ledger.test_trials[0]!.test_result_sha256 = null;
+    ledger.test_trials[0]!.feedback_event_id = null;
+    ledger.test_trials[0]!.settled_at = null;
     fs.writeFileSync(ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`);
     const feedback = buildTesterFeedback({
       schema_version: 1,
@@ -1170,9 +1163,9 @@ test("反馈文件已落盘但账本未结算时恢复只补事件和结算一�
       feedback,
     });
     assert.equal(replay.feedback_event_id, published.feedback_event_id);
-    const settled = readExposureLedger(root, current.taskId, current.tester.max_exposures_per_task);
-    assert.equal(settled.exposures[0]!.status, "settled");
-    assert.equal(settled.exposures[0]!.feedback_event_id, feedback.feedback_event_id);
+    const settled = readTesterTrialLedger(root, current.taskId,);
+    assert.equal(settled.test_trials[0]!.status, "settled");
+    assert.equal(settled.test_trials[0]!.feedback_event_id, feedback.feedback_event_id);
   } finally {
     cleanup(root);
   }
@@ -1229,15 +1222,15 @@ test("纯 gate 与封存路径使用同一 arm 规范，代码 tester 不接受 
   );
 });
 
-test("private result 的 case manifest id 也必须来自封存 tester", () => {
+test("测试结果的 case manifest id 也必须来自封存 tester", () => {
   const root = tempDir();
   try {
     const current = setup();
     const sealed = sealedRun(root, current);
     expectCode(
       () =>
-        recordTesterPrivateResult(root, "tester-run-1", {
-          ...sealed.privateResult,
+        recordTesterResult(root, "tester-run-1", {
+          ...sealed.testResult,
           case_manifest: {
             case_manifest_id: "cases:other",
             case_manifest_sha256: current.tester.case_manifest_sha256,
@@ -1251,7 +1244,7 @@ test("private result 的 case manifest id 也必须来自封存 tester", () => {
   }
 });
 
-test("tester 一旦真正启动就结算 exposure，不能再释放", () => {
+test("tester 一旦真正启动就记录trial执行，不能再释放", () => {
   const root = tempDir();
   try {
     const current = setup();
@@ -1260,62 +1253,35 @@ test("tester 一旦真正启动就结算 exposure，不能再释放", () => {
     start(root, current);
     recordTesterStarted(root, "tester-run-1");
     assert.equal(
-      readExposureLedger(root, current.taskId, current.tester.max_exposures_per_task).exposures[0]
+      readTesterTrialLedger(root, current.taskId,).test_trials[0]
         ?.status,
       "settled",
     );
     expectCode(
       () =>
-        releaseExposure(
+        releaseTesterTrial(
           root,
           current.taskId,
           current.trialId,
-          current.tester.max_exposures_per_task,
           "failed_irrecoverable",
         ),
-      "EXPOSURE_TERMINAL",
+      "TESTER_TRIAL_TERMINAL",
     );
   } finally {
     cleanup(root);
   }
 });
 
-for (const stage of ["creation", "running"] as const) {
-  test(`tester 子 run 守卫覆盖 ${stage} 入口且不消耗 exposure`, () => {
-    const root = tempDir();
-    try {
-      const current = setup(deterministicTester());
-      saveTesterDefinition(root, current.tester);
-      reserve(root, current);
-      createChildContract(root, current.outerRunId, "tester-with-child", "tester", true);
-      assert.deepEqual(requireRunContract(root, "tester-with-child").child_run_ids, []);
-      if (stage === "running") start(root, current, "tester-with-child");
-      else
-        sealWikiWorkerManifest({
-          project_root: root,
-          run_id: "tester-with-child",
-          worker: "tester",
-        });
-      createChildContract(root, "tester-with-child", "tester-training-child", "training");
-      assert.deepEqual(requireRunContract(root, "tester-with-child").child_run_ids, [
-        "tester-training-child",
-      ]);
-      const ledgerBefore = fs.readFileSync(exposureLedgerPath(root, current.taskId), "utf8");
-      expectCode(
-        () =>
-          stage === "creation"
-            ? start(root, current, "tester-with-child")
-            : recordTesterStarted(root, "tester-with-child"),
-        "TESTER_CHILD_RUN_FORBIDDEN",
-      );
-      assert.equal(fs.readFileSync(exposureLedgerPath(root, current.taskId), "utf8"), ledgerBefore);
-      if (stage === "running")
-        assert.equal(readTesterRunState(root, "tester-with-child").status, "queued");
-    } finally {
-      cleanup(root);
-    }
-  });
-}
+test("tester设施可使用普通子任务部署和执行benchmark",()=>{
+ const root=tempDir();try {
+  const current=setup(deterministicTester());saveTesterDefinition(root,current.tester);reserve(root,current);
+  createChildContract(root,current.outerRunId,"tester-with-child","tester",true);
+  start(root,current,"tester-with-child");
+  createChildContract(root,"tester-with-child","benchmark-worker","benchmark");
+  recordTesterStarted(root,"tester-with-child");
+  assert.equal(readTesterRunState(root,"tester-with-child").status,"running");
+ } finally {cleanup(root);}
+});
 
 let passed = 0;
 for (const current of tests) {

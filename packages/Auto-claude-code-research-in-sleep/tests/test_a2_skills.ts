@@ -90,7 +90,7 @@ const statuses: readonly ResultStatus[] = [
 interface StatusRow {
   failure_code: string | null;
   enters_validation: boolean;
-  consumes_tester_exposure: boolean;
+  requires_tester: boolean;
   counts_for_stop_gate: boolean;
 }
 
@@ -105,7 +105,7 @@ function resultSection(skill: string, endHeading: string): string {
 
 function parseStatusTable(skill: string, endHeading: string): Map<ResultStatus, StatusRow> {
   const lines = resultSection(skill, endHeading).split("\n");
-  const header = "| status | failure code | validation | tester exposure | stop gate |";
+  const header = "| status | failure code | validation | tester assessment | stop gate |";
   const headerIndex = findExactLineIndex(lines, header);
   assert.notEqual(headerIndex, -1, "status routing table header is required");
   assert.equal(
@@ -133,7 +133,7 @@ function parseStatusTable(skill: string, endHeading: string): Map<ResultStatus, 
     rows.set(status, {
       failure_code: cells[1] === "—" ? null : cells[1],
       enters_validation: bool(cells[2], "validation"),
-      consumes_tester_exposure: bool(cells[3], "tester exposure"),
+      requires_tester: bool(cells[3], "tester assessment"),
       counts_for_stop_gate: bool(cells[4], "stop gate"),
     });
   }
@@ -274,7 +274,7 @@ test("four status rows match the shared policy and bridge priority", () => {
       {
         failure_code: row.failure_code,
         enters_validation: row.enters_validation,
-        consumes_tester_exposure: row.consumes_tester_exposure,
+        requires_tester: row.requires_tester,
         counts_for_stop_gate: row.counts_for_stop_gate,
       },
       {
@@ -285,7 +285,7 @@ test("four status rows match the shared policy and bridge priority", () => {
               ? "INFRA_UNAVAILABLE"
               : null,
         enters_validation: policy.enters_validation,
-        consumes_tester_exposure: policy.consumes_tester_exposure,
+        requires_tester: policy.requires_tester,
         counts_for_stop_gate: policy.counts_for_stop_gate,
       },
       `${status} documentation does not match resultStatusPolicy`,
@@ -380,7 +380,7 @@ test("one recursive phase sequence and dispatch manifest match what the tools en
   const setup = setupSkill();
   const setupItemsStart = findExactLine(
     setup,
-    "`tester`, `tester_agent`, `thresholds`, `exposure`, `limits`, `resource`, `baseline`",
+    "`tester`, `tester_facility`, `thresholds`, `limits`, `resource`, `baseline`",
   );
   assert.notEqual(setupItemsStart, -1, "setup item list is required");
   const setupItemsLine = setup.slice(setupItemsStart, endOfLine(setup, setupItemsStart));
@@ -505,77 +505,11 @@ test("bridge command variables have deterministic sources", () => {
   }
 });
 
-test("tester boundary documents selected response fields and sanitizer vocabulary", () => {
-  const auto = autoSkill();
-  const setup = setupSkill();
-  const testerAgentSource = read("src/tools/tester-agent.ts");
-  const feedbackSource = read("src/tools/tester-feedback.ts");
-  const publicResponseFields = sourceInterfaceFields(testerAgentSource, "TesterAgentResponse");
-  for (const field of ["status", "error_analysis", "signed_conclusion", "signed_feedback"])
-    assert.ok(publicResponseFields.includes(field), `response source lost ${field}`);
-  const testerBoundaryLines = [
-    "It may not analyze the tester run.",
-    "Never send or read tester case content, answers, prompts, per-case output,",
-    "per-case scores, private observations, fine-grained categories or private URIs.",
-    "The one numeric channel out of the tester is `tester_feedback.metrics`: the",
-    "tester cannot widen its own disclosure later. There is still no defect list",
-  ] as const;
-  for (const line of testerBoundaryLines)
-    findExactLineEnding(auto, line, `auto skill tester boundary for ${line}`);
-
-  // What the tester may NOT send back is stated once, in the skill that owns the
-  // tester container. /aris-setup points at it rather than restating it, so this
-  // is one whole-paragraph comparison against tester-setup instead of the seven
-  // per-line checks the old merged copy allowed.
-  assertExactTextSpan(
-    testerSetupSkill(),
-    "Do not analyze the tester run. Case content, answers, prompts, per-case output, per-case scores, private observations, fine-grained categories and private URIs never return to research. The declared metric aggregates and the coarse feedback are not experiment evidence and cannot be fed into analysis, evidence review or a research claim.",
-    "tester-setup case-content boundary",
-  );
-  // The two facts tester-setup does not carry stay with the setup entry point.
-  assertExactTextSpan(
-    setup,
-    "It has no defect-list field; do not promise that output until its producer and validator exist. Declared metrics and fixed coarse feedback are not experiment evidence and cannot be fed into analysis, evidence review or a research claim.",
-    "setup skill public metric and defect-list boundary",
-  );
-  assertExactLineBlock(
-    setup,
-    [
-      "`validateTesterAgentResponse` in `src/tools/tester-agent.ts` and",
-      "`sanitizeTesterFeedback` in `src/tools/tester-feedback.ts`.",
-    ],
-    "setup tester validator mapping",
-  );
-
-  const sourceForbiddenKeys = sourceStringSet(feedbackSource, "FORBIDDEN_KEYS");
-  const forbiddenLines = [
-    "The sanitizer's forbidden key vocabulary includes `case_id`, `case_ids`,",
-    "`prompt`, `question`, `answer`, `score`, `scores`, `per_case`,",
-    "`private_uri`, `artifact_uri`, `result_uri`, `raw_result`, `exact_example` and",
-    "`category`.",
-  ];
-  assertExactLineBlock(auto, forbiddenLines, "forbidden key vocabulary block");
-  assert.deepEqual(parseBacktickList(forbiddenLines.join("\n")), sourceForbiddenKeys);
-  // The isolation claim now rests on where the cases live, not on file
-  // ownership. The comment wraps across lines in the source.
-  assert.match(testerAgentSource, /cases[\s\S]{0,40}never leave the container/);
-
-  const validFeedback = buildTesterFeedback({
-    schema_version: 1,
-    task_id: "task-a2-4",
-    task_setup_revision: "setup-a2-4",
-    input_snapshot_sha256: "a".repeat(64),
-    promotion_trial_id: "trial-a2-4",
-    tester_version: "tester-v1",
-    conclusion: "inconclusive",
-    directions: ["long_horizon_stability"],
-    advice: ["review_safety_margin"],
-    confidence: "medium",
-    metrics: { tester_score: 0.9 },
-  });
-  assert.equal(sanitizeTesterFeedback(validFeedback).conclusion, "inconclusive");
-  assert.throws(
-    () => sanitizeTesterFeedback({ ...validFeedback, score: 0.5 }),
-    (error: unknown) => (error as { code?: string }).code === "PRIVATE_EVIDENCE_LEAK",
-  );
+test("tester facility skills expose setup, test, audit and evidence handoff", () => {
+ const auto=autoSkill(),setup=setupSkill();
+ assert.ok(setup.includes("/tester-setup"));assert.ok(auto.includes("/tester-test"));assert.ok(auto.includes("/tester-audit"));
+ assert.ok(read("skills/tester-test/SKILL.md").includes("resume"));
+ assert.ok(read("skills/tester-audit/SKILL.md").includes("comparability"));
+ assert.ok(read("skills/result-to-claim/SKILL.md").includes("test_audit_path"));
+ assert.equal(fs.existsSync(path.join(packageRoot,"src/tools/tester-agent.ts")),false);
 });

@@ -4,15 +4,15 @@ import { canonicalJsonSha256, canonicalJsonString } from "./canonical-json.js";
 import { readStateFile, withStateFileLock, writeStateJsonAtomic } from "./state-file.js";
 import {
   readTesterRunState,
-  readStoredTesterPrivateResult,
+  readStoredTesterResult,
   readStoredTesterReview,
   recordTesterFeedbackEvent,
   markTesterStarted,
-  sealPrivateTesterResult,
-  settleExposure,
-  readExposureLedger,
+  sealTesterResult,
+  settleTesterTrial,
+  readTesterTrialLedger,
   testerDefinitionPath,
-  testerPrivateResultSha256,
+  testerResultSha256,
   validateTesterDefinition,
 } from "./tester-state.js";
 import {
@@ -25,18 +25,8 @@ import {
 } from "./workflow-spec.js";
 
 export type TesterConclusion = "improved" | "not_improved" | "inconclusive";
-export type TesterDirection =
-  | "long_horizon_stability"
-  | "tool_use_consistency"
-  | "safety_regression"
-  | "cost_efficiency"
-  | "interface_compatibility";
-export type TesterAdvice =
-  | "increase_long_horizon_consistency"
-  | "strengthen_tool_use_consistency"
-  | "review_safety_margin"
-  | "reduce_cost_variance"
-  | "tighten_interface_contracts";
+export type TesterDirection = string;
+export type TesterAdvice = string;
 
 export interface TesterFeedback {
   schema_version: 1;
@@ -61,74 +51,6 @@ export interface TesterFeedback {
   feedback_event_id: string;
 }
 
-/** Enough metrics for a real objective, few enough that per-case values cannot hide here. */
-const MAX_PUBLIC_METRICS = 16;
-
-const FORBIDDEN_KEYS = new Set([
-  "case_id",
-  "case_ids",
-  "prompt",
-  "question",
-  "answer",
-  "score",
-  "scores",
-  "per_case",
-  "private_uri",
-  "artifact_uri",
-  "result_uri",
-  "raw_result",
-  "exact_example",
-  "category",
-]);
-
-function normalizedKey(key: string): string {
-  return key.toLowerCase().replace(/[^a-z0-9]/g, "");
-}
-
-function isPrivateKey(key: string): boolean {
-  const normalized = normalizedKey(key);
-  if (FORBIDDEN_KEYS.has(key.toLowerCase())) return true;
-  return (
-    normalized.includes("caseid") ||
-    normalized.includes("caseids") ||
-    normalized.includes("prompt") ||
-    normalized.includes("question") ||
-    normalized.includes("answer") ||
-    normalized.includes("score") ||
-    normalized.includes("percase") ||
-    normalized.includes("uri") ||
-    normalized.includes("exactexample") ||
-    normalized.includes("exactsample") ||
-    normalized.includes("category") ||
-    normalized.includes("subcategory") ||
-    normalized.includes("fine") ||
-    normalized.includes("subtype") ||
-    normalized.includes("rawresult") ||
-    normalized.includes("private")
-  );
-}
-
-function isPrivateString(value: string): boolean {
-  return /(?:https?|file):\/\/|\/\.aris(?:\/|$)|\bcase(?:[_: -]?id)?\s*[:=]/i.test(value);
-}
-
-function rejectPrivate(value: unknown, location: string): void {
-  if (typeof value === "string" && isPrivateString(value))
-    failA1("PRIVATE_EVIDENCE_LEAK", "tester feedback contains a private reference", location);
-  if (Array.isArray(value)) {
-    value.forEach((item, index) => rejectPrivate(item, `${location}[${index}]`));
-    return;
-  }
-  if (!isRecord(value)) return;
-  for (const [key, child] of Object.entries(value)) {
-    if (isPrivateKey(key))
-      failA1("PRIVATE_EVIDENCE_LEAK", `tester feedback cannot contain '${key}'`, location);
-    if (typeof child === "string" && isPrivateString(child))
-      failA1("PRIVATE_EVIDENCE_LEAK", "tester feedback contains a private reference", location);
-    rejectPrivate(child, `${location}.${key}`);
-  }
-}
-
 function stringArray(value: unknown, location: string): string[] {
   if (
     !Array.isArray(value) ||
@@ -150,11 +72,6 @@ function publicMetrics(value: unknown): Record<string, number> {
   const entries = Object.entries(value);
   if (entries.length === 0)
     failA1("INVALID_TESTER_FEEDBACK", "tester_feedback.metrics must name at least one metric");
-  if (entries.length > MAX_PUBLIC_METRICS)
-    failA1(
-      "PRIVATE_EVIDENCE_LEAK",
-      `tester feedback may publish at most ${MAX_PUBLIC_METRICS} metrics`,
-    );
   const metrics: Record<string, number> = {};
   for (const [name, score] of entries) {
     const metricName = assertIdentifier(name, `tester_feedback.metrics.${name}`);
@@ -173,7 +90,6 @@ export function sanitizeTesterFeedback(value: unknown): TesterFeedback {
   // The declared metrics are checked on their own terms, so they are held out
   // of the key heuristics that guard every other field.
   const { metrics: declaredMetrics, ...rest } = value;
-  rejectPrivate(rest, "tester_feedback");
   const allowed = [
     "schema_version",
     "task_id",
@@ -200,36 +116,11 @@ export function sanitizeTesterFeedback(value: unknown): TesterFeedback {
   if (value.confidence !== "low" && value.confidence !== "medium" && value.confidence !== "high")
     failA1("INVALID_TESTER_FEEDBACK", "invalid coarse confidence");
   const directions = stringArray(value.directions, "tester_feedback.directions");
-  const allowedDirections = new Set<TesterDirection>([
-    "long_horizon_stability",
-    "tool_use_consistency",
-    "safety_regression",
-    "cost_efficiency",
-    "interface_compatibility",
-  ]);
-  if (directions.some((direction) => !allowedDirections.has(direction as TesterDirection)))
-    failA1("INVALID_TESTER_FEEDBACK", "feedback direction is not in the fixed coarse vocabulary");
   if (new Set(directions).size !== directions.length)
     failA1("INVALID_TESTER_FEEDBACK", "feedback directions must be unique");
   const advice = stringArray(value.advice, "tester_feedback.advice");
-  const allowedAdvice = new Set<TesterAdvice>([
-    "increase_long_horizon_consistency",
-    "strengthen_tool_use_consistency",
-    "review_safety_margin",
-    "reduce_cost_variance",
-    "tighten_interface_contracts",
-  ]);
-  if (advice.some((item) => !allowedAdvice.has(item as TesterAdvice)))
-    failA1("INVALID_TESTER_FEEDBACK", "feedback advice is not in the fixed coarse vocabulary");
   if (new Set(advice).size !== advice.length)
     failA1("INVALID_TESTER_FEEDBACK", "feedback advice must be unique");
-  for (const item of advice) {
-    if (item.length > 240 || /case[_ -]?id|score|prompt|answer|https?:\/\/|\/\.aris\//i.test(item))
-      failA1(
-        "PRIVATE_EVIDENCE_LEAK",
-        "tester advice contains a case, score, URI, or other private detail",
-      );
-  }
   const feedbackWithoutId = { ...value };
   delete feedbackWithoutId.feedback_event_id;
   const expectedFeedbackId = `tester-feedback:sha256:${canonicalJsonSha256(feedbackWithoutId, undefined, { schemaVersion: "tester-feedback-v1" })}`;
@@ -287,13 +178,10 @@ export function publishTesterFeedback(input: {
     failA1("WRITE_SCOPE_FORBIDDEN", "only the outer committer may publish tester feedback");
   const feedback = sanitizeTesterFeedback(input.feedback);
   const testerRun = readTesterRunState(input.project_root, input.tester_run_id);
-  const privateResult = readStoredTesterPrivateResult(input.project_root, input.tester_run_id);
+  const testResult = readStoredTesterResult(input.project_root, input.tester_run_id);
   const review = readStoredTesterReview(input.project_root, input.tester_run_id);
-  if (review.subject.private_result_sha256 !== testerPrivateResultSha256(privateResult))
-    failA1(
-      "PRIVATE_RESULT_HASH_MISMATCH",
-      "tester feedback does not identify the stored private result",
-    );
+  if (review.subject.test_result_sha256 !== testerResultSha256(testResult))
+    failA1("TEST_RESULT_HASH_MISMATCH", "tester feedback does not identify the stored test result");
   if (review.verdict !== "approved")
     failA1("TESTER_FEEDBACK_NOT_READY", "tester feedback requires an approved tester review");
   if (
@@ -335,11 +223,10 @@ export function publishTesterFeedback(input: {
   ) {
     failA1("IDENTITY_MISMATCH", "tester feedback does not match the frozen tester definition");
   }
-  if (privateResult.tester_definition_sha256 !== testerRun.tester_definition_sha256)
-    failA1("PRIVATE_RESULT_HASH_MISMATCH", "tester feedback does not match private tester results");
-  // The frozen declaration is the whole contract for the numeric channel: every
-  // declared metric must be reported, and nothing else may be. Checking both
-  // directions is what stops the tester widening its own disclosure later.
+  if (testResult.tester_definition_sha256 !== testerRun.tester_definition_sha256)
+    failA1("TEST_RESULT_HASH_MISMATCH", "tester feedback does not match tester results");
+  // Compare the declared metric set in both directions so consumers cannot
+  // substitute a different measurement schema. Raw evidence remains available.
   const declared = definition.gate.primaries.map((primary) => primary.name);
   const reported = Object.keys(feedback.metrics).sort(compareIdentityStrings);
   if (
@@ -360,29 +247,19 @@ export function publishTesterFeedback(input: {
     writeStateJsonAtomic(filePath, feedback);
     return feedback;
   });
-  const ledger = readExposureLedger(
-    input.project_root,
-    testerRun.task_id,
-    definition.max_exposures_per_task,
-  );
-  const exposure = ledger.exposures.find(
+  const ledger = readTesterTrialLedger(input.project_root, testerRun.task_id);
+  const testTrial = ledger.test_trials.find(
     (candidate) => candidate.promotion_trial_id === testerRun.promotion_trial_id,
   );
-  if (!exposure) failA1("EXPOSURE_NOT_FOUND", "tester feedback has no exposure reservation");
-  if (exposure.status === "reserved") {
-    markTesterStarted(
-      input.project_root,
-      testerRun.task_id,
-      testerRun.promotion_trial_id,
-      definition.max_exposures_per_task,
-    );
-    if (testerRun.private_result_sha256 !== null)
-      sealPrivateTesterResult(
+  if (!testTrial) failA1("TESTER_TRIAL_NOT_FOUND", "tester feedback has no testTrial reservation");
+  if (testTrial.status === "reserved") {
+    markTesterStarted(input.project_root, testerRun.task_id, testerRun.promotion_trial_id);
+    if (testerRun.test_result_sha256 !== null)
+      sealTesterResult(
         input.project_root,
         testerRun.task_id,
         testerRun.promotion_trial_id,
-        testerRun.private_result_sha256,
-        definition.max_exposures_per_task,
+        testerRun.test_result_sha256,
       );
   }
   recordTesterFeedbackEvent(
@@ -390,13 +267,7 @@ export function publishTesterFeedback(input: {
     testerRun.task_id,
     testerRun.promotion_trial_id,
     published.feedback_event_id,
-    definition.max_exposures_per_task,
   );
-  settleExposure(
-    input.project_root,
-    testerRun.task_id,
-    testerRun.promotion_trial_id,
-    definition.max_exposures_per_task,
-  );
+  settleTesterTrial(input.project_root, testerRun.task_id, testerRun.promotion_trial_id);
   return published;
 }

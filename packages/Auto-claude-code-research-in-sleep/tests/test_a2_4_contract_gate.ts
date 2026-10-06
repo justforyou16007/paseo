@@ -14,7 +14,7 @@ function withRoot(action: (root: string) => void): void {
 
 function cli(tool: string, args: string[]) {
   return spawnSync(process.execPath, [
-    "/home/liu/paseo/node_modules/tsx/dist/cli.mjs",
+    "--import", "tsx",
     path.resolve("src/tools", tool + ".ts"), ...args,
   ], { encoding: "utf8", timeout: 15000 });
 }

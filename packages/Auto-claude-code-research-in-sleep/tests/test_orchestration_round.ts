@@ -1,3 +1,4 @@
+import {appendHistoricalWikiFixture} from "./helpers/wiki-history-fixture.js";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -330,7 +331,7 @@ test("the parent's result package names the children the generation dispatched",
 
     const wikiRoot = runWikiRoot(projectRoot, PARENT);
     initializeWikiSchema(wikiRoot);
-    appendWikiEvent(wikiRoot, {
+    appendHistoricalWikiFixture(wikiRoot, {
       producer_kind: "orchestration-round-test",
       scope: `runs/${PARENT}`,
       subject_id: "exp:assembly",

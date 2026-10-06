@@ -334,6 +334,10 @@ Dispatch → `skills/experiment-bridge/SKILL.md`. Queue routing is automatic:
 
 **Gate:** jobs completed (deterministic). Accept with `--reviewer deterministic:experiment-bridge`.
 
+### Mandatory Benchmark Handoff
+
+After bridge results are available, dispatch `/tester-test` using the current run, iteration, experiment id and produced artifact reference/digest, then dispatch `/tester-audit` on the completed full result. Follow the normal manifest, receipt and watchdog protocol; a failure enters bounded repair and blocks formal Wiki metrics. Pass canonical `test_result_path` and `test_audit_path` to Stage 3 and its `/result-to-claim` worker. Reuse the facilities initialized by `/aris-setup`; setup does not run per iteration. See [tester-facility.md](../shared-references/tester-facility.md).
+
 ### Stage 3: Auto Review Loop (W2)
 
 | Manifest inputs | |

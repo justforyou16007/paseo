@@ -233,8 +233,8 @@ function oneModuleSpec(): WorkflowSpec {
     promotion_tester: {
       tester_id: "standalone-tester",
       definition_version: "standalone-v1",
-      research_feedback: "fuzzy_advice_only",
-      max_exposures_per_task: 1,
+      research_feedback: "detailed",
+
     },
     wave_policy: {
       max_parallel_modules: 1,
@@ -373,8 +373,8 @@ function minimalFreezeInput(projectRoot: string, outerRunId: string): FreezeOute
     case_manifest_sha256: HASH_A,
     seed_manifest_sha256: HASH_B,
     harness_sha256: HASH_C,
-    research_feedback: "fuzzy_advice_only",
-    max_exposures_per_task: 4,
+    research_feedback: "detailed",
+
     comparison: "paired_matching_baseline_vs_finalist",
     gate: {
       primaries: [{ name: "score", direction: "higher_better", improvement: { policy: "absolute", minimum_gain: 0.1 } }],
@@ -444,7 +444,7 @@ test("bridge routes each independently classified result state through the share
   assert.equal(failed.status, "failed");
   assert.equal(succeeded.status, "succeeded");
   assert.equal(resultStatusPolicy(outOfScope.status).enters_validation, false);
-  assert.equal(resultStatusPolicy(unavailable.status).consumes_tester_exposure, false);
+  assert.equal(resultStatusPolicy(unavailable.status).requires_tester, false);
   assert.equal(resultStatusPolicy(failed.status).counts_for_stop_gate, true);
   assert.equal(resultStatusPolicy(succeeded.status).counts_for_stop_gate, false);
 });
@@ -743,7 +743,6 @@ test("refund returns a settled child's balance before the next split and is repl
 });
 
 test("stop gate excludes not-executable and infra-unavailable waves, counts real matrix comparisons, and replays identically", () => {
-  const exposure = { max_exposures_per_task: 4, reserved: 0, settled: 0, released: 0 };
   for (const status of ["not_executable", "infra_unavailable"] as const) {
     const nonExecutable = evaluateWorkflowStopGate({
       outer_run_id: "outer-a2-3",
@@ -752,7 +751,6 @@ test("stop gate excludes not-executable and infra-unavailable waves, counts real
       // matrix_compared=true makes this probe reach the eligibility decision;
       // the status itself must still keep the wave out of the streak.
       result_packages: [{ status, matrix_compared: true, matrix_improved: false }],
-      exposure,
     });
     assert.equal(nonExecutable.reason, "continue");
     assert.equal(nonExecutable.no_finalist_streak, 0);
@@ -763,7 +761,6 @@ test("stop gate excludes not-executable and infra-unavailable waves, counts real
     policy: noStopPolicy,
     cycle_summaries: [cycle(1)],
     result_packages: [{ status: "succeeded", matrix_compared: false, matrix_improved: false }],
-    exposure,
   });
   assert.equal(noComparedMatrix.reason, "continue");
   assert.equal(noComparedMatrix.no_finalist_streak, 0);
@@ -773,7 +770,6 @@ test("stop gate excludes not-executable and infra-unavailable waves, counts real
     policy: noStopPolicy,
     cycle_summaries: [cycle(1)],
     result_packages: [{ status: "succeeded", matrix_compared: true, matrix_improved: false }],
-    exposure,
   });
   assert.equal(compared.reason, "no_finalist");
   assert.equal(compared.no_finalist_streak, 1);
@@ -783,7 +779,6 @@ test("stop gate excludes not-executable and infra-unavailable waves, counts real
       policy: noStopPolicy,
       cycle_summaries: [cycle(1)],
       result_packages: [{ status: "succeeded", matrix_compared: true, matrix_improved: false }],
-      exposure,
     }),
     compared,
   );
@@ -794,7 +789,7 @@ test("children use their own frozen measurement and hash actual experiment conte
  const input=bridgeFixture({charter:charter(base,resource),baseline:base,resource_inventory:resource,positions:[position("main",{child_run_id:"child-local"})]});
  const first=planExperimentBridge(input).children[0]!;
  // The child's tester reference is the acceptance its parent wrote, not a name
- // the caller chose: that is what keeps a child away from the task tester.
+ // the caller chose: that preserves the declared local acceptance.
  assert.deepEqual(first.charter.measurement,{validator_ref:"validator:main",tester_ref:first.acceptance.acceptance_id});
  assert.equal(first.acceptance.owner_run_id,input.charter.run_id);
  assert.equal(first.acceptance.position_id,"main");
@@ -1663,15 +1658,15 @@ test("a child is judged by its parent's acceptance and never by the task tester"
       "CHILD_TESTER_FORBIDDEN",
     );
 
-    // The exposure budget belongs to the run that owns the task. A dispatched
-    // run is refused before any of its reservation details are even read.
+    // Promotion changes belong to the root task; children run facility tests
+    // without reserving a root incumbent promotion.
     expectCode(
       () =>
         reservePromotionTrial({
           project_root: projectRoot,
           outer_run_id: child.run_id,
         } as unknown as Parameters<typeof reservePromotionTrial>[0]),
-      "CHILD_TESTER_FORBIDDEN",
+      "TESTER_ROOT_ONLY",
     );
 
     // And an acceptance cannot borrow a tester's id, which is how a local

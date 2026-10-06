@@ -21,7 +21,6 @@ export type StopReason =
   | "continue"
   | "target_reached"
   | "outer_budget_exhausted"
-  | "tester_exposure_exhausted"
   | "no_finalist"
   | "no_tester_improvement"
   | "no_valid_candidate"
@@ -50,13 +49,6 @@ export interface StopPolicy {
   max_no_valid_candidate_cycles?: number;
 }
 
-export interface StopExposureSnapshot {
-  max_exposures_per_task: number;
-  reserved: number;
-  settled: number;
-  released: number;
-}
-
 export interface StopBudgetSnapshot {
   limit: number;
   reserved: number;
@@ -81,7 +73,6 @@ export interface StopGateInput {
   outer_run_id?: string;
   policy: StopPolicy;
   cycle_summaries: readonly OuterCycleSummary[];
-  exposure: StopExposureSnapshot;
   budget?: StopBudgetSnapshot;
   outer_iteration?: number;
   result_packages?: readonly (StopGateResultPackage | ResultPackage)[];
@@ -99,7 +90,6 @@ export interface StopDecision {
   no_tester_improvement_streak: number;
   no_valid_candidate_streak: number;
   budget_remaining: number | null;
-  exposure_remaining: number;
   cycle_history_sha256: string;
   decision_sha256: string;
 }
@@ -152,19 +142,6 @@ function validatePolicy(policy: StopPolicy): void {
       policy.max_no_valid_candidate_cycles,
       "stop.policy.max_no_valid_candidate_cycles",
     );
-}
-
-function validateExposure(exposure: StopExposureSnapshot): number {
-  const max = positiveInteger(
-    exposure.max_exposures_per_task,
-    "stop.exposure.max_exposures_per_task",
-  );
-  const reserved = requireInteger(exposure.reserved, "stop.exposure.reserved", 0);
-  const settled = requireInteger(exposure.settled, "stop.exposure.settled", 0);
-  requireInteger(exposure.released, "stop.exposure.released", 0);
-  if (reserved + settled > max)
-    failA1("INVALID_VALUE", "tester exposure counts are inconsistent", "stop.exposure");
-  return max - reserved - settled;
 }
 
 function validateBudget(budget: StopBudgetSnapshot): number {
@@ -360,8 +337,6 @@ export function evaluateWorkflowStopGate(input: StopGateInput): StopDecision {
     if (outerRunId !== null && cycle.outer_run_id !== outerRunId)
       failA1("IDENTITY_MISMATCH", "stop gate cycle belongs to another outer run");
   }
-  const exposureRemaining =
-    input.policy.mode === "auto_research_loop" ? 0 : validateExposure(input.exposure);
   if (
     input.policy.mode !== "auto_research_loop" &&
     input.policy.max_outer_budget !== undefined &&
@@ -401,7 +376,6 @@ export function evaluateWorkflowStopGate(input: StopGateInput): StopDecision {
         resultCycleSucceeded(latestResultView) &&
         latestResultView.cycle.target_reached === true);
   const budgetExhausted = budgetRemaining !== null && budgetRemaining <= 0;
-  const exposureExhausted = exposureRemaining <= 0;
   const noFinalistStreak =
     resultViews === null
       ? trailingStreak(cycles, (cycle) => cycle.finalist_id === null)
@@ -433,7 +407,6 @@ export function evaluateWorkflowStopGate(input: StopGateInput): StopDecision {
   else if (input.policy.mode === "auto_research_loop") {
     if (cycles.length >= input.policy.max_iterations!) reason = "iteration_cap";
   } else if (budgetExhausted) reason = "outer_budget_exhausted";
-  else if (exposureExhausted) reason = "tester_exposure_exhausted";
   else if (
     input.policy.max_no_finalist_cycles !== undefined &&
     noFinalistStreak >= input.policy.max_no_finalist_cycles
@@ -469,7 +442,6 @@ export function evaluateWorkflowStopGate(input: StopGateInput): StopDecision {
     no_tester_improvement_streak: noTesterImprovementStreak,
     no_valid_candidate_streak: noValidCandidateStreak,
     budget_remaining: budgetRemaining,
-    exposure_remaining: exposureRemaining,
     cycle_history_sha256: canonicalJsonSha256(cycleHistoryValue, undefined, {
       schemaVersion: "workflow-cycle-history-v1",
     }),
@@ -501,7 +473,6 @@ export function validateWorkflowStopDecision(
     "no_tester_improvement_streak",
     "no_valid_candidate_streak",
     "budget_remaining",
-    "exposure_remaining",
     "cycle_history_sha256",
     "decision_sha256",
   ];
@@ -520,7 +491,6 @@ export function validateWorkflowStopDecision(
     "continue",
     "target_reached",
     "outer_budget_exhausted",
-    "tester_exposure_exhausted",
     "no_finalist",
     "no_tester_improvement",
     "no_valid_candidate",
@@ -559,10 +529,6 @@ export function validateWorkflowStopDecision(
       record.budget_remaining === null
         ? null
         : nonNegativeFinite(record.budget_remaining, `${filePath}.budget_remaining`),
-    exposure_remaining: nonNegativeFinite(
-      record.exposure_remaining,
-      `${filePath}.exposure_remaining`,
-    ),
     cycle_history_sha256: assertSha256(
       record.cycle_history_sha256,
       `${filePath}.cycle_history_sha256`,

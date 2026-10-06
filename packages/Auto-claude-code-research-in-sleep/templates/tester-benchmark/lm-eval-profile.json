@@ -1,0 +1,19 @@
+{
+  "harness_revision": "REPLACE_WITH_EXACT_40_HEX_COMMIT",
+  "dataset_name": "Rowan/hellaswag",
+  "dataset_revision": "REPLACE_WITH_EXACT_40_HEX_DATASET_COMMIT",
+  "dataset_split": "validation",
+  "expected_samples": 10042,
+  "base_task": "hellaswag",
+  "task": "aris_hellaswag",
+  "model": "hf",
+  "model_args": "pretrained={artifact_ref},dtype=float16",
+  "smoke_model_args": "pretrained=REPLACE_WITH_PINNED_SMOKE_MODEL_PATH,dtype=float16",
+  "metric_map": {"accuracy": {"aggregate": "acc,none", "sample": "acc"}},
+  "num_fewshot": 0,
+  "seed": 42,
+  "device": "cuda:0",
+  "batch_size": 8,
+  "smoke_samples": 5,
+  "timeout_seconds": 86400
+}

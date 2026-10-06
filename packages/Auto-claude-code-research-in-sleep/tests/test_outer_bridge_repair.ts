@@ -94,7 +94,7 @@ function enterWorkset(
   runId: string,
   outerBudget?: { amount: number; unit: string },
 ): ReturnType<typeof makeFixture> {
-  const fixture = makeFixture(root, executionRoot, runId, 4, { outer_budget: outerBudget });
+  const fixture = makeFixture(root, executionRoot, runId, { outer_budget: outerBudget });
   startFixture(fixture);
   beginOuterCycle({
     ...fixture.identity,

@@ -1,5 +1,5 @@
+import { checkTesterResult, readAuditedTesterResult } from "./tester-facility.js";
 import { assertRunId } from "./workflow-spec.js";
-import { assertResearchVisible } from "./wiki-scope.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -107,6 +107,8 @@ function isSha256(value: unknown): value is string {
 }
 
 const WORKER_RULES: Readonly<Record<string, WorkerRule>> = {
+  "tester-test": { phases: ["tester-test"], patchKeys: {}, requiredPatchKeys: [] },
+  "tester-audit": { phases: ["tester-audit"], patchKeys: {}, requiredPatchKeys: [] },
   "idea-discovery": {
     phases: ["idea-discovery"],
     patchKeys: {
@@ -541,6 +543,14 @@ function validateOwnership(
           fail("receipt primary output hash does not match its contents");
       }
 
+      if (receipt.status === "done" && receipt.worker === "tester-test") {
+        const result = checkTesterResult(String(receipt.summary.test_result_path));
+        if (result.request.run_id !== runId || result.request.iteration !== receipt.iteration)
+          fail("tester result does not identify this run and iteration");
+      }
+      if (receipt.status === "done" && receipt.worker === "tester-audit") {
+        readAuditedTesterResult(String(receipt.summary.test_result_path), String(receipt.summary.test_audit_path), { run_id: runId, iteration: receipt.iteration });
+      }
       if (receipt.worker === "idea-discovery") {
         // The loop's next stage (experiment-bridge) consumes this plan directly, so the
         // path in the patch must name a file this worker actually produced.
@@ -961,19 +971,16 @@ function apply(root: string, runId: string, receiptPath: string): void {
   if (!fs.existsSync(receiptPath)) fail(`no receipt at ${receiptPath}`);
 
   const receiptRaw = readJson(receiptPath, "receipt");
-  assertResearchVisible(receiptRaw);
   if (isObject(receiptRaw) && receiptRaw.reviewed_run_kind !== undefined) {
     fail("review receipts cannot be sent to dashboard-merge");
   }
   const dashboardRaw = readJson(dashboardPath, "dashboard");
-  assertResearchVisible(dashboardRaw);
 
   withStateFileLock(dashboardPath, () => {
     // The receipt is immutable input, but the dashboard must be read and
     // changed under the same path-derived lock. Otherwise two valid receipts
     // can both read the same applied_receipts array and one update disappears.
     const currentReceiptRaw = readJson(receiptPath, "receipt");
-    assertResearchVisible(currentReceiptRaw);
     if (isObject(currentReceiptRaw) && currentReceiptRaw.reviewed_run_kind !== undefined) {
       fail("review receipts cannot be sent to dashboard-merge");
     }

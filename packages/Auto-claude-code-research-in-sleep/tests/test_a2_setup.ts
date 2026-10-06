@@ -1,3 +1,21 @@
+import {auditedResultFixture} from "./helpers/tester-facility-fixture.js";
+import {appendHistoricalWikiFixture} from "./helpers/wiki-history-fixture.js";
+import {advanceAutoResearchPhase} from "../src/tools/workflow-runtime.js";
+function assessmentSummary(identity:any) {
+ const current=readWorkflowRuntimeState(identity.project_root,identity.outer_run_id).active_cycle!.tester_assessment!;
+ return {test_result_path:path.resolve(identity.project_root,current.result_ref),test_audit_path:path.resolve(identity.project_root,current.audit_ref!)};
+}
+function prepareAssessment(identity:any, refresh=false) {
+ const root=identity.project_root,run=identity.outer_run_id,state=readWorkflowRuntimeState(root,run);
+ if(state.current_phase==="auto-review-loop"&&!refresh)return;
+ const config=JSON.parse(fs.readFileSync(path.join(root,".aris/tester-config.json"),"utf8"));
+ const binding=auditedResultFixture(root,{schema_version:1,test_id:`${run}-${state.active_cycle!.outer_iteration}${refresh?"-refreshed":""}`,run_id:run,iteration:state.active_cycle!.outer_iteration,experiment_id:"assessment",artifact:{ref:"fixture",sha256:"a".repeat(64)},mode:"full"},{score:.82},undefined,config);
+ if(!refresh)assert.throws(()=>advanceAutoResearchPhase({...identity,from_phase:"workset",to_phase:"auto-review-loop",evidence_paths:[binding.result_path]}),/test then audit/);
+ advanceAutoResearchPhase({...identity,from_phase:state.current_phase,to_phase:"tester-test",evidence_paths:[binding.result_path]});
+ advanceAutoResearchPhase({...identity,from_phase:"tester-test",to_phase:"tester-audit",test_result_path:binding.result_path,evidence_paths:[binding.result_path]});
+ advanceAutoResearchPhase({...identity,from_phase:"tester-audit",to_phase:"auto-review-loop",test_audit_path:binding.audit_path,evidence_paths:[binding.audit_path]});
+}
+import { installedFacilityFixture } from "./helpers/tester-facility-fixture.js";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -169,6 +187,9 @@ test("ARL root setup and charter-only Workflow start/resume use a finite round l
     fs.mkdirSync(insufficientDir, { recursive: true });
     const insufficientReceipt = path.join(insufficientDir, "receipt.json");
     fs.writeFileSync(insufficientReceipt, JSON.stringify({ run_id: "child-arl", iteration: 1, worker: "auto-review-loop", phase: "auto-review-loop", status: "done", dashboard_patch: { "last_review.verdict": "insufficient", "metric.current": null } }));
+    prepareAssessment(childIdentity);
+    prepareAssessment(childIdentity,true);
+    assert.match(readWorkflowRuntimeState(root,"child-arl").active_cycle!.tester_assessment!.result_ref, /refreshed/);
     assert.throws(() => recordAutoResearchInsufficient({ ...childIdentity, review_receipt_path: insufficientReceipt, evidence_paths: [insufficientReceipt] }), /bridge file does not exist/);
     writeReviewManifest(insufficientDir, "child-arl");
     const pending = recordAutoResearchInsufficient({ ...childIdentity, review_receipt_path: insufficientReceipt, evidence_paths: [insufficientReceipt] });
@@ -185,15 +206,16 @@ test("ARL root setup and charter-only Workflow start/resume use a finite round l
     assert.equal(fixed.current_phase, "workset");
     assert.equal(recordOuterBridgeRepair({ ...childIdentity, repair_receipt_path: repairReceipt, repair_manifest_path: repairManifest, evidence_paths: [repairReceipt] }).active_cycle?.bridge_failure?.repair_attempts, 1);
     recordOuterBridgeSuccess({ ...childIdentity, receipt_path: bridgeReceipt, manifest_path: bridgeManifest, evidence_paths: [bridgeReceipt, bridgeManifest] });
+    prepareAssessment(childIdentity);
     const reviewDir = runOwnedPath(root, "child-arl", "cycles", "1", "workers", "1-auto-review-loop");
     fs.mkdirSync(reviewDir, { recursive: true });
     const reviewReceipt = path.join(reviewDir, "receipt.json");
-    fs.writeFileSync(reviewReceipt, JSON.stringify({ run_id: "child-arl", iteration: 1, worker: "auto-review-loop", phase: "auto-review-loop", status: "done", dashboard_patch: { "last_review.verdict": "ready", "metric.current": 0.82 } }));
+    fs.writeFileSync(reviewReceipt, JSON.stringify({ run_id: "child-arl", iteration: 1, worker: "auto-review-loop", phase: "auto-review-loop", status: "done", summary: assessmentSummary(childIdentity), dashboard_patch: { "last_review.verdict": "ready", "metric.current": 0.82 } }));
     writeReviewManifest(reviewDir, "child-arl");
     completeAutoResearchCycle({ ...childIdentity, review_receipt_path: reviewReceipt, evidence_paths: [evidencePath] });
     const wikiRoot = runWikiRoot(root, "child-arl");
     initializeWikiSchema(wikiRoot);
-    appendWikiEvent(wikiRoot, { producer_kind: "result-to-claim", scope: "runs/child-arl", subject_id: "exp-child-arl", evidence_bundle_id: "bundle:child-arl", payload: { context: {}, operations: [{ op: "upsert_page", kind: "experiment", id: "exp-child-arl", data: { title: "Child result", idea_id: "idea:main", verdict: "yes", confidence: "high", date: "2026-01-01", hardware: "", duration: "", provenance: "", metrics: "score 0.82", reasoning: "measured", tags: [], iteration: 1, gate_metric: 0.82 } }] } });
+    appendHistoricalWikiFixture(wikiRoot, { producer_kind: "result-to-claim", scope: "runs/child-arl", subject_id: "exp-child-arl", evidence_bundle_id: "bundle:child-arl", payload: { context: {}, operations: [{ op: "upsert_page", kind: "experiment", id: "exp-child-arl", data: { title: "Child result", idea_id: "idea:main", verdict: "yes", confidence: "high", date: "2026-01-01", hardware: "", duration: "", provenance: "", metrics: "score 0.82", reasoning: "measured", tags: [], iteration: 1, gate_metric: 0.82 } }] } });
     assert.throws(() => planResultExport({ project_root: root, run_id: "child-arl" }), /saved terminal stop decision/);
     const stop = recordWorkflowStopDecision({ ...childIdentity });
     assert.equal(stop.reason, "target_reached");
@@ -224,6 +246,7 @@ test("ARL root setup and charter-only Workflow start/resume use a finite round l
     const rootReviewReceipt = path.join(rootReviewDir, "receipt.json");
     fs.writeFileSync(rootReviewReceipt, JSON.stringify({ run_id: "root-arl", iteration: 1, worker: "auto-review-loop", phase: "auto-review-loop", status: "done", dashboard_patch: { "last_review.verdict": "ready", "metric.current": 0.83 } }));
     writeReviewManifest(rootReviewDir, "root-arl");
+    prepareAssessment(rootIdentity);
     // The parent's round is not over until its child has published: with the
     // child's package out of the way, closing the iteration waits for it.
     const childPackage = runOwnedPath(root, "child-arl", "result-package.json");
@@ -238,8 +261,19 @@ test("ARL root setup and charter-only Workflow start/resume use a finite round l
     })();
     assert.equal(thrownCode(waiting), "ROUND_INCOMPLETE");
     assert.match(waiting!.message, /child-arl/);
-    assert.equal(readWorkflowRuntimeState(root, "root-arl").current_phase, "workset");
+    assert.equal(readWorkflowRuntimeState(root, "root-arl").current_phase, "auto-review-loop");
     fs.renameSync(`${childPackage}.held`, childPackage);
+    const assessment=readWorkflowRuntimeState(root,"root-arl").active_cycle!.tester_assessment!;
+    const finalReview=JSON.parse(fs.readFileSync(rootReviewReceipt,"utf8"));
+    assert.throws(()=>completeAutoResearchCycle({...rootIdentity,review_receipt_path:rootReviewReceipt,evidence_paths:[evidencePath]}),/final tested and audited assessment/);
+    finalReview.summary={};
+    fs.writeFileSync(rootReviewReceipt,JSON.stringify(finalReview));
+    assert.throws(()=>completeAutoResearchCycle({...rootIdentity,review_receipt_path:rootReviewReceipt,evidence_paths:[evidencePath]}),/expected a non-empty string/);
+    finalReview.summary={test_result_path:path.join(root,"stale-result.json"),test_audit_path:path.resolve(root,assessment.audit_ref!)};
+    fs.writeFileSync(rootReviewReceipt,JSON.stringify(finalReview));
+    assert.throws(()=>completeAutoResearchCycle({...rootIdentity,review_receipt_path:rootReviewReceipt,evidence_paths:[evidencePath]}),/record the final review assessment/);
+    finalReview.summary.test_result_path=path.resolve(root,assessment.result_ref);
+    fs.writeFileSync(rootReviewReceipt,JSON.stringify(finalReview));
     completeAutoResearchCycle({ ...rootIdentity, review_receipt_path: rootReviewReceipt, evidence_paths: [evidencePath] });
     assert.equal(recordWorkflowStopDecision(rootIdentity).reason, "target_reached");
     releaseTestProcessScope(root, "root-arl");
@@ -247,7 +281,7 @@ test("ARL root setup and charter-only Workflow start/resume use a finite round l
     assert.equal(rootFinish.status, 0, rootFinish.stderr);
     const rootWiki = runWikiRoot(root, "root-arl");
     initializeWikiSchema(rootWiki);
-    appendWikiEvent(rootWiki, { producer_kind: "result-to-claim", scope: "runs/root-arl", subject_id: "exp-root-arl", evidence_bundle_id: "bundle:root-arl", payload: { context: {}, operations: [{ op: "upsert_page", kind: "experiment", id: "exp-root-arl", data: { title: "Root result", idea_id: "idea:root", verdict: "yes", confidence: "high", date: "2026-01-01", hardware: "", duration: "", provenance: "", metrics: "score 0.83", reasoning: "measured", tags: [], iteration: 1, gate_metric: 0.83 } }] } });
+    appendHistoricalWikiFixture(rootWiki, { producer_kind: "result-to-claim", scope: "runs/root-arl", subject_id: "exp-root-arl", evidence_bundle_id: "bundle:root-arl", payload: { context: {}, operations: [{ op: "upsert_page", kind: "experiment", id: "exp-root-arl", data: { title: "Root result", idea_id: "idea:root", verdict: "yes", confidence: "high", date: "2026-01-01", hardware: "", duration: "", provenance: "", metrics: "score 0.83", reasoning: "measured", tags: [], iteration: 1, gate_metric: 0.83 } }] } });
     const rootExport = planResultExport({ project_root: root, run_id: "root-arl" });
     assert.equal(rootExport.candidate.parent_run_id, null);
     assert.deepEqual(rootExport.candidate.child_summaries.map((child) => child.run_id), ["child-arl"]);
@@ -390,6 +424,7 @@ test("ARL repair cap is counted per iteration across bridge failure and insuffic
     writeReviewManifest(reviewDir, "root-cap");
     // The execution repair already spent this iteration's single repair, so the
     // insufficient review is final at intake instead of opening a second one.
+    prepareAssessment(identity);
     const exhausted = recordAutoResearchInsufficient({ ...identity, review_receipt_path: reviewReceipt, evidence_paths: [reviewReceipt] });
     assert.equal(exhausted.active_cycle?.bridge_failure?.status, "exhausted");
     assert.equal(exhausted.active_cycle?.bridge_failure?.repair_attempts, 1);
@@ -464,25 +499,11 @@ function baseInput(root: string, runId = "root-a2", revision = "setup-a2"): Root
       optimizable_scope: [{ position_id: "main", mode: "independent" }],
     },
     tester_definition: { tester_id: "tester:a2", version: "tester:v1" },
-    tester_agent_config: {
-      schema_version: 1,
-      mode: "tester_agent",
-      tester_id: "tester:a2",
-      project_id: "project:a2",
-      container: "aris-tester",
-      container_user: "paseo",
-      agent_id: "agent-a2",
-      remote_receipt_dir: "/srv/aris-tester/receipts",
-      public_key_path: "/tmp/aris-a2-public-key.pem",
-      public_key_sha256: HASH_A,
-      submission_contract_sha256: HASH_B,
-      request_timeout_ms: 1000,
-    },
+    tester_facility_config: installedFacilityFixture(root),
     validation_thresholds: {
       primary: { name: "score", direction: "higher_better", target: 0.5 },
       constraints: [],
     },
-    exposure_limit: 2,
     owner_limits: {
       revision: "limits:a2",
       
@@ -703,9 +724,8 @@ test("setup reports every missing item before touching disk", () => {
     } as RootSetupInput;
     assert.deepEqual(collectMissingSetupItems(input), [
       "tester",
-      "tester_agent",
+      "tester_facility",
       "thresholds",
-      "exposure",
       "limits",
       "resource",
       "baseline",
@@ -719,9 +739,8 @@ test("setup reports every missing item before touching disk", () => {
     assert.equal(error instanceof SetupIncompleteError, true);
     assert.deepEqual((error as SetupIncompleteError).missing, [
       "tester",
-      "tester_agent",
+      "tester_facility",
       "thresholds",
-      "exposure",
       "limits",
       "resource",
       "baseline",
@@ -739,9 +758,8 @@ test("setup collects missing items before unknown-field validation", () => {
     const input = baseInput(root, "missing-with-unknown");
     for (const field of [
       "tester_definition",
-      "tester_agent_config",
+      "tester_facility_config",
       "validation_thresholds",
-      "exposure_limit",
       "owner_limits",
       "resource_inventory",
       "baseline",
@@ -753,9 +771,8 @@ test("setup collects missing items before unknown-field validation", () => {
     ) as SetupIncompleteError;
     assert.deepEqual(error.missing, [
       "tester",
-      "tester_agent",
+      "tester_facility",
       "thresholds",
-      "exposure",
       "limits",
       "resource",
       "baseline",
@@ -772,9 +789,8 @@ test("setup collects missing items before unknown-field validation", () => {
 test("setup distinguishes null, explicit undefined, and absent fields", () => {
   const cases = [
     ["tester_definition", "tester", "INVALID_VALUE"],
-    ["tester_agent_config", "tester_agent", "INVALID_VALUE"],
+    ["tester_facility_config", "tester_facility", "INVALID_VALUE"],
     ["validation_thresholds", "thresholds", "INVALID_VALUE"],
-    ["exposure_limit", "exposure", "INVALID_VALUE"],
     ["owner_limits", "limits", "INVALID_VALUE"],
     ["resource_inventory", "resource", "RESOURCE_INVENTORY_REQUIRED"],
     ["baseline", "baseline", "INVALID_BASELINE"],
@@ -814,7 +830,7 @@ test("setup keeps missing-item priority stable with invalid content", () => {
   try {
     const input = baseInput(root, "missing-with-invalid-content");
     input.tester_definition = null;
-    delete input.tester_agent_config;
+    delete input.tester_facility_config;
     delete input.validation_thresholds;
     const before = diskSnapshot(root);
     const first = expectFailure(root, "SETUP_INCOMPLETE", () =>
@@ -826,7 +842,7 @@ test("setup keeps missing-item priority stable with invalid content", () => {
       () => setupRootRun(input),
       before,
     ) as SetupIncompleteError;
-    assert.deepEqual(first.missing, ["tester_agent", "thresholds"]);
+    assert.deepEqual(first.missing, ["tester_facility", "thresholds"]);
     assert.deepEqual(second.missing, first.missing);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -836,9 +852,8 @@ test("setup keeps missing-item priority stable with invalid content", () => {
 test("setup missing-item matrix reports every selected item", () => {
   const cases = [
     ["tester_definition", "tester"],
-    ["tester_agent_config", "tester_agent"],
+    ["tester_facility_config", "tester_facility"],
     ["validation_thresholds", "thresholds"],
-    ["exposure_limit", "exposure"],
     ["owner_limits", "limits"],
     ["resource_inventory", "resource"],
     ["baseline", "baseline"],
@@ -847,7 +862,6 @@ test("setup missing-item matrix reports every selected item", () => {
     [0, 1],
     [0, 1, 2, 3],
     [0, 1, 2, 3, 4, 5],
-    [0, 1, 2, 3, 4, 5, 6],
     ...cases.map((_, index) => [index]),
   ];
   for (const [caseIndex, indexes] of combinations.entries()) {
@@ -1029,10 +1043,11 @@ test("setup cleans the contract and locks after a middle write failure", () => {
   const baselinePath = path.join(runDirectory, "baseline.json");
   try {
     fs.mkdirSync(baselinePath, { recursive: true });
+    const setupInput=baseInput(root,runId);
     const before = diskSnapshot(root);
     let thrown: unknown;
     try {
-      setupRootRun(baseInput(root, runId));
+      setupRootRun(setupInput);
     } catch (error) {
       thrown = error;
     }
@@ -1051,8 +1066,9 @@ test("setup surfaces cleanup failure and releases every lock it can release", ()
   const runId = "cleanup-failure";
   const resourcePath = path.join(root, ".aris", "runs", runId, "resource-inventory.json");
   fs.mkdirSync(path.join(root, ".aris", "runs", runId, "baseline.json"), { recursive: true });
+  const setupInput=baseInput(root,runId);
   const before = diskSnapshot(root);
-  const expectedResource = createResourceInventory(baseInput(root, runId).resource_inventory);
+  const expectedResource = createResourceInventory(setupInput.resource_inventory);
   const originalUnlinkSync = fs.unlinkSync;
   const mutableFs = fs as typeof fs & { unlinkSync: typeof fs.unlinkSync };
   try {
@@ -1114,9 +1130,8 @@ test("re-entry compares hashes and reuses unchanged confirmations", () => {
     assert.deepEqual(second.reentry_diff.confirmation_required, []);
     assert.deepEqual(second.reentry_diff.reused, [
       "tester",
-      "tester_agent",
+      "tester_facility",
       "thresholds",
-      "exposure",
       "limits",
       "resource",
       "baseline",
@@ -1127,20 +1142,19 @@ test("re-entry compares hashes and reuses unchanged confirmations", () => {
     assert.deepEqual(same.changed, []);
     assert.deepEqual(same.reused, [
       "tester",
-      "tester_agent",
+      "tester_facility",
       "thresholds",
-      "exposure",
       "limits",
       "resource",
       "baseline",
     ]);
     const changed = {
       ...first.confirmation_hashes,
-      exposure: canonicalJsonSha256({ exposure: 3 }),
+      thresholds: canonicalJsonSha256({ thresholds: 3 }),
     };
     const diff = computeSetupReentryDiff(first, changed);
-    assert.deepEqual(diff.changed, ["exposure"]);
-    assert.deepEqual(diff.confirmation_required, ["exposure"]);
+    assert.deepEqual(diff.changed, ["thresholds"]);
+    assert.deepEqual(diff.confirmation_required, ["thresholds"]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -1150,22 +1164,21 @@ test("pre-contract setup re-entry reuses old confirmations and seals the root af
   const root = tempRoot();
   try {
     const incomplete = baseInput(root, "precontract-reentry", "setup:precontract");
-    delete incomplete.exposure_limit;
+    delete incomplete.validation_thresholds;
     const incompleteError = expectFailure(root, "SETUP_INCOMPLETE", () =>
       setupRootRun(incomplete),
     ) as SetupIncompleteError;
-    assert.deepEqual(incompleteError.missing, ["exposure"]);
+    assert.deepEqual(incompleteError.missing, ["thresholds"]);
 
     const completed = baseInput(root, "precontract-reentry", "setup:precontract");
-    completed.exposure_limit = 3;
+    completed.validation_thresholds = {primary:{name:"score",direction:"higher_better",target:0.6},constraints:[]};
     const completedResult = setupRootRun(completed);
-    assert.deepEqual(completedResult.reentry_diff.added, ["exposure"]);
+    assert.deepEqual(completedResult.reentry_diff.added, ["thresholds"]);
     assert.deepEqual(completedResult.reentry_diff.changed, []);
-    assert.deepEqual(completedResult.reentry_diff.confirmation_required, ["exposure"]);
+    assert.deepEqual(completedResult.reentry_diff.confirmation_required, ["thresholds"]);
     assert.deepEqual(completedResult.reentry_diff.reused, [
       "tester",
-      "tester_agent",
-      "thresholds",
+      "tester_facility",
       "limits",
       "resource",
       "baseline",
@@ -1177,7 +1190,7 @@ test("pre-contract setup re-entry reuses old confirmations and seals the root af
 
     const beforeSealedRetry = diskSnapshot(root);
     const changed = baseInput(root, "precontract-reentry", "setup:precontract");
-    changed.exposure_limit = 4;
+    changed.validation_thresholds = {primary:{name:"score",direction:"higher_better",target:0.7},constraints:[]};
     expectFailure(root, "ROOT_SETUP_SEALED", () => setupRootRun(changed), beforeSealedRetry);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -1191,9 +1204,9 @@ test("sealed root rejects each changed setup item without changing bytes or scop
       (input) => (input.tester_definition = { tester_id: "tester:changed", version: "tester:v1" }),
     ],
     [
-      "tester_agent",
+      "tester_facility",
       (input) =>
-        ((input.tester_agent_config as Record<string, unknown>).request_timeout_ms = 2000),
+        ((input.tester_facility_config as any).test.timeout_ms = 2000),
     ],
     [
       "thresholds",
@@ -1204,7 +1217,6 @@ test("sealed root rejects each changed setup item without changing bytes or scop
           target: 0.6,
         }),
     ],
-    ["exposure", (input) => (input.exposure_limit = 3)],
     ["limits", (input) => ((input.owner_limits as Record<string, unknown>).max_depth = 3)],
     [
       "resource",
@@ -1229,7 +1241,7 @@ test("sealed root rejects each changed setup item without changing bytes or scop
       mutate(changed);
       const child = setupInNewProcess(changed);
       assert.equal(child.status, 0, item);
-      assert.deepEqual(JSON.parse(child.output), { ok: false, code: "ROOT_SETUP_SEALED" }, item);
+      assert.deepEqual(JSON.parse(child.output), { ok: false, code: item === "tester_facility" ? "TESTER_CONFIG_CHANGED" : "ROOT_SETUP_SEALED" }, item);
       assertDiskUnchanged(root, before);
       assert.equal(diskSnapshot(root).scopeLockCount, 1);
     } finally {
@@ -1246,9 +1258,8 @@ test("re-entry reuses reordered fields and pins persisted threshold confirmation
     const same = setupRootRun(baseInput(root, "reentry-order", "setup:order"));
     assert.deepEqual(same.reentry_diff.reused, [
       "tester",
-      "tester_agent",
+      "tester_facility",
       "thresholds",
-      "exposure",
       "limits",
       "resource",
       "baseline",
@@ -1260,9 +1271,8 @@ test("re-entry reuses reordered fields and pins persisted threshold confirmation
     );
     assert.deepEqual(reordered.reentry_diff.reused, [
       "tester",
-      "tester_agent",
+      "tester_facility",
       "thresholds",
-      "exposure",
       "limits",
       "resource",
       "baseline",
@@ -1300,9 +1310,8 @@ test("re-entry reuses reordered fields and pins persisted threshold confirmation
       const sameThresholds = computeSetupReentryDiff(first, first.confirmation_hashes);
       assert.deepEqual(sameThresholds.reused, [
         "tester",
-        "tester_agent",
+        "tester_facility",
         "thresholds",
-        "exposure",
         "limits",
         "resource",
         "baseline",
@@ -1310,8 +1319,8 @@ test("re-entry reuses reordered fields and pins persisted threshold confirmation
       assert.deepEqual(sameThresholds.confirmation_required, []);
 
       const changedThresholds = computeSetupReentryDiff(first, alternate.confirmation_hashes);
-      assert.deepEqual(changedThresholds.changed, ["thresholds"]);
-      assert.deepEqual(changedThresholds.confirmation_required, ["thresholds"]);
+      assert.deepEqual(changedThresholds.changed, ["tester_facility","thresholds"]);
+      assert.deepEqual(changedThresholds.confirmation_required, ["tester_facility","thresholds"]);
     } finally {
       fs.rmSync(alternateRoot, { recursive: true, force: true });
     }
@@ -1465,22 +1474,22 @@ test("result package policy keeps failed in validation and excludes the two unav
   assert.deepEqual(resultStatusPolicy("failed"), {
     enters_validation: true,
     counts_for_stop_gate: true,
-    consumes_tester_exposure: true,
+    requires_tester: true,
   });
   assert.deepEqual(resultStatusPolicy("succeeded"), {
     enters_validation: true,
     counts_for_stop_gate: false,
-    consumes_tester_exposure: true,
+    requires_tester: true,
   });
   assert.deepEqual(resultStatusPolicy("not_executable"), {
     enters_validation: false,
     counts_for_stop_gate: false,
-    consumes_tester_exposure: false,
+    requires_tester: false,
   });
   assert.deepEqual(resultStatusPolicy("infra_unavailable"), {
     enters_validation: false,
     counts_for_stop_gate: false,
-    consumes_tester_exposure: false,
+    requires_tester: false,
   });
 });
 

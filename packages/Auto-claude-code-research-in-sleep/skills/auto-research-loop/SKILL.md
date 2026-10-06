@@ -25,10 +25,11 @@ Iterative, metric-target-driven research. The loop is
 [`/research-pipeline`](../research-pipeline/SKILL.md)'s main flow (its Stage
 1-3) repeated until a deterministic stop gate fires:
 
-1. **One iteration = Stage 1 -> Stage 2 -> Stage 3.** Stage 1 idea-discovery
+1. **One iteration = Stage 1 -> Stage 2 -> tester-test -> tester-audit -> Stage 3.** Stage 1 idea-discovery
    (the full pipeline: literature survey -> idea-creator -> novelty check ->
    review -> refine; reads RESEARCH_BRIEF and the research wiki), Stage 2
-   experiment-bridge, Stage 3 auto-review-loop. Stage manifests reuse the
+   experiment-bridge, then full benchmark test and independent audit, then
+   Stage 3 auto-review-loop. Stage manifests reuse the
    research-pipeline Stage 1/2/3 definitions; this skill adds only the
    iteration counter, metric context, and the stop gate.
 2. **The wiki is the cross-iteration memory - and the loop never writes it.**
@@ -93,7 +94,7 @@ iteration, default 3) and `max_depth` (deepest child level below the root,
 default 2); the charter always carries both. Its baseline and
 resource inventory must be saved before startup. Use the commands below; `start` reads these frozen
 records and verifies their hashes. It requires no external `--freeze` file or
-tester agent configuration.
+tester facility configuration.
 
 Which model plays which role is not frozen. It is a rule the owner writes in
 prose under CLAUDE.md's `## Model Usage`; read it before choosing a provider for
@@ -814,7 +815,24 @@ A failure that arrives after the iteration has used them is recorded as
 `exhausted` straight away (merge prints `bridge-repair-exhausted`) and ends the
 run the same way; do not dispatch a repair for it.
 
-After merge, set `current_phase = "auto-review-loop"` and proceed to Stage 3.
+After bridge merge, run the mandatory tester stages before Stage 3:
+
+1. Run the durable transition to `tester-test`. Dispatch `/tester-test` with the current run, iteration, experiment id, setup config and produced artifact reference/digest. Wait for the external job to finish and merge its worker receipt; complete bounded repair/retries before merging a terminal failed receipt; an exhausted failure stops publication.
+2. Run the durable transition to `tester-audit` with the result. Dispatch `/tester-audit` with the canonical result path. Merge only a passing receipt, retain both paths in the iteration context, and run the durable transition to `auto-review-loop` with the passing audit.
+3. Supply audited test evidence to Stage 3 and `test_result_path` / `test_audit_path` to `/result-to-claim`. The claim phase and Wiki helper refuse missing/stale audits. Negative measured results remain eligible for integrity audit and publication.
+
+Persist each transition through the helper; mirror the returned phase in the normal dashboard. Recovery uses the runtime phase and stored assessment bindings.
+
+```bash
+node "$WORKFLOW" tester-phase --execution-root "$EXECUTION_ROOT" --project "$ROOT" --run "$RUN_ID" --from workset --to tester-test --evidence "$BRIDGE_RECEIPT"
+node "$WORKFLOW" tester-phase --execution-root "$EXECUTION_ROOT" --project "$ROOT" --run "$RUN_ID" --from tester-test --to tester-audit --test-result "$TEST_RESULT" --evidence "$TEST_RESULT"
+node "$WORKFLOW" tester-phase --execution-root "$EXECUTION_ROOT" --project "$ROOT" --run "$RUN_ID" --from tester-audit --to auto-review-loop --test-audit "$TEST_AUDIT" --evidence "$TEST_AUDIT"
+```
+
+If review fixes change the tested artifact, rerun `/tester-test` → `/tester-audit` before Wiki publication. The auto-review receipt must return the final canonical paths in `summary.test_result_path` and `summary.test_audit_path`. Record the refreshed assessment by replaying the three transitions above with the first transition `--from auto-review-loop --to tester-test` and the final result/audit paths; the original assessment must not stand in for a changed artifact.
+
+
+Use [tester-facility.md](../shared-references/tester-facility.md). Every run reuses the facility initialized by `/aris-setup`; child runs can evaluate against it with their own run binding. For an assembled workflow, execute these same two stages on the assembled artifact before publishing its formal metrics.
 
 ---
 
@@ -920,11 +938,7 @@ under [`shared-references/paseo-subagent-dispatch.md`](../shared-references/pase
 Rule 2, bound to this same skill, and hand it exactly two values: the project
 root and its own run id. No parent run id, no position, no generation - a child
 is told what to do, not who dispatched it, and everything it needs is already in
-its own charter. The child's tester is the acceptance its parent froze for it;
-a sub-ARL never reaches the task tester and never spends tester exposure. Both
-ends refuse it: the bridge rejects a child charter that names a tester, and
-`tester-agent-cli.js submit` rejects a submission whose `outer_run_id` has a
-parent (`TESTER_OUTER_RUN_REQUIRED`).
+its own charter. The child keeps its parent's frozen acceptance rule for recursive result acceptance. Its formal experiment metrics use the shared facility through `/tester-test` and `/tester-audit`, with its own run and iteration binding.
 
 **4. Collect the generation back.**
 
@@ -964,7 +978,7 @@ The table is the contract implemented by `resultStatusPolicy` in
 
 The priority is:
 
-| status | failure code | validation | tester exposure | stop gate |
+| status | failure code | validation | tester assessment | stop gate |
 | --- | --- | --- | --- | --- |
 | `not_executable` | `RESOURCE_SCOPE_ALIGNMENT_REQUIRED` | no | no | no |
 | `infra_unavailable` | `INFRA_UNAVAILABLE` | no | no | no |
@@ -978,7 +992,7 @@ The priority is:
 4. An available request that ran and failed is `failed`.
 
 Only `failed` is a stop-gate failure. The two unavailable states remain visible
-to the outer owner, but they do not enter validation, tester exposure or the
+to the outer owner, but they do not enter validation, tester assessment or the
 no-progress stop count. "Cannot perform this run" is different evidence from
 "performed the run and it failed"; counting a missing accelerator as a failed
 research attempt would make an environment problem close a research direction.
@@ -1355,7 +1369,7 @@ them wrong.
 
 Three criteria, in order:
 
-1. **The tester's declared metrics.** This is the held-out judgment, so it
+1. **The tester's declared metrics.** This is the benchmark judgment, so it
    decides first. All of `gate.primaries` count together: an iteration loses
    only to one that is at least as good on every declared metric and strictly
    better on at least one. Two iterations that each win a different metric
@@ -1395,17 +1409,8 @@ termination, so `add_experiment` must carry:
   without it is not a candidate.
 - `--gate-metric <value>` - that iteration's metric-gate reading, the same
   number the dashboard received.
-- `--tester-feedback <receipt> --tester-public-key <key>` - both or neither.
-  Tester numbers enter the Wiki only through a signature-verified public
-  receipt; there is no flag for typing them in. The receipt names the
-  iteration it judged, so supplying `--iteration` as well is only allowed when
-  the two agree.
+- `--test-result <result> --test-audit <audit>` are mandatory for formal experiment metrics. They identify a complete test and a current passing audit, bound to the experiment's run and iteration. Metrics are copied from the audited result; raw observations and detailed findings are available to research and review.
 
-Recorded tester values stay readable after they land: the export ranks by
-them, and a Wiki query or the markdown projection returns the same numbers,
-alongside the coarse conclusion, directions and advice. What never enters the
-page is the test content behind those numbers. See
-[Fixed tester boundary](#fixed-tester-boundary).
 
 ---
 
@@ -1554,47 +1559,10 @@ to claim Paseo workspace archival is already wired up.
 If the workspace, scope or Wiki helper is missing, stop. Do not substitute the
 current checkout, an ancestor directory or an old receipt.
 
-## Fixed tester boundary
+## Tester facility workflow
 
-The tester exists so the research loop cannot train against its own target.
-After submission, the research side may receive only the terminal gate
-conclusion and the fixed coarse public feedback that the current remote
-contract exposes. It may not analyze the tester run.
+Initialize through `/aris-setup` → `/tester-setup`. Evaluate each publishable experiment through `/tester-test` → `/tester-audit`. Read complete benchmark evidence for analysis and claim review. No separate user/container, private result channel, signatures, search bans or exposure limits are used. Result/configuration hashes support reproducibility and current audit binding.
 
-Never send or read tester case content, answers, prompts, per-case output,
-per-case scores, private observations, fine-grained categories or private URIs.
-The sanitizer's forbidden key vocabulary includes `case_id`, `case_ids`,
-`prompt`, `question`, `answer`, `score`, `scores`, `per_case`,
-`private_uri`, `artifact_uri`, `result_uri`, `raw_result`, `exact_example` and
-`category`.
-The submission carries bindings and hashes such as artifact hashes, harness
-hash, case manifest digest, input distribution and judge binding; it does not
-carry the private cases themselves, which never leave the tester container. The
-response validator
-in `src/tools/tester-agent.ts` accepts only terminal status, coarse
-`error_analysis` and signed public receipts. `src/tools/tester-feedback.ts`
-allows only the fixed coarse conclusion/direction/advice vocabulary and rejects
-private keys.
-
-The one numeric channel out of the tester is `tester_feedback.metrics`: the
-aggregate value of each metric the tester definition declared in
-`gate.primaries`, and nothing else. The names are frozen into
-`definition_sha256` at task setup, and publishing checks both directions -
-every declared metric must be reported, no undeclared one may be - so the
-tester cannot widen its own disclosure later. There is still no defect list
-field; do not describe one as available research input. What the tester says
-about defects is the fixed coarse vocabulary - `conclusion`, `directions`,
-`advice`, `confidence` - and nothing finer. A tester receipt is
-never evidence for `analyze-results`, for Stage 3's review, or for a
-research claim. Public tester metrics and that coarse verdict enter the Wiki
-under their own source, and any research reader may read them back:
-`idea-discovery`, a bridge repair and the result-package export all see the
-same aggregates. Reading them is not tuning against the held-out set, because
-the cases, prompts, answers and per-case scores that would let you tune never
-reach the Wiki at all. When you cite one, write it as what the tester
-reported, not as your own finding.
-
----
 
 ## Critical Rules
 
