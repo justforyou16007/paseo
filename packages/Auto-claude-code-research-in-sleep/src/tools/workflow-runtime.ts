@@ -1,4 +1,10 @@
 import { checkTesterResult, readAuditedTesterResult, evidenceFile } from "./tester-facility.js";
+import {
+  auditedTesterMetric,
+  testerMetricName,
+  verifyTesterDeliverables,
+} from "./tester-deliverables.js";
+import { requireChildAcceptance } from "./child-acceptance.js";
 import { runBudgetExhausted, settleExecutionReceipt } from "./run-budget.js";
 import { runOwnedPath } from "./run-contract.js";
 import {
@@ -1684,13 +1690,27 @@ function autoResearchPolicy(input: Required<OuterRunIdentity>): AutoResearchFroz
     taskSetupRevision = parent.task_setup_revision;
     ownerLimits = parent.owner_limits;
     maxBundledPositions = parent.max_bundled_positions_per_graph;
-    metric = parent.metric;
+    const acceptance = requireChildAcceptance(
+      input.project_root,
+      input.parent_run_id,
+      (charter as ReturnType<typeof validateRunCharter>).measurement.tester_ref,
+      "child.measurement.tester_ref",
+    );
+    metric = {
+      configured: true as const,
+      name: acceptance.metric.name,
+      target: acceptance.metric.threshold,
+      direction: acceptance.metric.direction,
+      tolerance: 0,
+      baseline: null,
+    };
     // The loop limits pass down through frozen policies, not charters.
     maxRepairAttempts = parent.max_repair_attempts;
     maxDepth = parent.max_depth;
     if (input.depth > maxDepth)
       failA1("RUN_DEPTH_MISMATCH", `run depth ${input.depth} exceeds max_depth ${maxDepth}`);
   }
+  metric = { ...metric, name: testerMetricName(facility, metric.name, metric.direction) };
   return {
     schema_version: 1,
     mode: "auto_research_loop",
@@ -3091,6 +3111,12 @@ export function advanceAutoResearchPhase(
     } else if (input.to_phase === "tester-audit") {
       const resultPath = requireString(input.test_result_path, "test_result_path"),
         result = checkTesterResult(resultPath);
+      verifyTesterDeliverables(
+        normalized.project_root,
+        normalized.outer_run_id,
+        result.request.artifact,
+        result.request.deliverables,
+      );
       if (
         result.request.run_id !== normalized.outer_run_id ||
         result.request.iteration !== cycle.outer_iteration ||
@@ -4326,7 +4352,19 @@ export function completeAutoResearchCycle(
       );
     if (!["ready", "almost", "not ready"].includes(String(patch["last_review.verdict"])))
       failA1("INVALID_EXECUTION_RECEIPT", "review verdict is invalid");
-    const metricValue = requireFiniteNumber(patch["metric.current"], "review.metric.current");
+    const { result: tested } = readAuditedTesterResult(testerEvidence[0]!, testerEvidence[1]!, {
+      run_id: normalized.outer_run_id,
+      iteration: cycle.outer_iteration,
+    });
+    verifyTesterDeliverables(
+      normalized.project_root,
+      normalized.outer_run_id,
+      tested.request.artifact,
+      tested.request.deliverables,
+    );
+    const metricValue = auditedTesterMetric(tested, policy.metric.name, policy.metric.direction);
+    if (requireFiniteNumber(patch["metric.current"], "review.metric.current") !== metricValue)
+      failA1("TESTER_METRIC_MISMATCH", "review metric differs from the audited tester reading");
     const targetReached =
       policy.metric.direction === "higher_better"
         ? metricValue >=

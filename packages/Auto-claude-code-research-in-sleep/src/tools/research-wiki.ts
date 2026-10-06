@@ -48,6 +48,7 @@ import {
 } from "./wiki-scope.js";
 import { requireRunContract, runOwnedPath } from "./run-contract.js";
 import { readAuditedTesterResult, evidenceFile } from "./tester-facility.js";
+import { auditedTesterMetric, testerMetricName } from "./tester-deliverables.js";
 import { exportResultPackage, planResultExport } from "./result-export.js";
 import { saveResultReview } from "./result-review.js";
 import type { ResultStatus } from "./result-package.js";
@@ -1063,8 +1064,10 @@ export function addExperiment(
     iteration?: number;
     /** This iteration's metric-gate reading, cross-checked against the dashboard on export. */
     gateMetric?: number;
+    gateMetricName?: string;
     testResult?: { result: string; audit: string };
     runId?: string;
+    projectRoot?: string;
     updateOnExist?: boolean;
   },
 ): void {
@@ -1095,6 +1098,28 @@ export function addExperiment(
           experiment_id: slug,
         });
   const iteration = options.iteration ?? tested?.result.request.iteration;
+  if (tested?.result.request.deliverables !== undefined) {
+    const projectRoot =
+      options.projectRoot ??
+      (path.basename(root) === "wiki" &&
+      path.basename(path.dirname(root)) === tested.result.request.run_id
+        ? path.resolve(root, "../../../..")
+        : path.dirname(root));
+    readAuditedTesterResult(options.testResult!.result, options.testResult!.audit, {
+      project_root: projectRoot,
+      run_id: tested.result.request.run_id,
+    });
+  }
+  const gateName =
+    tested !== null && options.gateMetric !== undefined
+      ? testerMetricName(tested.result.config, options.gateMetricName ?? null)
+      : undefined;
+  if (
+    tested !== null &&
+    options.gateMetric !== undefined &&
+    options.gateMetric !== auditedTesterMetric(tested.result, gateName!)
+  )
+    throw new Error("TESTER_METRIC_MISMATCH: gate metric differs from audited tester evidence");
   const subject = `exp:${slug}`;
   let existedBefore = false;
   let reused = false;
@@ -1122,15 +1147,29 @@ export function addExperiment(
         tested !== null &&
         (page?.data.tester_definition_sha256 !== tested.result.config_sha256 ||
           canonicalJsonSha256(page?.data.tester_metrics ?? null) !==
-            canonicalJsonSha256(tested.result.metrics))
+            canonicalJsonSha256(tested.result.metrics) ||
+          page?.data.test_result_sha256 !== evidenceFile(options.testResult!.result).sha256 ||
+          page?.data.test_audit_sha256 !== evidenceFile(options.testResult!.audit).sha256 ||
+          page?.data.tester_run_id !== tested.result.request.run_id ||
+          page?.data.iteration !== tested.result.request.iteration ||
+          (options.gateMetric !== undefined && page?.data.gate_metric !== options.gateMetric))
       )
         throw new Error(
-          `TESTER_RESULT_TOO_LATE: ${subject} already formed claims without this tester result; attach the receipt in the call that first judges the iteration`,
+          `TESTER_RESULT_TOO_LATE: ${subject} already formed claims with different tested evidence; use a new experiment id for a changed artifact or assessment`,
         );
       reused = true;
       return null;
     }
     if (model.pages.experiment.has(slug) && !options.updateOnExist) {
+      const page = model.pages.experiment.get(slug)!;
+      if (
+        tested !== null &&
+        (page.data.test_result_sha256 !== evidenceFile(options.testResult!.result).sha256 ||
+          page.data.test_audit_sha256 !== evidenceFile(options.testResult!.audit).sha256)
+      )
+        throw new Error(
+          "TESTER_RESULT_BINDING_MISMATCH: existing experiment has different tested evidence",
+        );
       console.log(`Experiment already exists: ${slug}.md (slug dedup) — skipping.`);
       return null;
     }
@@ -1167,6 +1206,7 @@ export function addExperiment(
         tags: options.tags ?? [],
         ...(iteration === undefined ? {} : { iteration }),
         ...(options.gateMetric === undefined ? {} : { gate_metric: options.gateMetric }),
+        ...(gateName === undefined ? {} : { gate_metric_name: gateName }),
         ...(tested === null
           ? {}
           : {
@@ -2455,6 +2495,8 @@ program
   .option("--tags <list>", "Comma-separated tag list", "")
   .option("--iteration <n>", "Outer loop iteration this experiment belongs to", "")
   .option("--gate-metric <value>", "This iteration's metric-gate reading", "")
+  .option("--gate-metric-name <name>", "Declared tester metric used by the stop gate")
+  .option("--project <path>", "Owning project root for a custom Wiki location")
   .option("--test-result <path>", "Completed full tester result", "")
   .option("--test-audit <path>", "Passing tester audit bound to this result", "")
   .option("--run-id <id>", "Run owning the tested experiment", "")
@@ -2477,9 +2519,11 @@ program
         tags: string;
         iteration: string;
         gateMetric: string;
+        gateMetricName?: string;
         testResult: string;
         testAudit: string;
         runId: string;
+        project?: string;
         updateOnExist: boolean;
       },
     ) => {
@@ -2501,6 +2545,8 @@ program
         tags: splitCsv(options.tags),
         iteration: optionalCliInteger(options.iteration, "--iteration", 1),
         gateMetric: optionalCliNumber(options.gateMetric, "--gate-metric"),
+        gateMetricName: options.gateMetricName,
+        projectRoot: options.project,
         runId: options.runId || undefined,
         testResult: options.testResult
           ? { result: options.testResult, audit: options.testAudit }

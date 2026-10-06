@@ -5,6 +5,12 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { createCli, runCli } from "../lib/cli.js";
 import { readStateFile } from "./state-file.js";
+import { advanceStandaloneTesterPhase } from "./standalone-tester.js";
+import {
+  auditedTesterMetric,
+  testerMetricName,
+  verifyTesterDeliverables,
+} from "./tester-deliverables.js";
 import {
   setupTesterFacility,
   testerConfigPath,
@@ -15,6 +21,7 @@ import {
   checkTesterResult,
   auditTesterResult,
   removeLegacyTesterGuard,
+  readAuditedTesterResult,
 } from "./tester-facility.js";
 
 const program = createCli(
@@ -22,6 +29,70 @@ const program = createCli(
   "Prepare benchmark facilities, run tests and audit results before Wiki publication",
 );
 const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
+program
+  .command("measure")
+  .requiredOption("--project <path>")
+  .requiredOption("--run <id>")
+  .requiredOption("--iteration <number>")
+  .requiredOption("--metric <name>")
+  .requiredOption("--result <path>")
+  .requiredOption("--audit <path>")
+  .action(
+    (o: {
+      project: string;
+      run: string;
+      iteration: string;
+      metric: string;
+      result: string;
+      audit: string;
+    }) => {
+      const { result } = readAuditedTesterResult(o.result, o.audit, {
+        run_id: o.run,
+        iteration: Number(o.iteration),
+      });
+      verifyTesterDeliverables(
+        o.project,
+        o.run,
+        result.request.artifact,
+        result.request.deliverables,
+      );
+      print({
+        metric_name: testerMetricName(result.config, o.metric),
+        metric_value: auditedTesterMetric(result, o.metric),
+        experiment_id: result.request.experiment_id,
+        test_result_path: path.resolve(o.result),
+        test_audit_path: path.resolve(o.audit),
+      });
+    },
+  );
+program
+  .command("stage")
+  .requiredOption("--project <path>")
+  .requiredOption("--run <id>")
+  .requiredOption("--from <phase>")
+  .requiredOption("--to <phase>")
+  .option("--test-result <path>")
+  .option("--test-audit <path>")
+  .action(
+    (o: {
+      project: string;
+      run: string;
+      from: string;
+      to: string;
+      testResult?: string;
+      testAudit?: string;
+    }) =>
+      print(
+        advanceStandaloneTesterPhase({
+          project_root: o.project,
+          run_id: o.run,
+          from_phase: o.from,
+          to_phase: o.to,
+          test_result_path: o.testResult,
+          test_audit_path: o.testAudit,
+        }),
+      ),
+  );
 program
   .command("setup")
   .requiredOption("--project <path>")
@@ -128,12 +199,33 @@ program
 program
   .command("precheck")
   .requiredOption("--result <path>")
-  .action((o: { result: string }) => print(checkTesterResult(o.result)));
+  .option("--project <path>")
+  .action((o: { result: string; project?: string }) => {
+    const result = checkTesterResult(o.result);
+    if (o.project !== undefined)
+      verifyTesterDeliverables(
+        o.project,
+        result.request.run_id,
+        result.request.artifact,
+        result.request.deliverables,
+      );
+    print(result);
+  });
 program
   .command("audit")
   .requiredOption("--result <path>")
   .requiredOption("--review <path>")
-  .action((o: { result: string; review: string }) => {
+  .option("--project <path>")
+  .action((o: { result: string; review: string; project?: string }) => {
+    if (o.project !== undefined) {
+      const result = checkTesterResult(o.result);
+      verifyTesterDeliverables(
+        o.project,
+        result.request.run_id,
+        result.request.artifact,
+        result.request.deliverables,
+      );
+    }
     const audit = auditTesterResult(o.result, o.review);
     print(audit);
     if (audit.status !== "pass") process.exitCode = 1;

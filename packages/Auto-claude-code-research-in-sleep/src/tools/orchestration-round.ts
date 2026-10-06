@@ -122,7 +122,7 @@ function judge(
   status: ResultStatus,
   localMetrics: Record<string, number> | undefined,
 ): { score: number | null; accepted: boolean; rejected: ChildRejection | null } {
-  const score = localMetrics?.[metric.name];
+  const score = localMetrics?.[`primary.${metric.name}`] ?? localMetrics?.[metric.name];
   if (status !== "succeeded")
     return { score: score ?? null, accepted: false, rejected: "child_failed" };
   if (score === undefined) return { score: null, accepted: false, rejected: "metric_missing" };

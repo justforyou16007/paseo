@@ -4,6 +4,11 @@ import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { canonicalJsonSha256 } from "./canonical-json.js";
 import {
+  validateTesterDeliverables,
+  verifyTesterDeliverables,
+  type TesterDeliverables,
+} from "./tester-deliverables.js";
+import {
   acquireStateFileLock,
   releaseStateFileLock,
   readStateFile,
@@ -62,6 +67,7 @@ export interface TesterTestRequest {
   iteration: number;
   experiment_id: string;
   artifact: { ref: string; sha256: string };
+  deliverables?: TesterDeliverables;
   mode: "full" | "smoke";
 }
 export interface TesterTestResult {
@@ -444,7 +450,16 @@ export function validateTesterTestRequest(value: unknown): TesterTestRequest {
     failA1("INVALID_TESTER_REQUEST", "invalid test request");
   assertNoUnknownFields(
     value,
-    ["schema_version", "test_id", "run_id", "iteration", "experiment_id", "artifact", "mode"],
+    [
+      "schema_version",
+      "test_id",
+      "run_id",
+      "iteration",
+      "experiment_id",
+      "artifact",
+      "deliverables",
+      "mode",
+    ],
     "request",
   );
   assertNoUnknownFields(value.artifact, ["ref", "sha256"], "artifact");
@@ -458,6 +473,9 @@ export function validateTesterTestRequest(value: unknown): TesterTestRequest {
       ref: requireString(value.artifact.ref, "artifact.ref"),
       sha256: assertSha256(value.artifact.sha256, "artifact.sha256"),
     },
+    ...(value.deliverables === undefined
+      ? {}
+      : { deliverables: validateTesterDeliverables(value.deliverables) }),
     mode: value.mode as "full" | "smoke",
   };
 }
@@ -473,6 +491,8 @@ export function prepareTesterJob(root: string, configPath: string, value: unknow
   const request = validateTesterTestRequest(value),
     dir = testerJobDirectory(root, request.test_id),
     file = path.join(dir, "job.json");
+  if (request.deliverables !== undefined)
+    verifyTesterDeliverables(root, request.run_id, request.artifact, request.deliverables);
   return withStateFileLock(file, () => {
     if (fs.existsSync(file)) {
       const job = readStateFile<TesterJob>(file);
@@ -553,6 +573,13 @@ export async function executeTesterJob(root: string, id: string): Promise<Tester
       }
     };
     await verifyInstalled();
+    if (job.request.deliverables !== undefined)
+      verifyTesterDeliverables(
+        root,
+        job.request.run_id,
+        job.request.artifact,
+        job.request.deliverables,
+      );
     if (
       job.config.execution.kind === "local" &&
       fs.existsSync(job.request.artifact.ref) &&
@@ -641,6 +668,13 @@ export async function executeTesterJob(root: string, id: string): Promise<Tester
       await fetchRemote(job.config, remote, local);
       evidence.push(evidenceFile(local));
     }
+    if (job.request.deliverables !== undefined)
+      verifyTesterDeliverables(
+        root,
+        job.request.run_id,
+        job.request.artifact,
+        job.request.deliverables,
+      );
     const result: TesterTestResult = {
       schema_version: 1,
       test_id: id,
@@ -762,20 +796,31 @@ export function auditTesterResult(resultPath: string, reviewPath: string): Teste
       (review.status === "pass" && !review.checks[key])
     )
       failA1("TESTER_AUDIT_INVALID", `unresolved ${key} check`);
-  const audit: TesterAuditReceipt = {
+  const content = {
     ...review,
     test_id: result.test_id,
     config_sha256: result.config_sha256,
     evidence: [evidenceFile(reviewPath)],
-    completed_at: new Date().toISOString(),
   };
-  writeStateJsonAtomic(path.join(path.dirname(resultPath), "test-audit.json"), audit);
-  return audit;
+  const auditPath = path.join(path.dirname(resultPath), "test-audit.json");
+  return withStateFileLock(auditPath, () => {
+    if (fs.existsSync(auditPath)) {
+      const existing = readStateFile<TesterAuditReceipt>(auditPath);
+      const { completed_at, ...recorded } = existing;
+      if (canonicalJsonSha256(recorded) === canonicalJsonSha256(content)) {
+        requireString(completed_at, "audit.completed_at");
+        return existing;
+      }
+    }
+    const audit: TesterAuditReceipt = { ...content, completed_at: new Date().toISOString() };
+    writeStateJsonAtomic(auditPath, audit);
+    return audit;
+  });
 }
 export function readAuditedTesterResult(
   resultPath: string,
   auditPath: string,
-  binding?: { run_id?: string; iteration?: number; experiment_id?: string },
+  binding?: { run_id?: string; iteration?: number; experiment_id?: string; project_root?: string },
 ): { result: TesterTestResult; audit: TesterAuditReceipt } {
   const result = checkTesterResult(resultPath),
     audit = readStateFile<TesterAuditReceipt>(auditPath);
@@ -805,5 +850,12 @@ export function readAuditedTesterResult(
   for (const key of ["run_id", "iteration", "experiment_id"] as const)
     if (binding?.[key] !== undefined && binding[key] !== result.request[key])
       failA1("TESTER_RESULT_BINDING_MISMATCH", key);
+  if (binding?.project_root !== undefined && result.request.deliverables !== undefined)
+    verifyTesterDeliverables(
+      binding.project_root,
+      result.request.run_id,
+      result.request.artifact,
+      result.request.deliverables,
+    );
   return { result, audit };
 }

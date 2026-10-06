@@ -18,7 +18,9 @@ import {
   roundChildSummaries,
 } from "../src/tools/orchestration-round.js";
 import { createResourceInventory, type ResourceInventory } from "../src/tools/resource-inventory.js";
-import { planResultExport } from "../src/tools/result-export.js";
+import { planResultExport, exportResultPackage } from "../src/tools/result-export.js";
+import { addExperiment } from "../src/tools/research-wiki.js";
+import { auditedResultFixture, installedFacilityFixture } from "./helpers/tester-facility-fixture.js";
 import { buildResultPackageForRun, saveResultPackage } from "../src/tools/result-package.js";
 import { saveResultReview } from "../src/tools/result-review.js";
 import { createRun, readRun, runOwnedPath } from "../src/tools/run-contract.js";
@@ -242,7 +244,17 @@ test("a generation is collected only once every position it declared has a termi
     assert.equal(dispatched.children[0]!.score, null);
     expectCode(() => requireCompleteRound(projectRoot, PARENT), "ROUND_INCOMPLETE");
 
-    publish(projectRoot, surveyRunId, { "outputs/survey.json": HASH_B }, { score: 0.9 });
+    const facility=installedFacilityFixture(projectRoot);
+    const tested=auditedResultFixture(projectRoot,{schema_version:1,test_id:"survey-1",run_id:surveyRunId,iteration:1,experiment_id:"iter-1",artifact:{ref:"fixture:survey",sha256:HASH_B},mode:"full"},{score:.9},undefined,facility);
+    const wiki=runWikiRoot(projectRoot,surveyRunId);
+    initializeWikiSchema(wiki);
+    addExperiment(wiki,"iter-1",{iteration:1,runId:surveyRunId,gateMetric:.9,testResult:{result:tested.result_path,audit:tested.audit_path}});
+    fs.writeFileSync(runOwnedPath(projectRoot,surveyRunId,"dashboard.json"),JSON.stringify({iteration:1,metric:{name:"score",target:.5,direction:"higher_better",tolerance:0,baseline:.4,current:.9,history:[{iter:1,value:.9}]},config:{patience:2}}));
+    const exported=planResultExport({project_root:projectRoot,run_id:surveyRunId});
+    assert.ok(Object.keys(exported.candidate.output_hashes).length>0);
+    assert.equal(exported.candidate.local_metrics?.["primary.score"],.9);
+    saveResultReview(projectRoot,{schema_version:1,review_id:"review:survey-export",run_id:surveyRunId,reviewer_worker_id:"reviewer:survey-export",package_sha256:exported.candidate.package_sha256,verdict:"approved",evidence_refs:[],reason_codes:[]});
+    exportResultPackage({project_root:projectRoot,run_id:surveyRunId,review:{review_id:"review:survey-export"}});
     const afterUpstream = collectOrchestrationRound({
       project_root: projectRoot,
       parent_run_id: PARENT,

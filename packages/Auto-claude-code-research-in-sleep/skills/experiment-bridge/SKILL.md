@@ -84,6 +84,8 @@ fi
 
 **Receipt (write last to `$WORKER_DIR/receipt.json`):**
 
+Before writing a done receipt, materialize the candidate implementation and deployment files under the owning run, write `outputs/TEST_REQUEST.json` following [tester-facility.md](../shared-references/tester-facility.md), and return its path in `summary.test_request_path`. Include the actual artifact ref/digest and nonempty `deliverables.output_hashes`; preserve candidate revisions. This also applies to an assembled workflow. Tester-test receives this request as `inputs.test_request`.
+
 In worker mode, the internal analyze-results receipt is the source of
 `metric.current`, `metric.delta`, and `statistical_significance`. Propagate
 those values into this final receipt. Never patch `metric.baseline` - the
@@ -93,12 +95,14 @@ worker.
 ```json
 {
   "worker": "experiment-bridge",
+  "phase": "experiment-bridge",
   "iteration": 1,
   "run_id": "<run-id>",
   "status": "done",
   "error": null,
   "primary_output": "analysis/EXPERIMENT_RESULTS.md",
-  "summary": { "experiments_run": 1, "experiments_passed": 1, "analysis_verdict": "pass" },
+  "primary_output_sha256": "<SHA-256 of the primary output file>",
+  "summary": { "experiments_run": 1, "experiments_passed": 1, "analysis_verdict": "pass", "test_request_path": "<absolute outputs/TEST_REQUEST.json>" },
   "dashboard_patch": {
     "metric.current": 0.71,
     "metric.delta": 0.0,

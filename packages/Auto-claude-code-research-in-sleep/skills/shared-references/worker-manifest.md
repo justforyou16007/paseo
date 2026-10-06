@@ -63,6 +63,12 @@ Written by the orchestrator before dispatching the worker.
   files (open problem ids, metric target, reference knowledge). Keep this bounded.
 - **`output_dir`** — where the worker MUST write all its output files
 
+For Workflow cycle workers, execution manifests and receipts also carry a
+matching `phase` (`experiment-bridge`, `tester-test`, `tester-audit` or
+`auto-review-loop`). A successful bridge receipt includes
+`primary_output_sha256`, computed from the actual primary output bytes.
+These execution fields do not belong in the run-level sealed assignment.
+
 The manifest carries no field for the worker directory, because the worker
 already knows it: it is the directory holding the manifest itself. Derive it,
 never guess it — `WORKER_DIR=$(dirname "$MANIFEST_PATH")`.
@@ -82,11 +88,12 @@ phase and parallel reader receives the same head. A changed input snapshot or
 role is an error. Worker-specific inputs and outputs stay in the existing
 `workers/<iteration>-<phase>/input-manifest.json` execution contract.
 
-`scope` comes from `run.json`: each ancestor contributes its run ID and the
-child's relative `scope_path`. `wiki_root` is that run's `wiki` directory;
+`scope` is resolved from the owning contract as `runs/<run_id>`; do not build
+it from ancestor IDs or the workflow's `scope_path`. `wiki_root` is that run's `wiki` directory;
 `wiki_head` is the sealed sequence, event ID and event hash. The child's
-`input_snapshot` contains only `{ref, sha256}` for a parent-owned file. Its
-hash must be registered in the parent's `run.json.output_hashes`, and its
+`input_snapshot` contains only `{ref, sha256}` for the bridge-created file
+inside the child's own run directory (`input-snapshot.json`). Its hash must
+be registered in the child's `run.json.output_hashes`, and its
 `input_snapshot_sha256` must match the child's contract. Read this sealed
 input, never the parent's live Wiki head. Parent links are checked in
 `run.json`; do not persist `parent_run_id` or `outer_run_id` in this manifest.
@@ -119,14 +126,16 @@ reviewer identity for the whole wave, and returns `approved`, `rejected`, or
 select or adopt a candidate. A tester audit independently checks the full result, protocol, scoring, coverage and comparability, and returns a review bound to the result digest.
 
 
-Submit through `workflow-tools-cli.js review-submit` with a submission JSON
+Validation and scorer reviews submit through `workflow-tools-cli.js review-submit` with a submission JSON
 carrying `project_root`, `manifest_run_id`, `command_run_id`, and `receipt`. The
 run IDs are the reviewed run's, not the reviewer session's. The helper reads the
 stored assignment and verifies identities and evidence hashes; on conflict,
 changed evidence, or a missing assignment, stop and report its error rather than
 adjusting the evidence until submission succeeds.
 
-A review has no `dashboard_patch`, selected candidate, score override,
+A tester integrity reviewer instead returns the pass/warn/fail result-digest schema in tester-audit; submit it through `tester-facility-cli audit --project`, not review-submit. The tester-audit worker wraps the checked audit in a normal execution receipt with an empty dashboard patch. Follow [tester-facility.md](tester-facility.md) for candidate manifests, assessment-specific directories and stage recovery.
+
+An independent reviewer judgment has no `dashboard_patch`, selected candidate, score override,
 implementation patch, or Wiki delta. A review receipt never merges into a
 dashboard, and a dashboard patch never carries a verdict on someone else's
 run.

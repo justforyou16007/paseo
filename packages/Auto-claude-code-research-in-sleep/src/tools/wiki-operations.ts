@@ -139,6 +139,7 @@ const PAGE_DATA_KEYS: Record<WikiPageKind, readonly string[]> = {
     "reasoning",
     "iteration",
     "gate_metric",
+    "gate_metric_name",
     "tester_metrics",
     "test_result_path",
     "test_audit_path",

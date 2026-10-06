@@ -1,4 +1,6 @@
 import { checkTesterResult, readAuditedTesterResult } from "./tester-facility.js";
+import { testerConfigPath } from "./tester-facility.js";
+import { assertStandaloneTesterAssessment } from "./standalone-tester.js";
 import { assertRunId } from "./workflow-spec.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -549,7 +551,11 @@ function validateOwnership(
           fail("tester result does not identify this run and iteration");
       }
       if (receipt.status === "done" && receipt.worker === "tester-audit") {
-        readAuditedTesterResult(String(receipt.summary.test_result_path), String(receipt.summary.test_audit_path), { run_id: runId, iteration: receipt.iteration });
+        readAuditedTesterResult(
+          String(receipt.summary.test_result_path),
+          String(receipt.summary.test_audit_path),
+          { run_id: runId, iteration: receipt.iteration },
+        );
       }
       if (receipt.worker === "idea-discovery") {
         // The loop's next stage (experiment-bridge) consumes this plan directly, so the
@@ -1132,6 +1138,28 @@ function apply(root: string, runId: string, receiptPath: string): void {
     }
 
     validatePatch(receipt, dashboard);
+    if (
+      receipt.worker === "auto-review-loop" &&
+      receipt.dashboard_patch["last_review.verdict"] !== "insufficient" &&
+      (dashboard.tester_facility_sha256 !== undefined || fs.existsSync(testerConfigPath(root)))
+    ) {
+      const assessment = assertStandaloneTesterAssessment(root, runId, dashboard);
+      if (
+        path.resolve(String(receipt.summary.test_result_path)) !== assessment.result_path ||
+        path.resolve(String(receipt.summary.test_audit_path)) !== assessment.audit_path ||
+        receipt.dashboard_patch["metric.current"] !== assessment.metric_value
+      )
+        fail(
+          "TESTER_METRIC_MISMATCH: standalone review must return its final audited assessment and reading",
+        );
+      const completed = Array.isArray(dashboard.tested_iterations)
+        ? (dashboard.tested_iterations as JsonObject[])
+        : [];
+      dashboard.tested_iterations = [
+        ...completed.filter((entry) => entry.iteration !== receipt.iteration),
+        { iteration: receipt.iteration, ...assessment },
+      ];
+    }
     // A run that has recorded a decomposition is being judged on that
     // decomposition, so its expansion phase can only be reported as an
     // orchestration. An ordinary experiment-bridge receipt would write a
@@ -1243,6 +1271,11 @@ function apply(root: string, runId: string, receiptPath: string): void {
     }
 
     appliedReceipts.push(normalizedReceipt);
+    const appliedHashes = isObject(dashboard.applied_receipt_hashes)
+      ? dashboard.applied_receipt_hashes
+      : {};
+    appliedHashes[normalizedReceipt] = receiptHash;
+    dashboard.applied_receipt_hashes = appliedHashes;
     dashboard.updated_at = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
     writeStateJsonAtomic(dashboardPath, dashboard);
 

@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { canonicalJsonSha256 } from "../../src/tools/canonical-json.js";
 import { writeStateJsonAtomic } from "../../src/tools/state-file.js";
 import {
@@ -59,6 +60,13 @@ export function auditedResultFixture(
   promotion?: unknown,
   facility?: TesterFacilityConfig,
 ) {
+  if (request.deliverables === undefined) {
+    const outputRef = `outputs/${request.test_id}/candidate.json`;
+    const output = path.join(root, ".aris", "runs", request.run_id, outputRef);
+    fs.mkdirSync(path.dirname(output), { recursive: true });
+    fs.writeFileSync(output, JSON.stringify({ model: request.artifact, synthetic_fixture: true }));
+    request = { ...request, deliverables: { output_hashes: { [outputRef]: crypto.createHash("sha256").update(fs.readFileSync(output)).digest("hex") } } };
+  }
   const dir = path.join(root, "fixture-results", request.test_id);
   fs.mkdirSync(dir, { recursive: true });
   const config = facility ?? facilityConfig(root);

@@ -9,6 +9,8 @@ function common(command: ReturnType<typeof program.command>) {
   return command
     .requiredOption("--project <path>", "research project root")
     .requiredOption("--run <id>", "run id")
+    .option("--wiki-root <path>", "Wiki location, relative to the project or absolute")
+    .option("--summary <text>", "result package summary")
     .option("--tester-definition <path>", "frozen tester definition for tester metrics");
 }
 
@@ -17,12 +19,16 @@ interface Options {
   run: string;
   testerDefinition?: string;
   reviewId?: string;
+  wikiRoot?: string;
+  summary?: string;
 }
 
 function input(options: Options) {
   return {
     project_root: requireString(options.project, "project_root"),
     run_id: assertIdentifier(options.run, "run_id"),
+    ...(options.wikiRoot === undefined ? {} : { wiki_root: options.wikiRoot }),
+    ...(options.summary === undefined ? {} : { summary: options.summary }),
     ...(options.testerDefinition === undefined
       ? {}
       : { tester_definition_path: options.testerDefinition }),

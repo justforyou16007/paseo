@@ -98,7 +98,12 @@ Long-running loops may hit the context window limit, triggering automatic compac
 
 **Write this file at the end of every Phase E** (after documenting the round). Overwrite each time — only the latest state matters.
 
-**On completion** (positive assessment or max rounds), set `"status": "completed"` so future invocations don't accidentally resume a finished loop.
+When review rounds end, set `"status": "terminating"` and checkpoint the next
+termination step. Retain the final assessment paths and collected nested
+receipts as termination advances. Set `"status": "completed"` only after all
+required termination artifacts are ready, immediately before writing the
+final outer receipt as the last action. Completion is reusable only with a
+valid matching receipt; a crash between these two writes resumes delivery.
 
 ## Output Protocols
 
@@ -143,6 +148,7 @@ writes a repair receipt with `summary.repair_status`, leaves
 ```json
 {
   "worker": "auto-review-loop",
+  "phase": "auto-review-loop",
   "iteration": 1,
   "run_id": "<run-id>",
   "status": "done",
@@ -165,7 +171,7 @@ writes a repair receipt with `summary.repair_status`, leaves
 
 > **Boundary note.** `dashboard_patch` carries the iteration's quality verdict
 > (`verdict` ∈ {ready, almost, not ready}, `score`, `reviewer_id`) and, for a
-> metric-target run, the final metric copied from the termination analysis. It does
+> metric-target run, the final metric copied from passing tester evidence. It does
 > **not** include `metric_progress`, `stop`, `continue`, or `pivot` - those
 > concepts do not exist in this skill's vocabulary. The loop-stop decision is
 > made by the research-loop orchestrator based on dashboard arithmetic alone.
@@ -235,7 +241,8 @@ ran, it just never produced evidence anyone could rule on.
 
 1. **Check for `$OUTPUT_DIR/REVIEW_STATE.json`**:
    - If it does not exist: **fresh start**
-   - If it exists AND `status` is `"completed"`: **fresh start** (previous loop finished normally)
+   - If it exists AND `status` is `"completed"` with a valid matching done receipt beside this manifest: reuse the completed delivery and stop. A new review uses a new attempt manifest/output directory.
+   - If `status` is `"terminating"`, or `"completed"` without a valid final receipt: **resume termination**, not another review round. Revalidate existing final inputs, assessment and nested receipts; continue at the saved termination step. Do not change the final experiment identity or re-audit/rewrite a completed assessment. If claim publication succeeded before interruption, reuse its matching evidence and finish the remaining delivery.
    - If it exists AND `status` is `"in_progress"` AND `timestamp` is older than 24 hours: fail with a stale-state receipt and ask the user to invoke an explicit fresh run
    - If it exists AND `status` is `"in_progress"` AND `timestamp` is within 24 hours: **resume**
      - Read the state file to recover `round`, `threadId`, `last_score`, `pending_experiments`
@@ -594,13 +601,13 @@ Increment round counter → back to Phase A.
 
 When loop ends (positive assessment or max rounds):
 
-1. Update `$OUTPUT_DIR/REVIEW_STATE.json` with `"status": "completed"`
+1. Update `$OUTPUT_DIR/REVIEW_STATE.json` with `"status": "terminating"` and the next termination step, preserving an existing recovery checkpoint. After each required step succeeds, persist its outputs/receipts and advance this checkpoint. Resume reuses verified completed steps.
 2. Write final summary to `$OUTPUT_DIR/AUTO_REVIEW.md`
 3. Update project notes with conclusions
 4. **Write method/pipeline description** to `$OUTPUT_DIR/AUTO_REVIEW.md` under a `## Method Description` section — a concise 1-2 paragraph description of the final method, its architecture, and data flow. This serves as input for `/paper-illustration` in Workflow 3.
 
-If `manifest.context.purpose == "bridge_repair"`, stop after step 4 and write
-the repair receipt. Do not execute steps 5–9: there is no valid experiment
+If `manifest.context.purpose == "bridge_repair"`, stop after step 4, mark
+the state completed and write the repair receipt last. Do not execute steps 5–9: there is no valid experiment
 result, so there is no metric, claim, Wiki signal, Feishu completion notice, or
 HTML result to publish. Steps 1–4 remain the repair log and may record the
 reviewer's reasoning; they are not an experiment result. The parent reads
@@ -631,8 +638,12 @@ For the ordinary quality-review purpose, continue with the following steps.
      asks the user what to supplement or whether to accept. This parent waits;
      it must not auto-override that question.
    - Require a done receipt with matching run/iteration and finite
-     `metric.current`. Copy metric current/delta/significance verbatim into the
-     auto-review receipt. A failed or missing final analysis makes this worker
+     `metric.current` for narrative analysis. After any final fixes, require a
+     current tester-test/tester-audit pair and run the `measure` command in
+     [tester-facility.md](../shared-references/tester-facility.md) using the frozen
+     target name. Copy its `metric_value` into the auto-review receipt's
+     `metric.current`; compute delta from audited readings and leave statistical
+     significance null unless audited evidence supplies it. A failed or missing final analysis makes this worker
      fail. Reject an analysis whose *metrics* came from project-root result
      files instead of the final-inputs paths in its manifest. Scope that
      check to the metric source: reading `code_root` or `artifacts_dir` is
@@ -676,10 +687,11 @@ For the ordinary quality-review purpose, continue with the following steps.
    - Active idea: `manifest.context.chosen_idea_id` — passed through verbatim; it is
      already a canonical node id (`idea:<slug>`), so tell the sub-agent NOT to prepend
      another `idea:` prefix.
-   - Experiment identity: `exp_id = iter-<iteration>` — one experiment node per loop
-     iteration (`exp:iter-<iteration>`), so a repeated dispatch for the iteration lands on
-     its own node instead of accumulating duplicates. Once that node supports or
-     invalidates a claim it is reused unchanged.
+   - Experiment identity: use the final test result's `request.experiment_id`.
+     Replaying the same assessment reuses its node. Changed artifacts or evidence
+     use a new request/test id and experiment revision, even when metrics are
+     unchanged. Keep old claims and evidence; export selects the final recorded
+     assessment for the iteration.
    - Intended claims: the outer manifest's `experiment_plan` input path.
    - Comparability fields, so the iteration can be ranked against the others when
      the run exports its result package: the outer `iteration` number, this
@@ -692,7 +704,10 @@ For the ordinary quality-review purpose, continue with the following steps.
      if no current audited result is bound to the final artifact. Any fixes or
      new measurements in review rounds invalidate earlier artifact bindings.
      Dispatch the two skills through Paseo with their normal manifests and
-     watchdogs, and stop publication on missing or nonpassing receipts.
+     watchdogs, and stop publication on missing or nonpassing receipts. Use new
+     assessment-specific worker directories, collect nested receipts without
+     dashboard-merge, and return the final paths for the owning orchestrator.
+     Pass the frozen metric name as `gate_metric_name` to result-to-claim.
      Step 5 passes both canonical paths through to `add_experiment`.
 
 
@@ -710,6 +725,12 @@ For the ordinary quality-review purpose, continue with the following steps.
    Pass `--state` explicitly. HTML lands at `$OUTPUT_DIR/AUTO_REVIEW.html` with
    embedded source SHA256. If `/render-html` fails, fail the worker. Set
    `RENDER_HTML = false` before the run to omit this artifact.
+
+After all required steps succeed, checkpoint delivery as completed with the
+final assessment and artifact references, then write the final outer receipt
+last. If interrupted before that receipt exists, initialization resumes this
+delivery checkpoint. A failed termination step keeps its checkpoint and
+returns failure; it must not start fresh rounds in the same directory.
 
 ## Key Rules
 

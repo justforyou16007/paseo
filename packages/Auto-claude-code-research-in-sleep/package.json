@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "npm run build && ARIS_TEST_DIST=1 npx tsx tests/test_run_state.ts",
     "test:source": "npx tsx tests/test_run_state.ts",
-    "test:tester": "npx tsx tests/test_tester_facility.ts && python3 tests/test_lm_eval_adapter.py"
+    "test:tester": "npx tsx tests/test_tester_facility.ts && npx tsx tests/test_tester_delivery_flow.ts && python3 tests/test_lm_eval_adapter.py",
+    "test:arl": "npx tsx tests/test_a2_setup.ts && npx tsx tests/test_result_export.ts && npx tsx tests/test_orchestration_round.ts && npx tsx tests/test_a2_skills.ts"
   },
   "dependencies": {
     "commander": "^15.0.0"

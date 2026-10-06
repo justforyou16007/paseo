@@ -6,7 +6,7 @@ allowed-tools: Bash(*), Read, Grep, Glob, Write, Edit, mcp__paseo__create_agent,
 
 ---
 
-> **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in [](shared-references/paseo-subagent-dispatch.md) (Rule 1: One Agent = One Skill; Rule 4: Paseo MCP Only, Strict). Spawn any sub-skill or sub-phase via `mcp__paseo__create_agent` — do **not** use the host `Skill` / `Agent` / `Task` tools.
+> **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in [](../shared-references/paseo-subagent-dispatch.md) (Rule 1: One Agent = One Skill; Rule 4: Paseo MCP Only, Strict). Spawn any sub-skill or sub-phase via `mcp__paseo__create_agent` — do **not** use the host `Skill` / `Agent` / `Task` tools.
 
 > **Paseo substrate.** This skill runs inside a paseo claude sub-agent; its cross-model claim reviewer is a paseo codex sub-agent (fresh round 1, continued for follow-ups). See `shared-references/paseo-reviewer-dispatch.md`..
 
@@ -78,10 +78,39 @@ it. Hash it after it is complete.
 
 ### Publishing signals
 
-Publish the generated signal files through the scoped command:
+`knowledge-delta.json` is the batch receipt, not a `WikiSignal`. Write one
+signal file for each supported update, including the required producer and
+frozen context from the assignment. For example:
+
+```json
+{
+  "signal_id": "signal:<run>:<experiment-revision>:observation-1",
+  "kind": "observation",
+  "source": "module_experiment",
+  "producer": {
+    "module_id": "<frozen module/workflow id>",
+    "module_version": "<frozen version>",
+    "run_id": "<owning run>"
+  },
+  "applies_to": {
+    "input_snapshot_id": "<sealed snapshot>",
+    "contract_versions": ["<frozen contract version>"]
+  },
+  "evidence_refs": ["<audited experiment and per-case evidence refs>"],
+  "supersedes": [],
+  "status": "active",
+  "summary": "<bounded observation>"
+}
+```
+
+Use the declared source for the assessment purpose (`module_experiment` or
+`workflow_validation`); retain any declared workflow/scorer context. Missing
+producer or frozen-context material blocks the write. Publish each signal
+through the scoped command, using the owning Wiki root from the sealed manifest:
 
 ```bash
-node "$WIKI_SCRIPT" signal publish \
+node "$WIKI_SCRIPT" signal publish "$WIKI_ROOT" \
+  --project-root "$ROOT" --run-id "$RUN_ID" \
   --signal-file "$SIGNAL_FILE" \
   --scope "$WIKI_SCOPE" \
   --evidence-bundle-id "$EVIDENCE_BUNDLE_ID"
@@ -89,10 +118,16 @@ node "$WIKI_SCRIPT" signal publish \
 
 Each signal must identify its producer and experiment source, the frozen
 context it was produced under, and stable evidence references. Record returned
-event IDs and the resulting Wiki head in a knowledge-write receipt. Do not call
-a default unscoped write. If a page or entity update cannot be expressed as a
-scoped signal, stop with an explicit API-gap error and report it rather than
-reaching around the scope.
+event IDs and the resulting Wiki head in a knowledge-write receipt. The
+experiment pages and claim edges required for result export are separate
+run-local operations through the Step-5 helpers at this same verified
+`WIKI_ROOT`; signals do not replace those pages. Do not write into another
+run's Wiki or substitute the project default. If a required operation lacks a
+supported helper, report an explicit API-gap error.
+
+An explicitly standalone legacy Wiki uses its declared `standalone` signal
+context: pass `--scope standalone` and omit `--project-root`/`--run-id` on the
+signal command. This entry does not provide a scoped Workflow binding.
 
 ## Claim judgment and Wiki integration
 
@@ -281,13 +316,17 @@ Revalidate the current `test_result_path` and `test_audit_path` before claim pub
 
 ### Step 5: Update Research Wiki (if active)
 
-**Skip this step entirely if `research-wiki/` does not exist.**
+In worker mode, take `WIKI_ROOT` from the validated sealed manifest. Root and
+child Workflow runs use `.aris/runs/<owning-run>/wiki`; do not skip publication
+because the project-level `research-wiki/` is absent. An explicit standalone
+run uses its configured Wiki root. Missing required Wiki material fails the
+worker receipt. A direct invocation without an active Wiki may skip this step.
 
-If `research-wiki/` exists, resolve `$WIKI_SCRIPT` per the canonical
+Resolve `$WIKI_SCRIPT` per the canonical
 chain documented in
 [`shared-references/wiki-helper-resolution.md`](../shared-references/wiki-helper-resolution.md)
-(The helper is required when `research-wiki/` exists.) The verdict / idea-outcome
-page edits below run on raw markdown, but edges, problem entities, query-pack
+(The helper is required when a Wiki is active.) Experiment and idea-outcome
+updates below use helper events, along with edges, problem entities, query-pack
 rebuild, and the log line must still succeed. **This skill never
 edits a claim's `status` field and never creates a claim node** — claims are
 born (and their proof `status` set) by `/proof-checker`; here we only attach
@@ -307,16 +346,16 @@ WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
 ```
 
 ```
-if research-wiki/ exists:
+if the owning WIKI_ROOT is active:
     # Placeholder values → the caller must pin these; when dispatched from
     # /auto-review-loop's termination step they arrive in the dispatch prompt:
     #   <active_idea> = the idea's canonical node id EXACTLY as carried by
     #     dashboard.best_idea.id / manifest.context.chosen_idea_id (already idea:<slug>).
     #     Pass it through verbatim → add_experiment adds the idea: prefix only when
     #     missing, so pre-pending one here produces idea:idea:<slug> and a dangling edge.
-    #   <exp_id> = the stable slug of the experiment being judged. From
-    #     /auto-review-loop it is iter-<iteration> (one experiment node per loop
-    #     iteration); standalone runs use the experiment's own slug from the tracker.
+    #   <exp_id> = the final audited result's request.experiment_id, for either
+    #     Workflow or standalone. A changed assessment uses a new revision;
+    #     replay of identical evidence retains the existing id and claim edges.
     #
     # 1. Create/refresh the experiment node FIRST (verdict OWNER → --update-on-exist so
     #    a re-judge before any claim edge exists overwrites the stale verdict). The
@@ -325,15 +364,15 @@ if research-wiki/ exists:
     #    An exp:<id> that already supports or invalidates a claim has formed its claims
     #    and is reused as is: add_experiment prints "Experiment reused:", writes nothing
     #    and leaves its edges alone. Skip step 2 for it. A tester result the reused page
-    #    does not already carry is refused (TESTER_RECEIPT_TOO_LATE), so pass the
+    #    does not already carry is refused (TESTER_RESULT_TOO_LATE), so pass the
     #    receipt in the call that first judges the iteration.
-    node "$WIKI_SCRIPT" add_experiment research-wiki/ \
+    node "$WIKI_SCRIPT" add_experiment "$WIKI_ROOT" --project "$ROOT" \
       --slug "<exp_id>" --idea "<active_idea>" \
       --verdict "<yes|partial|no>" --confidence "<high|medium|low>" \
       --date "<date>" --hardware "<hw>" --duration "<dur>" \
       --metrics "<key metrics>" --reasoning "<one-line why this verdict>" \
       --provenance "<EXPERIMENT_AUDIT.md / run dir>" \
-      --iteration "<outer iteration>" --gate-metric "<this iteration's gate reading>" \
+      --iteration "<outer iteration>" --gate-metric "<audited target reading>" --gate-metric-name "<declared target name>" \
       --run-id "<owning run>" --test-result "<test-result.json>" --test-audit "<test-audit.json>" \
       --update-on-exist || exit 1
 
@@ -355,17 +394,23 @@ if research-wiki/ exists:
     #    target should ALREADY be born by /proof-checker; add_edge does not verify it.
     for each claim resolved by this verdict:
         if verdict == "yes":
-            node "$WIKI_SCRIPT" add_edge research-wiki/ --from "exp:<id>" --to "claim:<cid>" --type supports --evidence "<metric>" || exit 1
+            node "$WIKI_SCRIPT" add_edge "$WIKI_ROOT" --from "exp:<id>" --to "claim:<cid>" --type supports --evidence "<metric>" || exit 1
         elif verdict == "partial":
-            node "$WIKI_SCRIPT" add_edge research-wiki/ --from "exp:<id>" --to "claim:<cid>" --type supports --evidence "partial: <metric>" || exit 1
+            node "$WIKI_SCRIPT" add_edge "$WIKI_ROOT" --from "exp:<id>" --to "claim:<cid>" --type supports --evidence "partial: <metric>" || exit 1
         else:
-            node "$WIKI_SCRIPT" add_edge research-wiki/ --from "exp:<id>" --to "claim:<cid>" --type invalidates --evidence "<why>" || exit 1
+            node "$WIKI_SCRIPT" add_edge "$WIKI_ROOT" --from "exp:<id>" --to "claim:<cid>" --type invalidates --evidence "<why>" || exit 1
 
-    # 3. Update idea outcome (raw markdown, helper-free)
-    Update research-wiki/ideas/<idea_id>.md:
-      - outcome: positive | mixed | negative
-      - If negative: fill "Failure / Risk Notes" and "Lessons Learned"
-      - If positive: fill "Actual Outcome" and "Reusable Components"
+    # 3. Update idea outcome through an event. Markdown is a generated projection.
+    #    Read the existing owning-run idea record; pass all unchanged fields
+    #    because upsert_idea replaces the complete record. Add reviewed outcome/
+    #    lessons to description and risks; do not edit generated page sections.
+    node "$WIKI_SCRIPT" upsert_idea "$WIKI_ROOT" \
+      --slug "<existing idea slug, without idea:>" --title "<existing title>" \
+      --stage "<existing stage>" --outcome "<positive|mixed|negative>" \
+      --description "<existing description plus reviewed outcome/lessons>" \
+      --thesis "<existing thesis>" --risks "<existing risks plus reviewed limitations>" \
+      --tags "<existing tags>" --based-on "<existing paper ids>" \
+      --target-problems "<existing problem ids>" --update-on-exist || exit 1
 
     # 4. Problem entities: the failure analysis becomes the next iteration's search seed.
     #    Sub-problems attach to the run's root problem via --parent, so /idea-creator's
@@ -375,7 +420,7 @@ if research-wiki/ exists:
     if verdict == "partial" or verdict == "no":
           # one call per distinct unresolved cause named in the Codex reasoning /
           # missing_evidence / next_experiments_needed fields (do NOT emit one per metric)
-          node "$WIKI_SCRIPT" add_problem research-wiki/ \
+          node "$WIKI_SCRIPT" add_problem "$WIKI_ROOT" \
             --slug "<stable-kebab-slug>" --title "<what is unsolved, one line>" \
             --parent "problem:root" --status open \
             --severity "<high|medium|low>" \
@@ -395,7 +440,7 @@ if research-wiki/ exists:
           # per run by the summary worker, after the metric gate reports metric_met.
           for each problem id in idea page's `target_problems` where the Codex
           judgment names its closing condition as met, EXCLUDING problem:root:
-              node "$WIKI_SCRIPT" add_problem research-wiki/ \
+              node "$WIKI_SCRIPT" add_problem "$WIKI_ROOT" \
                 --slug "<slug>" --status solved \
                 --evidence "<closing evidence path + value>" --update-on-exist \
                 || exit 1
@@ -404,8 +449,8 @@ if research-wiki/ exists:
                 # the existing page, so closing never rewrites history.
 
     # 5. Rebuild + log
-    node "$WIKI_SCRIPT" rebuild_query_pack research-wiki/ || exit 1
-    node "$WIKI_SCRIPT" log research-wiki/ "result-to-claim: exp:<id> verdict=<verdict> for idea:<idea_id>" || exit 1
+    node "$WIKI_SCRIPT" rebuild_query_pack "$WIKI_ROOT" || exit 1
+    node "$WIKI_SCRIPT" log "$WIKI_ROOT" "result-to-claim: exp:<id> verdict=<verdict> for idea:<idea_id>" || exit 1
 
     # 6. Re-ideation suggestion
     Count failed/partial ideas since last /idea-creator run.
@@ -429,3 +474,5 @@ continuation `send_agent_prompt`), save the trace with the required
 `save_trace.sh` helper from `shared-references/review-tracing.md`. If the
 helper is missing or fails, fail the claim phase; do not write a second trace
 format inline.
+
+Before publishing, use `tester-facility-cli measure` with the owning project/run/iteration and frozen target name. Take `exp_id` from the final result’s request, retain its deliverable manifest, and copy the audited reading to the Wiki gate. A changed model or assessment needs a new experiment revision; never silently reuse an already judged experiment with different result/audit digests.

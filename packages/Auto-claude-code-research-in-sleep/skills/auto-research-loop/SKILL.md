@@ -136,7 +136,7 @@ children. Read `max_depth` from this run's `frozen-policy.json` and its depth
 from `run.json`; when they are equal, tell idea-discovery to leave `children`
 empty. `bridge-expand` refuses any position there with `MAX_DEPTH_REACHED`.
 `start` checks the child run contract and inherits the parent's
-frozen metric target, owner limits and resource hashes. A child
+owner limits and resource hashes. Freeze the child target from its parent-owned local acceptance (metric name/direction/threshold, zero tolerance). A child
 never receives a task tester snapshot. If the parent policy or child charter is
 missing or differs, stop with the reported error.
 
@@ -181,7 +181,10 @@ node "$WORKFLOW" bridge-expand --execution-root "$EXECUTION_ROOT" --project "$RO
 #   node "$WORKFLOW" bridge-failure --execution-root "$EXECUTION_ROOT" --project "$ROOT" --run "$RUN_ID" --receipt "$WORKERS_DIR/$N-experiment-bridge/receipt.json" --manifest "$WORKERS_DIR/$N-experiment-bridge/input-manifest.json" --evidence "$WORKERS_DIR/$N-experiment-bridge/receipt.json"
 # After experiment-bridge reports a complete output:
 node "$WORKFLOW" bridge-success --execution-root "$EXECUTION_ROOT" --project "$ROOT" --run "$RUN_ID" --receipt "$WORKERS_DIR/$N-experiment-bridge/receipt.json" --evidence "$WORKERS_DIR/$N-experiment-bridge/receipt.json"
-# After auto-review-loop writes a judgeable metric:
+# Run the mandatory tester-test -> tester-audit stages in tester-facility.md
+# before dispatching auto-review-loop. Use Workflow tester-phase transitions,
+# the tested candidate manifest, and assessment-specific worker directories.
+# After auto-review-loop returns the final audited metric:
 node "$WORKFLOW" arl-cycle-complete --execution-root "$EXECUTION_ROOT" --project "$ROOT" --run "$RUN_ID" --review-receipt "$WORKERS_DIR/$N-auto-review-loop/receipt.json" --evidence "$WORKERS_DIR/$N-experiment-bridge/receipt.json"
 node "$WORKFLOW" stop-gate --execution-root "$EXECUTION_ROOT" --project "$ROOT" --run "$RUN_ID"
 ```
@@ -747,6 +750,9 @@ idea-creator Phase 7).
 | research_brief | `$ROOT/RESEARCH_BRIEF.md` |
 | claude_md | `$ROOT/CLAUDE.md` |
 | dashboard | `$ROOT/$DASHBOARD` |
+| test_request | `experiment-bridge receipt.summary.test_request_path` |
+| test_result | `$TEST_RESULT` (canonical current assessment) |
+| test_audit | `$TEST_AUDIT` (passing current assessment) |
 
 Context: `direction` (research direction from the brief), `iteration`,
 `source_iteration = ITERATION - 1`, the metric six-tuple
@@ -779,8 +785,11 @@ mirrors `/research-pipeline` Stage 2.
 | experiment_plan | `$WORKERS_DIR/${ITERATION}-idea-discovery/outputs/EXPERIMENT_PLAN.md` |
 | experiment_skill | `$ROOT/.claude/skills/run-${PROJECT_NAME}-experiment/env.json` |
 | dashboard | `$ROOT/$DASHBOARD` |
+| test_request | `experiment-bridge receipt.summary.test_request_path` |
+| test_result | `$TEST_RESULT` (canonical current assessment) |
+| test_audit | `$TEST_AUDIT` (passing current assessment) |
 
-Context: `chosen_idea` (`dashboard.best_idea.title`), `iteration`,
+Context: `tester_metric_name` (frozen target name), `chosen_idea` (`dashboard.best_idea.title`), `iteration`,
 `target_metric`, `target_unit`.
 
 Output: raw `EXPERIMENT_RESULTS.md`, `EXPERIMENT_TRACKER.md`, and authoritative
@@ -817,17 +826,34 @@ run the same way; do not dispatch a repair for it.
 
 After bridge merge, run the mandatory tester stages before Stage 3:
 
-1. Run the durable transition to `tester-test`. Dispatch `/tester-test` with the current run, iteration, experiment id, setup config and produced artifact reference/digest. Wait for the external job to finish and merge its worker receipt; complete bounded repair/retries before merging a terminal failed receipt; an exhausted failure stops publication.
-2. Run the durable transition to `tester-audit` with the result. Dispatch `/tester-audit` with the canonical result path. Merge only a passing receipt, retain both paths in the iteration context, and run the durable transition to `auto-review-loop` with the passing audit.
+1. Run the durable transition to `tester-test`. Dispatch `/tester-test` with the current run, iteration, experiment id, setup config and produced artifact reference/digest. Wait for the external job to finish; Workflow retains the receipt as cycle evidence, while standalone merges it through dashboard-merge; complete bounded repair/retries before merging a terminal failed receipt; an exhausted failure stops publication.
+2. Run the durable transition to `tester-audit` with the result. Dispatch `/tester-audit` with the canonical result path. Collect only a passing receipt (merge it for standalone), retain both paths in the iteration context, and run the durable transition to `auto-review-loop` with the passing audit.
 3. Supply audited test evidence to Stage 3 and `test_result_path` / `test_audit_path` to `/result-to-claim`. The claim phase and Wiki helper refuse missing/stale audits. Negative measured results remain eligible for integrity audit and publication.
 
-Persist each transition through the helper; mirror the returned phase in the normal dashboard. Recovery uses the runtime phase and stored assessment bindings.
+Persist each transition through the helper for the selected entry. Workflow recovery uses workflow-runtime.json; standalone recovery uses dashboard.json and its stored assessment. Do not manually change phase before calling the helper.
+
+For a root or child Workflow run:
 
 ```bash
 node "$WORKFLOW" tester-phase --execution-root "$EXECUTION_ROOT" --project "$ROOT" --run "$RUN_ID" --from workset --to tester-test --evidence "$BRIDGE_RECEIPT"
 node "$WORKFLOW" tester-phase --execution-root "$EXECUTION_ROOT" --project "$ROOT" --run "$RUN_ID" --from tester-test --to tester-audit --test-result "$TEST_RESULT" --evidence "$TEST_RESULT"
 node "$WORKFLOW" tester-phase --execution-root "$EXECUTION_ROOT" --project "$ROOT" --run "$RUN_ID" --from tester-audit --to auto-review-loop --test-audit "$TEST_AUDIT" --evidence "$TEST_AUDIT"
 ```
+
+For an explicit standalone run, resolve `TESTER` to the project-local
+`tester-facility-cli.js` and use its stage command after bridge merge:
+
+```bash
+node "$TESTER" stage --project "$ROOT" --run "$RUN_ID" --from experiment-bridge --to tester-test
+node "$TESTER" stage --project "$ROOT" --run "$RUN_ID" --from tester-test --to tester-audit --test-result "$TEST_RESULT"
+node "$TESTER" stage --project "$ROOT" --run "$RUN_ID" --from tester-audit --to auto-review-loop --test-audit "$TEST_AUDIT"
+```
+
+Use `inputs.test_request`, assessment-specific worker directories, and the
+`measure` command defined in [tester-facility.md](../shared-references/tester-facility.md).
+Pass the request, config, final result/audit paths and frozen metric name to review.
+The review receipt must copy the audited reading into `metric.current`.
+
 
 If review fixes change the tested artifact, rerun `/tester-test` → `/tester-audit` before Wiki publication. The auto-review receipt must return the final canonical paths in `summary.test_result_path` and `summary.test_audit_path`. Record the refreshed assessment by replaying the three transitions above with the first transition `--from auto-review-loop --to tester-test` and the final result/audit paths; the original assessment must not stand in for a changed artifact.
 
@@ -1073,8 +1099,11 @@ The manifest mirrors `/research-pipeline` Stage 3.
 | experiment_skill | `$ROOT/.claude/skills/run-${PROJECT_NAME}-experiment/env.json` |
 | idea_report | `$WORKERS_DIR/${ITERATION}-idea-discovery/outputs/IDEA_REPORT.md` |
 | dashboard | `$ROOT/$DASHBOARD` |
+| test_request | `experiment-bridge receipt.summary.test_request_path` |
+| test_result | `$TEST_RESULT` (canonical current assessment) |
+| test_audit | `$TEST_AUDIT` (passing current assessment) |
 
-Context: `chosen_idea` (`dashboard.best_idea.title`), `chosen_idea_id`
+Context: `tester_metric_name` (frozen target name), `chosen_idea` (`dashboard.best_idea.title`), `chosen_idea_id`
 (`dashboard.best_idea.id` - passed so the `/result-to-claim` dispatch in the
 termination step can link the experiment to the idea page), `iteration`,
 `target_metric`, `target_unit`, `metric_history`, `reviewer_model` (from the
@@ -1088,7 +1117,7 @@ Dispatch: `/auto-review-loop — manifest: $WORKER_DIR/input-manifest.json`
 **Dashboard patch fields:** `last_review.verdict`, `last_review.score`,
 `last_review.reviewer_id`, `metric.current`, `metric.delta`, and
 `statistical_significance`. The final three are copied from auto-review-loop's
-mandatory termination analysis after all fixes and reruns. When merged, they
+mandatory tester measurement after all fixes and reruns. Analysis supplies the narrative; the audited benchmark supplies the stop metric. When merged, they
 replace this iteration's initial experiment-bridge history value in place;
 they never append a second history row.
 
@@ -1236,6 +1265,9 @@ writes nothing to the wiki itself.
 | Input | Path |
 |-------|------|
 | dashboard | `$ROOT/$DASHBOARD` |
+| test_request | `experiment-bridge receipt.summary.test_request_path` |
+| test_result | `$TEST_RESULT` (canonical current assessment) |
+| test_audit | `$TEST_AUDIT` (passing current assessment) |
 | wiki_index | `$ROOT/research-wiki/index.md` |
 | wiki_root | `$ROOT/research-wiki/` |
 | last_analysis | `$WORKERS_DIR/${ITERATION}-auto-review-loop/outputs/final-analysis/EXPERIMENT_RESULTS.md` |
@@ -1370,7 +1402,7 @@ them wrong.
 Three criteria, in order:
 
 1. **The tester's declared metrics.** This is the benchmark judgment, so it
-   decides first. All of `gate.primaries` count together: an iteration loses
+   decides first. All of the facility’s declared metrics count together: an iteration loses
    only to one that is at least as good on every declared metric and strictly
    better on at least one. Two iterations that each win a different metric
    neither beat the other, and the next criterion separates them.
@@ -1381,9 +1413,9 @@ Three criteria, in order:
 
 Once any iteration has a tester reading, iterations without one are out of the
 running entirely - they have no measurement on the evidence that decides
-first. Pass `--tester-definition` whenever that is the case; without it the
-export cannot know which direction each declared metric improves and stops
-with `TESTER_DEFINITION_REQUIRED`.
+first. The helper uses the run’s frozen facility configuration (or the project config
+for standalone) to determine metric directions; `--tester-definition` can
+explicitly name that same configuration. A conflicting hash is rejected.
 
 ### What the export cross-checks
 
@@ -1441,6 +1473,9 @@ mkdir -p "$WORKER_DIR/outputs"
 | results | `$WORKERS_DIR/${ITERATION}-auto-review-loop/outputs/final-inputs/EXPERIMENT_RESULTS.md` |
 | analysis | `$WORKERS_DIR/${ITERATION}-auto-review-loop/outputs/final-analysis/EXPERIMENT_RESULTS.md` |
 | dashboard | `$ROOT/$DASHBOARD` |
+| test_request | `experiment-bridge receipt.summary.test_request_path` |
+| test_result | `$TEST_RESULT` (canonical current assessment) |
+| test_audit | `$TEST_AUDIT` (passing current assessment) |
 
 Context: `metric_trajectory`, `final_metric`, `target_metric` (from dashboard)
 

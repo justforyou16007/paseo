@@ -6,6 +6,7 @@ import { computeWikiCommandId } from "./wiki-command-id.js";
 import { readStateFile, withStateFileLock, writeStateFileAtomic } from "./state-file.js";
 import { validateWikiPayload } from "./wiki-operations.js";
 import { readAuditedTesterResult, evidenceFile } from "./tester-facility.js";
+import { auditedTesterMetric } from "./tester-deliverables.js";
 import { validateWikiScope } from "./wiki-scope.js";
 
 export const WIKI_SCHEMA_VERSION = 2;
@@ -247,6 +248,15 @@ function prepareDelta(delta: WikiDelta, options: WikiAppendOptions): PreparedWik
     });
     if (delta.scope.startsWith("runs/") && delta.scope.split("/")[1] !== result.request.run_id)
       throw new Error("TESTER_RESULT_BINDING_MISMATCH: Wiki scope differs from the test run");
+    if (
+      data.gate_metric !== undefined &&
+      data.gate_metric !==
+        auditedTesterMetric(
+          result,
+          typeof data.gate_metric_name === "string" ? data.gate_metric_name : null,
+        )
+    )
+      throw new Error("TESTER_METRIC_MISMATCH: gate metric differs from audited tester evidence");
     if (
       canonicalJsonSha256(data.tester_metrics) !== canonicalJsonSha256(result.metrics) ||
       data.tester_definition_sha256 !== result.config_sha256 ||

@@ -5,11 +5,11 @@ function assessmentSummary(identity:any) {
  const current=readWorkflowRuntimeState(identity.project_root,identity.outer_run_id).active_cycle!.tester_assessment!;
  return {test_result_path:path.resolve(identity.project_root,current.result_ref),test_audit_path:path.resolve(identity.project_root,current.audit_ref!)};
 }
-function prepareAssessment(identity:any, refresh=false) {
+function prepareAssessment(identity:any, refresh=false, score=.82) {
  const root=identity.project_root,run=identity.outer_run_id,state=readWorkflowRuntimeState(root,run);
  if(state.current_phase==="auto-review-loop"&&!refresh)return;
  const config=JSON.parse(fs.readFileSync(path.join(root,".aris/tester-config.json"),"utf8"));
- const binding=auditedResultFixture(root,{schema_version:1,test_id:`${run}-${state.active_cycle!.outer_iteration}${refresh?"-refreshed":""}`,run_id:run,iteration:state.active_cycle!.outer_iteration,experiment_id:"assessment",artifact:{ref:"fixture",sha256:"a".repeat(64)},mode:"full"},{score:.82},undefined,config);
+ const binding=auditedResultFixture(root,{schema_version:1,test_id:`${run}-${state.active_cycle!.outer_iteration}${refresh?"-refreshed":""}`,run_id:run,iteration:state.active_cycle!.outer_iteration,experiment_id:"assessment",artifact:{ref:"fixture",sha256:"a".repeat(64)},mode:"full"},{score},undefined,config);
  if(!refresh)assert.throws(()=>advanceAutoResearchPhase({...identity,from_phase:"workset",to_phase:"auto-review-loop",evidence_paths:[binding.result_path]}),/test then audit/);
  advanceAutoResearchPhase({...identity,from_phase:state.current_phase,to_phase:"tester-test",evidence_paths:[binding.result_path]});
  advanceAutoResearchPhase({...identity,from_phase:"tester-test",to_phase:"tester-audit",test_result_path:binding.result_path,evidence_paths:[binding.result_path]});
@@ -62,6 +62,7 @@ import { beginOuterCycle, advanceOuterPhase, recordOuterBridgeSuccess, recordOut
 import { appendWikiEvent, initializeWikiSchema } from "../src/tools/wiki-event-store.js";
 import { runWikiRoot } from "../src/tools/wiki-scope.js";
 import { planResultExport, exportResultPackage } from "../src/tools/result-export.js";
+import { addExperiment } from "../src/tools/research-wiki.js";
 import { prepareBridgeInput } from "../src/tools/bridge-input.js";
 import {
   createRun,
@@ -212,10 +213,11 @@ test("ARL root setup and charter-only Workflow start/resume use a finite round l
     const reviewReceipt = path.join(reviewDir, "receipt.json");
     fs.writeFileSync(reviewReceipt, JSON.stringify({ run_id: "child-arl", iteration: 1, worker: "auto-review-loop", phase: "auto-review-loop", status: "done", summary: assessmentSummary(childIdentity), dashboard_patch: { "last_review.verdict": "ready", "metric.current": 0.82 } }));
     writeReviewManifest(reviewDir, "child-arl");
+    const finalChildAssessment=assessmentSummary(childIdentity);
     completeAutoResearchCycle({ ...childIdentity, review_receipt_path: reviewReceipt, evidence_paths: [evidencePath] });
     const wikiRoot = runWikiRoot(root, "child-arl");
     initializeWikiSchema(wikiRoot);
-    appendHistoricalWikiFixture(wikiRoot, { producer_kind: "result-to-claim", scope: "runs/child-arl", subject_id: "exp-child-arl", evidence_bundle_id: "bundle:child-arl", payload: { context: {}, operations: [{ op: "upsert_page", kind: "experiment", id: "exp-child-arl", data: { title: "Child result", idea_id: "idea:main", verdict: "yes", confidence: "high", date: "2026-01-01", hardware: "", duration: "", provenance: "", metrics: "score 0.82", reasoning: "measured", tags: [], iteration: 1, gate_metric: 0.82 } }] } });
+    addExperiment(wikiRoot,"assessment",{iteration:1,runId:"child-arl",gateMetric:.82,testResult:{result:finalChildAssessment.test_result_path,audit:finalChildAssessment.test_audit_path}});
     assert.throws(() => planResultExport({ project_root: root, run_id: "child-arl" }), /saved terminal stop decision/);
     const stop = recordWorkflowStopDecision({ ...childIdentity });
     assert.equal(stop.reason, "target_reached");
@@ -246,7 +248,7 @@ test("ARL root setup and charter-only Workflow start/resume use a finite round l
     const rootReviewReceipt = path.join(rootReviewDir, "receipt.json");
     fs.writeFileSync(rootReviewReceipt, JSON.stringify({ run_id: "root-arl", iteration: 1, worker: "auto-review-loop", phase: "auto-review-loop", status: "done", dashboard_patch: { "last_review.verdict": "ready", "metric.current": 0.83 } }));
     writeReviewManifest(rootReviewDir, "root-arl");
-    prepareAssessment(rootIdentity);
+    prepareAssessment(rootIdentity,false,.83);
     // The parent's round is not over until its child has published: with the
     // child's package out of the way, closing the iteration waits for it.
     const childPackage = runOwnedPath(root, "child-arl", "result-package.json");
@@ -274,14 +276,19 @@ test("ARL root setup and charter-only Workflow start/resume use a finite round l
     assert.throws(()=>completeAutoResearchCycle({...rootIdentity,review_receipt_path:rootReviewReceipt,evidence_paths:[evidencePath]}),/record the final review assessment/);
     finalReview.summary.test_result_path=path.resolve(root,assessment.result_ref);
     fs.writeFileSync(rootReviewReceipt,JSON.stringify(finalReview));
-    completeAutoResearchCycle({ ...rootIdentity, review_receipt_path: rootReviewReceipt, evidence_paths: [evidencePath] });
+    finalReview.dashboard_patch["metric.current"]=.99;
+    fs.writeFileSync(rootReviewReceipt,JSON.stringify(finalReview));
+    assert.throws(()=>completeAutoResearchCycle({...rootIdentity,review_receipt_path:rootReviewReceipt,evidence_paths:[evidencePath]}),/review metric differs from the audited tester reading/);
+    finalReview.dashboard_patch["metric.current"]=.83;
+    fs.writeFileSync(rootReviewReceipt,JSON.stringify(finalReview));
+        completeAutoResearchCycle({ ...rootIdentity, review_receipt_path: rootReviewReceipt, evidence_paths: [evidencePath] });
     assert.equal(recordWorkflowStopDecision(rootIdentity).reason, "target_reached");
     releaseTestProcessScope(root, "root-arl");
     const rootFinish = spawnSync("npx", ["tsx", "src/tools/workflow-cli.ts", "finish", "--execution-root", executionRoot, "--project", root, "--run", "root-arl", "--outcome", "completed", "--evidence", runOwnedPath(root, "root-arl", "cycles", "1", "stop-decision.json")], { cwd: path.resolve(import.meta.dirname, ".."), encoding: "utf8" });
     assert.equal(rootFinish.status, 0, rootFinish.stderr);
     const rootWiki = runWikiRoot(root, "root-arl");
     initializeWikiSchema(rootWiki);
-    appendHistoricalWikiFixture(rootWiki, { producer_kind: "result-to-claim", scope: "runs/root-arl", subject_id: "exp-root-arl", evidence_bundle_id: "bundle:root-arl", payload: { context: {}, operations: [{ op: "upsert_page", kind: "experiment", id: "exp-root-arl", data: { title: "Root result", idea_id: "idea:root", verdict: "yes", confidence: "high", date: "2026-01-01", hardware: "", duration: "", provenance: "", metrics: "score 0.83", reasoning: "measured", tags: [], iteration: 1, gate_metric: 0.83 } }] } });
+    addExperiment(rootWiki,"assessment",{iteration:1,runId:"root-arl",gateMetric:.83,testResult:{result:finalReview.summary.test_result_path,audit:finalReview.summary.test_audit_path}});
     const rootExport = planResultExport({ project_root: root, run_id: "root-arl" });
     assert.equal(rootExport.candidate.parent_run_id, null);
     assert.deepEqual(rootExport.candidate.child_summaries.map((child) => child.run_id), ["child-arl"]);
@@ -292,6 +299,31 @@ test("ARL root setup and charter-only Workflow start/resume use a finite round l
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("ARL child freezes its parent's local acceptance instead of the root stop target",()=>{
+  const root=tempRoot();
+  try {
+    const input=baseInput(root,"root-local","setup:local");delete input.budget;
+    input.mode="auto_research_loop";input.max_iterations=2;
+    fs.writeFileSync(path.join(root,"CLAUDE.md"),"## Metric Target\nprimary: 0.8 score\ndirection: higher_better\ntolerance: 0.1\n");
+    const setup=setupRootRun(input),charter=setup.root_charter;
+    const execution_root=path.join(root,"execution");
+    startAutoResearchRun({execution_root,project_root:root,outer_run_id:"root-local",parent_run_id:null,depth:0,scope_path:"/"});
+    const content={problem:"Improve main",expected_output:"A measured candidate",evidence_refs:[],constraints:{},input_snapshot_refs:[],baseline_ref:"W_0",baseline_sha256:charter.baseline_sha256,optimizable_scope:[],resource_inventory_sha256:charter.resource_inventory_sha256,resource_inventory_ref:charter.resource_inventory_ref,policy_revision:charter.policy_revision,code_baseline_sha256:charter.code_baseline_sha256,measurement:{validator_ref:"validator:main"}};
+    const plan=planExperimentBridge({project_root:root,run:{run_id:"root-local",depth:0,scope_path:"/"},charter,baseline:readBaselineScope(root,"root-local"),resource_inventory:readResourceInventory(root,"root-local"),strategy_reason:"Local goal",positions:[{position_id:"main",child_run_id:"child-local",execution_plan:{method:"Improve main"},resource_request:{platform_id:"gpu-a"},charter:content,acceptance:{metric:{name:"score",direction:"higher_better",threshold:.95}}}]});
+    materializeBridgeChildren(root,plan);
+    const child=readRun(root,"child-local");
+    const identity={execution_root,project_root:root,outer_run_id:child.run_id,parent_run_id:child.parent_run_id,depth:child.depth,scope_path:child.scope_path};
+    startAutoResearchRun(identity);
+    assert.equal(readFrozenPolicy(root,"root-local").metric.target,.8);
+    const policy=readFrozenPolicy(root,"child-local");
+    assert.equal(policy.metric.target,.95);assert.equal(policy.metric.tolerance,0);
+    assert.equal(policy.metric.name,"score");assert.equal(policy.max_iterations,2);
+    assert.equal(policy.tester_facility_sha256,readFrozenPolicy(root,"root-local").tester_facility_sha256);
+    resumeAutoResearchRun(identity);
+    assert.equal(readFrozenPolicy(root,"child-local").metric.target,.95);
+  } finally {fs.rmSync(root,{recursive:true,force:true});}
 });
 
 test("ARL exhausted execution repair fails the run and names where it failed", () => {

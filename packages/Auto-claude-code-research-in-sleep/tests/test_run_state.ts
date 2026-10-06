@@ -1582,8 +1582,8 @@ test("contract: result-to-claim writes experiments with real add_experiment CLI 
   );
   assert.ok(declared.has("--slug"), "sanity: parsed the option list");
 
-  const callStart = r2c.indexOf('add_experiment research-wiki/');
-  assert.ok(callStart >= 0, "result-to-claim must invoke add_experiment");
+  const callStart = r2c.indexOf('add_experiment "$WIKI_ROOT"');
+  assert.ok(callStart >= 0, "result-to-claim must invoke add_experiment at the owning Wiki root");
   const call = r2c
     .slice(callStart, r2c.indexOf("\n\n", callStart))
     .split("\n")
@@ -1593,11 +1593,11 @@ test("contract: result-to-claim writes experiments with real add_experiment CLI 
   for (const flag of passed) {
     assert.ok(declared.has(flag), `result-to-claim passes ${flag}, which add_experiment does not declare`);
   }
-  for (const required of ["--slug", "--idea", "--verdict", "--confidence", "--metrics", "--reasoning", "--provenance"]) {
+  for (const required of ["--slug", "--idea", "--verdict", "--confidence", "--metrics", "--reasoning", "--provenance", "--project", "--run-id", "--iteration", "--gate-metric", "--gate-metric-name", "--test-result", "--test-audit"]) {
     assert.ok(passed.includes(required), `experiment wiki write must pass ${required}`);
   }
   assert.ok(passed.includes("--update-on-exist"),
-    "a re-judge must overwrite the stale verdict, not fail on an existing node");
+    "an unclaimed experiment may refresh its stale verdict while judged evidence stays immutable");
 
   // The loop must not have kept a competing copy of this write.
   const loop = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
@@ -3097,8 +3097,10 @@ test("contract: auto-review-loop's result-to-claim dispatch is mandatory in work
     "a failed dispatch must fail the receipt, not pass with the wiki write silently skipped");
   assert.ok(step6.includes("chosen_idea_id"),
     "the dispatch must forward the loop's idea id");
-  assert.ok(step6.includes("iter-<iteration>"),
-    "the dispatch must pin the experiment slug so re-judging overwrites instead of duplicating");
+  assert.ok(step6.includes("request.experiment_id"),
+    "the dispatch must pin the final tested experiment revision");
+  assert.ok(step6.includes("new request/test id and experiment revision"),
+    "changed evidence must retain old claims and use a new tested revision");
   assert.ok(step6.toLowerCase().includes("not to prepend"),
     "the dispatch must warn against re-prefixing the already-canonical idea id");
 });

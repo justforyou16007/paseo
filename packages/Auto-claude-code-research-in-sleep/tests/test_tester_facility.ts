@@ -130,6 +130,13 @@ try {
   };
   writeStateJsonAtomic(review, reviewValue);
   auditTesterResult(resultPath, review);
+  const recordedAudit = readStateFile<any>(auditPath);
+  recordedAudit.completed_at = "2026-01-01T00:00:00.000Z";
+  writeStateJsonAtomic(auditPath, recordedAudit);
+  const originalAuditBytes = fs.readFileSync(auditPath, "utf8");
+  assert.deepEqual(auditTesterResult(resultPath, review), recordedAudit);
+  assert.equal(fs.readFileSync(auditPath, "utf8"), originalAuditBytes,
+    "recovering a completed audit must retain its exact evidence digest");
   readAuditedTesterResult(resultPath, auditPath, {
     run_id: "root-run",
     iteration: 1,

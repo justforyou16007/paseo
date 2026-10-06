@@ -1,4 +1,9 @@
 import { canonicalJsonSha256 } from "./canonical-json.js";
+import {
+  auditedTesterMetric,
+  verifyTesterDeliverables,
+  type TesterDeliverables,
+} from "./tester-deliverables.js";
 /**
  * Exporting a run's best iteration as its result package.
  *
@@ -71,6 +76,10 @@ export interface ExportCandidate {
   tester_metrics: Record<string, number> | null;
   tester_definition_sha256: string | null;
   gate_metric: number | null;
+  test_result_path?: string;
+  test_audit_path?: string;
+  artifact?: { ref: string; sha256: string };
+  deliverables?: TesterDeliverables;
 }
 
 export interface ResultExportInput {
@@ -121,6 +130,10 @@ function candidateFromPage(page: WikiPage, runId: string): ExportCandidate | nul
       ? (data.tester_metrics as Record<string, number>)
       : null;
   if (testerMetrics !== null && data.tester_audit_status !== "pass") return null;
+  let tested: Pick<
+    ExportCandidate,
+    "test_result_path" | "test_audit_path" | "artifact" | "deliverables"
+  > = {};
   if (testerMetrics !== null) {
     const { result } = readAuditedTesterResult(
       String(data.test_result_path),
@@ -134,8 +147,23 @@ function candidateFromPage(page: WikiPage, runId: string): ExportCandidate | nul
       data.test_audit_sha256 !== evidenceFile(String(data.test_audit_path)).sha256
     )
       failA1("TESTER_METRIC_MISMATCH", "Wiki page differs from its audited benchmark result");
+    // Historical pages predate explicit gate bindings. New Wiki writes always
+    // carry the name; ARL exports additionally check their frozen target below.
+    if (
+      typeof data.gate_metric === "number" &&
+      typeof data.gate_metric_name === "string" &&
+      data.gate_metric !== auditedTesterMetric(result, data.gate_metric_name)
+    )
+      failA1("TESTER_METRIC_MISMATCH", "Wiki gate metric differs from audited tester evidence");
+    tested = {
+      test_result_path: String(data.test_result_path),
+      test_audit_path: String(data.test_audit_path),
+      artifact: result.request.artifact,
+      deliverables: result.request.deliverables,
+    };
   }
   return {
+    ...tested,
     page_id: page.id,
     iteration: data.iteration,
     idea_id: typeof data.idea_id === "string" && data.idea_id !== "" ? data.idea_id : null,
@@ -461,14 +489,6 @@ export function planResultExport(input: Omit<ResultExportInput, "review">): Resu
       ranked: [],
     };
   }
-  const iterations = allCandidates.map((candidate) => candidate.iteration);
-  if (new Set(iterations).size !== iterations.length)
-    failA1(
-      "DUPLICATE_ID",
-      "two experiment pages claim the same iteration",
-      "result_export.wiki_root",
-    );
-
   const frozenPath = runOwnedPath(projectRoot, input.run_id, "frozen-policy.json");
   const frozen = fs.existsSync(frozenPath) ? readFrozenPolicy(projectRoot, input.run_id) : null;
   if (frozen === null && fs.existsSync(workflowDashboardPath(projectRoot, input.run_id)))
@@ -476,6 +496,8 @@ export function planResultExport(input: Omit<ResultExportInput, "review">): Resu
   let direction: "higher_better" | "lower_better";
   let dashboardByIteration: Map<number, number>;
   let terminationReason: ResultTerminationReason | undefined;
+  const assessments = new Map<number, { result_path: string; audit_path: string }>();
+  let requireRecordedAssessment = frozen?.mode === "auto_research_loop";
   if (frozen?.mode === "auto_research_loop") {
     const workflowDashboard = readStateFile<Record<string, unknown>>(
       workflowDashboardPath(projectRoot, input.run_id),
@@ -484,6 +506,20 @@ export function planResultExport(input: Omit<ResultExportInput, "review">): Resu
     if (workflowDashboard.run_id !== input.run_id || runtime.outer_run_id !== input.run_id)
       failA1("IDENTITY_MISMATCH", "Workflow dashboard and runtime refer to a different run");
     direction = frozen.metric.direction;
+    for (const candidate of allCandidates) {
+      if (!candidate.test_result_path || !candidate.test_audit_path)
+        failA1("TESTER_AUDIT_REQUIRED", "ARL export cannot use an unaudited historical experiment");
+      const { result } = readAuditedTesterResult(
+        candidate.test_result_path,
+        candidate.test_audit_path,
+        { run_id: input.run_id, iteration: candidate.iteration },
+      );
+      if (
+        candidate.gate_metric !==
+        auditedTesterMetric(result, frozen.metric.name, frozen.metric.direction)
+      )
+        failA1("TESTER_METRIC_MISMATCH", "ARL Wiki gate differs from the frozen audited metric");
+    }
     dashboardByIteration = new Map();
     for (const cycle of runtime.cycle_history) {
       if (cycle.metric_value === undefined)
@@ -500,6 +536,19 @@ export function planResultExport(input: Omit<ResultExportInput, "review">): Resu
         const patch = receipt.dashboard_patch as Record<string, unknown> | null;
         if (patch?.["metric.current"] !== cycle.metric_value)
           failA1("GATE_METRIC_MISMATCH", "Workflow summary differs from its review receipt");
+        const summary = receipt.summary as Record<string, unknown>;
+        if (
+          typeof summary?.test_result_path !== "string" ||
+          typeof summary?.test_audit_path !== "string"
+        )
+          failA1(
+            "TESTER_AUDIT_REQUIRED",
+            "completed ARL review must identify its final assessment",
+          );
+        assessments.set(cycle.outer_iteration, {
+          result_path: path.resolve(summary.test_result_path),
+          audit_path: path.resolve(summary.test_audit_path),
+        });
       }
       if (cycle.metric_value !== null)
         dashboardByIteration.set(cycle.outer_iteration, cycle.metric_value);
@@ -521,6 +570,18 @@ export function planResultExport(input: Omit<ResultExportInput, "review">): Resu
       runOwnedPath(projectRoot, input.run_id, "dashboard.json"),
     );
     direction = dashboard.direction;
+    if (persistedDashboard.tester_facility_sha256 !== undefined) {
+      requireRecordedAssessment = true;
+      for (const assessment of (persistedDashboard.tested_iterations ?? []) as Array<{
+        iteration: number;
+        result_path: string;
+        audit_path: string;
+      }>)
+        assessments.set(assessment.iteration, {
+          result_path: path.resolve(assessment.result_path),
+          audit_path: path.resolve(assessment.audit_path),
+        });
+    }
     dashboardByIteration = new Map(dashboard.history.map((entry) => [entry.iter, entry.value]));
     if (persistedDashboard.outcome === "no_proposal") terminationReason = "no_proposal";
     else if (
@@ -529,7 +590,29 @@ export function planResultExport(input: Omit<ResultExportInput, "review">): Resu
     )
       terminationReason = persistedDashboard.stop_reason;
   }
-  const candidates = allCandidates.map((candidate) => ({
+  const selected = allCandidates.filter((candidate) => {
+    const assessment = assessments.get(candidate.iteration);
+    if (assessment === undefined) return !requireRecordedAssessment;
+    return (
+      candidate.test_result_path !== undefined &&
+      candidate.test_audit_path !== undefined &&
+      path.resolve(candidate.test_result_path) === assessment.result_path &&
+      path.resolve(candidate.test_audit_path) === assessment.audit_path
+    );
+  });
+  if (!selected.length)
+    failA1(
+      "TESTER_RESULT_BINDING_MISMATCH",
+      "Wiki has no experiment matching the completed assessment",
+    );
+  const iterations = selected.map((candidate) => candidate.iteration);
+  if (new Set(iterations).size !== iterations.length)
+    failA1(
+      "DUPLICATE_ID",
+      "two experiment pages claim the same completed assessment",
+      "result_export.wiki_root",
+    );
+  const candidates = selected.map((candidate) => ({
     ...candidate,
     gate_metric: reconcileGateMetric(candidate, dashboardByIteration, "result_export.wiki_root"),
   }));
@@ -540,6 +623,15 @@ export function planResultExport(input: Omit<ResultExportInput, "review">): Resu
   const eligible = tester === null ? candidates : tester.judged;
   const ranked = rankCandidates(eligible, tester === null ? null : tester.declared, direction);
   const winner = ranked[0]!;
+  if (frozen?.mode === "auto_research_loop" && winner.tester_metrics === null)
+    failA1(
+      "TESTER_AUDIT_REQUIRED",
+      "ARL exports require an audited experiment and its tested deliverables",
+    );
+  const deliverables =
+    winner.tester_metrics === null
+      ? null
+      : verifyTesterDeliverables(projectRoot, input.run_id, winner.artifact!, winner.deliverables);
 
   const localMetrics: Record<string, number> = {};
   for (const [name, value] of Object.entries(winner.tester_metrics ?? {}))
@@ -577,6 +669,13 @@ export function planResultExport(input: Omit<ResultExportInput, "review">): Resu
     ...(terminationReason === undefined ? {} : { termination_reason: terminationReason }),
     ...(failure === null ? {} : { failure }),
     input_snapshot_sha256: contract.identity_material.input_snapshot_sha256,
+    ...(deliverables === null
+      ? {}
+      : {
+          output_hashes: deliverables.output_hashes,
+          execution_plan_ref: deliverables.execution_plan_ref ?? null,
+          interface_record_ref: deliverables.interface_record_ref ?? null,
+        }),
     best_idea_ref: winner.idea_id,
     evidence_refs: [`experiment:${winner.page_id}`],
     local_metrics: localMetrics,
