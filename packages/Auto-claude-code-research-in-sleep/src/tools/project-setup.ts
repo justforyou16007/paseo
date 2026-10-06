@@ -112,7 +112,7 @@ function detectProjectBasics(root: string): SetupStage {
     ready: false,
     evidence: [],
     reason: `missing: ${absent.join(", ")}`,
-    next: "/research-setup",
+    next: "/aris-setup: edit and confirm the project module",
   };
 }
 
@@ -135,7 +135,7 @@ function detectMetricTarget(root: string): SetupStage {
     ready: false,
     evidence: [],
     reason: read.reason,
-    next: "fill '## Metric Target' in CLAUDE.md (templates/CLAUDE_MD_TEMPLATE.md has the block)",
+    next: "/aris-setup: edit and confirm the metric module",
     blocked_by: read.status === "missing_file" ? ["project_basics"] : undefined,
   };
 }
@@ -169,7 +169,7 @@ function detectExperimentEnv(root: string): SetupStage {
     ready: false,
     evidence: [],
     reason,
-    next: "/experiment-env-manager — mode: setup",
+    next: "/aris-setup: review and confirm the environment PRD, then configure it",
     blocked_by: ["project_basics"],
   };
 }
@@ -183,7 +183,7 @@ function detectTesterFacility(root: string): SetupStage {
       ready: false,
       evidence: [],
       reason: `no tester facility config at ${path.relative(root, configPath)}`,
-      next: "/aris-setup Phase 3: /tester-setup",
+      next: "/aris-setup: edit and confirm the tester module, then prepare facilities",
     };
   }
   try {
@@ -206,7 +206,7 @@ function detectTesterFacility(root: string): SetupStage {
       ready: false,
       evidence: [],
       reason: `tester facility config is invalid: ${(error as Error).message}`,
-      next: "re-run tester-facility-cli.js setup",
+      next: "/aris-setup: review the tester module and prepare matching facilities",
     };
   }
 }
@@ -361,7 +361,7 @@ function inferThresholds(root: string, out: SetupInference): void {
  * env.json describes how to reach the machine and start a job. It does not
  * describe the hardware: there is no accelerator model, no memory size, no
  * quota, no wall-clock ceiling and no endpoint list anywhere in the v2 schema.
- * Those five are asked, not guessed -- they are what `classifyResourceRequest`
+ * Those five are owner edits, not guessed -- they are what `classifyResourceRequest`
  * later uses to tell "the plan asked for something outside the frozen
  * inventory" (a research negative) from "the machine was unreachable" (an
  * infrastructure fault), and a fabricated inventory makes that call wrong in a
@@ -375,7 +375,7 @@ function inferResource(root: string, out: SetupInference): void {
     out.needs_owner.push({
       item: "resource",
       field: "platforms",
-      why: `no readable ${relEnv}; run /experiment-env-manager first`,
+      why: `no readable ${relEnv}; review the environment module in /aris-setup`,
     });
     return;
   }

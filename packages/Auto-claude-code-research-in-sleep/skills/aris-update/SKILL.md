@@ -423,7 +423,14 @@ PROJECT_SLUG=$(basename "$ROOT" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\
 
 # Setup state
 SETUP_COMPLETE=false
-if [ -f .aris/setup-state.json ]; then
+if [ -f .aris/global-setup-state.json ]; then
+  SETUP_RUN_ID=$(jq -r '.run_id // empty' .aris/global-setup-state.json)
+  if [ -n "$SETUP_RUN_ID" ] && [ -f .aris/dist/tools/project-setup-cli.js ] &&
+     node .aris/dist/tools/project-setup-cli.js status --project "$PWD" --run-id "$SETUP_RUN_ID" >/dev/null 2>&1; then
+    SETUP_COMPLETE=true
+  fi
+elif [ -f .aris/setup-state.json ]; then
+  # Migration display only; new setup writes the unified review state.
   SETUP_COMPLETE=$(jq -r '.completed // false' .aris/setup-state.json 2>/dev/null)
 fi
 
@@ -502,11 +509,11 @@ print_adaptation() {
           echo ""
         fi
         ;;
-      research-setup)
+      aris-setup|research-setup|tester-setup)
         if [ "$SETUP_COMPLETE" = "true" ]; then
           HAS_ADVICE=true
           echo "  ✓ $name updated — completed setup is not affected."
-          echo "    New projects will use the updated setup wizard."
+          echo "    Setup uses one modular configuration review with grouped edits and final confirmation."
           echo ""
         fi
         ;;

@@ -415,7 +415,7 @@ if the owning WIKI_ROOT is active:
     # 4. Problem entities: the failure analysis becomes the next iteration's search seed.
     #    Sub-problems attach to the run's root problem via --parent, so /idea-creator's
     #    Phase 0 read of query_pack's "Open Problems" section picks them up next round.
-    #    Every problem is born here or at /research-setup (root) or /kill-argument
+    #    Every problem is born here or at /aris-setup (root) or /kill-argument
     #    (attack-derived) — never freehand markdown.
     if verdict == "partial" or verdict == "no":
           # one call per distinct unresolved cause named in the Codex reasoning /

@@ -16,10 +16,10 @@
         <mxCell id="ov-check" value="&lt;b&gt;项目基础齐全？&lt;/b&gt;&lt;br&gt;CLAUDE.md + RESEARCH_BRIEF.md + research-wiki" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;spacing=5;" vertex="1" parent="ov-1">
           <mxGeometry x="760" y="200" width="280" height="100" as="geometry" />
         </mxCell>
-        <mxCell id="ov-research-setup" value="&lt;b&gt;/research-setup&lt;/b&gt;&lt;br&gt;交互式问答，生成项目基础与 Baseline Reproduction 信息&lt;br&gt;输出：CLAUDE.md、RESEARCH_BRIEF.md、research-wiki、setup-state" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="ov-1">
+        <mxCell id="ov-research-setup" value="&lt;b&gt;兼容名称&lt;/b&gt;&lt;br&gt;/research-setup、/tester-setup 与 /aris-setup 同一流程，无独立问答" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="ov-1">
           <mxGeometry x="70" y="350" width="520" height="130" as="geometry" />
         </mxCell>
-        <mxCell id="ov-aris-setup" value="&lt;b&gt;/aris-setup&lt;/b&gt;&lt;br&gt;按五阶段准备正式运行；Phase 3 执行 /tester-setup&lt;br&gt;输出：可验证的 setup 状态与 root setup 输入" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="ov-1">
+        <mxCell id="ov-aris-setup" value="&lt;b&gt;/aris-setup&lt;/b&gt;&lt;br&gt;八模块配置总览 → 集中修改/刷新 → 最终确认&lt;br&gt;确认后执行研究/环境/tester设置并封存root" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="ov-1">
           <mxGeometry x="650" y="350" width="520" height="130" as="geometry" />
         </mxCell>
         <mxCell id="ov-ready" value="&lt;b&gt;正式运行就绪&lt;/b&gt;&lt;br&gt;Metric Target、实验环境、tester 设施、root charter 均可验证&lt;br&gt;→ 允许启动 /auto-research-loop" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;spacing=8;" vertex="1" parent="ov-1">
@@ -55,13 +55,10 @@
         <mxCell id="ov-e1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="ov-1" source="ov-start" target="ov-check">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="ov-e2" value="否：先初始化" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;entryX=1;entryY=0.333333;entryDx=0;entryDy=0;" edge="1" parent="ov-1" source="ov-check" target="ov-research-setup">
+        <mxCell id="ov-e2" value="否：先初始化" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;entryX=1;entryY=0.333333;entryDx=0;entryDy=0;" edge="1" parent="ov-1" source="ov-check" target="ov-aris-setup">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="ov-e3" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" edge="1" parent="ov-1" source="ov-check" target="ov-aris-setup">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="ov-e4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;exitX=1;exitY=0.666667;exitDx=0;exitDy=0;" edge="1" parent="ov-1" source="ov-research-setup" target="ov-aris-setup">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="ov-e5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="ov-1" source="ov-aris-setup" target="ov-ready">
@@ -140,22 +137,22 @@
         <mxCell id="set-start" value="&lt;b&gt;Phase 0：status / infer&lt;/b&gt;&lt;br&gt;读取证据、全局 setup state 与当前 run 状态" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;spacing=8;" vertex="1" parent="set-1">
           <mxGeometry x="620" y="120" width="560" height="90" as="geometry" />
         </mxCell>
-        <mxCell id="set-g1" value="&lt;b&gt;1 project_basics&lt;/b&gt;&lt;br&gt;CLAUDE.md + RESEARCH_BRIEF.md + 非空 research-wiki&lt;br&gt;负责人：/research-setup" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;spacing=7;" vertex="1" parent="set-1">
+        <mxCell id="set-g1" value="&lt;b&gt;1 project_basics&lt;/b&gt;&lt;br&gt;CLAUDE.md + RESEARCH_BRIEF.md + research-wiki&lt;br&gt;统一 /aris-setup 在确认后生成" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;spacing=7;" vertex="1" parent="set-1">
           <mxGeometry x="40" y="300" width="260" height="150" as="geometry" />
         </mxCell>
-        <mxCell id="set-g2" value="&lt;b&gt;2 metric_target&lt;/b&gt;&lt;br&gt;CLAUDE.md 的 active ## Metric Target 可解析&lt;br&gt;负责人：/research-setup 或模板" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;spacing=7;" vertex="1" parent="set-1">
+        <mxCell id="set-g2" value="&lt;b&gt;2 metric_target&lt;/b&gt;&lt;br&gt;active Metric Target 可解析&lt;br&gt;来自统一配置 metric 模块" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;spacing=7;" vertex="1" parent="set-1">
           <mxGeometry x="340" y="300" width="260" height="150" as="geometry" />
         </mxCell>
         <mxCell id="set-g3" value="&lt;b&gt;3 experiment_env&lt;/b&gt;&lt;br&gt;env.json.status=complete 且 scripts/ 存在&lt;br&gt;负责人：/experiment-env-manager" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;spacing=7;" vertex="1" parent="set-1">
           <mxGeometry x="640" y="300" width="260" height="150" as="geometry" />
         </mxCell>
-        <mxCell id="set-g4" value="&lt;b&gt;4 tester_facility&lt;/b&gt;&lt;br&gt;.aris/tester-config.json + ready setup 回执&lt;br&gt;负责人：/tester-setup" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;spacing=7;" vertex="1" parent="set-1">
+        <mxCell id="set-g4" value="&lt;b&gt;4 tester_facility&lt;/b&gt;&lt;br&gt;tester-config.json + matching ready receipt&lt;br&gt;确认后执行 tester-facility-cli setup" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;spacing=7;" vertex="1" parent="set-1">
           <mxGeometry x="940" y="300" width="260" height="150" as="geometry" />
         </mxCell>
-        <mxCell id="set-g6" value="&lt;b&gt;5 root_charter&lt;/b&gt;&lt;br&gt;run.json + charter.json&lt;br&gt;负责人：/aris-setup Phase 5 + workflow-tools-cli root-setup" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;spacing=7;" vertex="1" parent="set-1">
+        <mxCell id="set-g6" value="&lt;b&gt;5 root_charter&lt;/b&gt;&lt;br&gt;run.json + charter.json&lt;br&gt;统一setup组装，root-setup为唯一写入者" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;spacing=7;" vertex="1" parent="set-1">
           <mxGeometry x="1240" y="300" width="260" height="150" as="geometry" />
         </mxCell>
-        <mxCell id="set-note" value="&lt;b&gt;/aris-setup 的职责&lt;/b&gt;&lt;br&gt;只负责顺序、确认、路由。project-setup-cli.js 负责 status / infer / assemble；helper 负责各自的验证与写入。不能用本地默认值替代缺失的 owner 输入。" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;spacing=8;" vertex="1" parent="set-1">
+        <mxCell id="set-note" value="&lt;b&gt;统一配置交互&lt;/b&gt;&lt;br&gt;分模块展示当前值/来源，选择项给出选项和建议，文本项给出建议；集中修改后刷新全部缺项/冲突，最后确认整份配置。确认前不安装或封存。" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;spacing=8;" vertex="1" parent="set-1">
           <mxGeometry x="40" y="560" width="520" height="170" as="geometry" />
         </mxCell>
         <mxCell id="set-artifacts" value="&lt;b&gt;确认并装配&lt;/b&gt;&lt;br&gt;.aris/global-setup-state.json&lt;br&gt;.aris/root-setup-answers.json → root-setup-input.json&lt;br&gt;六项 setup item 齐全后才允许封存" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=12;spacing=8;" vertex="1" parent="set-1">
@@ -210,7 +207,7 @@
       </root>
     </mxGraphModel>
   </diagram>
-  <diagram id="research-setup-env" name="02 research-setup 与环境管理">
+  <diagram id="research-setup-env" name="02 统一配置与环境管理">
     <mxGraphModel dx="1800" dy="1350" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1350" math="0" shadow="0" background="#ffffff">
       <root>
         <mxCell id="env-0" />
@@ -218,43 +215,43 @@
         <mxCell id="env-title" value="&lt;b&gt;项目初始化与实验环境准备&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;fontSize=22;fontColor=#1f2937;" vertex="1" parent="env-1">
           <mxGeometry x="40" y="20" width="1720" height="40" as="geometry" />
         </mxCell>
-        <mxCell id="env-subtitle" value="左侧由 /research-setup 收集研究信息；右侧由 /experiment-env-manager 独占环境脚本生成、审计和修复。" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#6b7280;" vertex="1" parent="env-1">
+        <mxCell id="env-subtitle" value="左侧统一 /aris-setup 审阅全部配置；右侧环境worker读取已确认PRD，负责配置、审计和修复。" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#6b7280;" vertex="1" parent="env-1">
           <mxGeometry x="40" y="60" width="1720" height="30" as="geometry" />
         </mxCell>
-        <mxCell id="env-rs-lane" value="&lt;b&gt;/research-setup：交互式研究项目向导&lt;/b&gt;" style="swimlane;html=1;startSize=36;horizontal=1;collapsible=0;fillColor=#f8fafc;strokeColor=#9673a6;container=1;pointerEvents=0;verticalAlign=top;align=left;spacingTop=8;spacingLeft=12;fontSize=14;" vertex="1" parent="env-1">
+        <mxCell id="env-rs-lane" value="&lt;b&gt;/aris-setup：统一配置总览与执行&lt;/b&gt;" style="swimlane;html=1;startSize=36;horizontal=1;collapsible=0;fillColor=#f8fafc;strokeColor=#9673a6;container=1;pointerEvents=0;verticalAlign=top;align=left;spacingTop=8;spacingLeft=12;fontSize=14;" vertex="1" parent="env-1">
           <mxGeometry x="40" y="110" width="820" height="1120" as="geometry" />
         </mxCell>
-        <mxCell id="env-rs-start" value="&lt;b&gt;Phase 0&lt;/b&gt;&lt;br&gt;pre-flight、恢复检测、读取已有 artifacts、判断 language 与 mode" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="env-rs-lane">
+        <mxCell id="env-rs-start" value="&lt;b&gt;读取当前配置&lt;/b&gt;&lt;br&gt;当前项目文件、环境PRD、tester、root输入；恢复统一草稿" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="env-rs-lane">
           <mxGeometry x="40" y="60" width="740" height="75" as="geometry" />
         </mxCell>
-        <mxCell id="env-rs-qa1" value="&lt;b&gt;Phase 1–3&lt;/b&gt;&lt;br&gt;项目基本信息、研究背景、已有论文/实验/结果；prior work 可跳过" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;spacing=8;" vertex="1" parent="env-rs-lane">
+        <mxCell id="env-rs-qa1" value="&lt;b&gt;完整分模块总览&lt;/b&gt;&lt;br&gt;研究、指标、基线、环境、benchmark、模型角色、运行限制&lt;br&gt;选项/文本建议与来源" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;spacing=8;" vertex="1" parent="env-rs-lane">
           <mxGeometry x="40" y="165" width="740" height="95" as="geometry" />
         </mxCell>
-        <mxCell id="env-rs-qa2" value="&lt;b&gt;Phase 4–6&lt;/b&gt;&lt;br&gt;环境需求、early stop、研究目标与 metric、reference knowledge、Paseo executor/reviewer 配置" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;spacing=8;" vertex="1" parent="env-rs-lane">
+        <mxCell id="env-rs-qa2" value="&lt;b&gt;集中修改&lt;/b&gt;&lt;br&gt;用户一次描述多项修改或直接编辑JSON草稿；没有逐项问答" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;spacing=8;" vertex="1" parent="env-rs-lane">
           <mxGeometry x="40" y="290" width="740" height="105" as="geometry" />
         </mxCell>
-        <mxCell id="env-rs-artifacts" value="&lt;b&gt;Phase 7&lt;/b&gt;&lt;br&gt;生成 CLAUDE.md、RESEARCH_BRIEF.md、research-wiki、.gitignore、.aris/setup-state.json；创建 root problem" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;spacing=8;" vertex="1" parent="env-rs-lane">
+        <mxCell id="env-rs-artifacts" value="&lt;b&gt;刷新完整配置&lt;/b&gt;&lt;br&gt;展示全部当前值和全部缺项/冲突；修改使旧确认失效" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;spacing=8;" vertex="1" parent="env-rs-lane">
           <mxGeometry x="40" y="425" width="740" height="105" as="geometry" />
         </mxCell>
-        <mxCell id="env-rs-review" value="&lt;b&gt;Phase 7.4&lt;/b&gt;&lt;br&gt;configuration review checklist：确认或调整 quick-mode defaults" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;spacing=8;" vertex="1" parent="env-rs-lane">
+        <mxCell id="env-rs-review" value="&lt;b&gt;最后确认&lt;/b&gt;&lt;br&gt;用户确认最新整份配置；prepare生成对应执行输入" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;spacing=8;" vertex="1" parent="env-rs-lane">
           <mxGeometry x="40" y="560" width="740" height="80" as="geometry" />
         </mxCell>
-        <mxCell id="env-rs-dispatch" value="&lt;b&gt;Phase 7.5&lt;/b&gt;&lt;br&gt;通过 Paseo 派发 /experiment-env-manager；等待其配置与审计完成" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;spacing=8;" vertex="1" parent="env-rs-lane">
+        <mxCell id="env-rs-dispatch" value="&lt;b&gt;确认后生成和配置&lt;/b&gt;&lt;br&gt;研究文档/Wiki/基线说明；Paseo环境worker读取confirmed PRD，无新问答" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;spacing=8;" vertex="1" parent="env-rs-lane">
           <mxGeometry x="40" y="670" width="740" height="90" as="geometry" />
         </mxCell>
-        <mxCell id="env-rs-baseline" value="&lt;b&gt;Phase 7.6&lt;/b&gt;&lt;br&gt;把 baseline 方法、代码位置、命令、期望 metric 写进 RESEARCH_BRIEF；不执行复现" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="env-rs-lane">
+        <mxCell id="env-rs-baseline" value="&lt;b&gt;tester设施与root&lt;/b&gt;&lt;br&gt;helper安装/健康检查/smoke，再组装封存root；setup不复现实验或发布分数" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="env-rs-lane">
           <mxGeometry x="40" y="790" width="740" height="90" as="geometry" />
         </mxCell>
-        <mxCell id="env-rs-end" value="&lt;b&gt;Phase 8&lt;/b&gt;&lt;br&gt;总结产物、提示下一步 /aris-setup 或 /auto-research-loop" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;spacing=8;" vertex="1" parent="env-rs-lane">
+        <mxCell id="env-rs-end" value="&lt;b&gt;就绪与交接&lt;/b&gt;&lt;br&gt;五个执行阶段均就绪 → /auto-research-loop；后续 tester-test / tester-audit" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;spacing=8;" vertex="1" parent="env-rs-lane">
           <mxGeometry x="40" y="920" width="740" height="75" as="geometry" />
         </mxCell>
         <mxCell id="env-em-lane" value="&lt;b&gt;/experiment-env-manager：环境配置、审计与修复的唯一入口&lt;/b&gt;" style="swimlane;html=1;startSize=36;horizontal=1;collapsible=0;fillColor=#f8fafc;strokeColor=#d79b00;container=1;pointerEvents=0;verticalAlign=top;align=left;spacingTop=8;spacingLeft=12;fontSize=14;" vertex="1" parent="env-1">
           <mxGeometry x="940" y="110" width="820" height="1120" as="geometry" />
         </mxCell>
-        <mxCell id="env-em-start" value="&lt;b&gt;入口&lt;/b&gt;&lt;br&gt;mode=setup / error-report / audit；调用者可为 /research-setup、/aris-setup、/auto-research-loop" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;spacing=8;" vertex="1" parent="env-em-lane">
+        <mxCell id="env-em-start" value="&lt;b&gt;入口&lt;/b&gt;&lt;br&gt;setup：统一流程的已确认PRD；error-report / audit：已有环境的运行时修复" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;spacing=8;" vertex="1" parent="env-em-lane">
           <mxGeometry x="40" y="60" width="740" height="85" as="geometry" />
         </mxCell>
-        <mxCell id="env-em-prd" value="&lt;b&gt;收集需求&lt;/b&gt;&lt;br&gt;把路径、依赖、资源、运行命令、错误采集、结果采集、监控和 baseline 组织成 PRD" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;spacing=8;" vertex="1" parent="env-em-lane">
+        <mxCell id="env-em-prd" value="&lt;b&gt;验证并使用PRD&lt;/b&gt;&lt;br&gt;verify确认配置快照与当前确认一致；复制准确PRD，不重新收集需求" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;spacing=8;" vertex="1" parent="env-em-lane">
           <mxGeometry x="40" y="180" width="740" height="95" as="geometry" />
         </mxCell>
         <mxCell id="env-em-config" value="&lt;b&gt;dispatch /experiment-env-configuration&lt;/b&gt;&lt;br&gt;生成 env.json 与 scripts；状态先为 pending_audit" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;spacing=8;" vertex="1" parent="env-em-lane">
@@ -272,7 +269,7 @@
         <mxCell id="env-em-repair" value="&lt;b&gt;FAIL&lt;/b&gt;&lt;br&gt;按 patch_targets 修复并重新配置、重新审计" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;spacing=8;" vertex="1" parent="env-em-lane">
           <mxGeometry x="40" y="895" width="350" height="90" as="geometry" />
         </mxCell>
-        <mxCell id="env-em-human" value="&lt;b&gt;无法自动修复&lt;/b&gt;&lt;br&gt;询问 owner、force-deploy 或停止；不伪造 complete" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;spacing=8;" vertex="1" parent="env-em-lane">
+        <mxCell id="env-em-human" value="&lt;b&gt;无法自动修复&lt;/b&gt;&lt;br&gt;setup返回全部缺陷至统一配置总览，修改刷新后重新确认；不强制部署" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;spacing=8;" vertex="1" parent="env-em-lane">
           <mxGeometry x="430" y="895" width="350" height="90" as="geometry" />
         </mxCell>
         <mxCell id="env-r1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="env-1" source="env-rs-start" target="env-rs-qa1">
@@ -326,9 +323,11 @@
         <mxCell id="env-r17" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="env-1" source="env-rs-baseline" target="env-rs-end">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="env-source" value="依据：skills/research-setup/SKILL.md、skills/experiment-env-manager/SKILL.md、skills/experiment-env-configuration/SKILL.md、skills/experiment-env-audit/SKILL.md" style="text;html=1;align=left;verticalAlign=middle;fontSize=10;fontColor=#6b7280;" vertex="1" parent="env-1">
+        <mxCell id="env-source" value="依据：skills/aris-setup/SKILL.md、shared-references/unified-setup.md、experiment-env-manager/SKILL.md" style="text;html=1;align=left;verticalAlign=middle;fontSize=10;fontColor=#6b7280;" vertex="1" parent="env-1">
           <mxGeometry x="40" y="1270" width="1720" height="30" as="geometry" />
         </mxCell>
+        <mxCell id="env-edit-refresh" value="集中修改" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;" edge="1" parent="env-1" source="env-rs-artifacts" target="env-rs-qa2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="env-confirm-edit" value="继续修改" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;" edge="1" parent="env-1" source="env-rs-review" target="env-rs-qa2"><mxGeometry relative="1" as="geometry" /></mxCell>
       </root>
     </mxGraphModel>
   </diagram>

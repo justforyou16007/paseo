@@ -852,7 +852,7 @@ function requireObject(value: unknown, location: string): JsonObject {
   return value;
 }
 
-function normalizeThresholds(value: unknown): JsonObject {
+export function normalizeThresholds(value: unknown): JsonObject {
   const thresholds = requireObject(value, "validation_thresholds");
   const primary = presentField(thresholds, ["primary", "metric"]);
   if (primary === undefined)
@@ -901,7 +901,7 @@ function normalizeThresholds(value: unknown): JsonObject {
   return thresholds;
 }
 
-function normalizeOwnerLimitsForRoot(value: unknown): JsonObject {
+export function normalizeOwnerLimitsForRoot(value: unknown): JsonObject {
   const limits = requireObject(value, "owner_limits");
 
   if (

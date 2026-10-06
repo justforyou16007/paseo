@@ -20,7 +20,7 @@
 | 8 | 最优版本由导出阶段跨轮挑选，不是由某一轮自己宣称 | `result-export` 排名 | 已实现 |
 | 9 | 正式指标先测试再审计 | tester设施部署benchmark，测试和审计保留完整证据 | 已实现 |
 | 10 | Auto Research Loop 以必填轮数和指标目标停机 | root/child charter 启动 Workflow，评审收据进入 cycle summary，停机决定进入结果包 | 代码交接测试通过；现场 agent 派发仍需验证 |
-| 11 | 人配一个项目只需要一条命令，缺什么由检测器指出而不是靠记 | `/aris-setup` 编排六个阶段，`project-setup-cli.js status` 逐段判定并在没配全时退非零 | 已实现 |
+| 11 | 人配一个项目只需要一条命令，缺什么由检测器指出而不是靠记 | `/aris-setup` 展示八个配置模块，集中修改/刷新后最终确认；`status` 检查五个执行就绪阶段 | 已实现 |
 | 12 | 一个 run 的优化对象可以是"这个问题该怎么拆"，而不是某个实验 | 每一代的分解图先落盘再派子，改图要 tester 信号开 wave | 已实现 |
 
 ---
@@ -221,7 +221,7 @@ result package 的摘要绑定是关键：包由输入确定性构造，reviewer
 
 ## 7. tester设施与评测流程
 
-`/aris-setup`在实验环境准备好后调用`/tester-setup`。Setup确定benchmark版本、数据revision/split、样本数、指标及聚合口径、执行位置和产物接口，运行安装、健康检查与smoke测试，成功后记录ready状态和配置/依赖证据摘要。五个setup阶段为项目基础、指标目标、实验环境、tester设施、root charter。
+`/aris-setup`、`/research-setup`和`/tester-setup`使用同一套配置流程：按八个模块展示当前值、来源、选择项与建议，用户集中修改或编辑草稿，刷新时一次列出全部缺项和冲突，最后确认整份配置。确认后才生成研究文件、配置审计环境、通过helper安装benchmark设施并运行健康检查/smoke、封存root。环境worker读取已确认PRD，不再逐项询问；tester不再派发独立setup skill。五个执行就绪阶段仍为项目基础、指标目标、实验环境、tester设施、root charter。
 
 后续评测复用设施：`/tester-test`执行完整benchmark，保留样本结果、日志、配置、产物摘要和持久任务状态；`/tester-audit`独立核查协议、评分、覆盖率和可比性。`result-to-claim`提交正式Wiki指标之前必须提供这两步的当前结果和通过审计。Wiki事件写入和结果导出均验证绑定及证据摘要，防止混用迭代或改动后继续采用旧审计。
 

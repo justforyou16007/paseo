@@ -1,7 +1,7 @@
 ---
 name: experiment-env-manager
 description: 'Sole entry point for experiment environment lifecycle: baseline creation, runtime error handling, and on-demand audit. Dispatches /experiment-env-configuration for script generation and /experiment-env-audit for validation. Manages repair loops until the environment passes or requires human intervention. Use when user says "set up experiment environment", "fix experiment env", "env error", "环境管理", "环境出错", "configure environment", or when experiment agents report environment failures.'
-argument-hint: "[— project: <name>] [— mode: setup|error-report|audit] [— error-report: <path>] [— run-id: <id>] [— paseo-config: <path>]"
+argument-hint: "[— project: <name>] [— mode: setup|error-report|audit] [— error-report: <path>] [— run-id: <id>] [— paseo-config: <path>] [— prd: <path>] [— confirmed-setup: <path>]"
 allowed-tools: Bash(*), Read, Write, Grep, Glob, AskUserQuestion, WebSearch, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__create_heartbeat, mcp__paseo__delete_heartbeat
 ---
 
@@ -47,7 +47,7 @@ owns the repair loop and the escalation path; the two worker skills
 generation and verdict production respectively.
 
 ```
-Mode A: Setup        User / /research-setup / /auto-research-loop Phase 0
+Mode A: Setup        Confirmed /aris-setup configuration
 Mode B: Error Report /run-experiment / /experiment-bridge / /experiment-queue
 Mode C: Audit        User wanting a diagnostic
 ```
@@ -180,7 +180,9 @@ provider in this skill. When called by auto-research-loop, preserve its
    }
    ```
 
-4. **Parse mode.** Default to `setup` if `— mode` is absent.
+4. **Parse mode and setup inputs.** Default to `setup` if `— mode` is absent.
+   Record `— prd` as ARG_PRD and `— confirmed-setup` as ARG_CONFIRMED_SETUP.
+   For Mode A, the passed project must equal the helper-discovered slug.
    - `— mode: setup` --> Mode A
    - `— mode: error-report` --> Mode B (requires `— error-report: <path>`)
    - `— mode: audit` --> Mode C
@@ -195,7 +197,7 @@ provider in this skill. When called by auto-research-loop, preserve its
 6. **Browser preflight.** Only when an existing bundle says it needs one —
    a project with no browser in scope never runs this:
    ```bash
-   if [ -f "$SKILL_DIR/env.json" ] &&
+   if [ "$ARG_MODE" != "setup" ] && [ -f "$SKILL_DIR/env.json" ] &&
       [ "$(jq -r '.browser.required // false' "$SKILL_DIR/env.json")" = "true" ]; then
        BROWSER_ACT_ENSURE=".aris/tools/ensure_browser_act.sh"
        [ -f "$BROWSER_ACT_ENSURE" ] || BROWSER_ACT_ENSURE="tools/ensure_browser_act.sh"
@@ -205,348 +207,62 @@ provider in this skill. When called by auto-research-loop, preserve its
        }
    fi
    ```
-   Mode A collects the answer in Phase 1 Step 1.3b and ensures it there; this
-   step covers the modes that start from an already-configured bundle.
+   Mode A verifies the confirmed PRD before its browser installation in Phase 1;
+   this step applies only to Mode B/C with an already-configured bundle.
    See `shared-references/browser-act.md`.
 
 ---
 
 ## Mode A: Setup
 
-Triggered by: user, `/research-setup`, `/auto-research-loop` Phase 0.
+Triggered by: `/aris-setup` with confirmed PRD/configuration; direct setup requests return to its unified configuration review.
 
-### Phase 1: Collect Requirements — Complete PRD Generation
+### Phase 1: Consume the confirmed unified PRD
 
-This phase asks the user all questions needed to produce a complete PRD.
-Every field in the PRD must be filled — env-configuration cannot ask the user.
+Mode A is an execution worker for `/aris-setup`, including its research-setup
+and tester-setup compatibility names. It does not conduct a setup interview.
+Require `— prd: <absolute prepared environment-prd.json>` and
+`— confirmed-setup: <absolute prepared configuration.json>`. A direct setup
+request without these inputs returns `configuration_review_required` and
+points the owner to the complete `/aris-setup` sheet; do not ask individual
+questions. Runtime repairs retain Mode B/C and the established PRD.
 
-**Seed sources** (read before asking questions to pre-fill defaults):
-- `CLAUDE.md` `## Experiment Environment` section
-- `.aris/setup-state.json` (from `/research-setup`)
-- `refine-logs/EXPERIMENT_TRACKER.md` (commands that actually worked)
+Before any installation or configuration dispatch, resolve project-setup-cli
+through the integration contract and validate the current confirmation:
 
 ```bash
-# Harvest context (all optional -- missing files are skipped)
-CLAUDE_MD_ENV=$(awk '/^## Experiment Environment/,/^## [^#]/' CLAUDE.md 2>/dev/null)
-SETUP_STATE=$(cat .aris/setup-state.json 2>/dev/null)
-TRACKER=$(cat refine-logs/EXPERIMENT_TRACKER.md 2>/dev/null)
+SETUP_CLI=".aris/dist/tools/project-setup-cli.js"
+[ -f "$SETUP_CLI" ] || SETUP_CLI="dist/tools/project-setup-cli.js"
+[ -f "$SETUP_CLI" ] || { echo "ERROR: unified setup helper missing"; exit 1; }
+node "$SETUP_CLI" verify --project "$ROOT" \
+  --configuration "$ARG_CONFIRMED_SETUP" --environment "$ARG_PRD"
 ```
 
-#### Step 1.1 — Environment Overview
-
-`AskUserQuestion` — header: "环境描述" / "Environment"
-question: "请描述你的实验环境 CLI 使用方式（如何连接、在哪里运行、用什么工具）"
-(en): "Describe your experiment environment CLI workflow (how to connect, where it runs, what tools)"
-
-#### Step 1.2 — File Location
-
-`AskUserQuestion` — header: "Location"
-question: "Where do experiments actually execute?"
-options: `["本机 (local)"]` / `["远程 SSH 服务器"]` / `["Docker 容器"]` / Other
-
-`AskUserQuestion` — header: "Remote path"
-question: "Absolute path on the execution machine where code must live?"
-(skip if local)
-
-`AskUserQuestion` — header: "Transfer"
-question: "How does code get from here to there?"
-options: `["rsync"]` / `["git push/pull"]` / `["Shared filesystem"]` / Other
-(skip if local)
-
-`AskUserQuestion` — header: "Excludes"
-question: "Which paths must NOT be transferred?"
-Seed: `["data/", "checkpoints/", "__pycache__/", ".git/", "*.pyc"]`
-
-When location is "远程 SSH 服务器" (remote):
-
-`AskUserQuestion` — header: "SSH Alias"
-question: "SSH alias or hostname for the remote server? (from ~/.ssh/config or raw host)"
-Seed: read from `~/.ssh/config` host entries or CLAUDE.md
-
-Record as `preparation.files.ssh_alias` in the PRD. This field flows through
-to env-configuration → env.json → env-info.sh `connection.ssh_alias` → experiment-queue.
-
-#### Step 1.3 — Dependency Environment
-
-`AskUserQuestion` — header: "Env type"
-question: "What provides the dependency environment?"
-options: `["conda"]` / `["venv"]` / `["Docker/container"]` / `["System packages"]` / Other
-
-`AskUserQuestion` — header: "Env name"
-question: "Environment name or activation path?"
-
-`AskUserQuestion` — header: "Activation"
-question: "Exact activation line (including conda hook if needed)?"
-Seed: probe via `ssh <host> 'conda env list'` or local detection
-
-`AskUserQuestion` — header: "Verify"
-question: "One command that proves the environment is usable?"
-Seed: `python -c "import torch; print(torch.__version__, torch.cuda.is_available())"`
-
-`AskUserQuestion` — header: "Build"
-question: "What build/install steps are needed after code is synced? (Leave blank if code runs directly)"
-options: `["无需构建"]` / Other
-
-#### Step 1.3b — Browser
-
-`AskUserQuestion` — header: "Browser"
-question (zh): "实验过程需要浏览器吗？（只有网页上才有的数据、驱动 Web 应用、只有看板没有 API 的指标、登录后才能下载的资源）"
-question (en): "Does the experiment need a browser? (data that only exists on a rendered page, driving a web app, a dashboard with no API, a download behind a login)"
-options: `["不需要 (no browser)"]` / `["需要 (browser required)"]`
-
-Seed from the Step 1.1 overview and the entry point. A run that reads local
-files or an HTTP API needs no browser. On "no", record
-`browser: { "required": false }` and skip the rest of this step — nothing else
-in the pipeline touches the browser contract.
-
-On "yes", every browser interaction goes through the browser-act CLI
-([shared-references/browser-act.md](../shared-references/browser-act.md)). This step is the only place a person is
-present, and browser-act requires explicit approval to create a browser or log
-in, so both happen here rather than inside a later op.
-
-`AskUserQuestion` — header: "Browser use" (multi-select)
-question: "浏览器在这次实验里做什么？" / "What does the browser do in the run?"
-options: `["取页面数据 (extract rendered content)"]` / `["驱动 Web 应用 (click/input/upload)"]` / `["读看板指标 (read a dashboard)"]` / `["登录后下载 (download behind a login)"]`
-
-If the only answer is "取页面数据", the run needs no session: record
-`mode: "extract"` and the ops use `browser-act stealth-extract <url>`, which
-opens and closes nothing. Any other answer is `mode: "session"`.
-
-`AskUserQuestion` — header: "Browser type"
-question: "Which browser-act browser type?"
-options:
-- `["chrome"]` — managed Chrome profile, no API key. The default.
-- `["chrome-direct"]` — CDP into the user's own Chrome; reuses their existing
-  logins, and needs their confirmation to attach.
-- `["stealth"]` — anti-detection fingerprints; requires a browser-act API key
-  (`browser-act auth set <key>`). Also required for `stealth-extract`.
-
-Then, with the user present:
-
-1. Run the ensure helper; on non-zero exit, print its `hint` and stop — a
-   browser-dependent PRD written against a missing CLI fails at generation
-   time instead:
-   ```bash
-   BROWSER_ACT_ENSURE=".aris/tools/ensure_browser_act.sh"
-   [ -f "$BROWSER_ACT_ENSURE" ] || BROWSER_ACT_ENSURE="tools/ensure_browser_act.sh"
-   sh "$BROWSER_ACT_ENSURE" || exit 1
-   ```
-2. When `mode` is `session`, freeze one browser. `browser-act browser list`
-   first: if this project already has one, confirm its id with the user rather
-   than creating a second. Otherwise create it now —
-   `browser-act browser create --type <type> --name "aris-<project>" --desc "<project> experiments"`
-   — and record the id as `browser.browser_id`.
-3. When the use includes a login, have the user complete it now against that
-   browser, so later runs inherit the profile. Credentials never enter the PRD,
-   `env.json`, or a generated script.
-
-`AskUserQuestion` — header: "Browser check"
-question: "一个能证明浏览器通道可用的 URL（实验真正会读的页面）？" / "One URL that proves the browser channel works — a page the run actually reads?"
-Record as `browser.smoke_url`. `/experiment-env-audit` Check Q reads exactly
-this page, so a URL nobody's run visits proves nothing.
-
-#### Step 1.4 — Compute Resources
-
-`AskUserQuestion` — header: "Compute Resource"
-question: "实验调度到什么类型的计算资源上？"
-options: `["GPU 显卡"]` / `["集群节点"]` / `["CPU 核心"]` / Other
-
-Auto-detect:
-- GPU: run `nvidia-smi --query-gpu=index,name --format=csv,noheader` on target
-- CPU: run `nproc` on target
-- Cluster: ask for node list or `scontrol show nodes`
-
-Present detected config for confirmation.
-
-For GPU resources, auto-fill and present for confirmation:
-- `bind_env: "CUDA_VISIBLE_DEVICES"`, `bind_mode: "env"`
-- `free_check: { "cmd": "nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits", "threshold": 500, "unit": "MiB", "compare": "lt", "index_by": "physical" }`
-- `exhaustion_patterns: ["CUDA out of memory", "torch.OutOfMemoryError"]`
-- `label: "<from nvidia-smi detection>"`
-
-For CPU: `bind_env: "taskset -c"`, `bind_mode: "prefix"`, `free_check: null`,
-`exhaustion_patterns: []`. Construct `ids` from `nproc`:
-```bash
-CPU_COUNT=$(nproc)
-# ids = [0, 1, ..., CPU_COUNT-1]
-```
-Present for confirmation.
-
-For node: ask user for bind mechanism, probe command, and exhaustion patterns.
-Collect ALL `free_check` members or explicitly set `free_check: null`:
-```
-AskUserQuestion — header: "Node probe"
-question: "Command to check if a node is free? (leave blank if none)"
-If non-blank:
-  AskUserQuestion — header: "Threshold"
-  question: "Threshold value for free check?"
-  AskUserQuestion — header: "Unit"
-  question: "Unit for the threshold value? (e.g., MiB, %, count)"
-  AskUserQuestion — header: "Compare"
-  question: "How to compare against threshold?"
-  options: ["lt (less than)", "gt (greater than)", "eq (equal)"]
-  → compose free_check: { cmd, threshold, unit, compare, index_by: "positional" }
-If blank:
-  → free_check: null
-```
-
-For custom: ask user for all resource fields explicitly. Collect the full
-`free_check` object or explicitly set it to `null`. Do not emit `{}`.
-
-#### Step 1.5 — Run Command
-
-`AskUserQuestion` — header: "Entry point"
-question: "Script or module that runs one experiment?"
-Seed: grep EXPERIMENT_TRACKER for the last successful command
-
-`AskUserQuestion` — header: "Arguments"
-question: "How are experiment parameters passed?"
-options: `["CLI flags (--seed 42)"]` / `["Config file (config.yaml)"]` / `["Environment vars"]` / Other
-
-`AskUserQuestion` — header: "Launch mode"
-question: "How is a long run kept alive?"
-options: `["screen"]` / `["nohup"]` / `["Scheduler (SLURM/PBS)"]` / `["Foreground"]`
-
-`AskUserQuestion` — header: "GPU selection"
-question: "How is the GPU chosen?"
-options: `["CUDA_VISIBLE_DEVICES"]` / `["Scheduler-assigned"]` / `["All available"]` / `["CPU only"]`
-
-Compose the run template using the generator's `{{...}}` placeholder syntax.
-The template MUST include `{{activation}}`, `{{remote_path}}` (if remote),
-`{{entry_point}}`, `{{exp_name}}`, and `{{args}}`. Include `{{gpu}}` when
-GPU binding is used.
-
-Example:
-```
-{{activation}} && cd {{remote_path}} && CUDA_VISIBLE_DEVICES={{gpu}} \
-  screen -dmS {{exp_name}} bash -c '{{entry_point}} {{args}} 2>&1 | tee logs/{{exp_name}}.log'
-```
-
-#### Step 1.6 — Error Collection
-
-`AskUserQuestion` — header: "Failure signal"
-question: "How do you know a run failed?"
-options: `["Non-zero exit code"]` / `["Error pattern in log"]` / `["Both"]`
-
-`AskUserQuestion` — header: "Task type"
-question: "What type of experiment task? (e.g., PyTorch training, inference, data processing)"
-
-WebSearch: `"<task_type> common error patterns failure modes"`
-Parse results to extract known error patterns.
-
-`AskUserQuestion` — header: "Error patterns"
-question: "以下是合并后的错误模式列表（来自你的输入 + 搜索结果）。需要增减吗？\n<list>"
-Present merged list (user input + web search) for confirmation.
-
-Also ask for log path: `AskUserQuestion` — header: "Log path"
-question: "Where does the run write its log?"
-Seed: `logs/${EXP_NAME}.log`
-
-#### Step 1.7 — Result Collection
-
-`AskUserQuestion` — header: "Result file"
-question: "Where does the run write its metrics?"
-Seed: `results/${EXP_NAME}.json`
-
-`AskUserQuestion` — header: "Format"
-question: "What format?"
-options: `["JSON"]` / `["CSV"]` / `["Parsed from log"]` / `["W&B"]`
-
-`AskUserQuestion` — header: "Primary metric"
-question: "Which key is the headline metric?"
-
-#### Step 1.8 — Monitoring
-
-Analysis is NOT configured here — it is owned by `/analyze-results` and its
-sub-skills. What IS configured: how a running job is watched.
-
-`AskUserQuestion` — header: "Check interval"
-question: "How often should the monitoring heartbeat wake?"
-options: `["Every 20 minutes"]` / `["Every hour"]` / `["Custom cron"]`
-
-`AskUserQuestion` — header: "Max hours"
-question: "Hard cap on a single job's wall time?"
-Seed: `48`
-
-`AskUserQuestion` — header: "Early stop"
-question: "配置早停条件吗？（超时/收敛/发散/熵塌缩）"
-options: `["No"]` / `["Yes"]`
-
-When "Yes", follow up with the early-stop sub-questions (timeout hours,
-convergence patience, divergence multiplier, entropy threshold) — the same
-shape `/research-setup` collects. These are inputs for analysis sub-skills,
-not enforced by the ops.
-
-#### Step 1.9 — Baseline info
-
-`AskUserQuestion` — header: "Baseline"
-question: "Is there an existing baseline run, or should we establish a simple baseline (one real run of the entry point at reduced scale)?"
-options: `["Existing baseline (in EXPERIMENT_TRACKER)"]` / `["Create simple baseline (real entry point, reduced scale)"]`
-
-When "Create simple baseline" is chosen, follow up:
-
-`AskUserQuestion` — header: "Simple run"
-question (en): "What is the smallest meaningful run of the real entry point? (e.g., '--max-steps 100', '1 epoch on the val split')"
-question (zh): "真实入口点最小的一次可运行实验是什么？（如 '--max-steps 100'、'在验证集上跑 1 个 epoch'）"
-options: one concrete example option derived from the collected `run.template` + "Other" for free text.
-
-A simple baseline is a REAL run of the project's own entry point with
-reduced-scale arguments - never a synthetic script with invented metrics.
-The answer becomes `baseline.simple_args` in the PRD.
-
-#### Step 1.10 — Write PRD
-
-Assemble the complete PRD JSON (full schema, all fields filled):
-
-```json
-{
-  "version": 1,
-  "mode": "fresh",
-  "project": "<project>",
-  "preparation": {
-    "files": {
-      "location": "...",
-      "remote_path": "...",
-      "transfer": "...",
-      "excludes": ["..."],
-      "ssh_alias": "<collected in Step 1.2, or null for local>"
-    },
-    "environment": { "type": "...", "name": "...", "activation": "...", "build_cmd": "...", "verify_cmd": "..." }
-  },
-  "browser": {
-    "required": false,
-    "mode": "extract|session",
-    "uses": ["extract", "interact", "dashboard", "download"],
-    "browser_type": "chrome|chrome-direct|stealth",
-    "browser_id": "<from Step 1.3b, null when mode is extract>",
-    "smoke_url": "..."
-  },
-  "resources": {
-    "type": "...", "ids": ["..."], "label": "...",
-    "bind_env": "...", "bind_mode": "...",
-    "free_check": { "cmd": "...", "threshold": 500, "unit": "MiB", "compare": "lt", "index_by": "physical" },
-    "exhaustion_patterns": ["..."]
-  },
-  "run": { "entry_point": "...", "arg_style": "...", "launch_mode": "...", "gpu_selection": "...", "template": "..." },
-  "feedback": {
-    "error": { "signal": "...", "log_path": "...", "task_type": "...", "failure_patterns": ["..."] },
-    "result": { "path_template": "...", "format": "...", "primary_metric_key": "...", "extra_keys": ["..."] }
-  },
-  "monitor": {
-    "interval_cron": "*/20 * * * *", "escalate_cron": "23 * * * *", "max_hours": 48,
-    "early_stop": { "enabled": false },
-    "stall": { "no_log_growth_minutes": 45, "gpu_idle_threshold_pct": 5, "consecutive_alert_ticks": 3 }
-  },
-  "baseline": { "kind": "real|simple", "simple_args": "...", "evidence_source": "..." }
-}
-```
-
-Write to `$CONFIG_DIR/prd.json`.
-
-If existing config is present and `— mode: setup` was explicit (not a
-re-entry from error-report), set `"mode": "fresh"`.
-
-Update state: `last_action: "phase-1-prd-written"`.
+A missing, stale, invalid or mismatched input stops the worker with a failure
+receipt containing all available defects. Return them to `/aris-setup` for
+grouped edits, refresh and confirmation; do not patch user choices silently
+or invoke AskUserQuestion. Successful verification means the PRD is exactly
+configuration.environment.prd from the latest confirmed draft.
+
+Copy that exact PRD into `$CONFIG_DIR/prd.json`, record its configuration
+sha256 in env-manager-state.json and continue at Phase 2. Read the declared
+environment.backend from the confirmed configuration as well; generated
+backend metadata must agree with it. Do not infer a different backend silently. Seed/discovery and
+all environment/browser/resource/monitoring choices were reviewed together
+in [unified-setup.md](../shared-references/unified-setup.md). Old
+`.aris/setup-state.json` is a migration input for the unified helper, not a
+second writer or questionnaire state.
+
+When this PRD declares browser.required, run the browser-act ensure helper
+now, after confirmation. Missing browser/session prerequisites return a
+failure receipt; no separate browser configuration interview. Login remains
+an explicit platform interaction when required.
+
+All Mode A paths, including repair exhaustion, are noninteractive. Repairs
+may fix scripts under the unchanged reviewed PRD. If a repair needs changed
+commands/resources/protocol, return the proposed changes and all defects to
+the parent sheet. A changed PRD needs a new refresh/confirmation. A FAIL audit
+never becomes `user_override` in unified setup.
 
 ### Phase 2: Dispatch /experiment-env-configuration
 
@@ -707,6 +423,12 @@ WHILE TRUE:
                - "change X to Y" → value = "Y"
                - "remove X" → value = "" or null
             4. Write each as a `changes[]` entry with the concrete value.
+            5. For Mode A, compare changes against the reviewed PRD. If any
+               target changes a reviewed command, resource, browser setting,
+               protocol or other PRD value, return all defects and proposed
+               changes to /aris-setup and STOP before patch dispatch. Only
+               generator/script corrections that retain reviewed values may
+               proceed without changing the confirmation.
 
             The manager MUST verify each derived value is concrete (not prose,
             not a placeholder like "MANAGER_MUST_DERIVE"). If a fix_hint cannot
@@ -767,6 +489,12 @@ WHILE TRUE:
             → Loop back to step 1.
 
        ELSE (auto_fixable == false):
+         IF mode == setup:
+           Write a failed Mode A receipt with all failing checks, fix hints,
+           audit report path and any proposed PRD changes.
+           STOP and return to /aris-setup's full edit/refresh/confirm sheet.
+           Do not ask questions or offer forced deployment.
+         ELSE (runtime Mode B/C only):
          Escalate to user:
          AskUserQuestion:
            header: "审计失败 — 需要人工介入"
@@ -824,6 +552,15 @@ WHILE TRUE:
 
 ### Phase 6: Finalize
 
+For Mode A require the actual audit PASS/WARN and `override: false` before
+finalizing. FAIL returns all defects to the unified sheet. Forced-deployment
+paths below apply only to explicit runtime repair/audit decisions in Mode B/C.
+Re-verify the current confirmed setup inputs before promoting the Mode A
+bundle; a draft edit during execution returns a stale-configuration receipt.
+Also require the generated bundle to retain every declared PRD value and the
+confirmed backend. Undeclared metadata and expanded script paths may differ;
+changed reviewed values return all differences to the unified sheet.
+
 This is the **only place in the entire system** that transitions env.json
 status from `pending_audit` to `complete`. Neither env-configuration nor
 env-audit writes `complete`.
@@ -856,9 +593,9 @@ env-audit writes `complete`.
      "run_id": "<run-id>",
      "project": "<project>",
      "mode": "setup",
-     "result": "complete|user_override",
+     "result": "complete",
      "skill_dir": ".claude/skills/run-<project>-experiment",
-     "audit_verdict": "pass|warn|fail",
+     "audit_verdict": "pass|warn",
      "repair_rounds": 0,
      "config_dispatches": 1,
      "audit_dispatches": 1,
@@ -866,9 +603,11 @@ env-audit writes `complete`.
    }
    ```
 
-   `audit_verdict` is the audit's own verdict, lowercased. It is never
-   `user_override` - a forced deploy is `result: "user_override"` with
-   `audit_verdict: "fail"`, which keeps both facts readable.
+   This is the Mode A success receipt; a failing setup returns defects instead
+   of finalizing. Runtime Mode B/C receipts retain their actual mode and result.
+   `audit_verdict` is always the audit's own verdict, lowercased. An explicitly
+   authorized runtime forced deploy is `result: "user_override"` with
+   `audit_verdict: "fail"`; Mode A cannot produce that result.
 
 3. Update `CLAUDE.md` `## Experiment Skill` section (if present) with the
    skill directory path and audit status.
@@ -1046,8 +785,8 @@ channel broke.
    explicit user approval, so an unattended retry either stalls on an approval
    prompt or silently produces a login page instead of data. Point the user at
    `browser-act remote-assist --objective "<what is stuck>"`, which hands the
-   live session to them, and at Step 1.3b of Mode A to re-record
-   `browser.browser_id`.
+   live session to them, and at the unified /aris-setup browser module to edit, refresh
+   and confirm the new `browser.browser_id`.
 
 Retry once, not three times. Transient already owns the retry loop for network
 faults; a second loop here would repeat a structural failure three times
@@ -1225,7 +964,7 @@ When user chooses "我来指导修复":
 - Re-read verdict → loop back to Phase 3B
 
 When user chooses "强制标记已修复":
-- Finalize with `user_override` status (same as Mode A)
+- Finalize with `user_override` status through Phase 6's runtime-only path.
 
 ### Phase 5B: Write Receipt
 
@@ -1257,7 +996,7 @@ Same as Phase 0 shared logic. Verify existing config:
 ```bash
 test -f "$SKILL_DIR/env.json" || {
     echo "ERROR: No experiment environment configured for project <project>."
-    echo "Run /experiment-env-manager — mode: setup first."
+    echo "Run /aris-setup to review and confirm the complete environment configuration."
     exit 1
 }
 ```
@@ -1431,8 +1170,9 @@ Rule 3, file-paths-only receipts).
    from the structured verdict file. Do not reinterpret FAIL as WARN, do
    not average checks, do not override a verdict.
 4. **Repair until resolved.** No fixed upper limit on repair rounds. Stop
-   only when: (a) audit passes or warns, (b) user chooses force-deploy or
-   abort, (c) auto-fix is impossible AND user escalation is needed.
+   when the audit passes or warns. In Mode A, return all defects when auto-fix
+   is impossible or would change reviewed configuration. Only Mode B/C may
+   escalate to the user for forced deployment or abort.
 5. **Fresh reviewer per audit, on the reviewer leg.** Each
    `/experiment-env-audit` dispatch creates a new sub-agent on
    `$ENV_REVIEWER_PROVIDER` -- never `$ENV_EXECUTOR_PROVIDER`, which is the
@@ -1460,8 +1200,8 @@ Rule 3, file-paths-only receipts).
     bundle that drives a browser with Playwright, Selenium, Puppeteer, or
     chromedriver, and never accept `curl` or `wget` standing in for a page
     read — a JS-rendered page returns an empty shell and the shell looks like
-    a result. Browser creation and login happen once during Step 1.3b with the
-    user present, never inside an op. See
+    a result. Browser configuration is reviewed in unified /aris-setup; required
+    creation/login happens after confirmation with the user present, never inside an op. See
     [shared-references/browser-act.md](../shared-references/browser-act.md).
 12. **Never end a waiting turn without a watchdog.** Every dispatch in this
     skill ends the turn to wait for a finish notification that a daemon
@@ -1484,4 +1224,4 @@ Rule 3, file-paths-only receipts).
 - `shared-references/browser-act.md` -- the browser channel: activation
   condition, the `browser` block in `env.json`, what stays interactive.
 - `tools/ensure_browser_act.sh` -- Policy A gate when `browser.required`.
-  Run in Step 1.3b (Mode A) and in Phase 0 step 6 (Modes B and C).
+  Run after confirmation verification in Mode A Phase 1 and in Phase 0 step 6 (Modes B and C).

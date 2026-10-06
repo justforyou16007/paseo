@@ -506,7 +506,7 @@ For each action item (highest priority first):
 > 2. `sh .claude/skills/run-<project>-experiment/scripts/ops/build-env.sh` — build + verify
 > 3. `sh .claude/skills/run-<project>-experiment/scripts/ops/launch-job.sh <exp_name> --args "..."` — launch
 > If the generated experiment skill is missing, stop and request
-> `/experiment-env-manager — mode: setup`.
+> unified `/aris-setup` review, or restoration from its unchanged confirmed PRD/configuration.
 
 Prioritization rules:
 

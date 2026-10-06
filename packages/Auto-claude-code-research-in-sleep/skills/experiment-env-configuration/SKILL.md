@@ -226,7 +226,7 @@ Read `prd.browser.smoke_url`    → set smoke_url
 **Required fields (when required is true):** `mode`, `browser_type`.
 `browser_id` is required when `mode` is `session` — a session has to open a
 browser that already exists, and creating one needs user approval, which the
-questionnaire already collected. When `mode` is `extract`, `browser_id` is
+unified setup review already confirmed. When `mode` is `extract`, `browser_id` is
 `null`: `stealth-extract` takes a URL and no browser.
 
 **`session_prefix` is derived, not asked.** Default it to the project slug.
@@ -246,7 +246,7 @@ so two experiments of the same project never collide on one session name.
 }
 ```
 
-Credentials never appear here. A login was completed once in the questionnaire
+Credentials never appear here. A required login was completed after unified configuration confirmation
 and lives in the browser profile; an API key lives in the CLI's own auth store.
 See [shared-references/browser-act.md](../shared-references/browser-act.md).
 
@@ -351,7 +351,7 @@ Read `prd.monitor.stall`                  → set stall
 - `early_stop`: `{ "enabled": false }` — when enabled, carries
   `max_training_time_hours`, `convergence {enabled, patience, min_delta}`,
   `divergence {enabled, threshold_multiplier}`, `entropy_collapse {enabled,
-  threshold}` (same shape `/research-setup` collects). These conditions are
+  threshold}` (same shape the unified `/aris-setup` sheet reviews). These conditions are
   **inputs to the analysis sub-skills**, not enforced by the ops — the ops and
   the heartbeat wake contract only surface machine-checkable facts.
 - `stall`: `{ "no_log_growth_minutes": 45, "gpu_idle_threshold_pct": 5,
@@ -385,8 +385,8 @@ by the generated scripts — downstream skills do NOT read them directly.
 
 2. **`CLAUDE.md` `## Experiment Environment`** — if the section exists, replace
    it in place. If absent, insert after `## Compute Budget`. If `CLAUDE.md`
-   itself is absent, skip and log (in the `/research-setup` flow it will already
-   exist from Phase 7b).
+   itself is absent, skip and log (in the unified `/aris-setup` flow it already
+   exists from the confirmed project artifact generation).
 
 ---
 
@@ -815,10 +815,11 @@ baseline.
 This phase executes them for real (not dry-run) to prove the environment works
 end-to-end before Phase 6 promotes.
 
-1. Resolve the reduced-scale arguments from `prd.baseline.simple_args`. If it
-   is absent or empty, do NOT guess a scale-down — ask the user
-   (AskUserQuestion, forwarded through paseo) for the smallest meaningful run
-   of the real entry point, then record the answer.
+1. Use the reviewed reduced-scale arguments from `prd.baseline.simple_args`.
+   If absent or empty, stop with a failed receipt naming that field and return
+   all available defects to env-manager and the unified `/aris-setup` sheet.
+   Do not guess arguments or ask the owner another setup question. The owner
+   edits the same draft, refreshes all modules and confirms the changed version.
 
 2. Execute end-to-end through the **staging** bundle's ops, launching the
    project's real entry point with the simple args:
@@ -1161,7 +1162,7 @@ When `— patch: <path>` is provided:
     against a page that needs rendering. Never emit `browser create`,
     `auth set`, or a login step inside an op — each needs user approval, and an
     op runs unattended, so it would either hang on a prompt or save a login
-    page as the result. Those happen once in the questionnaire; `browser_id`
+    page as the result. Those happen after unified configuration confirmation; `browser_id`
     arrives frozen in the PRD.
 16. **Uniform failure contract.** Every op emits the structured error JSON on
     stderr per 5b.0. The failure-recovery loop (`/experiment-env-manager`

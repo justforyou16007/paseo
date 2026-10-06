@@ -502,7 +502,7 @@ Three writers, one command:
 
 | Writer             | When                                                    |
 | ------------------ | ------------------------------------------------------- |
-| `/research-setup`  | once, at wiki init — creates `problem:root`             |
+| `/aris-setup`      | once, at wiki init — creates `problem:root`             |
 | `/result-to-claim` | on a `partial` / `no` verdict — one per unresolved cause |
 | `/kill-argument`   | per `still_unresolved` attack point                     |
 

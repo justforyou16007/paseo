@@ -784,7 +784,7 @@ test("contract: resume restores persisted run configuration", () => {
   for (const field of ["auto_write", "render_html", "max_iterations"]) {
     assert.ok(arl.includes(`.config.${field}`), `auto-research-loop does not restore config.${field}`);
   }
-  assert.ok(!arl.includes(".config.baseline_plan"), "baseline_plan is no longer a run config field (baseline is anchored during /research-setup Phase 7.6)");
+  assert.ok(!arl.includes(".config.baseline_plan"), "baseline_plan is no longer a run config field (baseline description comes from unified /aris-setup)");
   assert.ok(!arl.includes("older than 24h"), "valid old runs must not be discarded by age");
 
   const pipeline = fs.readFileSync(path.resolve("skills/research-pipeline/SKILL.md"), "utf-8");
@@ -796,7 +796,7 @@ test("contract: resume restores persisted run configuration", () => {
 test("contract: research-pipeline and auto-research-loop are decoupled", () => {
   const pipeline = fs.readFileSync(path.resolve("skills/research-pipeline/SKILL.md"), "utf-8");
   const loop = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
-  const setup = fs.readFileSync(path.resolve("skills/research-setup/SKILL.md"), "utf-8");
+  const setup = fs.readFileSync(path.resolve("skills/shared-references/unified-setup.md"), "utf-8");
 
   // No pipeline-coupling configuration anywhere.
   for (const doc of [pipeline, loop, setup]) {
@@ -1932,11 +1932,11 @@ test("contract: experiment-bridge never patches metric.baseline (anchored at set
   const workflowStart = eb.indexOf("## Workflow");
   const protocol = eb.slice(manifestStart, workflowStart);
 
-  // The baseline is reproduced in /research-setup Phase 7.6, not by this worker.
-  assert.ok(!protocol.includes('"metric.baseline"'), 'dashboard_patch must not patch "metric.baseline" (baseline is anchored during /research-setup Phase 7.6)');
+  // The baseline description is owned by /aris-setup; iteration 1 reproduces it.
+  assert.ok(!protocol.includes('"metric.baseline"'), 'dashboard_patch must not patch "metric.baseline" (baseline description comes from unified /aris-setup)');
 
   // The protocol must say so, so a reader knows where the baseline comes from.
-  assert.ok(protocol.includes("research-setup"), "manifest protocol must point at /research-setup as the baseline owner");
+  assert.ok(protocol.includes("aris-setup"), "manifest protocol must point at unified /aris-setup as the baseline description owner");
 
   // Must NOT use the old flat key in any receipt example
   assert.ok(!protocol.includes('"primary_metric"'), 'dashboard_patch must not use legacy "primary_metric" key');
@@ -1944,7 +1944,7 @@ test("contract: experiment-bridge never patches metric.baseline (anchored at set
 
 test("contract: metric configuration chain is consistent across template, setup, and gate", () => {
   const template = fs.readFileSync(path.resolve("templates/CLAUDE_MD_TEMPLATE.md"), "utf-8");
-  const setup = fs.readFileSync(path.resolve("skills/research-setup/SKILL.md"), "utf-8");
+  const setup = fs.readFileSync(path.resolve("skills/shared-references/unified-setup.md"), "utf-8");
 
   // Template must have the metric block inside HTML comments (template is not a config)
   const templateSection = template.slice(template.indexOf("## Metric Target"));
@@ -1952,13 +1952,13 @@ test("contract: metric configuration chain is consistent across template, setup,
   assert.ok(templateSection.includes("higher_better"), "template must show higher_better as an option");
   assert.ok(templateSection.includes("lower_better"), "template must show lower_better as an option");
 
-  // Research-setup must wire Q8 → direction field using higher_better/lower_better vocabulary
-  assert.ok(setup.includes("higher_better"), "research-setup must use higher_better vocabulary");
-  assert.ok(setup.includes("lower_better"), "research-setup must use lower_better vocabulary");
+  // Unified setup must preserve the metric direction vocabulary through the reviewed draft.
+  assert.ok(setup.includes("higher_better"), "unified setup must use higher_better vocabulary");
+  assert.ok(setup.includes("lower_better"), "unified setup must use lower_better vocabulary");
 
-  // Research-setup's CLAUDE.md write must use direction: not direction-other-form
-  const phase7 = setup.slice(setup.indexOf("## Phase 7"));
-  assert.ok(phase7.includes("direction: <answers.metric_direction>") || phase7.includes("direction: $DIRECTION"), "Phase 7 must write direction field using metric_direction answer");
+  // The confirmed artifact mapping writes the exact reviewed metric direction.
+  const artifactMapping = setup.slice(setup.indexOf("## Apply confirmed project artifacts"));
+  assert.ok(artifactMapping.includes("direction: <configuration.metric.direction>"), "unified setup must write the reviewed direction into active Metric Target");
 
   // No deleted pipeline-coupling field in auto-research-loop
   const loop = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
@@ -1970,7 +1970,7 @@ test("contract: dashboard-merge.js wires metric.current to metric.history", () =
   // Verify the tool source handles the current-metric key
   const src = fs.readFileSync(path.resolve("src/tools/dashboard-merge.ts"), "utf-8");
   assert.ok(src.includes('"metric.current"') || src.includes("metric.current"), 'dashboard-merge must recognize metric.current patch key');
-  assert.ok(!src.includes('"metric.baseline"'), 'no worker may patch metric.baseline (anchored during /research-setup Phase 7.6)');
+  assert.ok(!src.includes('"metric.baseline"'), 'no worker may patch metric.baseline (described by unified /aris-setup and measured by iteration 1)');
   assert.ok(src.includes("metric.history"), 'dashboard-merge must append to metric.history');
 
   // Verify the history append is idempotent (checks by iteration number)
@@ -2794,7 +2794,7 @@ test("research-wiki: a problem tree survives round-trip into edges and query_pac
     const wiki = path.join(d, "research-wiki");
     assert.equal(wikiCli("init", wiki).exitCode, 0, "init");
 
-    // Root problem: no parent. This is what /research-setup writes.
+    // Root problem: no parent. This is what unified /aris-setup writes.
     let r = wikiCli("add_problem", wiki,
       "--slug", "root", "--title", "close accuracy gap: 71.2 -> 78",
       "--severity", "high", "--statement", "reach 78 accuracy from the baseline");
@@ -3371,8 +3371,8 @@ test("contract: idea-discovery strips the manifest token from sub-skill dispatch
     "forwarding $ARGUMENTS verbatim makes idea-creator enter worker mode against idea-discovery's manifest and write a mismatched receipt");
 });
 
-test("contract: research-setup carries the baseline into the brief and dispatches no experiment", () => {
-  const setup = fs.readFileSync(path.resolve("skills/research-setup/SKILL.md"), "utf-8");
+test("contract: unified setup carries the baseline into the brief and dispatches no experiment", () => {
+  const setup = fs.readFileSync(path.resolve("skills/shared-references/unified-setup.md"), "utf-8");
 
   assert.ok(setup.includes("## Baseline Reproduction (first experiment)"),
     "setup must write the Baseline Reproduction section idea-discovery Phase 0 reads");
@@ -3388,14 +3388,14 @@ test("contract: research-setup carries the baseline into the brief and dispatche
     .map((m) => m[1]);
   for (const forbidden of ["experiment-bridge", "run-experiment", "auto-review-loop", "idea-discovery"]) {
     assert.ok(!dispatched.includes(forbidden),
-      `research-setup must not dispatch /${forbidden} — iteration 1 of the loop reproduces the baseline`);
+      `unified setup must not dispatch /${forbidden} — iteration 1 of the loop reproduces the baseline`);
   }
   assert.ok(flat.includes("Do not dispatch any agent in this phase"),
     "the baseline phase must state that it dispatches nothing");
 
   // Invariant: claims are born only at /proof-checker.
   const loop = fs.readFileSync(path.resolve("skills/auto-research-loop/SKILL.md"), "utf-8");
-  for (const [name, text] of [["research-setup", setup], ["auto-research-loop", loop]] as const) {
+  for (const [name, text] of [["unified-setup", setup], ["auto-research-loop", loop]] as const) {
     assert.ok(!/add_claim/.test(text),
       `${name} must not create claim nodes — /proof-checker owns the claim birth point`);
   }

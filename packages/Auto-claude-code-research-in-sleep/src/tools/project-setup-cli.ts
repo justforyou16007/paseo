@@ -1,18 +1,9 @@
 #!/usr/bin/env node
 /**
- * `/aris-setup`'s three reads. None of them writes a sealed artifact:
- *
- *   status    what the project still has to configure, and the command for each
- *   infer     what can be read off existing files, with its source, and what
- *             cannot be and therefore has to be asked
- *   assemble  the owner's confirmed answers, merged with the inferred values,
- *             written out as the input `workflow-tools-cli.js root-setup` takes
- *
- * `root-setup` stays the only writer of the setup record. Splitting it that way
- * keeps one gate instead of two implementations of the same validation.
- *
- * `status` exits non-zero while anything is unconfigured, so a shell step can
- * gate on it. It reports readiness and configuration sources.
+ * Unified setup: review/refresh a modular draft, confirm its current digest,
+ * then prepare execution inputs. No review command installs or seals anything.
+ * status/infer/assemble remain available for readiness and root input assembly;
+ * workflow-tools root-setup remains the only writer of sealed root records.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -21,10 +12,17 @@ import { createCli, runCli } from "../lib/cli.js";
 import { assembleRootSetupInput, detectSetupStages, inferSetupItems } from "./project-setup.js";
 import { SetupIncompleteError } from "./task-setup.js";
 import { A1Error } from "./workflow-spec.js";
+import {
+  refreshSetupReview,
+  confirmSetupReview,
+  prepareSetupInputs,
+  verifySetupInputs,
+  SetupReviewIncompleteError,
+} from "./setup-review.js";
 
 const program = createCli(
   "project-setup",
-  "Report what an ARIS project still has to configure, and turn the owner's answers into the root setup input",
+  "Review, edit, confirm and prepare the complete ARIS project configuration",
 );
 
 function reject(fallback: string, error: unknown): void {
@@ -34,10 +32,78 @@ function reject(fallback: string, error: unknown): void {
     message: (error as Error).message,
   };
   if (error instanceof SetupIncompleteError) body.missing_items = error.missing_items;
+  if (error instanceof SetupReviewIncompleteError) {
+    body.reason = "SETUP_CONFIGURATION_INCOMPLETE";
+    body.issues = error.issues;
+  }
   console.error(JSON.stringify(body, null, 2));
   process.exitCode = 1;
 }
 
+for (const command of ["review", "refresh"]) {
+  program
+    .command(command)
+    .description(
+      "Show the complete modular configuration, options, recommendations and all gaps; apply grouped edits without a questionnaire",
+    )
+    .requiredOption("--project <dir>", "research project directory")
+    .option("--input <path>", "configuration patch or edited draft JSON")
+    .action((options: { project: string; input?: string }) => {
+      try {
+        const patch = options.input
+          ? (JSON.parse(fs.readFileSync(options.input, "utf8")) as unknown)
+          : undefined;
+        console.log(JSON.stringify(refreshSetupReview(options.project, patch), null, 2));
+      } catch (error) {
+        reject("project_setup_review_failed", error);
+      }
+    });
+}
+program
+  .command("confirm")
+  .description(
+    "Record the owner's final confirmation of the complete reviewed configuration version",
+  )
+  .requiredOption("--project <dir>")
+  .requiredOption("--digest <sha256>", "digest of the configuration the owner just approved")
+  .action((options: { project: string; digest: string }) => {
+    try {
+      console.log(JSON.stringify(confirmSetupReview(options.project, options.digest), null, 2));
+    } catch (error) {
+      reject("project_setup_confirm_failed", error);
+    }
+  });
+program
+  .command("prepare")
+  .description("Write execution inputs only for the current owner-confirmed configuration")
+  .requiredOption("--project <dir>")
+  .action((options: { project: string }) => {
+    try {
+      console.log(JSON.stringify(prepareSetupInputs(options.project), null, 2));
+    } catch (error) {
+      reject("project_setup_prepare_failed", error);
+    }
+  });
+
+program
+  .command("verify")
+  .description("Check that worker inputs match the current confirmed configuration without writing")
+  .requiredOption("--project <dir>")
+  .requiredOption("--configuration <path>")
+  .requiredOption("--environment <path>")
+  .action((options: { project: string; configuration: string; environment: string }) => {
+    try {
+      console.log(
+        JSON.stringify(
+          verifySetupInputs(options.project, options.configuration, options.environment),
+          null,
+          2,
+        ),
+      );
+    } catch (error) {
+      reject("project_setup_verify_failed", error);
+    }
+  });
 program
   .command("status")
   .description("Report every setup stage; exit non-zero while any of them is unconfigured")
@@ -60,7 +126,7 @@ program
 
 program
   .command("infer")
-  .description("What existing files already answer, with their source, and what has to be asked")
+  .description("Existing configuration sources and owner fields to edit in the unified review")
   .requiredOption("--project <dir>", "research project directory")
   .action((options: { project: string }) => {
     try {

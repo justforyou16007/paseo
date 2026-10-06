@@ -44,8 +44,8 @@ uv tool install browser-act-cli --python 3.12
 browser-act --version
 ```
 
-`/aris-setup`（Phase 0.5）会替你装一次，`/experiment-env-manager` 在你回答
-浏览器那道题时也会装，所以手动装是可选的。API key 只有 `stealth` 浏览器和
+统一 `/aris-setup` 在最终确认整份配置后，仅当环境声明需要浏览器时安装。
+环境 worker 读取已确认的 PRD，不再逐项询问；手动安装是可选的。API key 只有 `stealth` 浏览器和
 `stealth-extract` 需要，`chrome` 和 `chrome-direct` 不需要。
 
 ### 1.4 LaTeX 环境（可选）
@@ -119,7 +119,17 @@ export ARIS_REPO=~/aris_repo
 
 </details>
 
-## 第四步：配置 GPU 服务器
+## 第四步：总览、修改并确认项目配置
+
+执行 `/aris-setup`。`/research-setup` 和 `/tester-setup` 是同一流程的兼容名称。
+先按模块展示全部当前配置与来源，选择项列出可选项和建议，文本项给出填写建议。
+一次描述多项修改，或直接编辑 `.aris/setup-draft.json`；刷新后展示整份配置，
+并一次列出全部缺项和冲突。最后确认最新的整份配置，再生成研究文档、配置并审计
+执行环境、安装 benchmark 设施并执行健康检查/smoke、封存 root charter。
+后续评测只执行 `/tester-test` 和 `/tester-audit`，通过后才提交 Wiki 指标，
+不再进入另一轮 setup 问答。
+
+### GPU 配置参考（用于手动编辑）
 
 如果你的实验需要跑在远程 GPU 服务器上，需要两步：SSH 免密登录 + 写入服务器信息。
 
@@ -174,7 +184,10 @@ ssh username@your-server-ip 'eval "$(/path/to/miniconda3/bin/conda shell.bash ho
 
 应输出 Python 版本、PyTorch 版本和 GPU 数量。
 
-## 第五步：初始化 Research Wiki
+## 第五步：Research Wiki 参考
+
+统一 `/aris-setup` 在确认配置后初始化 Wiki 和 root problem，并保留已有历史。
+以下命令供手动参考，不是额外必做的设置步骤。
 
 Research Wiki 是 ARIS 的核心知识库，自动积累你整个研究过程中读过的论文、产生的想法、跑过的实验。其他 skill 会自动往里写入内容，你不需要手动维护。
 

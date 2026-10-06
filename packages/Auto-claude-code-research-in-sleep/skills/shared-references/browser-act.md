@@ -15,8 +15,8 @@ app, a metric dashboard with no API, a download behind a login. Nothing else
 turns it on — an experiment that only reads local files or an HTTP API has
 `browser.required: false` and never touches this contract.
 
-The answer is collected once, by `/experiment-env-manager` Phase 1 Step 1.3b,
-and written into the generated bundle's `env.json` as `browser` by
+The browser choices are reviewed and confirmed in the unified `/aris-setup`
+configuration sheet, then written into the generated bundle's `env.json` as `browser` by
 `/experiment-env-configuration` §2c — the single writer of that block, including
 `session_prefix`, which it defaults to the project slug rather than asking.
 Downstream readers get it from `ops/env-info.sh`, never by re-asking.
@@ -49,9 +49,9 @@ Installed at three points, all idempotent:
 
 | Point | Why there |
 | --- | --- |
-| `/aris-setup` Phase 0.5 | A project is configured once, with the user present to approve a download; not a gate there, because the project has not yet declared whether it needs a browser |
+| `/aris-setup` after final configuration confirmation | Install only when the reviewed environment declares browser.required; the helper failure blocks browser-dependent setup |
 | `/aris-update` Phase 4, when a bundle declares it | An existing project picks it up without a reinstall |
-| `/experiment-env-manager` Phase 0, when `browser.required` | The last gate before a browser-dependent bundle is generated or repaired |
+| `/experiment-env-manager` Mode A Phase 1 / runtime Phase 0, when `browser.required` | Confirmed setup installs it after input verification; runtime repairs check the existing declaration |
 
 The helper installs the CLI with `uv tool install browser-act-cli --python
 3.12` and fetches the agent-facing skill stub into

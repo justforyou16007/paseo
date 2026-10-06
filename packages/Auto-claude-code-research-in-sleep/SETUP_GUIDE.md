@@ -46,9 +46,9 @@ uv tool install browser-act-cli --python 3.12
 browser-act --version
 ```
 
-`/aris-setup` runs this for you (Phase 0.5), and
-`/experiment-env-manager` installs it while you answer the browser question, so
-installing it by hand is optional. An API key is only needed for `stealth`
+Unified `/aris-setup` installs it after final configuration confirmation, only
+when the reviewed environment declares browser.required. The environment worker
+uses that confirmed PRD without another setup interview; manual installation is optional. An API key is only needed for `stealth`
 browsers and `stealth-extract`; `chrome` and `chrome-direct` need none.
 
 ### 1.4 LaTeX Environment (Optional)
@@ -124,7 +124,19 @@ overwrites local edits under `.claude/skills/`.
 
 </details>
 
-## Step 4: Configure GPU Server
+## Step 4: Review and Confirm Project Configuration
+
+Run `/aris-setup`. `/research-setup` and `/tester-setup` are compatibility names
+for the same procedure. It shows all current configuration by module with
+sources, choice options and recommendations for text fields. Describe multiple
+changes in one reply or edit `.aris/setup-draft.json`; each refresh displays the
+complete sheet and all remaining gaps/conflicts. Confirm the latest complete
+configuration once, then setup writes research documents, configures/audits the
+execution environment, installs/checks/smoke-tests tester facilities and seals
+the root charter. Subsequent evaluations use `/tester-test` then `/tester-audit`
+before Wiki metric publication. No additional setup interview is required.
+
+### GPU configuration reference (for manual edits)
 
 If your experiments run on a remote GPU server, you need two things: SSH key-based auth + server info in CLAUDE.md.
 
@@ -179,7 +191,11 @@ ssh username@your-server-ip 'eval "$(/path/to/miniconda3/bin/conda shell.bash ho
 
 Should output Python version, PyTorch version, and GPU count.
 
-## Step 5: Initialize Research Wiki
+## Step 5: Research Wiki Reference
+
+Unified `/aris-setup` initializes the Wiki and root problem after configuration
+confirmation. Existing history is preserved. The following commands are a
+manual reference, not another required setup step.
 
 Research Wiki is ARIS's core knowledge base — it automatically accumulates papers you've read, ideas you've generated, and experiments you've run. Other skills write to it automatically; you don't need to maintain it manually.
 

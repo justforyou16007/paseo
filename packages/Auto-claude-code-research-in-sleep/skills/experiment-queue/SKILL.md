@@ -5,7 +5,7 @@ argument-hint: [manifest-or-grid-spec]
 allowed-tools: Bash(*), Read, Grep, Glob, Edit, Write, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__create_heartbeat, mcp__paseo__delete_heartbeat
 ---
 
-> **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in [](shared-references/paseo-subagent-dispatch.md) (Rule 1: One Agent = One Skill; Rule 4: Paseo MCP Only, Strict). Spawn any sub-skill or sub-phase via `mcp__paseo__create_agent` — do **not** use the host `Skill` / `Agent` / `Task` tools.
+> **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in [paseo-subagent-dispatch.md](../shared-references/paseo-subagent-dispatch.md) (Rule 1: One Agent = One Skill; Rule 4: Paseo MCP Only, Strict). Spawn any sub-skill or sub-phase via `mcp__paseo__create_agent` — do **not** use the host `Skill` / `Agent` / `Task` tools.
 
 > **Dispatch watchdog (mandatory).** Every `mcp__paseo__create_agent` in this
 > skill is covered by `shared-references/paseo-subagent-dispatch.md`
@@ -69,7 +69,7 @@ All of these are pure engineering friction that can be orchestrated.
 > PROJECT=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\+/-/g; s/^-//; s/-$//')
 > SKILL_DIR=".claude/skills/run-${PROJECT}-experiment"
 > OPS="$SKILL_DIR/scripts/ops"
-> [ -d "$OPS" ] || { echo "ERROR: experiment skill not found — run /experiment-env-manager — mode: setup first" >&2; exit 1; }
+> [ -d "$OPS" ] || { echo "ERROR: experiment skill not found — run /aris-setup to review and confirm the complete environment configuration" >&2; exit 1; }
 >
 > # Read connection and resource details from the op interface
 > ENV_INFO=$(sh "$OPS/env-info.sh")

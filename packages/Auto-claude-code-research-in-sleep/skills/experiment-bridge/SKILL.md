@@ -66,7 +66,7 @@ consumes them together.
 
 Iteration 1 is not a special case. The loop's first iteration reproduces the
 baseline described in `RESEARCH_BRIEF.md`'s Baseline Reproduction section, and
-it reaches this skill as an ordinary plan - `/research-setup` describes that
+it reaches this skill as an ordinary plan - `/aris-setup` describes that
 baseline but never runs it.
 
 **Startup check:**
@@ -264,10 +264,11 @@ Before deploying the full experiment suite, run the sanity-stage experiment.
 
 **Pre-check the project experiment skill.** `/run-experiment` hard-fails at its
 Step 1 when `.claude/skills/run-<project>-experiment/scripts/` does not exist.
-If that directory is missing, dispatch a paseo claude sub-agent for
-`/experiment-env-manager - mode: setup` first (same spawn shape as below),
-wait for its finish notification, then continue. Never run the experiments
-inline as a shortcut.
+If that directory is missing, stop with an infrastructure failure receipt.
+The parent can restore the unchanged environment through env-manager using
+confirmed setup PRD/configuration inputs, or return all missing configuration
+to the unified `/aris-setup` review. Never start a separate setup interview or
+run the experiments inline as a shortcut.
 
 Dispatch the sanity run to a paseo claude sub-agent (never run it yourself):
 
@@ -310,7 +311,7 @@ If sanity fails → **auto-debug before giving up** (max 3 attempts):
 
    > When `run-<project>-experiment` exists, read error patterns from:
    > `sh .claude/skills/run-<project>-experiment/scripts/ops/env-info.sh | jq -r '.error_patterns[]'`
-   > If the generated skill is missing, stop and request `/experiment-env-manager — mode: setup`.
+   > If the generated skill is missing, stop and request unified `/aris-setup` configuration review or restoration from its unchanged confirmed inputs.
 3. **Fix and re-run** — apply the fix, re-run sanity
 4. **Still failing after 3 attempts?** → follow the generated skill's
    unified op-failure routing: the failing op (`launch-job.sh` / `job-status.sh`)

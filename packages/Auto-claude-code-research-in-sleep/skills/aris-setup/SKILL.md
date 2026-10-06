@@ -1,208 +1,199 @@
 ---
 name: aris-setup
-description: 'The single human entry point for configuring an ARIS project end to end. Reports which of the five setup stages are done, routes each unfinished one to the skill or command that finishes it, infers the root setup items that existing files already answer, asks for the ones no file contains, and seals the root charter. Use when the user says "配置项目", "setup my project", "aris setup", "全局设置", "初始化整个项目", or when /auto-research-loop stopped because the root charter is missing.'
-allowed-tools: Read, Write, Bash(*), AskUserQuestion, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__archive_agent, mcp__paseo__create_heartbeat, mcp__paseo__delete_heartbeat
+description: 'Configure research context, metrics, experiment environment, benchmark facilities, model roles and root run in one editable configuration review. Show current values by module with options and recommendations, refresh grouped edits, ask for one final confirmation, then execute setup. Use for "aris setup", "research setup", "tester setup", "配置项目" or a missing root charter.'
+allowed-tools: Read, Write, Bash(*), AskUserQuestion, mcp__paseo__list_models, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__archive_agent, mcp__paseo__create_heartbeat, mcp__paseo__delete_heartbeat
 ---
 
-> **Dispatch watchdog (mandatory).** Every `mcp__paseo__create_agent` in this
-> skill is covered by `shared-references/paseo-subagent-dispatch.md`
-> §"The dispatch watchdog": arm a self-target watchdog before ending the turn
-> to wait, disarm once no awaited child turn remains. The procedure lives
-> there, not here.
+> **Dispatch watchdog (mandatory).** Every child dispatch follows
+> `shared-references/paseo-subagent-dispatch.md` §"The dispatch watchdog":
+> arm before waiting and disarm after collecting terminal receipts.
 
-# ARIS Setup
+# Unified ARIS Setup
 
-A formal run needs project basics, a metric target, the experiment environment, reusable tester facilities and a root charter. Configure all five stages; skip stages whose persisted evidence is still ready.
+`/aris-setup`, `/research-setup` and `/tester-setup` name this same procedure.
+Research and tester setup are modules, not additional conversations or workers.
+The result is project documents, an audited execution environment, reusable
+tester facilities and a sealed root charter for `/auto-research-loop`.
 
-| Stage | Ready when | Owner |
-| --- | --- | --- |
-| project_basics | CLAUDE.md, RESEARCH_BRIEF.md and research-wiki exist | /research-setup |
-| metric_target | Metric Target parses | /research-setup |
-| experiment_env | environment manager reports complete and scripts exist | /experiment-env-manager |
-| tester_facility | tester-config.json has a matching ready setup receipt and unchanged evidence | /tester-setup |
-| root_charter | run.json and charter.json exist | root-setup |
+**Interaction contract:** show the complete configuration first; accept edits
+to any number of fields together; refresh the whole sheet; finally ask the
+owner to confirm the latest complete configuration. Never interview the owner
+field by field or module by module. `quick` and `full` legacy arguments use
+this same interaction. Read [the configuration and artifact guide](../shared-references/unified-setup.md)
+before generating a draft or applying confirmed configuration.
 
-## Resolving the helpers
+## 1. Discover and show the configuration
 
-`project-setup-cli.js`, `tester-facility-cli.js` and
-`workflow-tools-cli.js` resolve only through the shared
-[integration contract](../shared-references/integration-contract.md)
-(`.aris/dist` for installed projects, `dist` for development). A missing or
-failed helper is a setup failure. Never hand-write a file a helper produces —
-the validation lives in the helper, and a hand-written file skips it.
+Resolve helpers through [integration-contract.md](../shared-references/integration-contract.md):
+define its `_find_project_root` resolver, then use installed `.aris/dist` or
+development `dist`. Do not hand-write helper-owned receipts, setup state,
+environment metadata or root records.
 
 ```bash
+ROOT="$(_find_project_root)" || exit 1
+cd "$ROOT" || exit 1
 SETUP_CLI=".aris/dist/tools/project-setup-cli.js"
 [ -f "$SETUP_CLI" ] || SETUP_CLI="dist/tools/project-setup-cli.js"
 [ -f "$SETUP_CLI" ] || { echo "ERROR: run /aris-update or build the ARIS runtime." >&2; exit 1; }
+node "$SETUP_CLI" review --project "$ROOT"
 ```
 
-## Phase 0 — read the state
+The helper seeds `.aris/setup-draft.json` from current project files and prior
+answers, writes `.aris/setup-review.md`, and returns modules, field sources,
+options, recommendations, all validation issues and execution readiness.
+Existing drafts resume unchanged; old `.aris/setup-state.json` is only a
+migration source. `.aris/global-setup-state.json` is the single review state.
+
+Present the **entire** review in the project's language, grouped into:
+
+| Module | Content |
+| --- | --- |
+| Project | Name, language, constraints, non-goals |
+| Research | Field, problem, work type, venue, prior work, references, budget and timeline |
+| Metric | Primary name, target, direction, tolerance, constraints |
+| Baseline | Method, code/run location, expected reading, tolerance |
+| Execution | Backend, files, dependencies, browser, resources, commands, feedback, monitoring |
+| Tester | Pinned benchmark/data, scoring, execution, setup, healthcheck, smoke, full test and evidence |
+| Models | Available providers, execution/reviewer settings, model usage prose and lifecycle |
+| Run | Run/task/workflow IDs, revision, outputs, round/depth/repair limits, inventory and W_0 scope |
+
+For every choice field show **current value, source, all options and a
+recommendation**. For text/JSON fields show **current value, source and a
+concrete suggested description or shape**. Use the guide to replace generic
+recommendations with project-specific suggestions, and show unset values as
+`待填写 / unset`. Include all missing fields and conflicts in one list.
+
+Read-only discovery may add concrete observations or proposed commands to
+the draft, then refresh before displaying it. Mark proposals as proposals.
+Model choices come from the available provider/model catalogue; list valid
+options and recommend an independent reviewer family. If the catalogue cannot
+be read or selected settings are unavailable, show these conflicts on the same
+sheet and resolve them before confirmation. The helper's structural readiness
+does not verify live model availability. Never invent hardware,
+quota, benchmark revisions, full sample counts or measurements. No installation,
+downloads, dispatch, generated project files or sealing happen during review.
+
+Finish with one editing invitation: the owner can describe multiple edits in
+one reply, edit the JSON draft directly, or accept the displayed suggestions.
+Do not replace the sheet with a series of multiple-choice questions.
+
+## 2. Apply grouped edits and refresh
+
+Translate the owner's changes into a JSON patch using module paths. Plain
+objects merge, arrays replace the whole list, and `null` clears a value.
 
 ```bash
-node "$SETUP_CLI" status --project "$ROOT" ${RUN_ID:+--run-id "$RUN_ID"}
+node "$SETUP_CLI" refresh --project "$ROOT" --input "$PATCH_JSON"
+# If the owner edited setup-draft.json directly:
+node "$SETUP_CLI" refresh --project "$ROOT"
 ```
 
-It prints every stage with its evidence, its reason and its `next`, and exits
-non-zero while `blocking` is non-empty. **Skip every phase whose stage is
-already `ready`** — that is what makes this skill resumable and what keeps it
-from re-asking a question the project already answered.
+Reprint all modules with their refreshed values, options and recommendations.
+Summarize changed fields, then show **all** remaining missing fields or
+conflicts together. Continue this edit/refresh loop in any order the owner
+chooses. Do not ask the original per-field questions after an edit. Recommendations
+become draft values only when accepted, and are reviewed again before execution.
 
-Record progress in `.aris/global-setup-state.json`: `{ "version": 1,
-"stages_done": [...], "run_id": "...", "answers": {...} }`. This is deliberately
-not `/research-setup`'s `.aris/setup-state.json`. The two have different
-lifetimes — one is project initialization, the other is the precondition
-contract for a specific run — and sharing a file would let a re-run of
-`/research-setup` wipe a sealed run's setup answers.
+`ready_to_confirm: false` means more grouped edits are needed. A successful
+review command only means the sheet was generated; it does not mean runtime
+setup is ready. Any draft change invalidates a prior confirmation.
 
-## Phase 0.5 — install browser-act
+## 3. Confirm the whole configuration once
 
-Setup is where the external CLI tooling gets installed, while the user is
-present to approve a download. Run the ensure helper once, in install mode:
+When `ready_to_confirm: true`, show the full latest sheet and its digest,
+plus the installation/healthcheck/smoke/sealing actions it authorizes. Ask one
+final confirmation: “确认以上整份配置并执行设置，或一次性列出需要修改的项。”
+The only decision here is confirm or continue editing; do not launch a new
+questionnaire. A request to edit is not confirmation. If the configuration
+changed since the owner saw it, refresh, display it and obtain confirmation
+of that new version.
+
+After explicit confirmation of the displayed configuration:
 
 ```bash
-BROWSER_ACT_ENSURE=".aris/tools/ensure_browser_act.sh"
-[ -f "$BROWSER_ACT_ENSURE" ] || BROWSER_ACT_ENSURE="tools/ensure_browser_act.sh"
-sh "$BROWSER_ACT_ENSURE"
+node "$SETUP_CLI" confirm --project "$ROOT" --digest "$REVIEWED_DIGEST"
+node "$SETUP_CLI" prepare --project "$ROOT"
+RUN_ID=$(jq -er '.configuration.run.run_id' "$ROOT/.aris/setup-inputs/configuration.json") || exit 1
 ```
 
-It prints one JSON object and is idempotent — a project that already has the
-CLI spends nothing here.
+`prepare` verifies the current confirmation and writes immutable-for-this-attempt
+inputs under `.aris/setup-inputs/` plus `.aris/root-setup-answers.json`. It
+does not deploy facilities or seal the root. Do not treat a suggestion, a
+legacy checklist confirmation, or an old digest as current approval.
 
-A non-zero exit does not stop setup. `browser-act` is required only by an
-experiment environment that declares `browser.required`, and this project has
-not answered that question yet (Phase 2 asks it). Print the helper's `hint`,
-tell the user it matters only if their experiments read web pages, and go on.
-Do not promote this to a gate: the gate belongs where the requirement is known,
-which is `/experiment-env-manager` Step 1.3b and Phase 0 step 6. See
-[shared-references/browser-act.md](../shared-references/browser-act.md).
+## 4. Execute the confirmed configuration
 
-## Phase 1 — project basics
+Follow [unified-setup.md](../shared-references/unified-setup.md) for artifact
+mapping, the complete environment PRD and benchmark runner requirements.
 
-Not ready → tell the user to run `/research-setup`, and stop. It is an
-interactive wizard with its own state file; by
-[Rule 1](../shared-references/paseo-subagent-dispatch.md) a skill does not
-invoke another skill in-process, and re-implementing its questions here would
-give the project two writers of the same files. When they come back, re-run
-Phase 0.
+1. Generate or merge `CLAUDE.md`, `RESEARCH_BRIEF.md`, `.gitignore` and the
+   Wiki from the confirmed `configuration.json`. Preserve unrelated notes and
+   existing Wiki history. Setup describes baseline reproduction; iteration 1
+   executes it. Do not publish metrics from setup or smoke.
+2. Reuse an execution environment only when its effective PRD, backend and
+   audit evidence match the confirmed configuration. Otherwise render Paseo
+   settings from the confirmed CLAUDE.md block and dispatch one worker:
 
-## Phase 2 — experiment environment
+   ```text
+   /experiment-env-manager — project: <discovered project slug> — mode: setup
+     — prd: <absolute setup-inputs/environment-prd.json>
+     — confirmed-setup: <absolute setup-inputs/configuration.json>
+     — run-id: <setup attempt id> — paseo-config: <resolved config path>
+   ```
 
-Not ready → dispatch it, in the same shape `/research-setup` Phase 7.5 uses:
+   The worker uses the confirmed PRD and **does not ask setup questions**.
+   Follow [Paseo dispatch](../shared-references/paseo-subagent-dispatch.md)
+   and its mandatory **dispatch watchdog** before waiting, collect the receipt,
+   check actual env.json/audit evidence, then archive the worker. Failure or
+   missing requirements returns all defects to this configuration sheet;
+   there is no automatic `user_override` or second setup interview.
+3. Prepare the declared benchmark runner/data/service files. Resolve
+   `tester-facility-cli.js`, then execute the confirmed facility input directly:
 
-```
-mcp__paseo__create_agent
-  title:    "env-manager: setup $PROJECT_SLUG"
-  provider: claude
-  initialPrompt: "/experiment-env-manager — project: $PROJECT_SLUG — mode: setup"
-  notifyOnFinish: true
-```
+   ```bash
+   TESTER_CLI=".aris/dist/tools/tester-facility-cli.js"
+   [ -f "$TESTER_CLI" ] || TESTER_CLI="dist/tools/tester-facility-cli.js"
+   [ -f "$TESTER_CLI" ] || { echo "ERROR: missing tester-facility-cli.js" >&2; exit 1; }
+   node "$TESTER_CLI" migrate --project "$ROOT"
+   node "$TESTER_CLI" setup --project "$ROOT" --input "$ROOT/.aris/setup-inputs/tester-facility.json"
+   ```
 
-Use the `project_name` from the Phase 0 output as `$PROJECT_SLUG`; it is
-computed with the same algorithm `/auto-research-loop` step 0b uses, so a
-mismatch here means the loop would not find what the env-manager wrote.
+   `migrate` removes prior ARIS tester/search hooks and preserves unrelated
+   hooks. `setup` owns installation commands, healthcheck, smoke, config and
+   setup receipt; unchanged ready facilities can be reused. Require the matching
+   receipt and unchanged installation evidence. Do not dispatch `/tester-setup`.
+   Use the existing execution account and shared tester facilities. Docker is
+   an optional dependency environment. No private store, separate user, signing
+   keys, search exclusions or exposure limits are introduced.
+4. Assemble and seal using the established helpers:
 
-**End the turn after creating the agent.** Resume on the finish notification,
-then re-run `status` — env.json is the authority, not the child's report.
-Archive the agent afterwards, including when it failed.
+   ```bash
+   WORKFLOW_TOOLS_CLI=".aris/dist/tools/workflow-tools-cli.js"
+   [ -f "$WORKFLOW_TOOLS_CLI" ] || WORKFLOW_TOOLS_CLI="dist/tools/workflow-tools-cli.js"
+   [ -f "$WORKFLOW_TOOLS_CLI" ] || { echo "ERROR: missing workflow-tools-cli.js" >&2; exit 1; }
+   node "$SETUP_CLI" assemble --project "$ROOT" \
+     --answers "$ROOT/.aris/root-setup-answers.json" --output "$ROOT/.aris/root-setup-input.json"
+   node "$WORKFLOW_TOOLS_CLI" root-setup --project "$ROOT" --input "$ROOT/.aris/root-setup-input.json"
+   node "$SETUP_CLI" status --project "$ROOT" --run-id "$RUN_ID"
+   ```
 
-## Phase 3 — tester facilities
+   `root-setup` is the sole root writer and requires all six setup items:
 
-Dispatch `/tester-setup` through Paseo after Phase 2 finishes. Pass the research brief, metric target, confirmed benchmark/protocol needs and execution resources. An explicit benchmark name is accepted. Use the existing execution account; Docker is optional.
+   `tester`, `tester_facility`, `thresholds`, `limits`, `resource`, `baseline`
 
-Wait with the dispatch watchdog, collect the setup receipt, archive the worker, then rerun `status`. Require a valid `.aris/tester-config.json`, matching `.setup.json` and verified installation evidence. Failure stops setup at this phase. Do not mark the project ready based on the worker's prose.
+   No loop `budget` or structured `model_usage_policy` is written; model rules are
+   CLAUDE.md prose. Require all five readiness stages with `blocking: []`.
 
-On upgrade remove prior ARIS search hooks with `tester-facility-cli.js migrate --project "$ROOT"`; it preserves unrelated hooks. Root setup receives `tester_facility_config` from the installed config. There are no tester deployment/public-key/contract files or search policy stages.
+Any configuration change needed during execution goes back to grouped edits,
+full refresh and final confirmation of the changed version. Retry technical
+failures under the unchanged confirmed configuration without repeating the
+interview. Never edit a sealed root contract: changed protocol/answers require
+a new run ID and revision, which appear in the same review sheet.
 
-Subsequent iterations dispatch `/tester-test` and `/tester-audit`; they reuse these facilities and never repeat the interactive setup. See [tester-facility.md](../shared-references/tester-facility.md).
+## 5. Hand off
 
-## Phase 4 — remaining owner items
-
-```bash
-node "$SETUP_CLI" infer --project "$ROOT"
-```
-
-Two lists come back and there is no third.
-
-`inferred` — each value carries the file and field it was read from. **Print the
-value and its source together** and ask the user to confirm or correct it. A
-value whose origin the user cannot see is a value the user cannot check.
-
-`needs_owner` — each entry names an item, a field, and why no file answers it.
-Ask every one. In particular: env.json describes how to reach the machine and
-start a job, and contains no accelerator model, no memory size, no quota, no
-wall-clock ceiling and no egress list. Those are asked, never defaulted — the
-frozen inventory is what later separates "the plan asked for hardware that was
-never on the list" (a research negative) from "the machine was unreachable" (an
-infrastructure fault), and an invented number makes that call wrong silently.
-
-Write every confirmed answer into `.aris/global-setup-state.json` as you go, so
-an interrupted questionnaire resumes instead of restarting.
-
-## Phase 5 — assemble and seal
-
-Write the confirmed answers to `.aris/root-setup-answers.json`: the six header
-fields (`run_id`, `task_id`, `workflow_id`, `setup_revision`, `problem`,
-`expected_output`) plus any item the user confirmed or corrected. Items the user
-left as inferred can be omitted — `assemble` merges them in.
-
-The run this hands off to is an Auto Research Loop, so the answers also carry
-`mode: "auto_research_loop"`, `max_iterations`, and `max_repair_attempts` /
-`max_depth` when the owner sets them. No file answers these: ask the round
-limit, never default it. Do not write a `budget`; the loop has none and
-`root-setup` refuses one. `assemble` copies these fields through unchanged.
-
-Model usage is not an answer. Ask the owner which models may play which roles
-(who generates, who reviews, who may judge whom) and write their reply as prose
-under `## Model Usage` in CLAUDE.md, in their words. Every agent in the project
-reads CLAUDE.md, and that is the whole mechanism: nothing parses, freezes or
-enforces the section. `assemble` refuses a `model_usage_policy` answer so the
-rule cannot end up in two places.
-
-```bash
-node "$SETUP_CLI" assemble --project "$ROOT" \
-  --answers "$ROOT/.aris/root-setup-answers.json" \
-  --output  "$ROOT/.aris/root-setup-input.json"
-```
-
-`setupRootRun` — the function the sealing command calls — writes nothing until
-all six setup items are present:
-
-`tester`, `tester_facility`, `thresholds`, `limits`, `resource`, `baseline`
-
-`collectMissingSetupItems` returns the complete missing list in one response, so
-a `SETUP_INCOMPLETE` failure names every gap at once. Go back to Phase 4 for all
-of them and re-run; do not fix the first one and try again. An absent key or an
-explicit `undefined` counts as missing. An explicit `null` counts as supplied and
-is then rejected by the content validator — a different failure with a different
-fix, so do not treat one as the other. On re-entry, unchanged confirmation hashes
-are reused, so Phase 4 only re-asks about items that were added or changed.
-
-Merge rule: an answer replaces the inferred value key by key, and any array it
-supplies replaces that array whole.
-
-Then seal, with the command that has always owned this write:
-
-```bash
-node "$WORKFLOW_TOOLS_CLI" root-setup --project "$ROOT" --input "$ROOT/.aris/root-setup-input.json"
-```
-
-`assemble` deliberately does not call it. One sealed record, one writer — a
-second path into `setupRootRun` would be a second implementation of its
-validation.
-
-A sealed root contract is not edited in place. Changing any setup answer changes
-the charter digest, and `setupRootRun` refuses the mismatch with
-`ROOT_SETUP_SEALED`: the correction goes into a new run, not over the old one.
-
-Re-run `status --run-id "$RUN_ID"` and require `blocking: []`.
-
-## Phase 6 — hand off
-
-Print the five stages with their evidence, and the next command:
-
-```text
-/auto-research-loop
-```
-
-The handoff reuses the tested facilities. Ordinary runtime repairs do not repeat `/aris-setup`; protocol changes require a new setup version and a new run when its root charter is sealed.
+Report artifacts and the five stages with evidence. Then show
+`/auto-research-loop`. Subsequent evaluations use `/tester-test` followed by
+`/tester-audit` before Wiki publication; they reuse the configured facilities
+and never invoke setup as an iteration step. See
+[tester-facility.md](../shared-references/tester-facility.md).

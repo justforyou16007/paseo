@@ -41,7 +41,7 @@ Iterative, metric-target-driven research. The loop is
    problems as search seeds).
 3. **No baseline special case.** Iteration 1 is a normal iteration: the
    baseline method (described in RESEARCH_BRIEF's "Baseline Reproduction"
-   section, written by `/research-setup`) is materialized by idea-discovery as
+   section, written by unified `/aris-setup`) is materialized by idea-discovery as
    the first - merely more detailed - idea and run by experiment-bridge. After
    iteration 1 the orchestrator anchors `metric.baseline` from the measured
    value (pure dashboard arithmetic). Iterations 2+ are improvement attempts.
@@ -489,7 +489,7 @@ run_preconditions() {
 #     template block is NOT a configuration and is rejected).
 METRIC_CONFIG=$(node "$METRIC_GATE" config "$ROOT") || {
     echo "ERROR: /auto-research-loop requires an active '## Metric Target' block in CLAUDE.md."
-    echo "Run /research-setup or uncomment the block from templates/CLAUDE_MD_TEMPLATE.md."
+    echo "Run /aris-setup and edit the metric module in the complete configuration review."
     exit 1
 }
 TARGET_METRIC=$(jq -r '.target' <<< "$METRIC_CONFIG")
@@ -498,7 +498,7 @@ TARGET_DIRECTION=$(jq -r '.direction' <<< "$METRIC_CONFIG")
 TARGET_TOLERANCE=$(jq -r '.tolerance' <<< "$METRIC_CONFIG")
 TARGET_BASELINE=$(jq -r '.baseline // empty' <<< "$METRIC_CONFIG")
 
-# 0b. Check experiment environment - dispatch env-manager if not configured
+# 0b. Check experiment environment - reuse confirmed setup inputs if repair is needed
 PROJECT_NAME=$(basename "$ROOT" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\+/-/g; s/^-//; s/-$//')
 ENV_JSON=".claude/skills/run-${PROJECT_NAME}-experiment/env.json"
 ENV_CONFIGURED=false
@@ -507,6 +507,12 @@ if jq -e '.status == "complete"' "$ENV_JSON" >/dev/null 2>&1 \
     ENV_CONFIGURED=true
 fi
 if [ "$ENV_CONFIGURED" = "false" ]; then
+    SETUP_CONFIGURATION="$ROOT/.aris/setup-inputs/configuration.json"
+    SETUP_ENVIRONMENT_PRD="$ROOT/.aris/setup-inputs/environment-prd.json"
+    if [ ! -f "$SETUP_CONFIGURATION" ] || [ ! -f "$SETUP_ENVIRONMENT_PRD" ]; then
+        echo "ERROR: Run /aris-setup to review, edit and confirm the complete environment configuration."
+        exit 1
+    fi
     EXECUTOR_PROVIDER=$(jq -er '.executor_provider' "$CFG") || exit 1
     EXECUTOR_MODE=$(jq -er '.executor_mode' "$CFG") || exit 1
     EXECUTOR_THINKING=$(jq -r '.executor_thinking // empty' "$CFG")
@@ -519,22 +525,24 @@ if [ "$ENV_CONFIGURED" = "false" ]; then
       title: "env-manager: setup $PROJECT_NAME"
       provider: "$EXECUTOR_PROVIDER"
       settings: { modeId: "$EXECUTOR_MODE", thinkingOptionId: "$EXECUTOR_THINKING" }
-      initialPrompt: "/experiment-env-manager — project: $PROJECT_NAME — mode: setup — run-id: $RUN_ID — paseo-config: $CFG"
+      initialPrompt: "/experiment-env-manager — project: $PROJECT_NAME — mode: setup — prd: $SETUP_ENVIRONMENT_PRD — confirmed-setup: $SETUP_CONFIGURATION — run-id: $RUN_ID — paseo-config: $CFG"
       notifyOnFinish: "$NOTIFY_ON_FINISH"
 
     # Waiting is mandatory: end the turn and resume on the env-manager's
     # finish notification. Never inspect env.json immediately after create.
 
-    # The receipt confirms the child result when present; env.json is the
-    # configuration authority.
+    # Both the current worker receipt and the actual environment must pass.
+    ENV_RECEIPT_VALID=false
     if [ -f "$ENV_RECEIPT" ]; then
-        jq -e --arg p "$PROJECT_NAME" '
+        if jq -e --arg p "$PROJECT_NAME" '
           .skill == "experiment-env-manager" and .project == $p and
-          (.result == "complete" or .result == "user_override")
-        ' "$ENV_RECEIPT" >/dev/null || ENV_CONFIGURED=false
+          .result == "complete" and
+          (.audit_verdict == "pass" or .audit_verdict == "warn")
+        ' "$ENV_RECEIPT" >/dev/null; then ENV_RECEIPT_VALID=true; fi
     fi
     if jq -e '.status == "complete"' "$ENV_JSON" >/dev/null 2>&1 \
-       && [ -d ".claude/skills/run-${PROJECT_NAME}-experiment/scripts" ]; then
+       && [ -d ".claude/skills/run-${PROJECT_NAME}-experiment/scripts" ] \
+       && [ "$ENV_RECEIPT_VALID" = "true" ]; then
         ENV_CONFIGURED=true
     fi
 
@@ -1596,7 +1604,7 @@ current checkout, an ancestor directory or an old receipt.
 
 ## Tester facility workflow
 
-Initialize through `/aris-setup` → `/tester-setup`. Evaluate each publishable experiment through `/tester-test` → `/tester-audit`. Read complete benchmark evidence for analysis and claim review. No separate user/container, private result channel, signatures, search bans or exposure limits are used. Result/configuration hashes support reproducibility and current audit binding.
+Initialize through unified `/aris-setup` after the owner confirms its full configuration review. Evaluate each publishable experiment through `/tester-test` → `/tester-audit`. Read complete benchmark evidence for analysis and claim review. No separate user/container, private result channel, signatures, search bans or exposure limits are used. Result/configuration hashes support reproducibility and current audit binding.
 
 
 ## Critical Rules

@@ -1,6 +1,6 @@
 # Tester facility contract
 
-`/aris-setup` dispatches `/tester-setup`. For every completed experiment or assembled workflow requiring publication, dispatch `/tester-test`, then `/tester-audit`, then `/result-to-claim`. Each phase uses its own Paseo worker and receipt; persistent external execution uses the existing heartbeat/watchdog pattern.
+Unified `/aris-setup` reviews research, environment and tester configuration together, accepts grouped edits, refreshes the full sheet and obtains one final confirmation before executing `tester-facility-cli.js setup`. `/research-setup` and `/tester-setup` are compatibility names for that same procedure. For every completed experiment or assembled workflow requiring publication, dispatch `/tester-test`, then `/tester-audit`, then `/result-to-claim`. Each phase uses its own Paseo worker and receipt; persistent external execution uses the existing heartbeat/watchdog pattern.
 
 The configuration, setup receipt, jobs and results live under the owning project's `.aris/`. The runtime has no special tester user, container, private path, signed receipt, search blocklist or exposure budget. Root/child knowledge scopes and run ownership still follow normal ARIS contracts.
 
