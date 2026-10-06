@@ -5,11 +5,6 @@ argument-hint: "[— project: <name>] [— max-rounds: N] [— method: <existing
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, AskUserQuestion, WebSearch, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__create_heartbeat, mcp__paseo__delete_heartbeat
 ---
 
-> **Paseo dispatch contract.** This skill satisfies the Global Agent Rules in
-> [](shared-references/paseo-subagent-dispatch.md) (Rule 1: One Agent = One Skill;
-> Rule 4: Paseo MCP Only, Strict). The Phase 3 verifier is dispatched via
-> `mcp__paseo__create_agent` — not the host `Skill` / `Agent` / `Task` tools.
-
 > **Gate provenance** (`shared-references/acceptance-gate.md` step 5).
 > This skill has one STOP gate: *is the analysis sufficiently complete and rigorous?*
 > - **Type-A** (self-checkable): tables parse, statistics are computed, files exist.
@@ -17,11 +12,7 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, AskUserQuestion, WebSearc
 >   claims?* This verdict is produced by a fresh cross-model verifier and read
 >   verbatim. This skill never forms its own opinion of completeness.
 
-> **Dispatch watchdog (mandatory).** Every `mcp__paseo__create_agent` in this
-> skill is covered by `shared-references/paseo-subagent-dispatch.md`
-> §"The dispatch watchdog": arm a self-target watchdog before ending the turn
-> to wait, disarm once no awaited child turn remains. The procedure lives
-> there, not here.
+> **Dispatch watchdog (mandatory).** Follow the global dispatch rules and §"The dispatch watchdog" in [paseo-subagent-dispatch.md](../shared-references/paseo-subagent-dispatch.md).
 
 # Analyze Results
 
@@ -57,18 +48,7 @@ orchestrator (`/research-pipeline` or `/auto-research-loop`). The manifest
 provides all inputs; the skill writes its receipt to the manifest's directory.
 The required input-manifest file is the complete input authority for this worker.
 
-**Startup check:**
-```
-if "$ARGUMENTS" contains "— manifest:"; then
-    MANIFEST_PATH=<extracted path>
-    MANIFEST=$(cat "$MANIFEST_PATH")
-    WORKER_DIR=$(dirname "$MANIFEST_PATH")
-    OUTPUT_DIR=$(jq -r '.output_dir' <<< "$MANIFEST")
-    mkdir -p "$OUTPUT_DIR"
-    # Read inputs from manifest.inputs (file paths)
-    # Read context from manifest.context (scalar values)
-fi
-```
+**Worker paths:** when `— manifest: <path>` is present, set `MANIFEST_PATH` from it, `WORKER_DIR` to its directory and `OUTPUT_DIR` to `manifest.output_dir`. Read `manifest.inputs` and `manifest.context`; the manifest is the input authority.
 
 **Worker input authority.** The manifest names two kinds of input and they
 carry different rights. Conflating them is what kept this skill to log-reading.

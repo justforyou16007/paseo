@@ -8,11 +8,7 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent,
 
 > **Paseo substrate.** This workflow runs as a paseo claude sub-agent; its sub-skills dispatch as paseo sub-agents and its cross-model code reviewer as a paseo codex sub-agent. See `shared-references/paseo-subagent-dispatch.md` + `paseo-reviewer-dispatch.md`.. **Strict mode**: Paseo MCP is required; if unavailable, the run BLOCKS (per `paseo-subagent-dispatch.md`).
 
-> **Dispatch watchdog (mandatory).** Every `mcp__paseo__create_agent` in this
-> skill is covered by `shared-references/paseo-subagent-dispatch.md`
-> §"The dispatch watchdog": arm a self-target watchdog before ending the turn
-> to wait, disarm once no awaited child turn remains. The procedure lives
-> there, not here.
+> **Dispatch watchdog (mandatory).** Follow the global dispatch rules and §"The dispatch watchdog" in [paseo-subagent-dispatch.md](../shared-references/paseo-subagent-dispatch.md).
 
 # Workflow 1.5: Experiment Bridge
 
@@ -69,18 +65,7 @@ baseline described in `RESEARCH_BRIEF.md`'s Baseline Reproduction section, and
 it reaches this skill as an ordinary plan - `/aris-setup` describes that
 baseline but never runs it.
 
-**Startup check:**
-```
-if "$ARGUMENTS" contains "— manifest:"; then
-    MANIFEST_PATH=<extracted path>
-    MANIFEST=$(cat "$MANIFEST_PATH")
-    WORKER_DIR=$(dirname "$MANIFEST_PATH")
-    OUTPUT_DIR=$(jq -r '.output_dir' <<< "$MANIFEST")
-    mkdir -p "$OUTPUT_DIR"
-    # Read inputs from manifest.inputs (file paths)
-    # Read context from manifest.context (scalar values)
-fi
-```
+**Worker paths:** when `— manifest: <path>` is present, set `MANIFEST_PATH` from it, `WORKER_DIR` to its directory and `OUTPUT_DIR` to `manifest.output_dir`. Read `manifest.inputs` and `manifest.context`; the manifest is the input authority.
 
 **Receipt (write last to `$WORKER_DIR/receipt.json`):**
 
@@ -573,11 +558,7 @@ Ready for Workflow 2:
 
 ## Output Protocols
 
-> Follow these shared protocols for all output files:
->
-> - **[Output Versioning Protocol](../shared-references/output-versioning.md)** — write timestamped file first, then copy to fixed name
-> - **[Output Manifest Protocol](../shared-references/output-manifest.md)** — log every output to MANIFEST.md
-> - **[Output Language Protocol](../shared-references/output-language.md)** — respect the project's language setting
+Follow the shared [versioning](../shared-references/output-versioning.md), [manifest](../shared-references/output-manifest.md) and [language](../shared-references/output-language.md) contracts.
 
 ## Key Rules
 

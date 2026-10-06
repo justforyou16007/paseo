@@ -178,7 +178,11 @@ function checkInventory(): string[] {
           `§"Global Agent Rules")`,
       );
     }
-    if (bodyCitesPaseo && !hasPaseoCreate && !body.includes("**Never spawn a reviewer sub-agent.**")) {
+    if (
+      bodyCitesPaseo &&
+      !hasPaseoCreate &&
+      !body.includes("**Never spawn a reviewer sub-agent.**")
+    ) {
       const rel = path.relative(REPO_ROOT, skillFile);
       failures.push(
         `${rel} cites paseo-subagent-dispatch.md in its body but ` +
@@ -311,12 +315,13 @@ function checkInventory(): string[] {
   );
 
   // Problem entities: the open-problem layer. Every problem is born through
-  // add_problem at one of three writers — /research-setup (the run's root
+  // add_problem at one of three writers — /aris-setup (the run's root
   // problem), /result-to-claim (children derived from a partial/no verdict),
   // /kill-argument (children derived from an unanswered attack). Freehand
   // problem pages would not get the child_of edge or the query_pack listing,
   // so /idea-creator's next round would never see them.
-  const setup = read(path.join(SKILLS_ROOT, "research-setup", "SKILL.md"));
+  const setup = read(path.join(SKILLS_ROOT, "aris-setup", "SKILL.md"));
+  const setupArtifacts = read(path.join(SKILLS_ROOT, "shared-references", "unified-setup.md"));
   const killarg = read(path.join(SKILLS_ROOT, "kill-argument", "SKILL.md"));
   const toolProblem =
     /\.command\("add_problem"\)/.test(rwiki) && /function\s+addProblem\b/.test(rwiki);
@@ -326,8 +331,8 @@ function checkInventory(): string[] {
     failures,
   );
   require_(
-    /"\$WIKI_SCRIPT"\s+add_problem\b/.test(setup),
-    "research-setup/SKILL.md must invoke `add_problem` to create the run's root problem (else idea discovery has no seed and child problems have no parent)",
+    setup.includes("unified-setup.md") && /"\$WIKI_SCRIPT"\s+add_problem\b/.test(setupArtifacts),
+    "aris-setup must link the artifact contract that invokes `add_problem` to create the run's root problem",
     failures,
   );
   require_(

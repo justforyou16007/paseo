@@ -316,11 +316,7 @@ Inspired by [Meta-Harness](https://arxiv.org/abs/2603.28052) (Lee et al., 2026) 
 
 ## Output Protocols
 
-> Follow these shared protocols for all output files:
->
-> - **[Output Versioning Protocol](../shared-references/output-versioning.md)** — write timestamped file first, then copy to fixed name
-> - **[Output Manifest Protocol](../shared-references/output-manifest.md)** — log every output to MANIFEST.md
-> - **[Output Language Protocol](../shared-references/output-language.md)** — respect the project's language setting
+Follow the shared [versioning](../shared-references/output-versioning.md), [manifest](../shared-references/output-manifest.md) and [language](../shared-references/output-language.md) contracts.
 
 ## Review Tracing
 

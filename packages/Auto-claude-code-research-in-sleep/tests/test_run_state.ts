@@ -812,7 +812,7 @@ test("contract: research-pipeline and auto-research-loop are decoupled", () => {
     "pipeline phase list must be the fixed single-pass list",
   );
 
-  // research-setup no longer wires the loop into the pipeline.
+  // aris-setup does not wire the loop into the pipeline.
   assert.ok(!setup.includes("Inserted between W1"), "setup must not describe loop insertion");
 
   // research-pipeline reads direction and chosen idea from stable sources,
@@ -2720,7 +2720,7 @@ test("contract: auto-research-loop has no baseline branch — iteration 1 runs t
   assert.ok(!/skip .{0,24}idea.discovery/i.test(arl),
     "no iteration may skip idea-discovery");
   assert.ok(!arl.includes("refine-logs/EXPERIMENT_RESULTS.md"),
-    "the loop must not read /research-setup baseline artifacts — setup no longer reproduces a baseline");
+    "the loop must not read /aris-setup baseline artifacts — setup no longer reproduces a baseline");
 
   // The one thing iteration 1 does own: anchoring metric.baseline afterward.
   const anchor = arl.indexOf("## Baseline Anchoring");

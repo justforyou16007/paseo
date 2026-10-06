@@ -8,11 +8,7 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent,
 
 > **Paseo substrate.** This workflow (W3) runs as a paseo claude sub-agent; its sub-skills dispatch as paseo sub-agents and each audit's cross-model reviewer as a paseo codex sub-agent (fresh). `auto-paper-improvement-loop` spawns a FRESH codex reviewer each round (REVIEWER_BIAS_GUARD). See `shared-references/paseo-subagent-dispatch.md` + `paseo-reviewer-dispatch.md`.. **Strict mode**: Paseo MCP is required; if unavailable, the run BLOCKS (per `paseo-subagent-dispatch.md`).
 
-> **Dispatch watchdog (mandatory).** Every `mcp__paseo__create_agent` in this
-> skill is covered by `shared-references/paseo-subagent-dispatch.md`
-> §"The dispatch watchdog": arm a self-target watchdog before ending the turn
-> to wait, disarm once no awaited child turn remains. The procedure lives
-> there, not here.
+> **Dispatch watchdog (mandatory).** Follow the global dispatch rules and §"The dispatch watchdog" in [paseo-subagent-dispatch.md](../shared-references/paseo-subagent-dispatch.md).
 
 # Workflow 3: Paper Writing Pipeline
 
@@ -106,18 +102,7 @@ orchestrator (`/research-pipeline` or `/auto-research-loop`). The manifest
 provides all inputs; the skill writes its receipt to the manifest's directory.
 The required input-manifest file is the complete input authority for this worker.
 
-**Startup check:**
-```
-if "$ARGUMENTS" contains "— manifest:"; then
-    MANIFEST_PATH=<extracted path>
-    MANIFEST=$(cat "$MANIFEST_PATH")
-    WORKER_DIR=$(dirname "$MANIFEST_PATH")
-    OUTPUT_DIR=$(jq -r '.output_dir' <<< "$MANIFEST")
-    mkdir -p "$OUTPUT_DIR"
-    # Read inputs from manifest.inputs (file paths)
-    # Read context from manifest.context (scalar values)
-fi
-```
+**Worker paths:** when `— manifest: <path>` is present, set `MANIFEST_PATH` from it, `WORKER_DIR` to its directory and `OUTPUT_DIR` to `manifest.output_dir`. Read `manifest.inputs` and `manifest.context`; the manifest is the input authority.
 
 **Receipt (write last to `$WORKER_DIR/receipt.json`):**
 ```json
@@ -784,11 +769,7 @@ or directly if `assurance=draft`)
 
 ## Output Protocols
 
-> Follow these shared protocols for all output files:
->
-> - **[Output Versioning Protocol](../shared-references/output-versioning.md)** — write timestamped file first, then copy to fixed name
-> - **[Output Manifest Protocol](../shared-references/output-manifest.md)** — log every output to MANIFEST.md
-> - **[Output Language Protocol](../shared-references/output-language.md)** — note: paper-writing always outputs English LaTeX for venue submission
+Follow the shared [versioning](../shared-references/output-versioning.md), [manifest](../shared-references/output-manifest.md) and [language](../shared-references/output-language.md) contracts.
 
 ## Key Rules
 

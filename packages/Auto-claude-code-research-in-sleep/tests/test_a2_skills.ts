@@ -78,7 +78,6 @@ function endOfLine(skill: string, start: number): number {
 
 const autoSkill = () => read("skills/auto-research-loop/SKILL.md");
 const setupSkill = () => read("skills/aris-setup/SKILL.md");
-const testerSetupSkill = () => read("skills/tester-setup/SKILL.md");
 
 const statuses: readonly ResultStatus[] = [
   "not_executable",
@@ -507,15 +506,13 @@ test("bridge command variables have deterministic sources", () => {
 
 test("tester facility skills expose setup, test, audit and evidence handoff", () => {
  const auto=autoSkill(),setup=setupSkill();
- assert.ok(setup.includes('node "$TESTER_CLI" setup'));
- assert.ok(setup.includes('node "$SETUP_CLI" refresh'));
- assert.ok(setup.includes('node "$SETUP_CLI" confirm'));
- assert.ok(setup.includes('node "$SETUP_CLI" prepare'));
- for (const alias of ["research-setup", "tester-setup"]) {
-  const entry=read(`skills/${alias}/SKILL.md`);
-  assert.ok(entry.includes("../aris-setup/SKILL.md"));
-  assert.ok(entry.includes("accept multiple edits together"));
-  assert.equal(/AskUserQuestion\s*[—:]|Step 1\.1|initialPrompt:/.test(entry),false);
+ assert.ok(setup.includes('tester-facility-cli.js setup'));
+ assert.match(setup,/`refresh --project/);
+ assert.match(setup,/`confirm --project/);
+ assert.match(setup,/`prepare --project/);
+ for (const retired of ["research-setup", "tester-setup"]) {
+  assert.equal(fs.existsSync(path.join(packageRoot,"skills",retired,"SKILL.md")),false);
+  assert.equal(read("docs/SKILLS_CATALOG.md").includes(`\`/${retired}\``),false);
  }
  assert.ok(auto.includes("/tester-test"));assert.ok(auto.includes("/tester-audit"));
  assert.ok(read("skills/tester-test/SKILL.md").includes("resume"));
@@ -530,7 +527,7 @@ test("unified environment setup consumes confirmed inputs and returns defects wi
  const phase=manager.slice(manager.indexOf("### Phase 1: Consume"),manager.indexOf("### Phase 2: Dispatch"));
  assert.ok(phase.includes('node "$SETUP_CLI" verify'));
  assert.ok(phase.includes("configuration_review_required"));
- assert.ok(phase.includes("does not conduct a setup interview"));
+ assert.ok(phase.includes("without an interview"));
  assert.equal(/AskUserQuestion\s*[—:]|Step 1\.1/.test(phase),false);
  assert.ok(manager.includes("IF mode == setup:"));
  assert.ok(manager.includes("Do not ask questions or offer forced deployment"));

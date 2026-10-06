@@ -8,11 +8,7 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__paseo__create_agent,
 
 > **Paseo substrate.** This workflow runs as a paseo claude sub-agent; its sub-skills dispatch as paseo sub-agents and its cross-model reviewer as a paseo codex sub-agent. See `shared-references/paseo-subagent-dispatch.md` + `paseo-reviewer-dispatch.md`.. **Strict mode**: Paseo MCP is required; if unavailable, the run BLOCKS (per `paseo-subagent-dispatch.md`).
 
-> **Dispatch watchdog (mandatory).** Every `mcp__paseo__create_agent` in this
-> skill is covered by `shared-references/paseo-subagent-dispatch.md`
-> §"The dispatch watchdog": arm a self-target watchdog before ending the turn
-> to wait, disarm once no awaited child turn remains. The procedure lives
-> there, not here.
+> **Dispatch watchdog (mandatory).** Follow the global dispatch rules and §"The dispatch watchdog" in [paseo-subagent-dispatch.md](../shared-references/paseo-subagent-dispatch.md).
 
 # Resubmit Pipeline: Text-Only Microedit Mode
 

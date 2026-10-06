@@ -126,8 +126,7 @@ overwrites local edits under `.claude/skills/`.
 
 ## Step 4: Review and Confirm Project Configuration
 
-Run `/aris-setup`. `/research-setup` and `/tester-setup` are compatibility names
-for the same procedure. It shows all current configuration by module with
+Run `/aris-setup`. It shows all current configuration by module with
 sources, choice options and recommendations for text fields. Describe multiple
 changes in one reply or edit `.aris/setup-draft.json`; each refresh displays the
 complete sheet and all remaining gaps/conflicts. Confirm the latest complete

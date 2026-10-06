@@ -16,9 +16,6 @@
         <mxCell id="ov-check" value="&lt;b&gt;项目基础齐全？&lt;/b&gt;&lt;br&gt;CLAUDE.md + RESEARCH_BRIEF.md + research-wiki" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;spacing=5;" vertex="1" parent="ov-1">
           <mxGeometry x="760" y="200" width="280" height="100" as="geometry" />
         </mxCell>
-        <mxCell id="ov-research-setup" value="&lt;b&gt;兼容名称&lt;/b&gt;&lt;br&gt;/research-setup、/tester-setup 与 /aris-setup 同一流程，无独立问答" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="ov-1">
-          <mxGeometry x="70" y="350" width="520" height="130" as="geometry" />
-        </mxCell>
         <mxCell id="ov-aris-setup" value="&lt;b&gt;/aris-setup&lt;/b&gt;&lt;br&gt;八模块配置总览 → 集中修改/刷新 → 最终确认&lt;br&gt;确认后执行研究/环境/tester设置并封存root" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;spacing=8;" vertex="1" parent="ov-1">
           <mxGeometry x="650" y="350" width="520" height="130" as="geometry" />
         </mxCell>
@@ -201,13 +198,13 @@
         <mxCell id="set-e10" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="set-1" source="set-ready" target="set-loop">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="set-source" value="依据：skills/aris-setup/SKILL.md、skills/tester-setup/SKILL.md、src/tools/project-setup.ts" style="text;html=1;align=left;verticalAlign=middle;fontSize=10;fontColor=#6b7280;" vertex="1" parent="set-1">
+        <mxCell id="set-source" value="依据：skills/aris-setup/SKILL.md、skills/shared-references/unified-setup.md、src/tools/project-setup.ts" style="text;html=1;align=left;verticalAlign=middle;fontSize=10;fontColor=#6b7280;" vertex="1" parent="set-1">
           <mxGeometry x="40" y="1140" width="1720" height="30" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>
   </diagram>
-  <diagram id="research-setup-env" name="02 统一配置与环境管理">
+  <diagram id="unified-setup-env" name="02 统一配置与环境管理">
     <mxGraphModel dx="1800" dy="1350" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1350" math="0" shadow="0" background="#ffffff">
       <root>
         <mxCell id="env-0" />
@@ -535,7 +532,7 @@
         <mxCell id="state-wiki-claim" value="&lt;b&gt;/proof-checker&lt;/b&gt;&lt;br&gt;唯一创建 claim 节点；维护证明状态轴" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;spacing=7;" vertex="1" parent="state-wiki">
           <mxGeometry x="730" y="80" width="300" height="100" as="geometry" />
         </mxCell>
-        <mxCell id="state-wiki-problem" value="&lt;b&gt;problem 写者&lt;/b&gt;&lt;br&gt;/research-setup、/result-to-claim、/kill-argument；不删除页面，只变更状态" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;spacing=7;" vertex="1" parent="state-wiki">
+        <mxCell id="state-wiki-problem" value="&lt;b&gt;problem 写者&lt;/b&gt;&lt;br&gt;/aris-setup、/result-to-claim、/kill-argument；不删除页面，只变更状态" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;spacing=7;" vertex="1" parent="state-wiki">
           <mxGeometry x="30" y="230" width="300" height="100" as="geometry" />
         </mxCell>
         <mxCell id="state-wiki-helper" value="&lt;b&gt;research-wiki.js&lt;/b&gt;&lt;br&gt;所有实体变更通过 helper；不从 raw Markdown 猜字段" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=12;spacing=8;" vertex="1" parent="state-wiki">
@@ -639,7 +636,7 @@
         <mxCell id="test-subtitle" value="/aris-setup 准备共享设施；每轮完整 benchmark 测试和独立审计通过后，才能提交正式 Wiki 指标。" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#6b7280;" vertex="1" parent="test-1">
           <mxGeometry x="40" y="60" width="1720" height="30" as="geometry" />
         </mxCell>
-        <mxCell id="test-tester-lane" value="&lt;b&gt;/tester-setup：在 /aris-setup Phase 3 执行&lt;/b&gt;" style="swimlane;html=1;startSize=36;horizontal=1;collapsible=0;fillColor=#f8fafc;strokeColor=#9673a6;container=1;pointerEvents=0;verticalAlign=top;align=left;spacingTop=8;spacingLeft=12;fontSize=14;" vertex="1" parent="test-1">
+        <mxCell id="test-tester-lane" value="&lt;b&gt;/aris-setup：tester 设施模块，确认后执行&lt;/b&gt;" style="swimlane;html=1;startSize=36;horizontal=1;collapsible=0;fillColor=#f8fafc;strokeColor=#9673a6;container=1;pointerEvents=0;verticalAlign=top;align=left;spacingTop=8;spacingLeft=12;fontSize=14;" vertex="1" parent="test-1">
           <mxGeometry x="40" y="110" width="820" height="1240" as="geometry" />
         </mxCell>
         <mxCell id="test-t1" value="&lt;b&gt;1 明确协议与资源&lt;/b&gt;&lt;br&gt;benchmark 版本、数据 split、样本数、指标、模型、设备与超时" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=12;spacing=8;" vertex="1" parent="test-tester-lane">
@@ -738,7 +735,7 @@
         <mxCell id="test-e15" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="test-workflow-lane" source="test-w7" target="test-w8">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="test-source" value="依据：skills/tester-setup/SKILL.md、skills/tester-test/SKILL.md、skills/tester-audit/SKILL.md、src/tools/tester-facility.ts" style="text;html=1;align=left;verticalAlign=middle;fontSize=10;fontColor=#6b7280;" vertex="1" parent="test-1">
+        <mxCell id="test-source" value="依据：skills/aris-setup/SKILL.md、skills/tester-test/SKILL.md、skills/tester-audit/SKILL.md、src/tools/tester-facility.ts" style="text;html=1;align=left;verticalAlign=middle;fontSize=10;fontColor=#6b7280;" vertex="1" parent="test-1">
           <mxGeometry x="40" y="1380" width="1720" height="30" as="geometry" />
         </mxCell>
       </root>

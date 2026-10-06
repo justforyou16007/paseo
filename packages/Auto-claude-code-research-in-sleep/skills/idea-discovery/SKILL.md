@@ -8,11 +8,7 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, WebSearch, WebFetch, mcp_
 
 > **Paseo substrate.** This workflow runs as a paseo claude sub-agent; its sub-skills dispatch as paseo sub-agents and its cross-model reviewer as a paseo codex sub-agent. See `shared-references/paseo-subagent-dispatch.md` + `paseo-reviewer-dispatch.md`.. **Strict mode**: Paseo MCP is required; if unavailable, the run BLOCKS (per `paseo-subagent-dispatch.md`).
 
-> **Dispatch watchdog (mandatory).** Every `mcp__paseo__create_agent` in this
-> skill is covered by `shared-references/paseo-subagent-dispatch.md`
-> §"The dispatch watchdog": arm a self-target watchdog before ending the turn
-> to wait, disarm once no awaited child turn remains. The procedure lives
-> there, not here.
+> **Dispatch watchdog (mandatory).** Follow the global dispatch rules and §"The dispatch watchdog" in [paseo-subagent-dispatch.md](../shared-references/paseo-subagent-dispatch.md).
 
 # Idea Discovery
 
@@ -165,24 +161,11 @@ The loop's later iterations supply the previous iteration's evidence paths in
 `RESEARCH_BRIEF.md` and the research wiki's `query_pack.md`, whose Open Problems
 and Failed Ideas sections already carry what earlier iterations produced.
 
-**Startup check:**
-```
-if "$ARGUMENTS" contains "— manifest:"; then
-    MANIFEST_PATH=<extracted path>
-    MANIFEST=$(cat "$MANIFEST_PATH")
-    WORKER_DIR=$(dirname "$MANIFEST_PATH")
-    OUTPUT_DIR=$(jq -r '.output_dir' <<< "$MANIFEST")
-    mkdir -p "$OUTPUT_DIR"
-    # Read inputs from manifest.inputs (file paths)
-    # Read context from manifest.context (scalar values)
-    # Forward NOTHING to sub-skills: a sub-skill seeing "— manifest:" in its own
-    # arguments would enter ITS worker mode against OUR manifest and write a
-    # mismatched receipt into our worker directory.
-    SUB_ARGS=""
-else
-    SUB_ARGS="$ARGUMENTS"
-fi
-```
+**Worker paths:** when `— manifest: <path>` is present, set `MANIFEST_PATH` from it, `WORKER_DIR` to its directory and `OUTPUT_DIR` to `manifest.output_dir`. Read `manifest.inputs` and `manifest.context`; the manifest is the input authority.
+
+In worker mode use `SUB_ARGS=""` for sub-skill dispatch; direct mode uses
+`SUB_ARGS="$ARGUMENTS"`. Passing this worker's manifest token to a sub-skill
+would bind that sub-skill to the wrong receipt directory.
 
 **Receipt (write last to `$WORKER_DIR/receipt.json`):**
 ```json

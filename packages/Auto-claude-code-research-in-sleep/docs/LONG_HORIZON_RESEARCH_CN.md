@@ -221,7 +221,7 @@ result package 的摘要绑定是关键：包由输入确定性构造，reviewer
 
 ## 7. tester设施与评测流程
 
-`/aris-setup`、`/research-setup`和`/tester-setup`使用同一套配置流程：按八个模块展示当前值、来源、选择项与建议，用户集中修改或编辑草稿，刷新时一次列出全部缺项和冲突，最后确认整份配置。确认后才生成研究文件、配置审计环境、通过helper安装benchmark设施并运行健康检查/smoke、封存root。环境worker读取已确认PRD，不再逐项询问；tester不再派发独立setup skill。五个执行就绪阶段仍为项目基础、指标目标、实验环境、tester设施、root charter。
+`/aris-setup`使用统一配置流程：按八个模块展示当前值、来源、选择项与建议，用户集中修改或编辑草稿，刷新时一次列出全部缺项和冲突，最后确认整份配置。确认后才生成研究文件、配置审计环境、通过helper安装benchmark设施并运行健康检查/smoke、封存root。环境worker读取已确认PRD，不再逐项询问；tester不再派发独立setup skill。五个执行就绪阶段仍为项目基础、指标目标、实验环境、tester设施、root charter。
 
 后续评测复用设施：`/tester-test`执行完整benchmark，保留样本结果、日志、配置、产物摘要和持久任务状态；`/tester-audit`独立核查协议、评分、覆盖率和可比性。`result-to-claim`提交正式Wiki指标之前必须提供这两步的当前结果和通过审计。Wiki事件写入和结果导出均验证绑定及证据摘要，防止混用迭代或改动后继续采用旧审计。
 

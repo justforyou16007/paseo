@@ -21,11 +21,7 @@ allowed-tools: Bash(*), Read, Write, Grep, Glob, AskUserQuestion, WebSearch, mcp
 > requests go through this skill. No downstream skill dispatches
 > `/experiment-env-configuration` or `/experiment-env-audit` directly.
 
-> **Dispatch watchdog (mandatory).** Every `mcp__paseo__create_agent` in this
-> skill is covered by `shared-references/paseo-subagent-dispatch.md`
-> §"The dispatch watchdog": arm a self-target watchdog before ending the turn
-> to wait, disarm once no awaited child turn remains. The procedure lives
-> there, not here.
+> **Dispatch watchdog (mandatory).** Follow the global dispatch rules and §"The dispatch watchdog" in [paseo-subagent-dispatch.md](../shared-references/paseo-subagent-dispatch.md).
 
 # Experiment Environment Manager
 
@@ -219,8 +215,7 @@ Triggered by: `/aris-setup` with confirmed PRD/configuration; direct setup reque
 
 ### Phase 1: Consume the confirmed unified PRD
 
-Mode A is an execution worker for `/aris-setup`, including its research-setup
-and tester-setup compatibility names. It does not conduct a setup interview.
+Mode A executes the confirmed `/aris-setup` configuration without an interview.
 Require `— prd: <absolute prepared environment-prd.json>` and
 `— confirmed-setup: <absolute prepared configuration.json>`. A direct setup
 request without these inputs returns `configuration_review_required` and

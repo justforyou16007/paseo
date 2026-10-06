@@ -7,11 +7,7 @@ allowed-tools: Bash(*), Read, Write, Grep, Glob, WebSearch, WebFetch, mcp__paseo
 
 > **Paseo substrate.** This skill runs inside a paseo claude sub-agent; its lens fan-out dispatches as paseo sub-agents and its Phase-4 devil's-advocate reviewer is a paseo codex sub-agent (fresh first pass, continued triage). See `shared-references/paseo-subagent-dispatch.md` + `paseo-reviewer-dispatch.md` + `fan-out-pattern.md`..
 
-> **Dispatch watchdog (mandatory).** Every `mcp__paseo__create_agent` in this
-> skill is covered by `shared-references/paseo-subagent-dispatch.md`
-> §"The dispatch watchdog": arm a self-target watchdog before ending the turn
-> to wait, disarm once no awaited child turn remains. The procedure lives
-> there, not here.
+> **Dispatch watchdog (mandatory).** Follow the global dispatch rules and §"The dispatch watchdog" in [paseo-subagent-dispatch.md](../shared-references/paseo-subagent-dispatch.md).
 
 # Research Idea Creator
 
@@ -64,18 +60,7 @@ When invoked with `— manifest: <path>`, this skill runs as a worker under an
 orchestrator (`/research-pipeline` or `/auto-research-loop`). The manifest
 provides all inputs; the skill writes its receipt to the manifest's directory.
 
-**Startup check:**
-```
-if "$ARGUMENTS" contains "— manifest:"; then
-    MANIFEST_PATH=<extracted path>
-    MANIFEST=$(cat "$MANIFEST_PATH")
-    WORKER_DIR=$(dirname "$MANIFEST_PATH")
-    OUTPUT_DIR=$(jq -r '.output_dir' <<< "$MANIFEST")
-    mkdir -p "$OUTPUT_DIR"
-    # Read inputs from manifest.inputs (file paths)
-    # Read context from manifest.context (scalar values)
-fi
-```
+**Worker paths:** when `— manifest: <path>` is present, set `MANIFEST_PATH` from it, `WORKER_DIR` to its directory and `OUTPUT_DIR` to `manifest.output_dir`. Read `manifest.inputs` and `manifest.context`; the manifest is the input authority.
 
 **Receipt (write last to `$WORKER_DIR/receipt.json`):**
 ```json

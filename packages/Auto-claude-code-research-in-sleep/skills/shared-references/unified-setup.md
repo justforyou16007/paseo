@@ -1,6 +1,6 @@
 # Unified setup configuration and artifacts
 
-Read with `/aris-setup` and its compatibility names. There is one editable
+Read with `/aris-setup`. There is one editable
 draft, one refresh loop and one final confirmation of the current full
 configuration. Display the modules together, not as a sequential interview.
 CLI output is the base sheet; enrich recommendations with known project
@@ -45,42 +45,6 @@ Objects merge recursively; arrays replace; `[]` clears an optional list;
 module after refresh, including unchanged modules. Do not write deployed files
 from an unconfirmed draft. `configuration_sha256` identifies the version the
 owner reviewed for stale-edit detection, rather than tester isolation.
-
-## Field recommendations
-
-| Module / fields | Options or text guidance |
-| --- | --- |
-| project.name / language | Current project name; `zh` or `en`, recommend the collaboration language |
-| project.constraints / non_goals | Known engineering constraints and explicitly excluded research directions |
-| research.field / sub_area / problem | Concrete subject, approach gap, why it matters and measured evidence that closes it |
-| research.work_type | `new_direction`, `improve_existing`, `diagnostic`; recommend improvement when baseline work exists |
-| research.venue / timeline | Known venue and actual timeline; unspecified is permitted, no fictional submission date |
-| research.compute_budget | Actual owner budget as prose; no default GPU-hour allocation |
-| research.key_papers / prior_attempts / failures / existing_results | Known references and experiments including negative results; optional empty values are explicit |
-| research.domain_knowledge / reference_skills / reference_documents / reference_knowledge | Domain intuitions and lists of actual skill names, paths and constraints |
-| metric.name / target / direction / tolerance | A facility metric, finite target, `higher_better` or `lower_better`; suggest accuracy/F1 higher and loss/latency lower; suggest 0.01 relative tolerance or 0 strict |
-| metric.constraints | Real hard metric constraints; `[]` explicitly means none |
-| baseline.method / code_ref / expected_metric / tolerance | Existing method and runnable code location; known score/tolerance or explicitly unknown score |
-| environment.backend | `local`, `remote`, `docker`, `vast`, `modal`; recommend the existing execution environment |
-| environment.prd | Complete shape below, with commands from successful runs or proposed scripts |
-| tester | Full `TESTER_FACILITY_CONFIG_TEMPLATE.json` shape; benchmark details below |
-| models.*_provider | List available providers/models and retain valid current choices; recommend a different reviewer family |
-| models.executor_mode / reviewer_mode | Executor `bypassPermissions`, `auto`, `plan`; reviewer `full-access`, `auto`, `read-only`. Recommend writable modes for setup; read-only modes cannot generate required artifacts |
-| models.*_thinking | Available reasoning options for the selected model; retain valid current values or omit for model default |
-| models.notify_on_finish / subagent_workspace | `true` / `false`, recommend true; `current` / `worktree`, recommend current for shared facilities |
-| models.dispatch_heartbeat_cron / dispatch_heartbeat_expires / max_phase_idle | Current watchdog settings; recommend 30-minute window and 24h expiry, with matching idle timeout |
-| models.heartbeat_cron / heartbeat_max_runs | Existing overnight driver cadence or `off`; optional run count, distinct from watchdog |
-| models.model_usage | Owner's prose naming model roles and independent reviewer/judge conditions; no structured frozen model policy |
-| run.run_id / task_id / workflow_id / setup_revision | Concrete identities; changed sealed setup requires a new run/revision |
-| run.expected_output | Candidate implementation/deployment files, measured output and evidence expected |
-| run.max_iterations / max_repair_attempts / max_depth | Explicit integer round limit, suggest 10; repair/depth suggest 3/2, allowing 0 where supported |
-| run.owner_limits | Actual graph, bundle and compute-per-candidate limits, including max_bundled_positions_per_graph |
-| run.resource_inventory | Actual platforms, access references, devices, memory, quota, paths, endpoints and time window; probes supply observations, never invented capacity |
-| run.baseline_scope | W_0 graph, code/artifact hashes, initial validation and optimizable positions (`independent` / `bundled`) |
-
-Show limits as editable values with recommendations, never hidden defaults.
-Setup confirmation and runtime readiness are separate: valid configuration
-can still have installation failures.
 
 ## Complete environment PRD
 
@@ -220,7 +184,7 @@ On resume preserve the root problem and history; use supported updates when
 context changes. Setup creates no claim nodes or test-result entries. Optional
 explicit paper sync uses the Wiki helper; never hand-write Wiki records.
 Append missing ARIS trace/runtime rules to .gitignore, preserving existing
-rules. State is owned by the review helper, not a research-setup wizard.
+rules. State is owned by the review helper, not a second setup writer.
 
 ## Execution and recovery
 

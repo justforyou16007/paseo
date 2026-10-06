@@ -121,7 +121,7 @@ export ARIS_REPO=~/aris_repo
 
 ## 第四步：总览、修改并确认项目配置
 
-执行 `/aris-setup`。`/research-setup` 和 `/tester-setup` 是同一流程的兼容名称。
+执行 `/aris-setup`。
 先按模块展示全部当前配置与来源，选择项列出可选项和建议，文本项给出填写建议。
 一次描述多项修改，或直接编辑 `.aris/setup-draft.json`；刷新后展示整份配置，
 并一次列出全部缺项和冲突。最后确认最新的整份配置，再生成研究文档、配置并审计

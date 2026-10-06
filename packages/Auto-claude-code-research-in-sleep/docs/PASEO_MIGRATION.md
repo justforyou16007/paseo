@@ -127,7 +127,7 @@ the dependency or input is fixed.
 The main research path is:
 
 ```text
-research-setup
+aris-setup
   → idea-discovery
   → experiment-bridge
   → auto-review-loop

@@ -7,11 +7,7 @@ allowed-tools: Bash(*), Read, Grep, Glob, Write, Edit, mcp__paseo__create_agent,
 
 > **Paseo substrate.** This workflow (W2) runs as ONE paseo claude agent looping rounds 1→N internally; round 1 spawns a fresh codex reviewer sub-agent and round 2+ continues it with `send_agent_prompt` when reviewer memory is required. See `shared-references/paseo-subagent-dispatch.md` (fence) + `paseo-reviewer-dispatch.md` (fresh-vs-continuation). **Strict mode**: Paseo MCP is required; if unavailable, the run BLOCKS (per `paseo-subagent-dispatch.md`).
 
-> **Dispatch watchdog (mandatory).** Every `mcp__paseo__create_agent` in this
-> skill is covered by `shared-references/paseo-subagent-dispatch.md`
-> §"The dispatch watchdog": arm a self-target watchdog before ending the turn
-> to wait, disarm once no awaited child turn remains. The procedure lives
-> there, not here.
+> **Dispatch watchdog (mandatory).** Follow the global dispatch rules and §"The dispatch watchdog" in [paseo-subagent-dispatch.md](../shared-references/paseo-subagent-dispatch.md).
 
 # Auto Review Loop: Autonomous Research Improvement
 
@@ -107,11 +103,7 @@ valid matching receipt; a crash between these two writes resumes delivery.
 
 ## Output Protocols
 
-> Follow these shared protocols for all output files:
->
-> - **[Output Versioning Protocol](../shared-references/output-versioning.md)** — write timestamped file first, then copy to fixed name
-> - **[Output Manifest Protocol](../shared-references/output-manifest.md)** — log every output to MANIFEST.md
-> - **[Output Language Protocol](../shared-references/output-language.md)** — respect the project's language setting
+Follow the shared [versioning](../shared-references/output-versioning.md), [manifest](../shared-references/output-manifest.md) and [language](../shared-references/output-language.md) contracts.
 
 ## Manifest Protocol (Worker Mode)
 
@@ -119,18 +111,7 @@ When invoked with `— manifest: <path>`, this skill runs as a worker under an
 orchestrator (`/research-pipeline` or `/auto-research-loop`). The manifest
 provides all inputs; the skill writes its receipt to the manifest's directory.
 
-**Startup check:**
-```
-if "$ARGUMENTS" contains "— manifest:"; then
-    MANIFEST_PATH=<extracted path>
-    MANIFEST=$(cat "$MANIFEST_PATH")
-    WORKER_DIR=$(dirname "$MANIFEST_PATH")
-    OUTPUT_DIR=$(jq -r '.output_dir' <<< "$MANIFEST")
-    mkdir -p "$OUTPUT_DIR"
-    # Read inputs from manifest.inputs (file paths)
-    # Read context from manifest.context (scalar values)
-fi
-```
+**Worker paths:** when `— manifest: <path>` is present, set `MANIFEST_PATH` from it, `WORKER_DIR` to its directory and `OUTPUT_DIR` to `manifest.output_dir`. Read `manifest.inputs` and `manifest.context`; the manifest is the input authority.
 
 In worker mode, begin from `manifest.inputs.results`,
 `manifest.inputs.tracker`, and `manifest.inputs.analysis`. These are the

@@ -7,11 +7,7 @@ allowed-tools: Bash(*), Read, Grep, Glob, Write, Edit, mcp__paseo__create_agent,
 
 > **Paseo substrate.** This workflow runs as a paseo claude sub-agent; its stress-test reviewer is a paseo codex sub-agent (fresh for the first stress test, continued for follow-up probes). See `shared-references/paseo-subagent-dispatch.md` + `paseo-reviewer-dispatch.md`.. **Strict mode**: Paseo MCP is required; if unavailable, the run BLOCKS (per `paseo-subagent-dispatch.md`).
 
-> **Dispatch watchdog (mandatory).** Every `mcp__paseo__create_agent` in this
-> skill is covered by `shared-references/paseo-subagent-dispatch.md`
-> §"The dispatch watchdog": arm a self-target watchdog before ending the turn
-> to wait, disarm once no awaited child turn remains. The procedure lives
-> there, not here.
+> **Dispatch watchdog (mandatory).** Follow the global dispatch rules and §"The dispatch watchdog" in [paseo-subagent-dispatch.md](../shared-references/paseo-subagent-dispatch.md).
 
 # Workflow 4: Rebuttal
 

@@ -1,7 +1,10 @@
 # ARIS Skills Catalog
 
-Every skill that ships with ARIS — **90 skills**, grouped by role. The table is
+Every skill that ships with ARIS — **88 skills**, grouped by role. The table is
 the current shipped skill set; add a row in the same change as a new skill.
+
+For per-skill simplification candidates and retained contracts, see the
+[skills maintenance audit](SKILLS_SIMPLIFICATION_AUDIT_CN.md).
 
 - Each `Skill` link goes to the canonical `SKILL.md` (the LLM-readable spec).
 - `Role` is a one-line summary — see the `SKILL.md` for the full contract,
@@ -22,7 +25,6 @@ End-to-end pipelines that chain many sub-skills. Most users start here.
 | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------- |
 | [`/aris-setup`](../skills/aris-setup/SKILL.md) | One modular configuration review: current values/options/recommendations → grouped edits/refresh → final confirmation → research files, environment, tester facilities and root seal | Local or SSH benchmark environment; runtime helpers |
 | [`/scorer-loop`](../skills/scorer-loop/SKILL.md) | Compare and review scorer revisions within a dedicated outer wave | Frozen scorer update plan; Paseo MCP |
-| [`/tester-setup`](../skills/tester-setup/SKILL.md) | Compatibility name for the same unified /aris-setup configuration review and execution | Same as /aris-setup |
 | [`/tester-test`](../skills/tester-test/SKILL.md) | Run complete benchmarks with durable jobs and raw evidence | Ready tester facilities |
 | [`/tester-audit`](../skills/tester-audit/SKILL.md) | Independently audit benchmark evidence before Wiki metrics | Paseo MCP; complete test result |
 | [`/research-pipeline`](../skills/research-pipeline/SKILL.md)               | **Full chain** — Workflow 1 → 1.5 → 2 → 3, from research direction to submission-ready paper                                                                                                                                         | Paseo MCP, LaTeX, GPU               |
@@ -170,7 +172,6 @@ Cross-cutting infrastructure used by other skills or run on demand.
 | [`/overleaf-sync`](../skills/overleaf-sync/SKILL.md)               | Two-way sync between local paper directory and Overleaf project via Overleaf Git bridge (Premium) — `setup` / `pull` (diff protocol) / `push` (confirmation gate) / `status`                                | Overleaf Premium + macOS Keychain        |
 | [`/feishu-notify`](../skills/feishu-notify/SKILL.md)               | Send notifications to Feishu / Lark — push-only (webhook) or interactive (bidirectional) modes. Off by default                                                                                              | Feishu webhook URL                       |
 | [`/interview-cheatsheet`](../skills/interview-cheatsheet/SKILL.md) | Generate long-form Chinese ML / LLM interview-prep cheat sheets with formulas, code, Q&A, review, and HTML output                                                                                           | Paseo MCP, Node.js compiled renderer     |
-| [`/research-setup`](../skills/research-setup/SKILL.md) | Compatibility name for unified /aris-setup; all modules reviewed together, grouped edits refreshed, one final confirmation before execution | Same as /aris-setup |
 | [`/aris-update`](../skills/aris-update/SKILL.md)                 | Incremental update of ARIS skills in a project directory — diffs upstream, preserves local edits, syncs tools/dist/templates, and outputs adaptation guidance for current project progress | None |
 
 ---

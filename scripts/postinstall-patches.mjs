@@ -112,25 +112,35 @@ if (existsSync("patches") && installedPackages.length > 0) {
   }
 }
 
-// ── 2. Install research-setup as a global Claude Code skill ───────────
-// Makes /research-setup available in any workspace so users can bootstrap
+// ── 2. Install aris-setup as a global Claude Code skill ───────────────
+// Makes /aris-setup available in any workspace so users can bootstrap
 // ARIS in new projects without first installing ARIS skills locally.
 
-const arisSkillSource = resolve(
-  "packages/Auto-claude-code-research-in-sleep/skills/research-setup",
-);
+const arisSkillSource = resolve("packages/Auto-claude-code-research-in-sleep/skills/aris-setup");
 const globalSkillsDir = join(homedir(), ".claude", "skills");
-const globalSkillLink = join(globalSkillsDir, "research-setup");
+const globalSkillLink = join(globalSkillsDir, "aris-setup");
 
 if (existsSync(arisSkillSource)) {
   mkdirSync(globalSkillsDir, { recursive: true });
+
+  // Remove retired entry links owned by this checkout; preserve user directories.
+  for (const name of ["research-setup", "tester-setup"]) {
+    const link = join(globalSkillsDir, name);
+    try {
+      const target = resolve(globalSkillsDir, readlinkSync(link));
+      const retiredSource = resolve("packages/Auto-claude-code-research-in-sleep/skills", name);
+      if (target === retiredSource || target === arisSkillSource) rmSync(link);
+    } catch {
+      // Absent paths and user-owned non-symlinks need no migration.
+    }
+  }
 
   let needsLink = true;
   try {
     const stat = lstatSync(globalSkillLink);
     if (stat.isSymbolicLink()) {
       const currentTarget = readlinkSync(globalSkillLink);
-      if (resolve(currentTarget) === resolve(arisSkillSource)) {
+      if (resolve(globalSkillsDir, currentTarget) === arisSkillSource) {
         needsLink = false;
       } else {
         rmSync(globalSkillLink);

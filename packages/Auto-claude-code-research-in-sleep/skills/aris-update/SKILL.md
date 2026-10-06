@@ -509,7 +509,7 @@ print_adaptation() {
           echo ""
         fi
         ;;
-      aris-setup|research-setup|tester-setup)
+      aris-setup)
         if [ "$SETUP_COMPLETE" = "true" ]; then
           HAS_ADVICE=true
           echo "  ✓ $name updated — completed setup is not affected."
