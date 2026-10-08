@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { readStateFile, writeStateFileAtomic } from "../state-file.js";
 import {
+  assertTesterSetupReady,
   readTesterFacilityConfig,
   testerConfigPath,
   testerFacilityConfigSha256,
@@ -171,7 +172,7 @@ export function readValidationConfig(root: string): ValidationConfig {
   return validateValidationConfig(readStateFile(file));
 }
 
-/** The installed benchmark must still be the one frozen at setup. */
+/** The installed benchmark, and every file it pins, must still be the one frozen at setup. */
 export function assertFrozenBenchmark(root: string, config: ValidationConfig): void {
   const actual = testerFacilityConfigSha256(readTesterFacilityConfig(testerConfigPath(root)));
   if (actual !== config.tester_config_sha256)
@@ -179,6 +180,7 @@ export function assertFrozenBenchmark(root: string, config: ValidationConfig): v
       "BENCHMARK_CHANGED",
       "the installed benchmark differs from the frozen one; validation is stopped",
     );
+  assertTesterSetupReady(testerConfigPath(root));
 }
 
 export function readValidationToken(root: string): string {
