@@ -104,6 +104,7 @@ const CHOICES: Record<string, readonly unknown[]> = {
   "environment.prd.baseline.kind": ["real", "simple"],
   "validation.benchmark.metrics.*.direction": ["higher_better", "lower_better"],
   "validation.benchmark.metrics.*.aggregation": ["mean", "sum", "external"],
+  "validation.service.host": ["127.0.0.1", "0.0.0.0"],
 };
 const PRD_REQUIRED = [
   "version",
@@ -138,7 +139,7 @@ const PRD_REQUIRED = [
   "baseline.kind",
 ];
 const ADAPTER_CONTRACT =
-  "adapter/run.py reads the benchmark samples named by the frozen runner, calls the delivered artifact as USAGE.md describes, and writes one prediction per sample to the path in ARIS_TEST_OUTPUT.";
+  'The runner calls `python <ARIS_ADAPTER_DIR>/predict.py <inputs.jsonl> <predictions.jsonl>`. predict.py runs the deliverable in ARIS_ARTIFACT_REF as USAGE.md describes and writes one JSON line {"id", "prediction"} per input. The runner scores the predictions and writes ARIS_TEST_OUTPUT.';
 const ROLE_BEGIN = "<!-- ARIS ROLE BEGIN -->";
 const ROLE_END = "<!-- ARIS ROLE END -->";
 const TEMPLATES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../templates");
@@ -221,7 +222,7 @@ function moduleDefaults(root: string, module: string): JsonObject {
     limits: DEFAULT_LIMITS,
     leak_check: { hidden_paths: [], min_match_chars: 40 },
     agent: { provider: null, model: null, mode: null, thinking: null, paseo_command: ["paseo"] },
-    service: { public_url: null },
+    service: { host: "127.0.0.1", port: null, public_url: null },
   };
 }
 /** A draft carries only the modules of its role; choosing a role fills in that role's modules. */
@@ -261,14 +262,18 @@ function recommendation(key: string, value: unknown): string {
     "validation.metric.target":
       "The value that ends the task, in the metric's unit; the benchmark metric decides the direction.",
     "validation.adapter_contract":
-      "What a validation agent must write under adapter/ so the frozen runner can call a deliverable.",
+      "Exactly how your runner calls ARIS_ADAPTER_DIR; a validation agent writes each submission's adapter to this contract.",
     "validation.leak_check.hidden_paths":
       "Absolute paths of the hidden samples, labels and references; feedback quoting them is held back.",
     "validation.agent.provider": "Provider for the per-submission validation agent, e.g. claude.",
     "validation.agent.paseo_command":
       'On Windows use ["node", "<install dir>\\\\bin\\\\paseo"]; the paseo.cmd shim cannot be spawned directly.',
+    "validation.service.host":
+      "127.0.0.1 behind the Paseo service proxy; 0.0.0.0 when the worker connects directly over a private network.",
+    "validation.service.port":
+      "null lets Paseo pick a port on every start; a direct connection needs a fixed one, e.g. 8765, open in the firewall.",
     "validation.service.public_url":
-      "The address the worker machine reaches: the Paseo service proxy alias or http://<host>:<port>.",
+      "The address the worker machine reaches: the Paseo service proxy URL, or http://<this machine's address>:<port>.",
   };
   if (advice[key]) return advice[key];
   if (key.startsWith("validation.limits."))
@@ -371,8 +376,11 @@ function draftValidationConfig(
       "validation.metric.name",
     );
   const { metric: _metric, benchmark: _benchmark, ...rest } = validation;
+  // The port belongs to the paseo.json service entry; Paseo hands it to the service as PASEO_PORT.
+  const { port: _port, ...service } = isRecord(validation.service) ? validation.service : {};
   return validateValidationConfig({
     ...rest,
+    service,
     schema_version: 1,
     metric: {
       name: declared.name,
@@ -433,6 +441,13 @@ export function validateSetupConfiguration(configuration: JsonObject, root: stri
   }
   if (role === "validation" && isRecord(configuration.validation)) {
     const validation = configuration.validation;
+    const port = get(validation, "service.port");
+    if (
+      port !== null &&
+      port !== undefined &&
+      !(Number.isInteger(port) && Number(port) > 0 && Number(port) < 65_536)
+    )
+      add("validation.service.port", "must be null or a TCP port number");
     let benchmark: TesterFacilityConfig | undefined;
     attempt("validation.benchmark", () => {
       benchmark = validateTesterFacilityConfig(validation.benchmark);
@@ -645,9 +660,11 @@ export async function applySetup(projectRoot: string): Promise<SetupApplyResult>
   const config = draftValidationConfig(validation, benchmark);
   writeStateJsonAtomic(validationConfigPath(root), config);
   const token = ensureValidationToken(root);
+  const port = get(validation, "service.port");
   mergeJsonEntry(path.join(root, "paseo.json"), "scripts", "aris-validation", {
     type: "service",
     command: "node .aris/dist/tools/validation-cli.js serve --project .",
+    ...(typeof port === "number" ? { port } : {}),
   });
   writeRoleBlock(root, role);
   return {

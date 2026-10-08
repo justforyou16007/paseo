@@ -92,9 +92,14 @@ await project("validation", async (root) => {
       metric: { name: "score", target: 1 },
       leak_check: { hidden_paths: [path.join(root, "bench", "labels.json")] },
       agent: { provider: "claude" },
-      service: { public_url: "https://validation.example/" },
+      service: { host: "0.0.0.0", port: 70_000, public_url: "https://validation.example/" },
     },
   });
+  assert.deepEqual(
+    review.issues.map((issue) => issue.field),
+    ["validation.service.port"],
+  );
+  review = refreshSetupReview(root, { validation: { service: { port: 8765 } } });
   assert.deepEqual(review.issues, []);
   assert.throws(
     () => confirmSetupReview(root, "0".repeat(64)),
@@ -113,10 +118,13 @@ await project("validation", async (root) => {
   assert.deepEqual(config.metric, { name: "score", direction: "higher_better", target: 1 });
   assert.equal(config.limits.max_submissions, 20);
   assert.ok(fs.existsSync(path.join(root, ".aris", "tester-config.json")));
-  assert.equal(
-    read(path.join(root, "paseo.json")).scripts["aris-validation"].type,
-    "service",
-  );
+  // The fixed port lives only in the Paseo service entry; the frozen config keeps the bind host.
+  assert.deepEqual(read(path.join(root, "paseo.json")).scripts["aris-validation"], {
+    type: "service",
+    command: "node .aris/dist/tools/validation-cli.js serve --project .",
+    port: 8765,
+  });
+  assert.deepEqual(config.service, { host: "0.0.0.0", public_url: "https://validation.example" });
   assert.match(fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8"), /ARIS role: validation/);
 
   // Re-applying keeps the token the worker already holds.

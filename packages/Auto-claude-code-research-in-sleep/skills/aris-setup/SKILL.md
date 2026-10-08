@@ -43,7 +43,9 @@ Show the whole sheet again after each refresh. A recommendation becomes a value 
 - `validation.leak_check.hidden_paths`: absolute paths of the hidden samples, labels and references. Feedback that quotes them is held back.
 - `validation.limits`: maximum counted submissions, concurrency, upload size and review timeout.
 - `validation.agent`: provider, model, mode and thinking for the per-submission validation agent. On Windows set `paseo_command` to `["node", "<Paseo install>\\bin\\paseo"]`.
-- `validation.service.public_url`: the address the worker reaches. Use the Paseo service proxy alias for the `aris-validation` script, or `http://<host>:<port>` on a private network.
+- `validation.service`: how the worker reaches the service.
+  - Through the Paseo service proxy: keep `host` at `127.0.0.1`, leave `port` null, and set `public_url` to the proxy URL of the `aris-validation` script.
+  - Directly on a private network: set `host` to `0.0.0.0`, a fixed `port`, and `public_url` to `http://<this machine's address>:<port>`. On Windows, allow that port through the firewall: `netsh advfirewall firewall add rule name="ARIS validation" dir=in action=allow protocol=TCP localport=<port>`.
 
 Once a submission has been counted, the benchmark and metric are frozen and the helper reports any change as an issue. Changing them means a new validation project.
 
