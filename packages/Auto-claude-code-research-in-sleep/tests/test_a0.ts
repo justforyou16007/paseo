@@ -1182,6 +1182,109 @@ test("standalone first-write output, claim dates, and experiment IDs remain comp
   }
 });
 
+const OVERLEAF_CLI = path.resolve("src/tools/overleaf-cli.ts");
+const ENSURE_BROWSER_ACT = path.resolve("src/tools/ensure-browser-act.ts");
+
+test("overleaf audit finds a leaked token without printing it", () => {
+  const root = tmpDir();
+  const token = `olp_${"A1b2C3d4".repeat(4)}`;
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", ...args], {
+      cwd: root,
+      stdio: "pipe",
+    });
+  try {
+    fs.writeFileSync(path.join(root, "clean.tex"), "no secrets here\n");
+    let result = runTsx(OVERLEAF_CLI, "audit", root);
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).clean, true);
+
+    git("init", "-q");
+    fs.writeFileSync(path.join(root, "notes.md"), `line one\ntoken ${token}\n`);
+    git("add", ".");
+    git("commit", "-qm", `oops ${token}`);
+    git("remote", "add", "origin", `https://git:${token}@git.overleaf.com/abc`);
+    result = runTsx(OVERLEAF_CLI, "audit", root);
+    assert.equal(result.exitCode, 1);
+    assert.ok(!result.stdout.includes(token) && !result.stderr.includes(token));
+    const report = JSON.parse(result.stdout) as { clean: boolean; leaks: { kind: string; where: string }[] };
+    assert.equal(report.clean, false);
+    assert.deepEqual(
+      report.leaks.map((leak) => leak.kind).sort(),
+      ["history", "remote_url", "working_tree"],
+    );
+    assert.ok(report.leaks.some((leak) => leak.where === "notes.md:2"));
+    assert.ok(report.leaks.some((leak) => leak.where.includes("olp_<redacted>")));
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("overleaf mirror makes the target match and dry-run changes nothing", () => {
+  const root = tmpDir();
+  const from = path.join(root, "from");
+  const to = path.join(root, "to");
+  const write = (file: string, text: string) => {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, text);
+  };
+  try {
+    write(path.join(from, "main.tex"), "new");
+    write(path.join(from, "sec", "intro.tex"), "intro");
+    write(path.join(from, "main.aux"), "build output");
+    write(path.join(to, "main.tex"), "old");
+    write(path.join(to, "stale.tex"), "gone upstream");
+    write(path.join(to, ".git", "config"), "keep");
+
+    let result = runTsx(OVERLEAF_CLI, "mirror", from, to, "--dry-run");
+    assert.equal(result.exitCode, 0, result.stderr);
+    const plan = JSON.parse(result.stdout) as { dry_run: boolean; copy: string[]; remove: string[] };
+    assert.equal(plan.dry_run, true);
+    assert.deepEqual(plan.copy.sort(), ["main.tex", "sec/intro.tex"]);
+    assert.deepEqual(plan.remove, ["stale.tex"]);
+    assert.equal(fs.readFileSync(path.join(to, "main.tex"), "utf8"), "old");
+
+    result = runTsx(OVERLEAF_CLI, "mirror", from, to);
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.equal(fs.readFileSync(path.join(to, "main.tex"), "utf8"), "new");
+    assert.equal(fs.readFileSync(path.join(to, "sec", "intro.tex"), "utf8"), "intro");
+    assert.ok(!fs.existsSync(path.join(to, "stale.tex")));
+    assert.ok(!fs.existsSync(path.join(to, "main.aux")));
+    assert.equal(fs.readFileSync(path.join(to, ".git", "config"), "utf8"), "keep");
+
+    result = runTsx(OVERLEAF_CLI, "mirror", from, to, "--dry-run");
+    assert.deepEqual(JSON.parse(result.stdout), { dry_run: true, copy: [], remove: [] });
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("overleaf setup refuses to run without a terminal", () => {
+  const root = tmpDir();
+  try {
+    const result = runTsx(OVERLEAF_CLI, "setup", "0123456789abcdef01234567", path.join(root, "clone"));
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stderr, /interactive terminal/);
+    assert.ok(!fs.existsSync(path.join(root, "clone")));
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("ensure-browser-act reports one JSON status and rejects unknown flags", () => {
+  const usage = runTsx(ENSURE_BROWSER_ACT, "--skill-only");
+  assert.equal(usage.exitCode, 1);
+  assert.match(usage.stderr, /usage: ensure-browser-act\.js \[--check\]/);
+
+  const result = runTsx(ENSURE_BROWSER_ACT, "--check");
+  const status = JSON.parse(result.stdout) as Record<string, unknown>;
+  assert.equal(status.tool, "browser-act");
+  assert.equal(status.installed_now, false);
+  assert.ok(status.status === "ok" || status.status === "missing");
+  assert.equal(result.exitCode, status.status === "ok" ? 0 : 1);
+  assert.equal(status.hint === null, status.status === "ok");
+});
+
 async function main(): Promise<void> {
   if (process.env.ARIS_A0_WORKER) {
     await runWorker();

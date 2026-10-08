@@ -26,18 +26,6 @@ async function createArisSource(root: string): Promise<void> {
   // Agents
   await mkdir(path.join(root, "agents"), { recursive: true });
   await writeFile(path.join(root, "agents", "demo-agent.md"), "# agent\n", "utf-8");
-  // Shell helpers (sentinels)
-  await mkdir(path.join(root, "tools"), { recursive: true });
-  await writeFile(
-    path.join(root, "tools", "save_trace.sh"),
-    '#!/bin/bash\necho "trace:$1"\n',
-    "utf-8",
-  );
-  await writeFile(
-    path.join(root, "tools", "verify_paper_audits.sh"),
-    '#!/bin/bash\necho "audit:$1"\n',
-    "utf-8",
-  );
   // dist/tools — real executable JS helpers that import commander
   // Use Node's standard require resolution which walks up to find node_modules
   await mkdir(path.join(root, "dist", "tools"), { recursive: true });
@@ -160,7 +148,7 @@ describe("ensureArisSkillsInstalled", () => {
     await rm(tempRoot, { recursive: true, force: true });
   });
 
-  it("installs skills, agents, shell helpers, and compiled JS tools", async () => {
+  it("installs skills, agents, and compiled JS tools", async () => {
     const result = await ensureArisSkillsInstalled({ cwd: projectDir, logger });
 
     expect(result).toMatchObject({ installed: true, skillCount: 1 });
@@ -179,10 +167,6 @@ describe("ensureArisSkillsInstalled", () => {
     await expect(
       readFile(path.join(projectDir, ".claude", "agents", "demo-agent.md"), "utf-8"),
     ).resolves.toBe("# agent\n");
-    // shell helper
-    await expect(
-      readFile(path.join(projectDir, ".aris", "tools", "save_trace.sh"), "utf-8"),
-    ).resolves.toContain("trace");
   });
 
   it("installed JS helpers execute and import commander from project-local node_modules", async () => {
@@ -261,7 +245,7 @@ node "$HELPER" resolved-from-deep
     expect(manifest).toContain("support\tshared-references");
     // runtime_file rows record exact inventory
     expect(manifest).toContain("runtime_file\tdist/tools/research-wiki.js");
-    expect(manifest).toContain("runtime_file\ttools/save_trace.sh");
+    expect(manifest).not.toContain("runtime_file\ttools/");
     expect(manifest).toContain("runtime_file\ttemplates/RESEARCH_BRIEF_TEMPLATE.md");
     expect(manifest).toContain("runtime_file\tnode_modules/commander/index.js");
   });
@@ -394,17 +378,28 @@ node "$HELPER" resolved-from-deep
     expect(JSON.parse(output)).toMatchObject({ ok: true, action: "repaired" });
   });
 
-  it("repairs missing tools/ and templates/ on revisit", async () => {
+  it("accepts a manifest that still records shell helpers from an older install", async () => {
     await ensureArisSkillsInstalled({ cwd: projectDir, logger });
-    await rm(path.join(projectDir, ".aris", "tools"), { recursive: true });
+    const manifestPath = path.join(projectDir, ".aris", "installed-skills.txt");
+    await mkdir(path.join(projectDir, ".aris", "tools"), { recursive: true });
+    await writeFile(path.join(projectDir, ".aris", "tools", "save_trace.sh"), "#!/bin/bash\n");
+    await writeFile(
+      manifestPath,
+      `${await readFile(manifestPath, "utf-8")}runtime_file\ttools/save_trace.sh\n`,
+    );
+
+    const result = await ensureArisSkillsInstalled({ cwd: projectDir, logger });
+
+    expect(result).toMatchObject({ installed: false, skippedReason: "already_installed" });
+  });
+
+  it("repairs missing templates/ on revisit", async () => {
+    await ensureArisSkillsInstalled({ cwd: projectDir, logger });
     await rm(path.join(projectDir, ".aris", "templates"), { recursive: true });
 
     const result = await ensureArisSkillsInstalled({ cwd: projectDir, logger });
 
     expect(result.repaired).toBe(true);
-    await expect(
-      readFile(path.join(projectDir, ".aris", "tools", "save_trace.sh"), "utf-8"),
-    ).resolves.toContain("trace");
     await expect(
       readFile(path.join(projectDir, ".aris", "templates", "RESEARCH_BRIEF_TEMPLATE.md"), "utf-8"),
     ).resolves.toBe("# Brief\n");

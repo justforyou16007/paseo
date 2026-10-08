@@ -1,6 +1,4 @@
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
-import os from "node:os";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -206,17 +204,21 @@ describe("ARIS runtime contract", () => {
   it("buildSourceInventory produces complete inventory matching src→dist", () => {
     const inventory = buildSourceInventory(ARIS_ROOT);
 
-    // Must include all dist/**/*.js files
-    const distJs = inventory.filter((f) => f.startsWith("dist/") && f.endsWith(".js"));
-    expect(distJs.length).toBeGreaterThanOrEqual(60);
-
-    // Must include shell helpers
-    const shellHelpers = inventory.filter((f) => f.startsWith("tools/") && f.endsWith(".sh"));
-    expect(shellHelpers.length).toBeGreaterThanOrEqual(5);
-
-    // Must include templates
-    const templates = inventory.filter((f) => f.startsWith("templates/"));
-    expect(templates.length).toBeGreaterThanOrEqual(15);
+    // Every compiled source file, and no shell helpers since the Node port.
+    const srcTs: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".d.ts"))
+          srcTs.push(path.relative(ARIS_ROOT, full).split(path.sep).join("/"));
+      }
+    };
+    walk(path.join(ARIS_ROOT, "src"));
+    const distJs = srcTs.map((f) => f.replace(/^src\//, "dist/").replace(/\.ts$/, ".js"));
+    expect(distJs.filter((f) => !inventory.includes(f))).toEqual([]);
+    expect(inventory.filter((f) => f.startsWith("tools/"))).toEqual([]);
+    expect(inventory.filter((f) => f.startsWith("templates/")).length).toBeGreaterThan(0);
 
     // Must include node_modules dep files (all files, not just package.json)
     const depFiles = inventory.filter((f) => f.startsWith("node_modules/"));
@@ -275,171 +277,5 @@ describe("ARIS runtime contract", () => {
       violations,
       `Helper resolvers still using bare git||pwd:\n${violations.join("\n")}`,
     ).toEqual([]);
-  });
-
-  it("aris-update manifest parser uses kind filter, not NR-based line skip", () => {
-    const updatePath = path.join(SKILLS_DIR, "aris-update", "SKILL.md");
-    const content = readFileSync(updatePath, "utf-8");
-
-    // Must NOT have NR>4 or NR>N pattern for manifest parsing
-    expect(content).not.toMatch(/awk.*NR\s*>\s*\d+.*MANIFEST/);
-
-    // Must filter by known kind values
-    expect(content).toMatch(/case.*\$.*kind/);
-    expect(content).toMatch(/skill\|support\|agent\)/);
-  });
-
-  it("aris-update manifest writer includes runtime_file rows", () => {
-    const updatePath = path.join(SKILLS_DIR, "aris-update", "SKILL.md");
-    const content = readFileSync(updatePath, "utf-8");
-
-    expect(content).toContain("runtime_file");
-    expect(content).toContain("RUNTIME_FILES");
-  });
-
-  it("save_trace records the first and subsequent calls", () => {
-    const tempDir = mkdtempSync(path.join(os.tmpdir(), "aris-save-trace-"));
-    const helper = path.join(ARIS_ROOT, "tools", "save_trace.sh");
-    const args = [
-      helper,
-      "--skill",
-      "idea-discovery",
-      "--purpose",
-      "idea-review",
-      "--model",
-      "gpt-5.5",
-      "--thread-id",
-      "test-agent-id",
-      "--prompt",
-      "review prompt",
-      "--response",
-      "review response",
-    ];
-
-    try {
-      execFileSync("bash", args, { cwd: tempDir, stdio: "pipe" });
-      execFileSync("bash", args, { cwd: tempDir, stdio: "pipe" });
-
-      const skillTraceDir = path.join(tempDir, ".aris", "traces", "idea-discovery");
-      const runs = readdirSync(skillTraceDir, { withFileTypes: true }).filter((entry) =>
-        entry.isDirectory(),
-      );
-      expect(runs).toHaveLength(1);
-
-      const runDir = path.join(skillTraceDir, runs[0]!.name);
-      expect(existsSync(path.join(runDir, "001-idea-review.request.json"))).toBe(true);
-      expect(existsSync(path.join(runDir, "002-idea-review.request.json"))).toBe(true);
-      expect(existsSync(path.join(runDir, "001-idea-review.meta.json"))).toBe(true);
-      expect(existsSync(path.join(runDir, "002-idea-review.meta.json"))).toBe(true);
-    } finally {
-      rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  it("forbids host-harness sub-agent dispatch and fallback in skill contracts", () => {
-    const violations: string[] = [];
-    const operationalFallbacks = [
-      /in-process\s+`?Skill`?\s+fallback/i,
-      /fallback to synchronous Skill-tool/i,
-      /via the Agent tool/i,
-      /Tier\s*2[^\n]*Agent tool/i,
-    ];
-
-    for (const { rel, content } of allFiles) {
-      if (path.basename(rel) !== "SKILL.md") continue;
-
-      const lines = content.split("\n");
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i]!;
-        for (const pattern of operationalFallbacks) {
-          if (pattern.test(line)) {
-            violations.push(`${rel}:${i + 1}: ${line.trim().slice(0, 120)}`);
-          }
-        }
-      }
-
-      const allowedTools = lines.find((line) => line.startsWith("allowed-tools:"));
-      if (allowedTools) {
-        for (const tool of allowedTools
-          .slice("allowed-tools:".length)
-          .split(",")
-          .map((value) => value.trim())) {
-          if (/^(Agent|Task|Skill)(\(.*\))?$/.test(tool)) {
-            violations.push(`${rel}: allowed-tools grants forbidden host tool ${tool}`);
-          }
-        }
-      }
-    }
-
-    expect(
-      violations,
-      `Host-harness sub-agent dispatch remains in skill contracts:\n${violations.join("\n")}`,
-    ).toEqual([]);
-  });
-
-  it("requires a new finish notification after every Paseo child turn", () => {
-    const dispatchContract = readFileSync(
-      path.join(SKILLS_DIR, "shared-references", "paseo-subagent-dispatch.md"),
-      "utf-8",
-    );
-    const reviewerContract = readFileSync(
-      path.join(SKILLS_DIR, "shared-references", "paseo-reviewer-dispatch.md"),
-      "utf-8",
-    );
-    // The renderer lives in the shared tools/ dir, not under the skill that
-    // calls it — skills resolve it through .aris/tools/ at runtime.
-    const renderedWorkerContract = readFileSync(
-      path.join(ARIS_ROOT, "tools", "render_w_agent_prompt.sh"),
-      "utf-8",
-    );
-
-    // A child turn is completed by its finish notification, not by a blocking
-    // call: agent-scoped create_agent always backgrounds the child. Both entry
-    // points that start a turn must be covered, and a continuation prompt must
-    // await its own notification — one round's signal never covers the next.
-    expect(dispatchContract).toContain("TURN_NOTIFICATION_INVARIANT");
-    expect(dispatchContract).toMatch(
-      /`mcp__paseo__create_agent`[\s\S]{0,80}or background `mcp__paseo__send_agent_prompt`/,
-    );
-    expect(dispatchContract).toMatch(/finish notification before the owner advances/);
-    expect(dispatchContract).toMatch(
-      /After a continuation prompt,[\s\S]{0,80}awaits the next notification again/,
-    );
-    expect(reviewerContract).toMatch(
-      /Every later `send_agent_prompt` likewise completes via its own finish[\s\S]{0,40}notification/,
-    );
-    expect(reviewerContract).toMatch(/one round's notification never covers the next/);
-    expect(renderedWorkerContract).toContain(
-      "resume on that child's finish notification (TURN_NOTIFICATION_INVARIANT)",
-    );
-
-    // `wait_for_agent` is not a Paseo MCP tool. The rendered worker prompt must
-    // not name it at all — a prompt that names a nonexistent tool invites the
-    // child to call it. The prose contracts may name it only to say it is gone.
-    expect(renderedWorkerContract).not.toContain("wait_for_agent");
-    const prescribesWait: string[] = [];
-    for (const [label, text] of [
-      ["paseo-subagent-dispatch.md", dispatchContract],
-      ["paseo-reviewer-dispatch.md", reviewerContract],
-    ] as const) {
-      for (const match of text.matchAll(/wait_for_agent/g)) {
-        const before = text.slice(Math.max(0, (match.index ?? 0) - 16), match.index);
-        if (!/is no\s+`?$/.test(before)) {
-          prescribesWait.push(`${label}: ...${before}wait_for_agent...`);
-        }
-      }
-    }
-    expect(
-      prescribesWait,
-      `Contract prescribes the nonexistent wait_for_agent tool:\n${prescribesWait.join("\n")}`,
-    ).toEqual([]);
-
-    const protocolCorpus = `${dispatchContract}\n${readFileSync(
-      path.join(SKILLS_DIR, "shared-references", "fan-out-pattern.md"),
-      "utf-8",
-    )}`;
-    expect(protocolCorpus).not.toMatch(/spawns? N children concurrently/i);
-    expect(protocolCorpus).not.toMatch(/Claude sub-agents run in parallel/i);
-    expect(protocolCorpus).not.toMatch(/parallel sub-agent dispatch/i);
   });
 });

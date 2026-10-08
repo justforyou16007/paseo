@@ -30,7 +30,7 @@ Entries, as the installer defines them:
 | `skill`   | `skills/<name>/` with a `SKILL.md`             | `.claude/skills/<name>/`      |
 | `support` | `skills/shared-references/`                    | `.claude/skills/shared-references/` |
 | `agent`   | `agents/<name>.md`                             | `.claude/agents/<name>.md`    |
-| runtime   | `dist/`, `tools/`, `templates/`, `node_modules/` | `.aris/<dir>/`              |
+| runtime   | `dist/`, `templates/`, `node_modules/`         | `.aris/<dir>/`                |
 
 Skip `skills-codex.bak`. Compare with `diff -rq`, ignoring `__pycache__`, `node_modules` and `.git` inside skills. Classify every entry:
 
@@ -49,7 +49,7 @@ Print the lists, then whether each runtime directory changed. On `— dry-run` s
 ## 4. Apply
 
 - Copy new and changed entries over their targets (remove the target first), using the same exclusions.
-- Replace `.aris/dist`, `.aris/tools`, `.aris/templates` and `.aris/node_modules` from the source; `node_modules` is copied unfiltered.
+- Replace `.aris/dist`, `.aris/templates` and `.aris/node_modules` from the source; `node_modules` is copied unfiltered. Delete `.aris/tools/` if an older install left it.
 - Do not delete skills removed upstream; report them and let the owner decide.
 
 ## 5. Rewrite the manifest
@@ -63,7 +63,7 @@ project_root	<project root>
 generated	<UTC ISO time>
 kind	name	source_rel	target_rel	mode
 <kind>	<name>	<source_rel>	<target_rel>	copy        one row per source entry
-runtime_file	<dist|tools|templates|node_modules>/<path>   one row per file now under .aris/
+runtime_file	<dist|templates|node_modules>/<path>   one row per file now under .aris/
 ```
 
 The installer repairs a project from the `runtime_file` rows, so they must list every file just copied and nothing else.

@@ -148,7 +148,6 @@ async function checkSafetyS9(cwd: string, logger: Logger): Promise<boolean> {
     path.join(cwd, ".aris", "dist"),
     path.join(cwd, ".aris", "node_modules"),
     path.join(cwd, ".aris", "templates"),
-    path.join(cwd, ".aris", "tools"),
     path.join(cwd, ".claude"),
     path.join(cwd, ".claude", "skills"),
     path.join(cwd, ".claude", "agents"),
@@ -386,13 +385,6 @@ export function buildSourceInventory(arisRepo: string): string[] {
     }
   }
 
-  const toolsDir = path.join(arisRepo, "tools");
-  if (existsSync(toolsDir)) {
-    for (const f of collectFiles(toolsDir, arisRepo)) {
-      if (f.endsWith(".sh")) inventory.push(f);
-    }
-  }
-
   const templatesDir = path.join(arisRepo, "templates");
   if (existsSync(templatesDir)) {
     for (const f of collectFiles(templatesDir, arisRepo)) {
@@ -484,6 +476,7 @@ function parseManifestRuntimeFiles(manifestPath: string): string[] {
 function isSafeRuntimeFile(file: string): boolean {
   if (path.isAbsolute(file) || file.includes("\0")) return false;
   const parts = file.split(/[\\/]+/);
+  // Installs from before the Node port recorded shell helpers under tools/.
   const allowedRoots = new Set(["dist", "node_modules", "templates", "tools"]);
   return (
     allowedRoots.has(parts[0] ?? "") &&
@@ -652,11 +645,6 @@ export async function ensureArisSkillsInstalled(
         installedEntries.push(entry);
       }
     }
-
-    // Shell helpers
-    const toolsSource = path.join(arisRepo, "tools");
-    const toolsTarget = path.join(cwd, ".aris", "tools");
-    await copyEntrySafe(toolsSource, toolsTarget, logger);
 
     // Compiled TypeScript tools
     const distSource = path.join(arisRepo, "dist");

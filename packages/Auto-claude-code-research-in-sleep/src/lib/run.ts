@@ -1,4 +1,6 @@
-import { execSync, execFileSync, type ExecSyncOptions } from "child_process";
+import { execFileSync, type ExecSyncOptions } from "child_process";
+import fs from "node:fs";
+import path from "node:path";
 
 export interface RunOptions {
   cwd?: string;
@@ -36,9 +38,16 @@ export function run(command: string, args: string[], options: RunOptions = {}): 
   }
 }
 
-export function exec(command: string, args: string[]): void {
-  // Equivalent to Python's os.execv - replace current process
-  const { spawnSync } = require("child_process");
-  const result = spawnSync(command, args, { stdio: "inherit" });
-  process.exit(result.status ?? 1);
+/**
+ * A command on PATH, as a path Node can start. On Windows only `.exe` counts:
+ * Node cannot start a `.cmd` shim without a shell, and Git Bash's `which`
+ * answers with `/c/...` paths Node does not understand.
+ */
+export function findExecutable(name: string): string | null {
+  const file = process.platform === "win32" ? `${name}.exe` : name;
+  for (const dir of (process.env.PATH ?? "").split(path.delimiter).filter(Boolean)) {
+    const candidate = path.join(dir, file);
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+  }
+  return null;
 }

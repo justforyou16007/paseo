@@ -1,223 +1,134 @@
 ---
 name: overleaf-sync
-description: 'Two-way sync between a local paper directory and an Overleaf project, so ARIS audit/edit workflows stay on the local copy while collaborators edit in the Overleaf web UI. Use when user says "同步 overleaf", "overleaf sync", "推送到 overleaf", "connect overleaf", "Overleaf 桥接", "pull overleaf", "push overleaf", or wants to bridge their ARIS paper directory with an Overleaf project.'
+description: 'Two-way sync between a local paper directory and an Overleaf project, so agents edit the local copy while collaborators edit in the Overleaf web UI. Use when user says "同步 overleaf", "overleaf sync", "推送到 overleaf", "connect overleaf", "Overleaf 桥接", "pull overleaf", "push overleaf", or wants to bridge a paper directory with an Overleaf project.'
 argument-hint: [setup <project-id> | pull | push | status]
 allowed-tools: Bash(*), Read, Grep, Glob, Edit, Write
 ---
 
 # Overleaf Sync
 
-Bridge a local paper directory with an Overleaf project so that:
+Bridge a local `paper/` directory with an Overleaf project through the Overleaf Git bridge (a Premium feature). Collaborators keep editing in the web UI; agents read and edit the local copy and push back.
 
-- **You** can keep editing in the Overleaf web UI (or share editing access with collaborators)
-- **ARIS** can read your changes, run audits (`/paper-claim-audit`, `/citation-audit`, `/auto-paper-improvement-loop`), and push fixes back
+The agent **never sees the authentication token**. The owner does the one-time setup in their own terminal, and the token goes straight into the operating system's git credential store (Windows Credential Manager, macOS Keychain, or git's in-memory cache on Linux), never into chat, a file, a command line or a URL.
 
-This uses the official **Overleaf Git bridge** (Premium feature). The agent **never sees your authentication token** — you do the one-time auth manually so the token lives in macOS Keychain, not in chat history or `.git/config`.
+The helper is `node .aris/dist/tools/overleaf-cli.js` (see [integration-contract.md](../shared-references/integration-contract.md)). It works the same on Windows, macOS and Linux.
 
-## When to Use This Skill
-
-- You want to use Overleaf as the editing surface (better collaboration, shared with team) but still run ARIS pipelines locally
-- You want to take an existing local ARIS paper and push it to Overleaf for a co-author to edit
-- A collaborator made changes in Overleaf and you want to pull + diff them before continuing local work
-
-## Constants
-
-- **CLONE_DIR_DEFAULT** = `paper-overleaf` (sibling of existing `paper/`, NOT inside `paper/`)
-- **CREDENTIAL_HELPER** = `osxkeychain` (macOS) / `manager` (Windows) / `cache` (Linux)
-- **TOKEN_HANDLING** = **NEVER write token to disk, env var, or chat**. User pastes it once into the terminal credential prompt; the OS keychain stores it from then on.
-
-## Architecture
+## Layout
 
 ```
-┌─────────────────┐       git pull/push      ┌─────────────────┐
-│  Local paper/   │ ◄─── rsync ──── ►       │ paper-overleaf/ │ ◄──► Overleaf web
-│  (ARIS audits)  │                          │ (git bridge)    │     (collaborators)
-└─────────────────┘                          └─────────────────┘
+paper/            ◄── mirror ──►   paper-overleaf/   ◄── git pull/push ──►   Overleaf web
+(agents edit)                      (git bridge clone)                         (collaborators)
 ```
 
-The `paper-overleaf/` directory is a **git clone of the Overleaf project**. The `paper/` directory is the working copy where ARIS skills run. They are kept in sync via `rsync`.
+`paper-overleaf/` is a git clone of the Overleaf project, a sibling of `paper/`, never inside it. `overleaf-cli.js mirror` keeps the two in step; it skips `.git`, OS litter and LaTeX build output, and with `--dry-run` only lists what differs.
 
-**Single-source-of-truth rule**: at any given time, treat _one_ of them as authoritative for active editing. Switch directions explicitly with `pull` or `push`, and run a `status` check before either to surface unexpected divergence.
+At any moment one side is authoritative. Switch direction explicitly with `pull` or `push`, and run `status` first to catch divergence.
 
-## Sub-commands
+## `setup <project-id>`: one time, by the owner
 
-### `setup <project-id>` — one-time
-
-Sets up the bridge for a new Overleaf project. **The user runs this in their own terminal, never through the agent.** The skill ships with a hardened setup script that:
-
-1. Refuses to run unless stdin/stdout are a TTY (won't run inside an agent harness)
-2. Reads the token from a hidden prompt (no chat history, no shell history)
-3. Strips the token from the remote URL immediately after cloning
-4. Primes the OS keychain so subsequent agent operations are auth-free
-5. **Auto-installs a `pre-commit` hook in `paper-overleaf/.git/hooks/` that refuses to commit any blob containing the token pattern `olp_[A-Za-z0-9]{20,}`** — a hard technical block, not a behavioral rule
-
-The agent's only role here is to print the user instruction:
+Tell the owner:
 
 ```
-Run this in your own terminal (NOT through me):
+Run this in your own terminal (PowerShell, Windows Terminal or a shell), not through me:
 
-    bash .aris/tools/overleaf_setup.sh <project-id-or-url>
+    node .aris/dist/tools/overleaf-cli.js setup <project-id-or-url>
 
-(If .aris/tools/ does not exist, run /aris-update first.)
-When it finishes, tell me "setup done" and I'll verify.
+If .aris/dist/ is missing, run /aris-update first. Tell me "setup done" when it finishes.
 ```
 
-After the user reports "setup done", the agent verifies (token-free):
+Setup refuses to run without an interactive terminal, reads the token from a hidden prompt, stores it with the credential helper, clones with a token-free URL and installs a `pre-commit` hook in `paper-overleaf/.git/hooks/` that rejects any staged `olp_...` token.
+
+After "setup done", verify without touching the token:
 
 ```bash
-cd paper-overleaf
-git remote -v                    # must show URL WITHOUT token
-git config --get credential.helper
-git fetch && git log --oneline -3   # must succeed without prompting
-ls .git/hooks/pre-commit         # must exist
-AUDIT_HELPER=".aris/tools/overleaf_audit.sh"
-[ -f "$AUDIT_HELPER" ] || AUDIT_HELPER="tools/overleaf_audit.sh"
-bash "$AUDIT_HELPER" .   # must report "Audit clean"
+git -C paper-overleaf remote -v                        # URL has no token
+git -C paper-overleaf config --get credential.helper
+git -C paper-overleaf fetch                            # succeeds without a prompt
+node .aris/dist/tools/overleaf-cli.js audit .          # "clean": true
 ```
 
-If `paper-overleaf/` exists but is empty (new Overleaf project), the agent then mirrors local `paper/` into it (see `push` workflow).
+If the Overleaf project is empty, continue with `push` to fill it from `paper/`.
 
-### `pull` — before each editing session
+## `pull`: before each editing session
 
 ```bash
-cd paper-overleaf && git pull --ff-only
-
-# Show what changed since last pull
-LAST=$(git rev-parse HEAD@{1})
-git diff --stat $LAST..HEAD
-git diff $LAST..HEAD -- 'sec/*.tex'        # detailed view for prose changes
+git -C paper-overleaf pull --ff-only
+git -C paper-overleaf diff --stat HEAD@{1}..HEAD
+git -C paper-overleaf diff HEAD@{1}..HEAD -- sec/
 ```
 
-**Diff protocol — DO NOT blindly merge into local `paper/`.** Overleaf edits frequently include:
+Do not copy the whole clone over `paper/`. Decide per hunk:
 
-- **Half-finished sentences** (collaborator clicked save mid-thought)
-- **Typos** that aren't in canonical references (`Lrage` for `Large`)
-- **Commented-out blocks** that may be intentional or may be a stash
-- **Number changes** that should re-trigger `/paper-claim-audit`
-- **Cite key changes** that should re-trigger `/citation-audit`
+| Hunk                                | Action                                                     |
+| ----------------------------------- | ---------------------------------------------------------- |
+| Clean editorial change              | Apply to `paper/`                                          |
+| Changed number or claim             | Apply, then check it against the validation results       |
+| New or changed `\cite{...}`         | Apply, then check the reference exists and says what's cited |
+| Half-finished sentence, typo        | Show the owner; do not apply                               |
+| New section or restructure          | Stop and ask the owner                                     |
 
-For each diff hunk, decide one of:
+Apply approved hunks with the Edit tool, or copy whole approved files.
 
-| Hunk character               | Action                                 |
-| ---------------------------- | -------------------------------------- |
-| Clean editorial improvement  | Sync into `paper/`, no audit needed    |
-| Numerical / claim change     | Sync, then re-run `/paper-claim-audit` |
-| New `\cite{...}`             | Sync, then re-run `/citation-audit`    |
-| Half-sentence / obvious typo | Flag to user, do NOT auto-sync         |
-| New section / restructure    | Stop, ask user before syncing          |
-
-After deciding per-hunk:
+## `push`: after local editing
 
 ```bash
-# Sync only the files the user approved into local paper/
-rsync -av paper-overleaf/sec/0.abstract.tex paper/sec/0.abstract.tex
-# (or use Edit tool for surgical changes that skip half-sentences)
+git -C paper-overleaf pull --ff-only                                    # 1. surface remote drift first
+node .aris/dist/tools/overleaf-cli.js mirror paper paper-overleaf       # 2. make the clone match paper/
+git -C paper-overleaf status --short                                    # 3. review
+git -C paper-overleaf diff --stat
+git -C paper-overleaf add -A                                            # 4. commit and push
+git -C paper-overleaf commit -m "<what changed and why>"
+git -C paper-overleaf push
 ```
 
-### `push` — after local editing
+If step 1 pulled anything, stop: those edits are not in `paper/` yet, and the mirror would delete them. Run `pull` first.
 
-Use after ARIS skills have edited `paper/` and you want collaborators on Overleaf to see the changes.
+Push writes to a shared project. Show the owner `git diff --stat` and a representative prose hunk, and wait for confirmation unless they said `auto: true` up front.
+
+Commit messages say what changed and where it came from, for example `sec/3: rewrite method after submission s004 feedback` or `sec/5: update numbers from the s006 validation result`.
+
+## `status`
 
 ```bash
-# 1. Always pull first to surface remote drift
-cd paper-overleaf && git pull --ff-only
-
-# 2. If pull was a no-op, sync local paper → paper-overleaf
-rsync -av --delete \
-  --exclude='.git' --exclude='.DS_Store' \
-  --exclude='*.aux' --exclude='*.log' --exclude='*.bbl' --exclude='*.blg' \
-  --exclude='*.fls' --exclude='*.fdb_latexmk' --exclude='*.out' \
-  --exclude='*.synctex.gz' --exclude='*.toc' \
-  paper/ paper-overleaf/
-
-# 3. Show what would be pushed
-git status --short
-git diff --stat
-
-# 4. Commit + push
-git add -A
-git commit -m "<descriptive message — what ARIS changed and why>"
-git push
+git -C paper-overleaf fetch
+git -C paper-overleaf log --oneline HEAD..@{u}                          # Overleaf ahead
+git -C paper-overleaf log --oneline @{u}..HEAD                          # unpushed local commits
+node .aris/dist/tools/overleaf-cli.js mirror paper paper-overleaf --dry-run   # paper/ vs clone
 ```
 
-**Commit message protocol**: say what changed and where it came from so collaborators on Overleaf understand provenance. Examples:
+| Overleaf ahead | `paper/` differs from the clone | Meaning                | Action                           |
+| :------------: | :-----------------------------: | ---------------------- | -------------------------------- |
+|       No       |               No                | Clean                  | Nothing                          |
+|      Yes       |               No                | New Overleaf edits     | `pull`                           |
+|       No       |               Yes               | Unsynced local edits   | `push`                           |
+|      Yes       |               Yes               | Diverged               | Stop and show the owner          |
 
-- `sec/3: rewrite method after submission s004 feedback`
-- `refs: fix 14 metadata entries (madaan2023, lee2024, ...)`
-- `sec/5: update numbers from the s006 validation result`
+## Conflicts
 
-**Confirmation gate**: `push` writes to a shared resource. ALWAYS show the user `git diff --stat` (and a representative hunk for prose changes) before running `git push`. Wait for explicit confirmation unless the user said `auto: true` upfront.
+If `git pull --ff-only` fails, never run a merging `git pull`, `git reset --hard` or `git push --force`. Show the owner `git log @{u} ^HEAD` (Overleaf commits) and `git log HEAD ^@{u}` (local commits) and ask which side to take per file, or have them merge in Overleaf and pull again.
 
-### `status` — diagnostic
+## Token rules
 
-```bash
-cd paper-overleaf
-git fetch
-echo "=== Remote-vs-local divergence ==="
-git log --oneline HEAD..origin/master    # remote ahead
-git log --oneline origin/master..HEAD    # local ahead
-echo "=== paper/ vs paper-overleaf/ divergence ==="
-diff -rq --brief paper/ paper-overleaf/ 2>/dev/null \
-  | grep -v "Only in paper/.*\.\(aux\|log\|out\|fls\|fdb_latexmk\|bbl\|blg\|synctex\|toc\)" \
-  | grep -v "Only in paper-overleaf/.git" \
-  | grep -v "DS_Store"
-```
+The guards that do not depend on the agent behaving:
 
-Three-way state assessment:
+- `setup` needs an interactive terminal and reads the token hidden.
+- The token goes only to the credential helper; the remote URL never holds it.
+- The `pre-commit` hook rejects staged `olp_[A-Za-z0-9]{20,}`.
+- `audit` scans the working tree, remote URLs, git history and common credential files, and prints locations only.
 
-| Remote ahead? | paper/ vs paper-overleaf/ differ? | Meaning                   | Recommended action                         |
-| :-----------: | :-------------------------------: | ------------------------- | ------------------------------------------ |
-|      No       |                No                 | Clean                     | Nothing to do                              |
-|      Yes      |                No                 | Overleaf has new edits    | Run `pull`, then re-run status             |
-|      No       |                Yes                | Local ARIS edits unsynced | Run `push`                                 |
-|      Yes      |                Yes                | Diverged — needs merge    | Stop, surface to user, do NOT auto-resolve |
+The agent's rules:
 
-## Conflict Resolution
+- Never ask for a token. If the owner pastes one into chat, tell them to revoke it at https://www.overleaf.com/user/settings and run `setup` again.
+- Never write a token to a file, environment variable, command line or URL.
+- On `401 Unauthorized`, the stored token expired: ask the owner to run `setup` again in their terminal.
 
-If `git pull --ff-only` fails because of true divergence:
+## Editing on both sides
 
-1. **Do not** run `git pull` (which would auto-merge).
-2. **Do not** run `git reset --hard` or `git push --force` (destructive).
-3. Show the user `git log origin/master ^HEAD` (their Overleaf commits) and `git log HEAD ^origin/master` (local ARIS commits).
-4. Ask the user which side to take per file, or to manually merge in Overleaf and then re-pull.
+While the owner edits in Overleaf, agents only read `paper/` until `pull` runs. While an agent edits `paper/`, the owner pauses Overleaf editing until `push` runs. When unsure, run `status`.
 
-## Token Security — Defense in Depth
+## Output
 
-Behavioral rules alone are not enough — the next agent reading this skill might forget them. The skill therefore relies on **technical guards** that hold even if the agent misbehaves:
+- `paper-overleaf/` at the project root: a token-free git clone of the Overleaf project.
+- After each `pull` or `push`, one line to the owner: commits pulled or pushed, files changed, and the Overleaf project URL.
 
-| Layer      | Guard                                                                                                          | Where enforced                 |
-| ---------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| 1. Setup   | `overleaf_setup.sh` refuses to run without an interactive TTY (agents don't have one)                          | `tools/overleaf_setup.sh`      |
-| 2. Input   | Token is read by `read -s` (hidden prompt, no shell history, never enters chat)                                | `tools/overleaf_setup.sh`      |
-| 3. Storage | Token goes straight into OS keychain via `git credential approve`; remote URL is stripped to a token-free form | `tools/overleaf_setup.sh`      |
-| 4. Commits | `paper-overleaf/.git/hooks/pre-commit` greps staged content for `olp_[A-Za-z0-9]{20,}` and aborts              | auto-installed by setup script |
-| 5. Audit   | `overleaf_audit.sh` scans working tree, remote URLs, git history, credential files                             | `tools/overleaf_audit.sh`      |
-
-Behavioral rules (still apply, but secondary):
-
-- **Never** ask the user to paste a token into chat. If they do anyway: (a) acknowledge it, (b) tell them to revoke it at https://www.overleaf.com/user/settings, (c) recover via keychain if already primed.
-- **Never** write a token to a file (`.env`, `.netrc`, `tools/*.sh`, etc.) committed to any repo.
-- **Never** include a token in a `git remote -v` URL — strip it after clone.
-- On `401 Unauthorized` from push/pull, tell the user the keychain entry expired and to re-run `overleaf_setup.sh`. Do **not** ask for a fresh token.
-
-## Mutual-Exclusion Rule
-
-The single biggest source of pain in two-way sync is **simultaneous editing on both sides**.
-
-- If the user is in an active Overleaf editing session, ARIS skills should **read-only** access `paper/` until the user runs `/overleaf-sync pull`.
-- If the agent is editing `paper/`, the user should pause Overleaf editing until the agent finishes and `/overleaf-sync push` is run.
-
-When in doubt, run `status` first.
-
-## Output Contract
-
-- `paper-overleaf/` directory at repo root, git clone of Overleaf project (origin URL has NO token)
-- `paper/` directory unchanged in role — still the ARIS working copy
-- Each `pull`/`push` operation: a one-line summary back to the user (commits pulled / pushed, file count, link to Overleaf project URL)
-
-## See Also
-
-- `/paper-claim-audit` — re-run after pulling Overleaf changes that touch numbers
-- `/citation-audit` — re-run after pulling Overleaf changes that add/edit `\cite{...}`
-- `/paper-compile` — local LaTeX build; Overleaf compiles independently in the cloud
-- Overleaf Git bridge docs: https://www.overleaf.com/learn/how-to/Using_Git_and_GitHub
+Overleaf Git bridge docs: https://www.overleaf.com/learn/how-to/Using_Git_and_GitHub

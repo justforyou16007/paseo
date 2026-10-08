@@ -1,18 +1,13 @@
 import { createCli, runCli } from "../lib/cli.js";
-import { run } from "../lib/run.js";
+import { findExecutable, run } from "../lib/run.js";
 
 const INSTALL_MESSAGE = "deepxiv CLI not found. Install it with: pip install deepxiv-sdk";
 
 function ensureDeepxivInstalled(): { ok: boolean; binary: string | null; message: string } {
-  try {
-    const result = run("which", ["deepxiv"], { capture: true });
-    if (result.exitCode === 0 && result.stdout.trim()) {
-      return { ok: true, binary: result.stdout.trim(), message: "" };
-    }
-  } catch {
-    // which not found or other error
-  }
-  return { ok: false, binary: null, message: INSTALL_MESSAGE };
+  const binary = findExecutable("deepxiv");
+  return binary
+    ? { ok: true, binary, message: "" }
+    : { ok: false, binary, message: INSTALL_MESSAGE };
 }
 
 function runDeepxivCli(args: string[]): { stdout: string; stderr: string; exitCode: number } {
