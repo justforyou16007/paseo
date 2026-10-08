@@ -14,7 +14,6 @@ Into the project directory:
 | ---------------------------- | ------------------------------------------------------ |
 | `.claude/skills/<skill>/`    | One directory per ARIS skill, plus `shared-references` |
 | `.claude/agents/<agent>.md`  | ARIS subagent definitions                              |
-| `.aris/tools/`               | Shell-script helpers (`save_trace.sh`, …)              |
 | `.aris/dist/`                | Compiled TypeScript tools and MCP servers              |
 | `.aris/node_modules/`        | Runtime dependencies for compiled tools (`commander`)  |
 | `.aris/templates/`           | Project scaffolding templates                          |
@@ -27,14 +26,16 @@ never silently changes a running project's behavior.
 
 Skills resolve helpers from the project's local `.aris/` snapshot. They never
 read `repo_root` from the manifest or `$ARIS_REPO` at runtime. The resolution
-chain (documented in `integration-contract.md §2`):
+chain ("Finding a helper" in `integration-contract.md`):
 
 | Layer | Path                        | When                                   |
 | ----- | --------------------------- | -------------------------------------- |
 | 1     | `.aris/dist/tools/<helper>` | Installed project                      |
 | 2     | `dist/tools/<helper>`       | Dev: running from inside the ARIS repo |
 
-Shell helpers: `.aris/tools/<helper>` → `tools/<helper>`.
+Helpers are Node scripts, so the same chain works on Windows. Older installs
+also recorded shell helpers under `.aris/tools/`; the repair pass still accepts
+those manifest rows but no longer copies `tools/`.
 
 `repo_root` is written to the manifest by the installer so `/aris-update` can
 locate the source checkout. The installer itself never reads `repo_root` back

@@ -23,6 +23,7 @@ function fixture(action) {
       join: path.join,
       resolve: (...parts) => path.resolve(root, "repo", ...parts),
       homedir: () => path.join(root, "user"),
+      process,
     });
   try {
     action({ root, skills, source, install });

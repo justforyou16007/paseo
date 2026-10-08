@@ -60,7 +60,7 @@ allowed-tools: Read, Write, Bash(*)
 ## Pull Request 流程
 
 1. 确保你的更改有完善的文档说明
-2. 如果添加了新的 Skill 或功能，请更新 README.md
+2. 如果添加了新的 Skill 或 helper，请同步更新 AGENT_GUIDE.md 和 integration contract
 3. 保持 PR 聚焦于单一更改
 4. 提交信息遵循仓库根目录 [CONTRIBUTING.md](../../CONTRIBUTING.md) 的 “Commit messages” 一节
 

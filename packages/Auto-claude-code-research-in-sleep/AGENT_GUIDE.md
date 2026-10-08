@@ -1,227 +1,47 @@
 # ARIS Agent Guide
 
-> **For AI agents reading this repo cold.** If you are a human, see [README.md](README.md) or [docs/ARIS_INTRO.html](https://wanshuiyin.github.io/Auto-claude-code-research-in-sleep/ARIS_INTRO.html).
+For agents reading this package cold. This file routes you to the right skill; the skill's `SKILL.md` is the specification and wins over anything here.
 
-ARIS is a research harness: composable Markdown skills that orchestrate the ML research lifecycle through cross-model adversarial collaboration. The Paseo Claude executor writes code and papers; the reviewer is a GPT-5.5 Paseo codex sub-agent by default, or an explicitly selected Oracle / Manual / Antigravity route, and critiques in fresh threads.
+## What ARIS is
 
-> **Paseo substrate.** W1–W6 + their sub-skills run as **paseo parent-child agents**
-> (executor = claude), and each cross-model reviewer runs as a **paseo codex
-> sub-agent** (GPT-5.5), all driven by `/research-pipeline`. The Paseo MCP
-> substrate is **mandatory** per Global Rule 4 in
-> [`paseo-subagent-dispatch.md`](skills/shared-references/paseo-subagent-dispatch.md);
-> if the MCP server is unavailable the run is blocked. The only MCP-tool
-> exception is `mcp__manual_review__*` for `— reviewer: manual`. The verdict,
-> audit chain, acceptance gate, and helpers are unchanged. See
-> [`docs/PASEO_MIGRATION.md`](docs/PASEO_MIGRATION.md) +
-> [`paseo-subagent-dispatch.md`](skills/shared-references/paseo-subagent-dispatch.md) +
-> [`paseo-reviewer-dispatch.md`](skills/shared-references/paseo-reviewer-dispatch.md).
+ARIS runs one task as a contest between two machines:
 
-> **Source of Truth.** This file is a _routing index_, not a specification.
-> Behavior of a skill lives in `skills/<name>/SKILL.md`. System-wide
-> contracts live in `skills/shared-references/*.md`. If this guide
-> conflicts with a SKILL.md, the **SKILL.md wins**.
+- The **worker** machine has one Claude Code agent with `task.md`, its own environment and its own research wiki. It builds a deliverable and submits it.
+- The **validation** machine runs the `aris-validation` service. It owns a frozen benchmark the worker never sees, starts one validation agent per submission, and publishes a verdict, a score and desensitized feedback.
 
-## Skill Locations & Platforms
+The two sides share nothing but the service's two MCP tools, `submit` and `query`. Each machine runs Paseo, so the owner watches both sides' agents in the Paseo app. Everything else (planning, coding, training, debugging, delegating to subagents) is the agent's own work; ARIS adds no workflow for it.
 
-| Platform                                                | Skill root                            | Notes                                                           |
-| ------------------------------------------------------- | ------------------------------------- | --------------------------------------------------------------- |
-| Claude Code / Cursor / Trae / Antigravity / Copilot CLI | `skills/<name>/SKILL.md`              | Mainline skills; native `SKILL.md` invocation                   |
+Your role is in `CLAUDE.md` between the `ARIS ROLE` markers. If there is none, the project is not set up: run `/aris-setup worker` or `/aris-setup validation`.
 
-**Full catalog**: [`docs/SKILLS_CATALOG.md`](docs/SKILLS_CATALOG.md) — **88 skills**, grouped by role.
+## Skills
 
-Invocation syntax is identical across hosts:
+| Skill | Role | Use it to |
+| --- | --- | --- |
+| `/aris-setup` | both | Configure this machine as worker or validation through one editable review sheet |
+| `/aris-update` | both | Refresh the installed skills and `.aris/` runtime from the ARIS checkout |
+| `/validation-review` | validation | Review one submission (the service starts an agent with it) |
+| `/research-wiki` | both | Record papers, ideas, submissions, claims and problems; the knowledge graph in Paseo reads it |
+| `/experiment-env-configuration` | both | Turn an environment PRD into generated run scripts with a repair loop |
+| `/experiment-queue` | both | Queue many experiment jobs on GPUs |
+| `/vast-gpu`, `/serverless-modal`, `/qzcli` | both | Rent or submit to GPU platforms |
+| `/arxiv`, `/deepxiv`, `/exa-search`, `/openalex`, `/semantic-scholar` | both | Literature search; results go to the wiki |
+| `/feishu-notify` | both | Push events to Feishu when `~/.claude/feishu.json` exists |
+| `/overleaf-sync` | both | Pull and push an Overleaf project through its Git bridge |
 
-```
-/skill-name "arguments" — key: value, key2: value2
-```
+## Helpers
 
-## Common Parameters
+Skills call compiled helpers with `node .aris/dist/tools/<helper>.js` from the project root. Which skill uses which helper, and what to do when one fails, is in [integration-contract.md](skills/shared-references/integration-contract.md). Never write a helper's output by hand.
 
-ARIS has **two independent control axes** plus scoped flags.
+## Where things live
 
-### Axis 1 — `effort` (depth / budget)
+| Path | Owner | Contents |
+| --- | --- | --- |
+| `task.md` | owner | The task, identical on both machines |
+| `.aris/setup-*.json`, `.aris/setup-review.md` | `setup-cli.js` | Draft, review sheet and confirmed configuration |
+| `.aris/tester-config.json` | `setup-cli.js` | Frozen benchmark (validation) |
+| `.aris/validation/` | `validation-cli.js` | Frozen terms, service token, submissions and published results (validation) |
+| `.mcp.json` | `setup-cli.js` | `aris-validation` server URL and token (worker; keep it out of git) |
+| `paseo.json` | `setup-cli.js` | `aris-validation` service script (validation) |
+| `research-wiki/` | `research-wiki.js` | Wiki pages, edges and the generated index |
 
-```
-— effort: lite | balanced | max | beast      # default: balanced
-```
-
-Controls how many papers / ideas / rounds / pilots. Codex reasoning is **always `xhigh`** regardless of effort.
-
-### Axis 2 — `assurance` (audit strictness, independent of effort)
-
-```
-— assurance: draft | polished | conference-ready | submission
-```
-
-Controls whether mandatory audits gate the final report. `lite` / `balanced` default to `draft`; `max` / `beast` default to `submission`. Override is legal: `--- effort: lite --- assurance: conference-ready` is meaningful. Spec: [`shared-references/assurance-contract.md`](skills/shared-references/assurance-contract.md).
-
-### Other common parameters
-
-```
-— human checkpoint: true | false             # pause for approval (default: false)
-— AUTO_PROCEED: true | false                 # auto-continue at gates (default: true)
-— difficulty: medium | hard | nightmare      # reviewer adversarial level
-— venue: ICLR | NeurIPS | ICML | ...         # target venue
-— sources: web, zotero, deepxiv, exa, ...    # literature sources
-— gpu: local | remote | vast | modal         # GPU backend
-— reviewer: codex | oracle-pro | manual      # reviewer routing
-```
-
-### Scoped flags (skill-specific)
-
-| Flag                                 | Skill                          | Effect                                                               |
-| ------------------------------------ | ------------------------------ | -------------------------------------------------------------------- |
-| `--- style-ref <source>`             | writer-side skills             | Mimic exemplar's structural style WITHOUT copying claims / terms     |
-| `--- edit-whitelist <path>`          | `/auto-paper-improvement-loop` | YAML schema gating which paths / operations the loop may touch       |
-| `--- soft-only`                      | `/citation-audit`              | Bib frozen — rewrites body instead of editing `.bib`                 |
-| `--review` / `--no-review`           | `/render-html`                 | Toggle cross-model review gate (default: academic=on, dashboard=off) |
-| `--author "..."`                     | `/render-html`                 | Optional byline rendered between subtitle and meta                   |
-| `--deep-fix` / `--restatement-check` | `/proof-checker`               | Patch-grade fix plans / cross-location theorem drift                 |
-
-Parameters pass through workflow chains automatically.
-
-## Workflow Index
-
-```
-Main chain:      /research-pipeline = W1 → W1.5 → W2 → W3
-Post-paper:      W4 (rebuttal), W5 (resubmit to new venue), W6 (talk)
-```
-
-| ID   | Skill                                      | Input                      | Output                                                      | When to invoke                               |
-| ---- | ------------------------------------------ | -------------------------- | ----------------------------------------------------------- | -------------------------------------------- |
-| W1   | `/idea-discovery "direction"`              | research direction         | `IDEA_REPORT.md`, `EXPERIMENT_PLAN.md`, `FINAL_PROPOSAL.md` | Starting new research                        |
-| W1.5 | `/experiment-bridge`                       | `EXPERIMENT_PLAN.md`       | running code, `EXPERIMENT_LOG.md`                           | Have a plan, need to implement               |
-| W2   | `/auto-review-loop "scope"`                | paper + results            | improved paper + `REVIEW_STATE.json`                        | Iterative improvement loop                   |
-| W3   | `/paper-writing "NARRATIVE_REPORT.md"`     | narrative report           | `paper/main.pdf` + LaTeX source                             | Ready to write                               |
-| W4   | `/rebuttal "paper/ + reviews"`             | paper + reviews            | `PASTE_READY.txt` + `REBUTTAL_DRAFT_rich.md`                | Reviews received                             |
-| W5   | `/resubmit-pipeline "paper/" --- venue: X` | polished paper + new venue | `<NEW_VENUE_DIR>/` + `RESUBMIT_REPORT.json`                 | Port to another venue under hard constraints |
-| W6   | `/paper-talk "paper/" --- venue: X`        | paper                      | Beamer + PPTX + speaker notes + Q&A prep                    | Conference talk after acceptance             |
-
-Hard constraints on W5: no new experiments, no bib edits, no framework changes, never overwrites prior submissions. Enforced via `--edit-whitelist` + `RESUBMIT_REPORT.json` 7-state failure-mode ledger.
-
-## Assurance & Audit Chain
-
-ARIS gates submission via a 5-layer cross-model audit chain. Each layer is invoked by a different skill, all use **fresh paseo codex sub-agents** (`mcp__paseo__create_agent` — never `send_agent_prompt` for these audits):
-
-| Layer | Skill                | Asks                                                                                    | Verdict file                           |
-| :---: | -------------------- | --------------------------------------------------------------------------------------- | -------------------------------------- |
-|   1   | `/experiment-audit`  | "Is the eval code honest? (no fake GT, no self-normalized scores, no phantom results)"  | `EXPERIMENT_AUDIT.{md,json}`           |
-|   2   | `/result-to-claim`   | "Does the claim scientifically follow from the result?"                                 | writes experiment nodes + edges to Research Wiki (claim status stays with `/proof-checker`) |
-|   3   | `/paper-claim-audit` | "Does the paper _report_ the numbers truthfully?" (zero-context reviewer)               | `PAPER_CLAIM_AUDIT.{md,json}`          |
-|   4   | `/citation-audit`    | "Every `\cite{}` valid? Existence + metadata + context-appropriateness?"                | `CITATION_AUDIT.{md,json}`             |
-|   5   | `/kill-argument`     | "Strongest 200-word rejection memo + independent adjudicator scoring each attack point" | `KILL_ARGUMENT.{md,json}`              |
-
-All five emit verdicts on the 6-state schema per [`shared-references/assurance-contract.md`](skills/shared-references/assurance-contract.md): `PASS | WARN | FAIL | BLOCKED | ERROR | NOT_APPLICABLE`.
-
-At `assurance: submission`, Phase 6 of `/paper-writing` runs `tools/verify_paper_audits.sh` and refuses to emit the Final Report if ANY layer is non-green.
-
-**Executor must NOT judge its own integrity.** Reviewer reads the artifact cold (file paths only, never summaries or interpretations). Trace each reviewer call to `.aris/traces/<skill>/<date>_run<NN>/` per [`shared-references/review-tracing.md`](skills/shared-references/review-tracing.md).
-
-## HTML Rendering (for human reading)
-
-[`/render-html`](skills/render-html/SKILL.md) renders selected MD / JSON artifacts (IDEA_REPORT, AUTO_REVIEW, KILL_ARGUMENT, PAPER_PLAN, research-wiki state) into single-file HTML for human reading. **MD / JSON remains canonical**; HTML is a generated view derived from the user's academic-newspaper style.
-
-```
-/render-html <input.md> [--template academic|dashboard]
-                        [--out <path>] [--author "..."]
-                        [--review | --no-review]
-```
-
-- `academic` template (linear long-form with sticky TOC): **review by default** — fresh paseo codex sub-agent (`mcp__paseo__create_agent`) audits render fidelity / safety / structure (NOT claim truthfulness; that's owned by `/paper-claim-audit` etc.)
-- `dashboard` template (grid cockpit): no review by default; pass `--review` to force
-- Outputs: `<file>.html` + `<file>.review.json` sidecar + trace at `.aris/traces/render-html/<date>_run<NN>/`
-- Do NOT hand-edit the generated HTML — edit the source, re-render
-
-## Artifact Contracts
-
-Skills communicate through plain-text files in known locations:
-
-| Artifact                               | Created by                                | Consumed by                                                                        |
-| -------------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------- |
-| `IDEA_REPORT.md`                       | `/idea-discovery`                         | `/experiment-bridge`                                                               |
-| `refine-logs/FINAL_PROPOSAL.md`        | `/research-refine`                        | `/experiment-plan`                                                                 |
-| `EXPERIMENT_PLAN.md`                   | `/experiment-plan`                        | `/experiment-bridge`                                                               |
-| `EXPERIMENT_LOG.md`                    | `/experiment-bridge`                      | `/auto-review-loop`, `/result-to-claim`                                            |
-| `NARRATIVE_REPORT.md`                  | `/auto-review-loop` (or human)            | `/paper-writing`                                                                   |
-| `paper/main.tex`                       | `/paper-write`                            | `/paper-compile`                                                                   |
-| `paper/main.pdf`                       | `/paper-compile`                          | `/auto-paper-improvement-loop`                                                     |
-| `REVIEW_STATE.json`                    | `/auto-review-loop`                       | `/auto-review-loop` (resume after context auto-compact)                            |
-| `EXPERIMENT_AUDIT.{md,json}`           | `/experiment-audit`                       | `/result-to-claim`                                                                 |
-| `PAPER_CLAIM_AUDIT.{md,json}`          | `/paper-claim-audit`                      | `/paper-writing` Phase 5.5 gate                                                    |
-| `CITATION_AUDIT.{md,json}`             | `/citation-audit`                         | `/paper-writing` Phase 5.8 submission gate                                         |
-| `KILL_ARGUMENT.{md,json}`              | `/kill-argument`                          | `/paper-writing` Phase 5.6 + `/resubmit-pipeline` adversarial gate                 |
-| `RESUBMIT_REPORT.json`                 | `/resubmit-pipeline`                      | submission-gate verifier (7-state ledger)                                          |
-| `GAP_REPORT.md`                        | `/paper-plan` (when `--- style-ref:` set) | `/paper-write` (emits `<!-- DATA_NEEDED: ... -->` HTML comments for missing slots) |
-| `<artifact>.review.json`               | `/render-html` review gate                | manual triage                                                                      |
-| `.aris/edit_whitelist.yaml`            | human / `/resubmit-pipeline`              | `/auto-paper-improvement-loop --edit-whitelist`                                    |
-| `research-wiki/`                       | `/research-wiki`                          | `/idea-creator`, `/research-lit`, `/result-to-claim`, `export_result_package`      |
-| `.aris/meta/events.jsonl`              | hooks (passive logging)                   | `/meta-optimize`                                                                   |
-| `.aris/traces/<skill>/<date>_run<NN>/` | reviewer-class skills                     | audit / forensic replay                                                            |
-
-## Helper Resolution (writing new skills)
-
-Use one compiled helper for each active integration. Resolve it through the
-shared `.aris/dist/` → `dist/` lookup in
-[`shared-references/integration-contract.md`](skills/shared-references/integration-contract.md)
-§2. A missing helper or a non-zero exit blocks the current phase. Do not add a
-second directory, source, model, transport, or inline implementation.
-
-The current shared helpers are compiled from `src/` and include the Wiki,
-paper verification, evidence, threat scanning, trace, fetch, and rendering
-tools. Environment backends are the explicit external-environment exception:
-they may inspect the configured local, remote, Docker, Vast, or Modal target
-and report which target is available.
-
-## Cross-Model Protocol
-
-- **Executor** (Paseo Claude child): writes code, runs experiments, drafts papers
-- **Reviewer** (Paseo codex child by default; or an explicitly selected Oracle / Gemini / Manual route): critiques, scores, demands revisions
-- **Rule**: executor and reviewer **must** be different model families. Same-family review is a non-feature.
-- **Reviewer independence**: pass file paths only, never summaries or interpretations
-- **Thread freshness**: every fresh-context review spawns a **new paseo codex reviewer sub-agent** (`create_agent`) — never continues a prior agent for a fresh review, since narrative accumulation inflates scores. Continuation (`send_agent_prompt` to the same agent) is reserved for multi-round reviewer-memory loops such as `/auto-review-loop` round 2+. See [`paseo-reviewer-dispatch.md`](skills/shared-references/paseo-reviewer-dispatch.md).
-- **Experiment integrity**: executor must NOT judge its own eval code — reviewer audits directly per [`shared-references/experiment-integrity.md`](skills/shared-references/experiment-integrity.md)
-
-Default reviewer model is `gpt-5.5`. Oracle Pro (`gpt-5.5-pro`), Manual, and Antigravity are explicit reviewer routes; an unavailable route blocks the review.
-
-## Shared References
-
-> Read [`paseo-subagent-dispatch.md`](skills/shared-references/paseo-subagent-dispatch.md)
-> and [`paseo-reviewer-dispatch.md`](skills/shared-references/paseo-reviewer-dispatch.md)
-> first — they own the four **Global Agent Rules** (Rule 1–4) that every
-> ARIS skill must satisfy. Rule 1 (One Agent = One Skill), Rule 2 (Parent-Child
-> Push Workflow), Rule 3 (Content-Free Inter-Agent Handshake), Rule 4 (Paseo
-> MCP Only, Strict). All other shared-references in this table are extensions
-> or specializations of those four rules.
-
-Read these before invoking review-related or audit-class skills:
-
-| File                                                                                | When you need it                                                                                                                   |
-| ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| [`paseo-subagent-dispatch.md`](skills/shared-references/paseo-subagent-dispatch.md) | Dispatching an executor sub-agent (claude parent → claude child) on the paseo substrate                                            |
-| [`paseo-reviewer-dispatch.md`](skills/shared-references/paseo-reviewer-dispatch.md) | Spawning/continuing a codex reviewer sub-agent (claude parent → codex child); the fresh-vs-continuation rule + REVIEWER_BIAS_GUARD |
-| [`reviewer-independence.md`](skills/shared-references/reviewer-independence.md)     | Any cross-model review                                                                                                             |
-| [`experiment-integrity.md`](skills/shared-references/experiment-integrity.md)       | Writing eval / audit code                                                                                                          |
-| [`fan-out-pattern.md`](skills/shared-references/fan-out-pattern.md)                 | Fanning out subagents for breadth (any runtime tier)                                                                               |
-| [`acceptance-gate.md`](skills/shared-references/acceptance-gate.md)                 | Autonomous loops / goal mode — who may ACCEPT a result                                                                             |
-| [`external-cadence.md`](skills/shared-references/external-cadence.md)               | Before wrapping a skill in `/loop`, `/schedule`, or `CronCreate`                                                                   |
-| [`assurance-contract.md`](skills/shared-references/assurance-contract.md)           | 6-state verdict schema, audit gating                                                                                               |
-| [`integration-contract.md`](skills/shared-references/integration-contract.md)       | Helper resolution + failure policies (writing new SKILL.md)                                                                        |
-| [`review-tracing.md`](skills/shared-references/review-tracing.md)                   | Where to save reviewer traces                                                                                                      |
-| [`reviewer-routing.md`](skills/shared-references/reviewer-routing.md)               | `--- reviewer: oracle-pro` etc.                                                                                                    |
-| [`citation-discipline.md`](skills/shared-references/citation-discipline.md)         | Citation rules                                                                                                                     |
-| [`effort-contract.md`](skills/shared-references/effort-contract.md)                 | Effort level specifications                                                                                                        |
-| [`writing-principles.md`](skills/shared-references/writing-principles.md)           | Writing standards                                                                                                                  |
-| [`venue-checklists.md`](skills/shared-references/venue-checklists.md)               | Venue formatting                                                                                                                   |
-| [`browser-act.md`](skills/shared-references/browser-act.md)                         | An experiment environment that needs a browser — the only browser stack, and what stays interactive                                |
-
-## Research Wiki (Optional)
-
-If `research-wiki/` exists in the project:
-
-- `/research-lit` auto-ingests discovered papers
-- `/idea-creator` reads wiki before ideation, writes ideas (both successful and failed) back after
-- `/result-to-claim` writes experiment nodes, `supports`/`invalidates` edges, idea outcomes, and failure-derived problems; claim `status` (the proof axis) is owned by `/proof-checker`
-- 3+ failed ideas → triggers re-ideation suggestion (failed ideas become anti-repetition memory)
-- when a run stops, `export_result_package` picks its best iteration out of the wiki and writes `.aris/runs/<run_id>/result-package.json` — the wiki is the only place that saw every iteration, and it is that file (never the wiki or dashboard) that a parent run reads
-
-Initialize with `/research-wiki init`. Spec: [`skills/research-wiki/SKILL.md`](skills/research-wiki/SKILL.md). The canonical helper is the compiled `research-wiki.js` under `.aris/dist/` or `dist/`; a missing helper blocks the write.
+Architecture and design rationale: [ARIS_ARCHITECTURE_GUIDE.md](ARIS_ARCHITECTURE_GUIDE.md). Installing both machines: [SETUP_GUIDE.md](SETUP_GUIDE.md).

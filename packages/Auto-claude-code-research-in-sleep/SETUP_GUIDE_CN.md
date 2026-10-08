@@ -1,264 +1,87 @@
-# ARIS 快速配置指南
+# ARIS 部署指南
 
-> 从零开始，手把手完成 ARIS 的全部配置。完成后你就可以使用 ARIS 的完整研究工作流。
->
-> 本指南面向 **macOS 本地 + 远程 Linux GPU 服务器** 环境，使用当前的 **Paseo 父子 agent 执行工作流和跨模型审阅** 配置。
->
-> [English](SETUP_GUIDE.md) | 中文版
+ARIS 把一个任务放在两台机器上：**worker** 负责做出交付件，**validation** 用 worker 看不到的 benchmark 给它打分。本指南按 Windows 部署两台机器。为什么要这样拆分，见 [ARIS_ARCHITECTURE_GUIDE.md](ARIS_ARCHITECTURE_GUIDE.md)。
 
----
+[English](SETUP_GUIDE.md) | 中文版
 
-## 第一步：安装必要工具
+## 1. 两台机器都要装
 
-### 1.1 Claude Code
+1. **Node.js 20+** 和 **Git**。Windows 上：`winget install OpenJS.NodeJS.LTS Git.Git`。
+2. **Claude Code**：见 [Claude Code 文档](https://docs.anthropic.com/en/docs/claude-code)，用 `claude --version` 检查。
+3. **Paseo**，并让 daemon 跑起来：`paseo daemon status`。你每添加一个项目，Paseo 都会把 ARIS 技能和编译好的 helper 复制进去，见 [ARIS 自动安装](../../docs/aris-auto-install.md)。打包版 Paseo（桌面 App、全局 npm 安装）需要一份构建好的 ARIS：
 
-Claude Code 是 Anthropic 的 CLI 工具，ARIS 的所有 skill 都在它上面运行。安装方式见 [Claude Code 官方文档](https://docs.anthropic.com/en/docs/claude-code)。
+   ```powershell
+   git clone <aris-repo> $HOME\.paseo\aris
+   cd $HOME\.paseo\aris; npm install; npm run build
+   ```
 
-```bash
-claude --version   # 验证安装
+4. **只有验证机器需要**：benchmark 依赖的东西，一般是 Python。benchmark 命令写 `python` 而不是 `python3`，这样同一份配置在 Windows 和 Linux 上都能跑。
+
+Windows 10 起自带 `curl.exe` 和 `tar`，worker 上传不需要额外安装。
+
+## 2. 各自建项目
+
+在每台机器上建一个空目录，执行 `git init`，添加到 Paseo，然后检查 `.claude\skills\aris-setup\` 和 `.aris\dist\` 是否已出现。两个项目完全独立：不要共用磁盘、仓库或同步文件夹。
+
+## 3. 验证机器
+
+先配验证机器，因为 worker 需要它的地址和 token。
+
+1. 和用户一起写好 `task.md`。在项目里打开 Claude Code，运行 `/aris-setup validation`。如果没有 `task.md`，setup 会按模板和你一起起草。
+2. setup 一次性展示完整的配置单，你把所有修改一次说完。需要你做决定的字段：
+   - **Benchmark**：来源、固定的数据版本、切分、完整样本数和 runner 命令。`.aris\templates\tester-benchmark\` 是一个 lm-evaluation-harness 的完整例子。
+   - **指标和目标**：达到这个分数任务就结束。
+   - **隐藏数据路径**：隐藏样本、标签和参考答案。反馈里引用了这些内容就会被拦下。
+   - **限制**：计次提交上限、并发审查数、上传大小、审查超时。
+   - **验证 agent**：审查每次提交的 agent 用哪个 provider 和模型。Windows 上把 `paseo_command` 设为 `["node", "<Paseo 安装目录>\\bin\\paseo"]`，因为 Node 不经过 shell 就启动不了 `paseo.cmd`。
+   - **服务地址**：见下面的[网络](#网络)。
+3. 确认最终配置摘要。setup 会安装 benchmark、跑 healthcheck 和 smoke 测试、冻结 benchmark、生成服务 token，并把 `aris-validation` 脚本写进 `paseo.json`。
+4. 在 Paseo App 的工作区里启动 `aris-validation` 脚本。
+5. 检查：`node .aris\dist\tools\validation-cli.js status --project .`
+6. 记下输出里的 `worker_connection`：一个以 `/mcp` 结尾的 URL 和一个 token。token 用私密渠道发给 worker 机器。
+
+一旦有提交被计次，benchmark 和目标就不能再改。换 benchmark 就要新建一个验证项目。
+
+### 网络
+
+worker 要能通过 HTTP 访问验证服务。二选一：
+
+**直连，适用于内网或 VPN**（最简单）：
+
+- `service.host`：`0.0.0.0`
+- `service.port`：一个固定端口，比如 `8790`
+- `service.public_url`：`http://<验证机器地址>:8790`
+
+在管理员 PowerShell 里放行这个端口：
+
+```powershell
+netsh advfirewall firewall add rule name="ARIS validation" dir=in action=allow protocol=TCP localport=8790
 ```
 
-### 1.2 Paseo MCP
+**经 Paseo 服务代理**（你已经用域名对外暴露 Paseo 服务时用）：`host` 保持 `127.0.0.1`，`port` 留空，`public_url` 填 `aris-validation` 脚本的代理地址。代理怎么配见 [service-proxy.md](../../docs/service-proxy.md)。
 
-ARIS 通过 Paseo 父子 agent 委派工作流阶段和跨模型审阅。先启动当前项目
-使用的 Paseo daemon，再确认 agent MCP 可用：
+在 worker 机器上执行 `curl.exe http://<地址>:8790/health`，应输出 `{"status":"ok"}`。除这个地址外，其他请求都要带 token。
 
-```bash
-paseo daemon start
-paseo daemon status
-```
+## 4. worker 机器
 
-宿主必须提供 `mcp__paseo__list_agents`、
-`mcp__paseo__create_agent`、`mcp__paseo__send_agent_prompt`。其中任何工具
-不可用时，工作流都必须阻断；不要安装第二套审阅传输，也不要在进程内执行
-技能。
+1. 把验证机器上的 `task.md` 原样复制到项目根目录。
+2. 运行 `/aris-setup worker`，`connection.url` 和 `connection.token` 填第 3 节第 6 步拿到的值。`environment.prd` 留空表示由 agent 自己管理环境；填写环境描述则由 `/experiment-env-configuration` 生成运行脚本。
+3. 确认摘要。setup 把 `aris-validation` 服务写进 `.mcp.json`，把 worker 角色段写进 `CLAUDE.md`，并创建 `research-wiki\`。
+4. `.mcp.json` 里有 token，把它加进 `.gitignore`。
+5. 在项目里重启 Claude Code 让它加载 MCP 服务，然后让它调用 `query`。正常时服务状态是 `open`，剩余次数是满的。
 
-### 1.3 browser-act（实验需要读网页时必装）
+## 5. 运行
 
-ARIS 只通过一个 CLI 使用浏览器：`browser-act`。如果实验环境要从渲染后的页面
-取数据、操作 Web 应用、或读一个没有 API 的看板，它的 `env.json` 里
-`browser.required` 就是 true，此后这个 CLI 是硬依赖。
+在 Paseo 里给 worker 项目开一个 agent，让它按 `task.md` 工作。它的角色段已经写明怎么提交、什么时候停。每次提交，验证机器的 Paseo App 里都会出现一个验证 agent。有提交的分数达到目标（`completed`），或者提交次数用完（`closed`），任务就结束。
 
-```bash
-uv tool install browser-act-cli --python 3.12
-browser-act --version
-```
+两台机器的工作区里，ARIS 标签页都会把各自的 research wiki 显示为知识图谱。
 
-统一 `/aris-setup` 在最终确认整份配置后，仅当环境声明需要浏览器时安装。
-环境 worker 读取已确认的 PRD，不再逐项询问；手动安装是可选的。API key 只有 `stealth` 浏览器和
-`stealth-extract` 需要，`chrome` 和 `chrome-direct` 不需要。
+## 常见问题
 
-### 1.4 LaTeX 环境（可选）
-
-工作流 3（论文写作）需要，含 `latexmk` 和 `pdfinfo`：
-
-```bash
-brew install --cask mactex    # 或: brew install basictex
-brew install poppler          # 提供 pdfinfo
-
-# 验证
-latexmk --version && pdfinfo -v
-```
-
-> 如果只用工作流 1 和 2（找 idea + 自动 review），不需要安装 LaTeX 环境。
-
-## 第二步：创建研究项目
-
-```bash
-mkdir ~/your-paper-project
-cd ~/your-paper-project
-git init
-touch CLAUDE.md
-```
-
-- `git init` — 部分技能需要 git 来定位项目根目录
-- `CLAUDE.md` — Claude Code 的项目配置文件，在其中描述项目与 GPU 服务器信息
-
-## 第三步：安装 Skills
-
-**Paseo 会自动安装 ARIS。** 在 Paseo 中添加项目时，daemon 会自动把
-skill 包复制进去，无需运行任何安装脚本：
-
-```
-.claude/skills/<skill>        ← ~/aris_repo/skills/<skill> 的副本
-.claude/agents/<agent>.md     ← ~/aris_repo/agents/<agent>.md 的副本
-.aris/tools/                  ← ~/aris_repo/tools/ 的副本（工具脚本）
-.aris/installed-skills.txt    ← 安装清单；skills 从中读取 `repo_root`
-```
-
-确认安装结果：
-
-```bash
-ls .claude/skills | wc -l && cat .aris/installed-skills.txt | head -4
-```
-
-安装是**一次性**的：已有 `.aris/installed-skills.txt` 的项目会被跳过。
-要拉取上游新增的 skills，删除 `.aris/installed-skills.txt` 和
-`.claude/skills/`，然后在 Paseo 中重新添加该项目。
-
-<details>
-<summary>不使用 Paseo？手动复制 skills</summary>
-
-```bash
-# 1. 克隆 ARIS 一次到稳定位置，~/aris_repo 是本地目录名，可自定义
-git clone https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep.git ~/aris_repo
-
-# 2. 在每个使用 ARIS 的项目中复制 skills
-cd ~/your-paper-project
-mkdir -p .claude/skills .claude/agents
-cp -r ~/aris_repo/skills/* .claude/skills/
-cp -r ~/aris_repo/agents/*.md .claude/agents/ 2>/dev/null || true
-
-# 3. 导出 ARIS_REPO，让 dist/tools helper 解析链可用
-export ARIS_REPO=~/aris_repo
-```
-
-手动复制不会写入清单，因此必须保持 `ARIS_REPO` 已导出。更新时先在
-`~/aris_repo` 执行 `git pull`，再重新复制 —— 这会覆盖 `.claude/skills/`
-下的本地修改。
-
-</details>
-
-## 第四步：总览、修改并确认项目配置
-
-执行 `/aris-setup`。
-先按模块展示全部当前配置与来源，选择项列出可选项和建议，文本项给出填写建议。
-一次描述多项修改，或直接编辑 `.aris/setup-draft.json`；刷新后展示整份配置，
-并一次列出全部缺项和冲突。最后确认最新的整份配置，再生成研究文档、配置并审计
-执行环境、安装 benchmark 设施并执行健康检查/smoke、封存 root charter。
-后续评测只执行 `/tester-test` 和 `/tester-audit`，通过后才提交 Wiki 指标，
-不再进入另一轮 setup 问答。
-
-### GPU 配置参考（用于手动编辑）
-
-如果你的实验需要跑在远程 GPU 服务器上，需要两步：SSH 免密登录 + 写入服务器信息。
-
-### 4.1 配置 SSH 免密登录
-
-确保本地有 SSH 密钥，没有的话先生成：
-
-```bash
-ls ~/.ssh/id_*.pub
-# 有输出 → 已有密钥，跳过下一条命令
-# No such file → 执行：
-
-ssh-keygen -t ed25519   # 一路回车即可
-```
-
-将公钥复制到服务器：
-
-```bash
-# 需要输入一次服务器密码
-ssh-copy-id username@your-server-ip
-```
-
-验证免密登录（不应再要求输入密码）：
-
-```bash
-ssh username@your-server-ip "echo ok"
-```
-
-### 4.2 写入服务器信息
-
-在项目的 `CLAUDE.md` 末尾添加以下内容，根据你的实际情况替换：
-
-```markdown
-## Remote Server
-
-- gpu: remote
-- SSH: `ssh username@your-server-ip` (key-based auth, no password)
-- GPU: 8x RTX 4090 (24GB)
-- Conda env: `YOUR_ENV` (Python 3.x + PyTorch x.x.x)
-- Activate: `eval "$(/path/to/miniconda3/bin/conda shell.bash hook)" && conda activate YOUR_ENV`
-- Code directory: `/home/user/experiments/`
-- Use `tmux` for background jobs: `tmux new -d -s exp0 'bash -c "..."'`
-```
-
-也可以使用 `screen`：`screen -dmS exp0 bash -c '...'`（ARIS README 默认使用 `screen`）。
-
-验证远程环境（在本地 Mac 上运行，替换为你的实际值）：
-
-```bash
-ssh username@your-server-ip 'eval "$(/path/to/miniconda3/bin/conda shell.bash hook)" && conda activate YOUR_ENV && python --version && python -c "import torch; print(torch.__version__, torch.cuda.device_count())"'
-```
-
-应输出 Python 版本、PyTorch 版本和 GPU 数量。
-
-## 第五步：Research Wiki 参考
-
-统一 `/aris-setup` 在确认配置后初始化 Wiki 和 root problem，并保留已有历史。
-以下命令供手动参考，不是额外必做的设置步骤。
-
-Research Wiki 是 ARIS 的核心知识库，自动积累你整个研究过程中读过的论文、产生的想法、跑过的实验。其他 skill 会自动往里写入内容，你不需要手动维护。
-
-在研究项目目录下打开 Claude Code，输入：
-
-```
-/research-wiki init
-```
-
-它会创建 `research-wiki/` 目录，当前调用契约见
-[`skills/research-wiki/SKILL.md`](skills/research-wiki/SKILL.md)。知识库写入
-统一使用编译后的 `research-wiki.js` helper，helper 失败时停止当前阶段。
-
-```
-research-wiki/
-  index.md               ← 分类索引（自动生成）
-  log.md                 ← 时间线日志
-  query_pack.md          ← 压缩摘要（供 /idea-creator 使用）
-  papers/                ← /alphaxiv、/arxiv 等自动写入
-  ideas/                 ← /idea-creator 自动写入
-  experiments/           ← /result-to-claim 自动写入
-  claims/                ← 科学声明
-  problems/              ← 开放问题（根问题与子问题）
-  graph/                 ← 关系图谱（edges.jsonl）
-```
-
-## 第六步：验证
-
-重启 Claude Code，在研究项目目录下测试：
-
-**1. 测试 Paseo 连通性** — 在 Claude Code 中输入：
-
-```
-确认 Paseo MCP 可以列出 agent，并创建和完成一个测试子 agent。
-```
-
-只有拿到测试子 agent 的 receipt，工作流才算准备完成。
-
-**2. 测试技能识别** — 在 Claude Code 中输入：
-
-```
-/alphaxiv https://arxiv.org/abs/1706.03762
-```
-
-正常调用说明技能安装成功。该技能还会自动将论文写入 Research Wiki，你可以在 `research-wiki/papers/` 下查看。
-
----
-
-全部完成后，你的研究项目结构如下：
-
-```
-~/your-paper-project/
-  CLAUDE.md               ← ARIS 配置 + GPU 服务器信息
-  .claude/skills/          ← 技能符号链接
-  .aris/
-    installed-skills.txt   ← 安装清单
-    tools/                 ← → ARIS 仓库 tools/
-  research-wiki/           ← 知识库（自动积累）
-  .git/                    ← git 仓库
-```
-
-接下来就可以开始使用 ARIS 的研究工作流了：
-
-```
-claude
-> /idea-discovery "你的研究方向"              # 工作流 1 — 方向要具体！不要 "NLP"，要 "离散扩散语言模型的 factorized gap"
-> /experiment-bridge                         # 工作流 1.5 — 有计划了？实现 + 部署 + 收结果
-> /auto-review-loop "你的论文主题或范围"         # 工作流 2：审稿 → 修复 → 再审，一夜完成
-> /paper-writing "NARRATIVE_REPORT.md"       # 工作流 3：研究叙事 → 精修 PDF
-> /rebuttal "paper/ + reviews" — venue: ICML  # 工作流 4：解析 review → 起草 rebuttal → follow-up
-> /resubmit-pipeline "paper/" — venue: NeurIPS  # 工作流 5：移植到新 venue（纯文本，不跑新实验）
-> /paper-talk "paper/" — venue: ICLR            # 工作流 6：论文 → Beamer + PPTX + 讲稿 + 评审审计
-> /research-pipeline "你的研究方向"            # 全流程：W1 → 1.5 → 2 → handoff；默认到 NARRATIVE_REPORT.md 停。加 `— auto_write: true, venue: ICLR` 才连 W3 写论文
-```
+| 现象 | 检查 |
+| --- | --- |
+| worker 上 `query` 失败 | `aris-validation` 脚本在运行；在 worker 上能访问 `/health`；URL 以 `/mcp` 结尾；token 一致 |
+| 上传卡住或被拒 | 防火墙规则和端口；上传大小限制；上传地址只能用一次且会过期，重新调用 `submit` |
+| 提交状态 `invalid` | zip 损坏，或者根目录（或唯一的顶层文件夹）里没有 `USAGE.md`。不计次数。 |
+| 提交状态 `failed` | 验证方没能启动 agent，或者审查超时。不计次数。检查 `paseo_command` 和 agent provider。 |
+| 改了文件后服务停了 | benchmark 依赖的某个文件变了。恢复它，或者新建验证项目。 |

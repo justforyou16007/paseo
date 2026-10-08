@@ -60,7 +60,7 @@ Before submitting:
 ## Pull Request Process
 
 1. Make sure your changes are well-documented
-2. Update README.md if you add new skills or features
+2. Update AGENT_GUIDE.md and the integration contract if you add a skill or helper
 3. Keep PRs focused on a single change
 4. Write clear commit messages
 

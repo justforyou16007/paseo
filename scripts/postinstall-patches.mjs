@@ -155,7 +155,12 @@ if (existsSync(arisSkillSource)) {
 
   if (needsLink) {
     try {
-      symlinkSync(arisSkillSource, globalSkillLink);
+      // A junction needs neither admin rights nor Developer Mode on Windows.
+      symlinkSync(
+        arisSkillSource,
+        globalSkillLink,
+        process.platform === "win32" ? "junction" : "dir",
+      );
     } catch {
       // Non-fatal: skill won't be globally available but install continues
     }

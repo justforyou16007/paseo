@@ -1,271 +1,87 @@
-# ARIS Quick Setup Guide
+# ARIS Setup Guide
 
-> Get ARIS fully configured from scratch. Once done, you're ready to use the complete research workflow.
->
-> This guide targets a **macOS local + remote Linux GPU server** setup with the current configuration: **Paseo parent-child agents for execution and the cross-model reviewer**.
->
-> English | [中文版](SETUP_GUIDE_CN.md)
+ARIS runs one task on two machines: a **worker** that builds a deliverable and a **validation** machine that scores it against a benchmark the worker never sees. This guide sets up both, with Windows as the default. Why it is split this way: [ARIS_ARCHITECTURE_GUIDE.md](ARIS_ARCHITECTURE_GUIDE.md) (Chinese).
 
----
+English | [中文版](SETUP_GUIDE_CN.md)
 
-## Step 1: Install Required Tools
+## 1. Install on both machines
 
-### 1.1 Claude Code
+1. **Node.js 20+** and **Git**. On Windows: `winget install OpenJS.NodeJS.LTS Git.Git`.
+2. **Claude Code**: see the [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code). Check with `claude --version`.
+3. **Paseo** with its daemon running: `paseo daemon status`. Paseo copies the ARIS skills and the compiled helpers into every project you add; see [ARIS auto-install](../../docs/aris-auto-install.md). A packaged Paseo (desktop app, global npm install) needs a built ARIS checkout:
 
-Claude Code is Anthropic's CLI tool — all ARIS skills run on top of it. See the [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code) for installation.
+   ```powershell
+   git clone <aris-repo> $HOME\.paseo\aris
+   cd $HOME\.paseo\aris; npm install; npm run build
+   ```
 
-```bash
-claude --version   # verify installation
+4. **Validation machine only:** whatever the benchmark needs, usually Python. Benchmark commands call `python`, not `python3`, so one config runs on Windows and Linux.
+
+`curl.exe` and `tar` ship with Windows 10 and later; the worker needs nothing else to upload.
+
+## 2. Create the project on each machine
+
+Make an empty directory with `git init`, add it to Paseo, and check that `.claude\skills\aris-setup\` and `.aris\dist\` appeared. The two projects are separate: never share a disk, a repository or a synced folder between them.
+
+## 3. Validation machine
+
+Set this side up first; the worker needs its address and token.
+
+1. Write `task.md` with the owner. Open Claude Code in the project and run `/aris-setup validation`. If `task.md` is missing, setup drafts it from the template with you.
+2. Setup shows one review sheet with every field. Answer with all your changes at once. The fields that need decisions:
+   - **Benchmark**: source, pinned dataset revision, split, full sample count, and the runner commands. `.aris\templates\tester-benchmark\` is a worked lm-evaluation-harness example.
+   - **Metric and target**: the score that ends the task.
+   - **Hidden paths**: the hidden samples, labels and references. Feedback that quotes them is held back.
+   - **Limits**: maximum counted submissions, concurrent reviews, upload size, review timeout.
+   - **Validation agent**: provider and model for the agent that reviews each submission. On Windows set `paseo_command` to `["node", "<Paseo install>\\bin\\paseo"]`, because Node cannot start `paseo.cmd` without a shell.
+   - **Service address**: see [Network](#network).
+3. Approve the final configuration digest. Setup installs the benchmark, runs its healthcheck and smoke test, freezes it, creates the service token and adds the `aris-validation` script to `paseo.json`.
+4. Start the `aris-validation` script from the workspace in the Paseo app.
+5. Check it: `node .aris\dist\tools\validation-cli.js status --project .`
+6. Note the printed `worker_connection`: a URL ending in `/mcp` and a token. Send the token to the worker machine over a private channel.
+
+Once a submission has been counted, the benchmark and target cannot change. A new benchmark means a new validation project.
+
+### Network
+
+The worker must reach the validation service over HTTP. Pick one:
+
+**Direct, on a private network or VPN** (simplest):
+
+- `service.host`: `0.0.0.0`
+- `service.port`: a fixed port, for example `8790`
+- `service.public_url`: `http://<validation machine address>:8790`
+
+Allow the port through Windows Firewall in an administrator PowerShell:
+
+```powershell
+netsh advfirewall firewall add rule name="ARIS validation" dir=in action=allow protocol=TCP localport=8790
 ```
 
-### 1.2 Paseo MCP
+**Through the Paseo service proxy** (when you already expose Paseo services under a domain): keep `host` at `127.0.0.1`, leave `port` empty, and set `public_url` to the proxy URL of the `aris-validation` script. Proxy setup: [service-proxy.md](../../docs/service-proxy.md).
 
-ARIS delegates workflow phases and cross-model review to Paseo parent-child
-agents. Start the Paseo daemon for the project and confirm the agent MCP is
-available before invoking a workflow:
+From the worker machine, `curl.exe http://<address>:8790/health` should print `{"status":"ok"}`. Every other request needs the token.
 
-```bash
-paseo daemon start
-paseo daemon status
-```
+## 4. Worker machine
 
-The host must expose `mcp__paseo__list_agents`,
-`mcp__paseo__create_agent`, and `mcp__paseo__send_agent_prompt`. If any of
-these are unavailable, the workflow is blocked; do not install a second
-reviewer transport or run the skill in-process.
+1. Copy `task.md` from the validation machine to the project root, unchanged.
+2. Run `/aris-setup worker`. Fill `connection.url` and `connection.token` with the values from step 3.6. Leave `environment.prd` empty to let the agent manage its environment, or describe it to have `/experiment-env-configuration` generate run scripts.
+3. Approve the digest. Setup writes the `aris-validation` server into `.mcp.json` and the worker role into `CLAUDE.md`, and creates `research-wiki\`.
+4. `.mcp.json` holds the token. Add it to `.gitignore`.
+5. Restart Claude Code in the project so it loads the MCP server, then ask it to call `query`. It should report the service as `open` with all submissions left.
 
-### 1.3 browser-act (needed when an experiment reads web pages)
+## 5. Run
 
-ARIS reaches a browser through one CLI and nothing else: `browser-act`. An
-experiment environment that extracts data from a rendered page, drives a web
-app, or reads a dashboard with no API declares `browser.required` in its
-`env.json`, and from then on the CLI is required.
+Start an agent in the worker project in Paseo and tell it to work on `task.md`. Its role block already says how to submit and when to stop. For every submission, a validation agent appears in the validation machine's Paseo app. The run ends when a valid submission meets the target (`completed`) or the submissions run out (`closed`).
 
-```bash
-uv tool install browser-act-cli --python 3.12
-browser-act --version
-```
+Both machines show their research wiki as a knowledge graph in the ARIS tab of the workspace.
 
-Unified `/aris-setup` installs it after final configuration confirmation, only
-when the reviewed environment declares browser.required. The environment worker
-uses that confirmed PRD without another setup interview; manual installation is optional. An API key is only needed for `stealth`
-browsers and `stealth-extract`; `chrome` and `chrome-direct` need none.
+## Troubleshooting
 
-### 1.4 LaTeX Environment (Optional)
-
-Required for Workflow 3 (paper writing), providing `latexmk` and `pdfinfo`:
-
-```bash
-brew install --cask mactex    # or: brew install basictex
-brew install poppler          # provides pdfinfo
-
-# verify
-latexmk --version && pdfinfo -v
-```
-
-> If you only need Workflow 1 & 2 (idea discovery + auto review), LaTeX is not required.
-
-## Step 2: Create a Research Project
-
-```bash
-mkdir ~/your-paper-project
-cd ~/your-paper-project
-git init
-touch CLAUDE.md
-```
-
-- `git init` — some skills need git to locate the project root
-- `CLAUDE.md` — Claude Code's project config file; describe your project and GPU servers here
-
-## Step 3: Install Skills
-
-**Paseo installs ARIS for you.** When you add a project in Paseo, the
-daemon copies the skill bundle into it automatically — there is no
-install script to run:
-
-```
-.claude/skills/<skill>        ← a copy of ~/aris_repo/skills/<skill>
-.claude/agents/<agent>.md     ← a copy of ~/aris_repo/agents/<agent>.md
-.aris/tools/                  ← a copy of ~/aris_repo/tools/ (helper scripts)
-.aris/installed-skills.txt    ← install manifest; skills read `repo_root` from it
-```
-
-Confirm it happened:
-
-```bash
-ls .claude/skills | wc -l && cat .aris/installed-skills.txt | head -4
-```
-
-The install is **one-shot**: a project that already has
-`.aris/installed-skills.txt` is skipped. To pick up new upstream skills,
-delete `.aris/installed-skills.txt` and `.claude/skills/`, then re-add
-the project in Paseo.
-
-<details>
-<summary>Not using Paseo? Copy the skills in by hand</summary>
-
-```bash
-# 1. Clone ARIS once to a stable location, ~/aris_repo is the local dir name (customizable)
-git clone https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep.git ~/aris_repo
-
-# 2. Copy the skills into each project that uses ARIS
-cd ~/your-paper-project
-mkdir -p .claude/skills .claude/agents
-cp -r ~/aris_repo/skills/* .claude/skills/
-cp -r ~/aris_repo/agents/*.md .claude/agents/ 2>/dev/null || true
-
-# 3. Point ARIS_REPO at the checkout so the dist/tools helper chain resolves
-export ARIS_REPO=~/aris_repo
-```
-
-A manual copy writes no manifest, so `ARIS_REPO` must stay exported.
-To update, `git pull` in `~/aris_repo` and re-run the copy — this
-overwrites local edits under `.claude/skills/`.
-
-</details>
-
-## Step 4: Review and Confirm Project Configuration
-
-Run `/aris-setup`. It shows all current configuration by module with
-sources, choice options and recommendations for text fields. Describe multiple
-changes in one reply or edit `.aris/setup-draft.json`; each refresh displays the
-complete sheet and all remaining gaps/conflicts. Confirm the latest complete
-configuration once, then setup writes research documents, configures/audits the
-execution environment, installs/checks/smoke-tests tester facilities and seals
-the root charter. Subsequent evaluations use `/tester-test` then `/tester-audit`
-before Wiki metric publication. No additional setup interview is required.
-
-### GPU configuration reference (for manual edits)
-
-If your experiments run on a remote GPU server, you need two things: SSH key-based auth + server info in CLAUDE.md.
-
-### 4.1 Set Up SSH Key-Based Login
-
-Make sure you have an SSH key locally; generate one if you don't:
-
-```bash
-ls ~/.ssh/id_*.pub
-# output exists → key already present, skip the next command
-# No such file → run:
-
-ssh-keygen -t ed25519   # press Enter through all prompts
-```
-
-Copy your public key to the server:
-
-```bash
-# will ask for server password once
-ssh-copy-id username@your-server-ip
-```
-
-Verify key-based login (should not ask for password):
-
-```bash
-ssh username@your-server-ip "echo ok"
-```
-
-### 4.2 Add Server Info to CLAUDE.md
-
-Append the following to your project's `CLAUDE.md`, replacing with your actual values:
-
-```markdown
-## Remote Server
-
-- gpu: remote
-- SSH: `ssh username@your-server-ip` (key-based auth, no password)
-- GPU: 8x RTX 4090 (24GB)
-- Conda env: `YOUR_ENV` (Python 3.x + PyTorch x.x.x)
-- Activate: `eval "$(/path/to/miniconda3/bin/conda shell.bash hook)" && conda activate YOUR_ENV`
-- Code directory: `/home/user/experiments/`
-- Use `tmux` for background jobs: `tmux new -d -s exp0 'bash -c "..."'`
-```
-
-You can also use `screen`: `screen -dmS exp0 bash -c '...'` (ARIS README defaults to `screen`).
-
-Verify the remote environment (run on your local Mac, replace with your actual values):
-
-```bash
-ssh username@your-server-ip 'eval "$(/path/to/miniconda3/bin/conda shell.bash hook)" && conda activate YOUR_ENV && python --version && python -c "import torch; print(torch.__version__, torch.cuda.device_count())"'
-```
-
-Should output Python version, PyTorch version, and GPU count.
-
-## Step 5: Research Wiki Reference
-
-Unified `/aris-setup` initializes the Wiki and root problem after configuration
-confirmation. Existing history is preserved. The following commands are a
-manual reference, not another required setup step.
-
-Research Wiki is ARIS's core knowledge base — it automatically accumulates papers you've read, ideas you've generated, and experiments you've run. Other skills write to it automatically; you don't need to maintain it manually.
-
-Open Claude Code in your research project directory and enter:
-
-```
-/research-wiki init
-```
-
-This creates a `research-wiki/` directory. The current command contract is in
-[`skills/research-wiki/SKILL.md`](skills/research-wiki/SKILL.md); wiki writes
-use the compiled `research-wiki.js` helper and stop when that helper fails.
-
-```
-research-wiki/
-  index.md               ← categorical index (auto-generated)
-  log.md                 ← append-only timeline
-  query_pack.md          ← compressed summary (for /idea-creator)
-  papers/                ← auto-populated by /alphaxiv, /arxiv, etc.
-  ideas/                 ← auto-populated by /idea-creator
-  experiments/           ← auto-populated by /result-to-claim
-  claims/                ← scientific claims
-  problems/              ← open problems (root + sub-problems)
-  graph/                 ← relationship graph (edges.jsonl)
-```
-
-## Step 6: Verify
-
-Restart Claude Code and test in your research project directory:
-
-**1. Test Paseo connectivity** — enter in Claude Code:
-
-```
-Check that Paseo MCP can list agents, then create and finish a test child.
-```
-
-The workflow is ready only when the Paseo child receipt is available.
-
-**2. Test skill recognition** — enter in Claude Code:
-
-```
-/alphaxiv https://arxiv.org/abs/1706.03762
-```
-
-A successful invocation means skills are installed. This skill will also auto-write the paper into Research Wiki — check `research-wiki/papers/`.
-
----
-
-After completing all steps, your research project structure looks like:
-
-```
-~/your-paper-project/
-  CLAUDE.md               ← ARIS config + GPU server info
-  .claude/skills/          ← skill symlinks
-  .aris/
-    installed-skills.txt   ← install manifest
-    tools/                 ← → ARIS repo tools/
-  research-wiki/           ← knowledge base (auto-accumulated)
-  .git/                    ← git repository
-```
-
-You're now ready to use ARIS research workflows:
-
-```
-claude
-> /idea-discovery "your research direction"          # Workflow 1 — be specific! not "NLP" but "factorized gap in discrete diffusion LMs"
-> /experiment-bridge                                 # Workflow 1.5 — have a plan? implement + deploy + collect results
-> /auto-review-loop "your paper topic or scope"      # Workflow 2: review → fix → re-review overnight
-> /paper-writing "NARRATIVE_REPORT.md"               # Workflow 3: narrative → polished PDF
-> /rebuttal "paper/ + reviews" — venue: ICML          # Workflow 4: parse reviews → draft rebuttal → follow-up
-> /resubmit-pipeline "paper/" — venue: NeurIPS        # Workflow 5: port to new venue (text-only, no new experiments)
-> /paper-talk "paper/" — venue: ICLR                  # Workflow 6: paper → Beamer + PPTX talk + speaker notes + assurance audits
-> /research-pipeline "your research direction"       # Full pipeline: W1 → 1.5 → 2 → handoff; default stops at NARRATIVE_REPORT.md. Add `— auto_write: true, venue: ICLR` to chain W3 paper writing too
-```
+| Symptom | Check |
+| --- | --- |
+| `query` fails on the worker | The `aris-validation` script is running; `/health` answers from the worker; URL ends in `/mcp`; token matches |
+| Upload hangs or is refused | Firewall rule and port; upload size limit; the upload URL is single-use and expires, so call `submit` again |
+| Submission `invalid` | The zip is malformed or has no `USAGE.md` at its root or in its single top-level folder. Not counted. |
+| Submission `failed` | The validation side could not start an agent or the review timed out. Not counted. Check `paseo_command` and the agent provider. |
+| Service stopped after an edit | A file the benchmark pins changed. Restore it, or start a new validation project. |
