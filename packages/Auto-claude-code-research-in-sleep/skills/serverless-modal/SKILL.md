@@ -91,7 +91,7 @@ Cost estimate (Modal):
 
 ```bash
 # --- resolve the project-level experiment skill ---
-PROJECT=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')
+PROJECT=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\+/-/g; s/^-//; s/-$//')
 SKILL_DIR=".claude/skills/run-${PROJECT}-experiment"
 [ -d "$SKILL_DIR/scripts" ] || { echo "ERROR: experiment skill not found at $SKILL_DIR. Run /experiment-env-configuration first." >&2; exit 1; }
 ```
@@ -116,13 +116,13 @@ sh "$SKILL_DIR/scripts/ops/sync-code.sh + scripts/ops/build-env.sh"
 sh "$SKILL_DIR/scripts/ops/launch-job.sh" "$EXP_NAME" --args "$ARGS"
 ```
 
-`deploy` generates `modal_launcher.py` reproducing Pattern A (`modal.Mount.from_local_dir` + `modal.Volume` + `@app.function(gpu=modal_gpu, timeout=modal_timeout, secrets=modal_secrets)` + `volume.commit()` + `train.remote()`) and runs `modal run`. The Pattern A/B/C/D/E/F reference below documents what the backend generates — kept for choosing the right pattern (Pattern A is the run-experiment default).
+`deploy` generates `modal_launcher.py` reproducing Pattern A (`modal.Mount.from_local_dir` + `modal.Volume` + `@app.function(gpu=modal_gpu, timeout=modal_timeout, secrets=modal_secrets)` + `volume.commit()` + `train.remote()`) and runs `modal run`. The Pattern A/B/C/D/E/F reference below documents what the backend generates — kept for choosing the right pattern (Pattern A is the default for training scripts).
 
 Based on the task type, generate the appropriate launcher script.
 
 #### Pattern A: One-Shot GPU Function (training, evaluation, benchmark)
 
-The most common pattern for `run-experiment` integration. Wraps an existing training script:
+The most common pattern. Wraps an existing training script:
 
 ```python
 import modal
@@ -329,11 +329,6 @@ modal secret create NAME KEY=VALUE       # Create secret
 ## Composing with Other Skills
 
 ```
-/run-experiment "train model"       <- detects gpu: modal, calls /serverless-modal
-  -> /serverless-modal              <- analyzes task, generates launcher, runs
-  -> Results returned locally or to Modal Volume
-  -> No destroy step needed (auto scale-to-zero)
-
 /serverless-modal                   <- standalone: any Modal GPU workload
 /serverless-modal "deploy vLLM"     <- inference service deployment
 ```
@@ -343,7 +338,7 @@ modal secret create NAME KEY=VALUE       # Create secret
 ```markdown
 ## Modal
 
-- gpu: modal # tells run-experiment to use Modal serverless
+- gpu: modal # run on Modal serverless
 - modal_gpu: A100-80GB # optional: override GPU selection (default: auto-select)
 - modal_timeout: 21600 # optional: max seconds (default: 6 hours)
 - modal_volume: my-results # optional: named volume for results persistence

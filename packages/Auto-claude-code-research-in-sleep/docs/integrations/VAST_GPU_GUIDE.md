@@ -1,9 +1,9 @@
 # Vast.ai On-Demand GPU Integration
 
 > 🇨🇳 中文版：[VAST_GPU_GUIDE_CN.md](VAST_GPU_GUIDE_CN.md)
-> Part of the ARIS [GPU Server Setup](../../README.md#%EF%B8%8F-setup) options. Use this when you don't own a GPU server.
+> Use this when you don't own a GPU server.
 
-ARIS supports renting GPUs on demand from [Vast.ai](https://vast.ai) — the cheapest spot-rental marketplace for ML hardware. When you run `/run-experiment`, ARIS **analyzes your training task** (model size, dataset, estimated time), searches for the cheapest GPU that fits the workload, and presents options ranked by **estimated total cost** (not just $/hr). After you pick, it handles everything: rent → setup → run → collect results → destroy.
+ARIS supports renting GPUs on demand from [Vast.ai](https://vast.ai) — the cheapest spot-rental marketplace for ML hardware. When an experiment needs a GPU, `/vast-gpu` **analyzes your training task** (model size, dataset, estimated time), searches for the cheapest GPU that fits the workload, and presents options ranked by **estimated total cost** (not just $/hr). After you pick, it handles everything: rent → setup → run → collect results → destroy.
 
 ## When to use this vs. `gpu: remote` / `gpu: local`
 
@@ -70,7 +70,7 @@ Pick a number and ARIS handles the rest.
 
 ## Manual control
 
-For one-off rentals outside the `/run-experiment` flow, use the dedicated skill:
+For one-off rentals outside an experiment, call the skill directly:
 
 ```
 /vast-gpu                          # interactive — search, pick, rent
@@ -78,7 +78,7 @@ For one-off rentals outside the `/run-experiment` flow, use the dedicated skill:
 /vast-gpu destroy <instance-id>    # tear down manually
 ```
 
-`auto_destroy: true` will tear instances down after `/run-experiment` finishes; `false` leaves them up so you can SSH in and inspect. Always run `vastai show instances` (or `/vast-gpu list`) after a session to confirm nothing is silently billing you.
+`auto_destroy: true` tears the instance down after `collect-outputs.sh` has pulled the results; `false` leaves them up so you can SSH in and inspect. Always run `vastai show instances` (or `/vast-gpu list`) after a session to confirm nothing is silently billing you.
 
 ## Cost expectations
 
@@ -90,12 +90,10 @@ Typical ARIS workloads with Vast.ai:
 
 Set `max_budget` in `CLAUDE.md` to get a warning when ARIS's estimate exceeds your comfort zone — it doesn't hard-block, just confirms before renting.
 
-If a run explicitly requires `gpu: vast` and no Vast instance can be resolved, the experiment
-stage is BLOCKED. It does not silently skip experiment-related fixes. Choose an available
-environment explicitly or run a workflow that does not contain an experiment stage.
+If the project sets `gpu: vast` and no instance can be rented, the experiment stops with the
+error. It never falls back to another environment.
 
 ## Related skills
 
 - [`/vast-gpu`](../../skills/vast-gpu/SKILL.md) — direct rental control
-- [`/run-experiment`](../../skills/run-experiment/SKILL.md) — auto-deploy via `gpu: vast`
 - the generated experiment skill's `ops/collect-outputs.sh` — collect results from running rentals

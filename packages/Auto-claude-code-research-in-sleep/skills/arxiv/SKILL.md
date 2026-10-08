@@ -25,7 +25,7 @@ ARXIV_FETCHER=".aris/dist/tools/arxiv-fetch.js"
 }
 ```
 
-Use the shared project-root resolver from
+Run from the project root; see
 [`shared-references/integration-contract.md`](../shared-references/integration-contract.md).
 
 ## Workflow
@@ -60,10 +60,9 @@ the skill or suggest another retrieval path as part of the same run.
 
 ## Research Wiki
 
-If `research-wiki/` exists, Wiki ingest is part of this run. Resolve the
-required helper using
-[`shared-references/wiki-helper-resolution.md`](../shared-references/wiki-helper-resolution.md)
-and ingest every returned arXiv ID:
+If `research-wiki/` exists, Wiki ingest is part of this run. Ingest every
+returned arXiv ID with the wiki helper (`WIKI_SCRIPT=.aris/dist/tools/research-wiki.js`,
+see [`/research-wiki`](../research-wiki/SKILL.md)):
 
 ```bash
 node "$WIKI_SCRIPT" ingest_paper research-wiki/ --arxiv-id "$ARXIV_ID" || exit 1

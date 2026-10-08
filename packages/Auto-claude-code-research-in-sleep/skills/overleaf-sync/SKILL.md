@@ -140,11 +140,11 @@ git commit -m "<descriptive message — what ARIS changed and why>"
 git push
 ```
 
-**Commit message protocol**: include the ARIS skill that produced the change so collaborators on Overleaf understand provenance. Examples:
+**Commit message protocol**: say what changed and where it came from so collaborators on Overleaf understand provenance. Examples:
 
-- `paper-write: regenerated sec/3.assurance after audit cascade refactor`
-- `citation-audit: fix 14 metadata entries (madaan2023, lee2024, ...)`
-- `paper-claim-audit: correct sec/5 numbers vs results/run_2026_04_19.json`
+- `sec/3: rewrite method after submission s004 feedback`
+- `refs: fix 14 metadata entries (madaan2023, lee2024, ...)`
+- `sec/5: update numbers from the s006 validation result`
 
 **Confirmation gate**: `push` writes to a shared resource. ALWAYS show the user `git diff --stat` (and a representative hunk for prose changes) before running `git push`. Wait for explicit confirmation unless the user said `auto: true` upfront.
 
@@ -205,7 +205,7 @@ Behavioral rules (still apply, but secondary):
 The single biggest source of pain in two-way sync is **simultaneous editing on both sides**.
 
 - If the user is in an active Overleaf editing session, ARIS skills should **read-only** access `paper/` until the user runs `/overleaf-sync pull`.
-- If ARIS is in the middle of `/auto-paper-improvement-loop` or `/paper-write`, the user should pause Overleaf editing until the loop finishes and `/overleaf-sync push` is run.
+- If the agent is editing `paper/`, the user should pause Overleaf editing until the agent finishes and `/overleaf-sync push` is run.
 
 When in doubt, run `status` first.
 

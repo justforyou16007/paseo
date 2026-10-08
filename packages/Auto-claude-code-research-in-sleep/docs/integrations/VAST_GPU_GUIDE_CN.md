@@ -1,9 +1,9 @@
 # Vast.ai 按需 GPU 集成
 
 > 🇬🇧 English: [VAST_GPU_GUIDE.md](VAST_GPU_GUIDE.md)
-> ARIS [GPU 服务器配置](../../README_CN.md#%EF%B8%8F-安装)的三种模式之一。没有自己的 GPU 服务器时用这个。
+> 没有自己的 GPU 服务器时用这个。
 
-ARIS 支持从 [Vast.ai](https://vast.ai)（最便宜的 ML 硬件 spot 租赁市场）按需租 GPU。当你跑 `/run-experiment` 时，ARIS **分析你的训练任务**（模型大小、数据集、预估时间），搜索能放下这个负载的最便宜 GPU，然后按**总成本**（不是 $/hr）排序展示给你。你选一个，ARIS 全自动：租 → 配环境 → 跑 → 收结果 → 销毁。
+ARIS 支持从 [Vast.ai](https://vast.ai)（最便宜的 ML 硬件 spot 租赁市场）按需租 GPU。实验需要 GPU 时，`/vast-gpu` **分析你的训练任务**（模型大小、数据集、预估时间），搜索能放下这个负载的最便宜 GPU，然后按**总成本**（不是 $/hr）排序展示给你。你选一个，ARIS 全自动：租 → 配环境 → 跑 → 收结果 → 销毁。
 
 ## 什么时候用 vs. `gpu: remote` / `gpu: local`
 
@@ -70,7 +70,7 @@ Vast.ai 适合一次性消融实验、跑 baseline、或者为某个单独实验
 
 ## 手动控制
 
-如果想在 `/run-experiment` 流程之外单独租 GPU，用专门的 skill：
+实验之外单独租 GPU，直接调用这个 skill：
 
 ```
 /vast-gpu                          # 交互式：搜索、挑选、租用
@@ -78,7 +78,7 @@ Vast.ai 适合一次性消融实验、跑 baseline、或者为某个单独实验
 /vast-gpu destroy <instance-id>    # 手动销毁
 ```
 
-`auto_destroy: true` 让 `/run-experiment` 跑完后自动销毁实例；`false` 让实例保留，方便你 SSH 进去看结果。每次用完之后 `vastai show instances`（或 `/vast-gpu list`）确认一下没有静默扣费的实例。
+`auto_destroy: true` 在 `collect-outputs.sh` 拉回结果后销毁实例；`false` 让实例保留，方便你 SSH 进去看结果。每次用完之后 `vastai show instances`（或 `/vast-gpu list`）确认一下没有静默扣费的实例。
 
 ## 大致花费
 
@@ -90,11 +90,9 @@ ARIS + Vast.ai 的典型工作负载：
 
 在 `CLAUDE.md` 设置 `max_budget`，ARIS 估算超过这个数会警告——不是硬阻断，而是租之前再确认。
 
-如果运行明确要求 `gpu: vast`，但找不到可用的 Vast 实例，实验阶段会标记为 BLOCKED
-并停止，不会静默跳过实验修复。需要时请显式选择可用环境，或运行不包含实验阶段的流程。
+项目设置了 `gpu: vast` 但租不到实例时，实验带着错误停止，不会换到别的环境继续。
 
 ## 相关 skill
 
 - [`/vast-gpu`](../../skills/vast-gpu/SKILL.md) —— 直接租用控制
-- [`/run-experiment`](../../skills/run-experiment/SKILL.md) —— 通过 `gpu: vast` 自动部署
 - 生成的实验 skill 的 `ops/collect-outputs.sh` —— 从租用中的实例收集结果

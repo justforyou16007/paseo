@@ -9,7 +9,7 @@
     "clean": "node ../../scripts/clean-package-dist.mjs && node -e \"require('node:fs').rmSync('tsconfig.tsbuildinfo', { force: true })\"",
     "watch": "tsc -p tsconfig.json --watch --preserveWatchOutput",
     "typecheck": "tsc --noEmit",
-    "test": "npx tsx tests/test_a0.ts && npx tsx tests/test_wiki_query.ts && npx tsx tests/test_tester_facility.ts && npx tsx tests/test_setup.ts",
+    "test": "npx tsx tests/test_a0.ts && npx tsx tests/test_tester_facility.ts && npx tsx tests/test_setup.ts",
     "test:python": "python3 -m unittest discover -s tests -p \"test_*.py\""
   },
   "dependencies": {

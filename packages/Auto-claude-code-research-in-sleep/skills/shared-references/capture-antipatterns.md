@@ -1,81 +1,33 @@
-# Capture Anti-patterns (anti-self-poisoning)
+# Capture Anti-patterns
 
-When ARIS captures _durable_ knowledge — a research-wiki idea / claim / experiment
-node, a `/meta-optimize` SKILL.md proposal — it must not store **operational
-noise** that later hardens into a self-cited falsehood. This is the failure mode
-Hermes's self-improvement loop hit and patched with a hand-written "Do NOT
-capture" list: negative tool-capability claims that _"harden into refusals the
-agent cites against itself for months after the actual problem was fixed."_
-ARIS's research-wiki "failed ideas → anti-repeat memory" is the GOOD inverse (a
-class-level _research_ finding worth remembering); this is the blocklist for the
-BAD kind (transient _operational_ state masquerading as a durable fact).
+When you write something durable — a wiki idea, claim or experiment page — do
+not store operational noise. A transient failure written down as a fact gets
+loaded into every later session, and the agent cites it against itself long
+after the cause is gone.
 
-## The four anti-patterns — do NOT capture
+## Do not capture
 
-| class                              | example (do NOT store)                                                  | store INSTEAD                                                                       |
-| ---------------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| **env-specific failure**           | "pip failed: No module named torch", "command not found"                | the fix / the missing dependency / the correct config                               |
-| **transient error**                | "got a 429", "CUDA OOM", "connection refused"                           | nothing — it self-resolves; or the retry/backoff that worked                        |
-| **negative tool-capability claim** | "codex can't handle long files", "gemini is broken", "don't use oracle" | the workaround, or "needs flag X" — never "tool can't do Y"                         |
-| **single-instance narrative**      | "in run 47 the loss spiked at step 300"                                 | only the _class-level_ rule it implies, if any ("LR > 3e-4 diverges on this model") |
+| Class | Example (do not store) | Store instead |
+| --- | --- | --- |
+| Environment-specific failure | "pip failed: No module named torch", "command not found" | The fix, the missing dependency, the correct config |
+| Transient error | "got a 429", "CUDA OOM", "connection refused" | Nothing, or the retry/backoff that worked |
+| Negative tool-capability claim | "the MCP is broken", "the CLI can't handle long files" | The workaround, or "needs flag X" |
+| Single-instance narrative | "in submission s004 the loss spiked at step 300" | Only the class-level rule it implies ("LR > 3e-4 diverges on this model") |
 
-The cardinal rule: **store _how to fix_ / _what config is missing_ / _the
-workaround_, never _"X can't do Y"_.** A negative capability claim about your own
-tooling is the most dangerous capture — it gets loaded into every future session
-and the agent cites it against itself long after the real cause is gone.
+Store how to fix it, never "X can't do Y".
 
-## Mechanical vs judgment
+## The helper
 
-- **Mechanical** (deterministic, `tools/capture-filter.js`): the unambiguous
-  classes — raw error output (`No module named`, `command not found`,
-  `ModuleNotFoundError`, `Permission denied`), transient errors (rate-limit / OOM
-  / network), and explicitly-broken-tool phrasing anchored on ARIS infrastructure
-  nouns (codex / gemini / oracle / the reviewer / the MCP / the CLI …).
-- **Judgment** (this doc): the single-instance-narrative class, and any operational
-  note dressed up as a finding. The agent applies this when deciding what to persist.
+`capture-filter.js` flags the mechanical classes: raw error output, transient
+errors, and phrasing that declares ARIS tooling broken. It does not flag
+research findings about a model or method ("our method fails on long
+sequences").
 
-The mechanical filter is **deliberately conservative**: it does NOT flag
-legitimate _research_ findings about a model/method ("the model can't generalize
-to OOD", "our method fails on long sequences") — it targets ARIS's own _tooling_
-being declared broken, and raw error text. False negatives are fine (the jury
-still judges); a flagged note just goes to manual review / gets rewritten.
-
-## The asymmetry (acceptance-gate.md)
-
-This filter may **REJECT a capture same-model** — it is a mechanical safety screen,
-low risk, and same-model is always allowed to _reject_. But anything that **passes**
-the filter and would become a **load-bearing** skill/claim still goes to the
-**cross-model jury** before it is trusted. Same-model is fine to reject; it is
-never enough to _accept_ into the load-bearing set.
-
-## Helper
-
-```
-const { screen, reasonDetail } = require("./capture-filter.js");
-screen(text)  // -> [reason, ...]  ([] = clean);  reason in {env_failure, transient_error, negative_tool_claim}
+```bash
+node .aris/dist/tools/capture-filter.js <file|->   # exit 1 and the reasons when flagged
 ```
 
-```
-node .aris/dist/tools/capture-filter.js <file|->   # exit 1 + reasons if anti-pattern found
-```
+When a note is flagged, rewrite it as the fix or drop it. The single-instance
+class is a judgment call the filter cannot make; apply the table yourself.
 
-## Where ARIS uses it
-
-- **`/research-wiki`** (and `/idea-creator` Phase-3 annotations): screen an
-  idea/claim/experiment note before persisting it; if flagged, rewrite to the
-  fix or drop it — don't let operational noise become a durable node.
-- **`/meta-optimize`**: screen the rationale of a proposed SKILL.md change; never
-  propose a change that encodes a negative tool-capability claim or a one-off
-  failure as a durable rule.
-
-## Cross-references
-
-- `acceptance-gate.md` — the reject/accept asymmetry: same-model may reject, only
-  cross-model may accept into the load-bearing set.
-- `evidence-precheck.md` / `injection-hygiene.md` — sibling deterministic
-  pre-gates feeding the cross-model jury.
-
-> Anti-pattern taxonomy adapted from NousResearch/hermes-agent's background-review
-> "Do NOT capture" list (MIT). ARIS's increment: Hermes patches self-poisoning with
-> more self-judged prose; ARIS adds the deterministic screen + the cross-model
-> acceptance gate on anything that survives it.
+Taxonomy adapted from NousResearch/hermes-agent's "Do NOT capture" list (MIT).

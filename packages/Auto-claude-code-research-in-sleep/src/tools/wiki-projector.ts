@@ -1,16 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import { anyJsonSchema, canonicalJsonSha256, canonicalJsonString } from "./canonical-json.js";
 import { scanForThreats } from "./threat-scan.js";
 import { writeStateFileAtomic, writeStateJsonAtomic } from "./state-file.js";
-import {
-  parseWikiPayload,
-  type WikiOperation,
-  type WikiPageKind,
-  type WikiPayloadContext,
-  type WikiSignal,
-} from "./wiki-operations.js";
-import { scopePathSegments, validateWikiScope } from "./wiki-scope.js";
+import { parseWikiPayload, type WikiOperation, type WikiPageKind } from "./wiki-operations.js";
 import {
   eventLogHead,
   readWikiEventsLocked,
@@ -34,71 +26,6 @@ export interface WikiEdge {
   added: string;
 }
 
-export type WikiSignalStatus = "active" | "superseded" | "retracted";
-
-export interface WikiSignalState extends Omit<WikiSignal, "status"> {
-  status: WikiSignalStatus;
-  retracted_reason?: string;
-}
-
-export interface WikiHead {
-  seq: number;
-  event_id: string | null;
-  event_hash: string | null;
-}
-
-export interface WikiQueryRequest {
-  purpose: string;
-  requester: string;
-  scope: string;
-  module_id?: string;
-  module_version?: string;
-  workflow_id?: string;
-  workflow_revision?: string;
-  input_snapshot_id?: string;
-  contract_versions?: string[];
-  scorer_revision?: string;
-  scorer_target?: unknown;
-  constraints?: unknown[];
-  head?: WikiHead | string;
-}
-
-export type WikiQueryStatus = "ok" | "no_evidence" | "insufficient_context";
-
-export interface WikiQueryEvidence {
-  id: string;
-  kind: "page" | "signal";
-  source: string;
-  summary: string;
-  evidence_refs: string[];
-}
-
-export interface WikiQueryExcluded {
-  event_id: string;
-  subject_id: string;
-  reason: string;
-}
-
-export interface WikiQueryResult {
-  schema_version: 2;
-  query_version: 1;
-  query_id: string;
-  status: WikiQueryStatus;
-  decision_eligible: false;
-  decision: null;
-  scope: string;
-  request: WikiQueryRequest;
-  head: WikiHead;
-  direct_observations: WikiQueryEvidence[];
-  inferences: WikiQueryEvidence[];
-  unsupported: string[];
-  excluded: WikiQueryExcluded[];
-  signals: WikiSignalState[];
-  pages: WikiPage[];
-  edges: WikiEdge[];
-  query_pack: string;
-}
-
 interface WikiLogEntry {
   timestamp: string;
   message: string;
@@ -116,10 +43,8 @@ export interface WikiModel {
   edges: WikiEdge[];
   logs: WikiLogEntry[];
   quarantine: QuarantineEntry[];
-  signals: Map<string, WikiSignalState>;
   project_direction: string | null;
   max_query_chars: number;
-  scopes: Set<string>;
 }
 
 type Operation = WikiOperation;
@@ -167,17 +92,14 @@ function emptyModel(): WikiModel {
     edges: [],
     logs: [],
     quarantine: [],
-    signals: new Map(),
     project_direction: null,
     max_query_chars: 8000,
-    scopes: new Set(),
   };
 }
 
 export function replayWikiEvents(events: readonly WikiEvent[]): WikiModel {
   const model = emptyModel();
   for (const event of events) {
-    model.scopes.add(event.producer.scope);
     for (const item of parseWikiPayload(event.payload).operations) {
       switch (item.op) {
         case "upsert_page": {
@@ -241,97 +163,10 @@ export function replayWikiEvents(events: readonly WikiEvent[]): WikiModel {
         case "set_projection_config":
           model.max_query_chars = item.max_query_chars;
           break;
-        case "publish_signal":
-        case "upsert_signal": {
-          const previous = model.signals.get(item.signal.signal_id);
-          if (previous) {
-            const previousHash = canonicalJsonSha256(
-              { ...previous, status: "active" },
-              anyJsonSchema,
-            );
-            const nextHash = canonicalJsonSha256(item.signal, anyJsonSchema);
-            if (previousHash !== nextHash) {
-              throw new Error(`Wiki signal '${item.signal.signal_id}' was published twice`);
-            }
-            break;
-          }
-          const signal: WikiSignalState = {
-            ...cloneSignal(item.signal),
-            status: "active",
-          };
-          model.signals.set(signal.signal_id, signal);
-          for (const supersededId of signal.supersedes) {
-            const superseded = model.signals.get(supersededId);
-            if (!superseded) {
-              throw new Error(
-                `Wiki signal '${signal.signal_id}' cannot supersede '${supersededId}' before publish`,
-              );
-            }
-            if (superseded.status !== "active") {
-              throw new Error(
-                `Wiki signal '${supersededId}' cannot be superseded from status ${superseded.status}`,
-              );
-            }
-            superseded.status = "superseded";
-          }
-          break;
-        }
-        case "retract_signal": {
-          const signal = model.signals.get(item.signal_id);
-          if (!signal)
-            throw new Error(`Wiki signal '${item.signal_id}' cannot be retracted before publish`);
-          signal.status = "retracted";
-          if (item.reason !== undefined) signal.retracted_reason = item.reason;
-          break;
-        }
-        case "supersede_signal": {
-          const signal = model.signals.get(item.signal_id);
-          if (!signal)
-            throw new Error(`Wiki signal '${item.signal_id}' cannot be superseded before publish`);
-          const replacement = model.signals.get(item.replacement_signal_id);
-          if (!replacement) {
-            throw new Error(
-              `Wiki signal '${item.replacement_signal_id}' cannot be used as a replacement before publish`,
-            );
-          }
-          if (!replacement.supersedes.includes(item.signal_id)) {
-            throw new Error(
-              `Wiki signal '${item.replacement_signal_id}' does not reference '${item.signal_id}' in supersedes`,
-            );
-          }
-          signal.status = "superseded";
-          break;
-        }
       }
     }
   }
   return model;
-}
-
-function cloneSignal(signal: WikiSignal): WikiSignal {
-  return {
-    signal_id: signal.signal_id,
-    kind: signal.kind,
-    source: signal.source,
-    producer: { ...signal.producer },
-    applies_to: {
-      ...signal.applies_to,
-      contract_versions: [...signal.applies_to.contract_versions],
-      ...(signal.applies_to.scorer_target === undefined
-        ? {}
-        : { scorer_target: cloneValue(signal.applies_to.scorer_target) }),
-      ...(signal.applies_to.constraints === undefined
-        ? {}
-        : { constraints: signal.applies_to.constraints.map((item) => cloneValue(item)) }),
-    },
-    evidence_refs: [...signal.evidence_refs],
-    supersedes: [...signal.supersedes],
-    status: "active",
-    ...(signal.summary === undefined ? {} : { summary: signal.summary }),
-    ...(signal.observation === undefined ? {} : { observation: signal.observation }),
-    ...(signal.inference === undefined ? {} : { inference: signal.inference }),
-    ...(signal.recommendation === undefined ? {} : { recommendation: signal.recommendation }),
-  };
 }
 
 function asString(data: Record<string, unknown>, key: string, fallback = ""): string {
@@ -615,16 +450,6 @@ function pageTitle(page: WikiPage): string {
   return asString(page.data, "title") || asString(page.data, "name") || page.id;
 }
 
-function signalTitle(signal: WikiSignalState): string {
-  return (
-    signal.summary ??
-    signal.observation ??
-    signal.inference ??
-    signal.recommendation ??
-    `${signal.kind} from ${signal.source}`
-  );
-}
-
 function renderIndex(model: WikiModel): string {
   const labels: Array<[WikiPageKind, string]> = [
     ["paper", "Papers"],
@@ -670,13 +495,10 @@ function projectDirectionSection(text: string | null): string | null {
   }
   if (heading) sections[heading] = body.join("\n").trim();
   const aliases: Array<[string, string]> = [
-    ["Problem", "Problem Statement"],
+    ["Goal", "Goal"],
+    ["Inputs and outputs", "Inputs and outputs"],
     ["Constraints", "Constraints"],
-    ["Direction", "What I'm Looking For"],
-    ["Background", "Background"],
-    ["Non-goals", "Non-Goals"],
-    ["Domain Knowledge", "Domain Knowledge"],
-    ["Existing Results", "Existing Results (if any)"],
+    ["Delivery", "Delivery"],
   ];
   const parts: string[] = [];
   for (const [label, wanted] of aliases) {
@@ -720,25 +542,6 @@ function renderQueryPack(model: WikiModel): string {
       .join("\n")
       .slice(0, 1400);
     sections.push({ text: `## Failed Ideas (avoid repeating)\n${body}\n`, must: true });
-  }
-
-  const activeSignals = [...model.signals.values()]
-    .filter((signal) => signal.status === "active")
-    .sort((left, right) => compareCodeUnits(left.signal_id, right.signal_id));
-  if (activeSignals.length > 0) {
-    const body = activeSignals
-      .slice(0, 30)
-      .map(
-        (signal) =>
-          `- [${signal.signal_id}] [${signal.source}/${signal.kind}] ${signalTitle(signal).slice(0, 220)} ` +
-          `(evidence: ${signal.evidence_refs.join(", ")})`,
-      )
-      .join("\n")
-      .slice(0, 2600);
-    sections.push({
-      text: `## Active Signals (${activeSignals.length} total)\n${body}\n`,
-      must: true,
-    });
   }
 
   const papers = [...model.pages.paper.values()].sort((left, right) =>
@@ -807,387 +610,10 @@ function renderQueryPack(model: WikiModel): string {
   return pack;
 }
 
-function nonEmptyQueryString(value: unknown, label: string): string {
-  if (typeof value !== "string" || value.trim() === "") {
-    throw new Error(`Wiki query ${label} must be a non-empty string`);
-  }
-  return value;
-}
-
-function normalizedStringList(value: unknown, label: string): string[] | undefined {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value) || !value.every((item) => typeof item === "string" && item.trim())) {
-    throw new Error(`Wiki query ${label} must be a non-empty string array`);
-  }
-  return [...new Set(value as string[])].sort(compareCodeUnits);
-}
-
-function normalizeQueryRequest(request: WikiQueryRequest): WikiQueryRequest {
-  const normalized: WikiQueryRequest = {
-    purpose: nonEmptyQueryString(request.purpose, "purpose"),
-    requester: nonEmptyQueryString(request.requester, "requester"),
-    scope: nonEmptyQueryString(request.scope, "scope"),
-  };
-  validateWikiScope(normalized.scope);
-  for (const field of [
-    "module_id",
-    "module_version",
-    "workflow_id",
-    "workflow_revision",
-    "input_snapshot_id",
-    "scorer_revision",
-  ] as const) {
-    if (request[field] !== undefined) {
-      normalized[field] = nonEmptyQueryString(request[field], field);
-    }
-  }
-  const contracts = normalizedStringList(request.contract_versions, "contract_versions");
-  if (contracts !== undefined) normalized.contract_versions = contracts;
-  if (request.scorer_target !== undefined) {
-    normalized.scorer_target = JSON.parse(
-      canonicalJsonString(request.scorer_target, anyJsonSchema),
-    );
-  }
-  if (request.constraints !== undefined) {
-    if (!Array.isArray(request.constraints)) {
-      throw new Error("Wiki query constraints must be an array");
-    }
-    normalized.constraints = JSON.parse(
-      canonicalJsonString(request.constraints, anyJsonSchema),
-    ) as unknown[];
-  }
-  if (request.head !== undefined) normalized.head = request.head;
-  return normalized;
-}
-
-function headForPrefix(events: readonly WikiEvent[], seq: number): WikiHead {
-  return eventLogHead(events.slice(0, seq));
-}
-
-function selectQueryHead(
-  events: readonly WikiEvent[],
-  requested: WikiHead | string | undefined,
-): {
-  head: WikiHead;
-  events: WikiEvent[];
-} {
-  if (requested === undefined) {
-    const head = eventLogHead(events);
-    return { head, events: [...events] };
-  }
-  let seq: number;
-  let expectedEventId: string | null | undefined;
-  let expectedEventHash: string | null | undefined;
-  if (typeof requested === "string") {
-    const index = events.findIndex((event) => event.event_id === requested);
-    if (index < 0) throw new Error(`WIKI_HEAD_NOT_FOUND: ${requested}`);
-    seq = index + 1;
-  } else {
-    if (!Number.isInteger(requested.seq) || requested.seq < 0 || requested.seq > events.length) {
-      throw new Error(`WIKI_HEAD_NOT_FOUND: invalid sequence ${String(requested.seq)}`);
-    }
-    seq = requested.seq;
-    expectedEventId = requested.event_id === null ? undefined : requested.event_id;
-    expectedEventHash = requested.event_hash === null ? undefined : requested.event_hash;
-  }
-  const head = headForPrefix(events, seq);
-  if (
-    (expectedEventId !== undefined && expectedEventId !== head.event_id) ||
-    (expectedEventHash !== undefined && expectedEventHash !== head.event_hash)
-  ) {
-    throw new Error(`WIKI_HEAD_NOT_FOUND: requested head does not match event ${seq}`);
-  }
-  return { head, events: events.slice(0, seq) };
-}
-
-function contextMatches(
-  context: WikiPayloadContext | undefined,
-  request: WikiQueryRequest,
-): boolean {
-  for (const field of [
-    "module_id",
-    "module_version",
-    "workflow_id",
-    "workflow_revision",
-    "input_snapshot_id",
-    "scorer_revision",
-  ] as const) {
-    const wanted = request[field];
-    if (wanted !== undefined && context?.[field] !== wanted) return false;
-  }
-  if (request.contract_versions !== undefined) {
-    const actual = context?.contract_versions;
-    if (actual === undefined) return false;
-    const left = [...new Set(actual)].sort(compareCodeUnits);
-    if (
-      left.length !== request.contract_versions.length ||
-      left.some((value, index) => value !== request.contract_versions?.[index])
-    ) {
-      return false;
-    }
-  }
-  for (const field of ["scorer_target", "constraints"] as const) {
-    if (request[field] === undefined) continue;
-    if (context?.[field] === undefined) return false;
-    if (
-      canonicalJsonString(context[field], anyJsonSchema) !==
-      canonicalJsonString(request[field], anyJsonSchema)
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function signalContext(signal: WikiSignalState): WikiPayloadContext {
-  return {
-    module_id: signal.producer.module_id,
-    module_version: signal.producer.module_version,
-    workflow_id: signal.applies_to.workflow_id,
-    workflow_revision: signal.applies_to.workflow_revision,
-    input_snapshot_id: signal.applies_to.input_snapshot_id,
-    contract_versions: signal.applies_to.contract_versions,
-    scorer_revision: signal.applies_to.scorer_revision,
-    ...(signal.applies_to.scorer_target === undefined
-      ? {}
-      : { scorer_target: signal.applies_to.scorer_target }),
-    ...(signal.applies_to.constraints === undefined
-      ? {}
-      : { constraints: signal.applies_to.constraints }),
-  };
-}
-
-function pageEvidenceRefs(page: WikiPage): string[] {
-  const refs: string[] = [];
-  for (const field of ["provenance", "evidence"] as const) {
-    if (typeof page.data[field] === "string" && page.data[field])
-      refs.push(page.data[field] as string);
-  }
-  return refs;
-}
-
-function queryEvidenceForPage(page: WikiPage): WikiQueryEvidence {
-  return {
-    id: `${page.kind}:${page.id}`,
-    kind: "page",
-    source: "event_wiki",
-    summary: pageTitle(page),
-    evidence_refs: pageEvidenceRefs(page),
-  };
-}
-
-function queryEvidenceForSignal(signal: WikiSignalState): WikiQueryEvidence {
-  return {
-    id: signal.signal_id,
-    kind: "signal",
-    source: signal.source,
-    summary: signalTitle(signal),
-    evidence_refs: [...signal.evidence_refs],
-  };
-}
-
-function sortPages(pages: Iterable<WikiPage>): WikiPage[] {
-  return [...pages].sort(
-    (left, right) => compareCodeUnits(left.kind, right.kind) || compareCodeUnits(left.id, right.id),
-  );
-}
-
-function sortEdges(edges: readonly WikiEdge[]): WikiEdge[] {
-  return [...edges].sort(
-    (left, right) =>
-      compareCodeUnits(left.from, right.from) ||
-      compareCodeUnits(left.to, right.to) ||
-      compareCodeUnits(left.type, right.type) ||
-      compareCodeUnits(left.evidence, right.evidence) ||
-      compareCodeUnits(left.added, right.added),
-  );
-}
-
-function queryEventsForScope(events: readonly WikiEvent[], request: WikiQueryRequest): WikiEvent[] {
-  return events.filter((event) => event.producer.scope === request.scope);
-}
-
-function withoutSignalOperations(event: WikiEvent): WikiEvent | null {
-  const payload = parseWikiPayload(event.payload);
-  const operations = payload.operations.filter(
-    (operation) =>
-      operation.op !== "publish_signal" &&
-      operation.op !== "upsert_signal" &&
-      operation.op !== "retract_signal" &&
-      operation.op !== "supersede_signal",
-  );
-  if (operations.length === 0) return null;
-  return {
-    ...event,
-    payload: {
-      operations,
-      ...(payload.context === undefined ? {} : { context: payload.context }),
-    },
-  };
-}
-
-function queryExcluded(
-  events: readonly WikiEvent[],
-  request: WikiQueryRequest,
-  model: WikiModel,
-): WikiQueryExcluded[] {
-  const excluded: WikiQueryExcluded[] = [];
-  const publishEvents = new Map<string, string>();
-  for (const event of events) {
-    const payload = parseWikiPayload(event.payload);
-    const hasNonSignalOperations = payload.operations.some(
-      (operation) =>
-        operation.op !== "publish_signal" &&
-        operation.op !== "upsert_signal" &&
-        operation.op !== "retract_signal" &&
-        operation.op !== "supersede_signal",
-    );
-    if (hasNonSignalOperations && !contextMatches(payload.context, request)) {
-      excluded.push({
-        event_id: event.event_id,
-        subject_id: event.producer.subject_id,
-        reason: "context_mismatch",
-      });
-    }
-    for (const operation of payload.operations) {
-      if (operation.op === "publish_signal" || operation.op === "upsert_signal") {
-        publishEvents.set(operation.signal.signal_id, event.event_id);
-        if (!contextMatches(signalContext({ ...operation.signal, status: "active" }), request)) {
-          excluded.push({
-            event_id: event.event_id,
-            subject_id: operation.signal.signal_id,
-            reason: "signal_context_mismatch",
-          });
-        }
-      }
-    }
-  }
-  for (const signal of model.signals.values()) {
-    if (
-      signal.status !== "active" &&
-      contextMatches(signalContext(signal), request) &&
-      publishEvents.has(signal.signal_id)
-    ) {
-      excluded.push({
-        event_id: publishEvents.get(signal.signal_id)!,
-        subject_id: signal.signal_id,
-        reason: `signal_${signal.status}`,
-      });
-    }
-  }
-  return excluded.sort(
-    (left, right) =>
-      compareCodeUnits(left.event_id, right.event_id) ||
-      compareCodeUnits(left.subject_id, right.subject_id) ||
-      compareCodeUnits(left.reason, right.reason),
-  );
-}
-
-export function queryWikiFromEvents(
-  events: readonly WikiEvent[],
-  request: WikiQueryRequest,
-): WikiQueryResult {
-  const normalizedRequest = normalizeQueryRequest(request);
-  const selected = selectQueryHead(events, normalizedRequest.head);
-  normalizedRequest.head = selected.head;
-  const scopedEvents = queryEventsForScope(selected.events, normalizedRequest);
-  const matchingEvents = scopedEvents.filter((event) =>
-    contextMatches(parseWikiPayload(event.payload).context, normalizedRequest),
-  );
-  const scopedModel = replayWikiEvents(scopedEvents);
-  const matchingModel = replayWikiEvents(
-    matchingEvents
-      .map(withoutSignalOperations)
-      .filter((event): event is WikiEvent => event !== null),
-  );
-  const signals = [...scopedModel.signals.values()]
-    .filter(
-      (signal) =>
-        signal.status === "active" && contextMatches(signalContext(signal), normalizedRequest),
-    )
-    .sort((left, right) => compareCodeUnits(left.signal_id, right.signal_id));
-  matchingModel.signals = new Map(signals.map((signal) => [signal.signal_id, signal]));
-  const pages = sortPages([
-    ...matchingModel.pages.paper.values(),
-    ...matchingModel.pages.idea.values(),
-    ...matchingModel.pages.experiment.values(),
-    ...matchingModel.pages.claim.values(),
-    ...matchingModel.pages.problem.values(),
-  ]);
-  const edges = sortEdges(matchingModel.edges);
-  const directObservations = [
-    ...pages.map(queryEvidenceForPage),
-    ...signals.filter((signal) => signal.kind !== "proposal").map(queryEvidenceForSignal),
-  ].sort((left, right) => compareCodeUnits(left.id, right.id));
-  const inferences = signals
-    .filter((signal) => signal.kind === "proposal")
-    .map(queryEvidenceForSignal)
-    .sort((left, right) => compareCodeUnits(left.id, right.id));
-  const excluded = queryExcluded(scopedEvents, normalizedRequest, scopedModel);
-  const hasEvidence = pages.length > 0 || signals.length > 0 || edges.length > 0;
-  const hasContextCandidates = scopedEvents.some((event) => {
-    const payload = parseWikiPayload(event.payload);
-    return payload.operations.length > 0;
-  });
-  const hasContextExclusions = excluded.some((item) =>
-    ["context_mismatch", "signal_context_mismatch"].includes(item.reason),
-  );
-  const status: WikiQueryStatus = hasEvidence
-    ? "ok"
-    : hasContextExclusions && hasContextCandidates
-      ? "insufficient_context"
-      : "no_evidence";
-  const unsupported =
-    status === "no_evidence"
-      ? ["No applicable evidence was found in the requested scope."]
-      : status === "insufficient_context"
-        ? [
-            "Evidence exists in the requested scope, but its frozen context does not match this query.",
-          ]
-        : [];
-  const queryPack = renderQueryPack(matchingModel);
-  const queryIdentity = canonicalJsonSha256(
-    { query_version: 1, request: normalizedRequest, head: selected.head },
-    anyJsonSchema,
-  );
-  return {
-    schema_version: 2,
-    query_version: 1,
-    query_id: `query:sha256:${queryIdentity}`,
-    status,
-    decision_eligible: false,
-    decision: null,
-    scope: normalizedRequest.scope,
-    request: normalizedRequest,
-    head: selected.head,
-    direct_observations: directObservations,
-    inferences,
-    unsupported,
-    excluded,
-    signals,
-    pages,
-    edges,
-    query_pack: queryPack,
-  };
-}
-
-export function queryWiki(wikiRoot: string, request: WikiQueryRequest): WikiQueryResult {
-  return withWikiEventLock(wikiRoot, () =>
-    queryWikiFromEvents(readWikiEventsLocked(path.resolve(wikiRoot)), request),
-  );
-}
-
 function removeGeneratedMarkdown(directory: string): void {
   fs.mkdirSync(directory, { recursive: true });
   for (const entry of fs.readdirSync(directory)) {
     if (entry.endsWith(".md")) fs.unlinkSync(path.join(directory, entry));
-  }
-}
-
-function removeGeneratedJson(directory: string): void {
-  fs.mkdirSync(directory, { recursive: true });
-  for (const entry of fs.readdirSync(directory)) {
-    if (entry.endsWith(".json")) fs.unlinkSync(path.join(directory, entry));
   }
 }
 
@@ -1234,33 +660,8 @@ function writeProjections(wikiRoot: string, events: readonly WikiEvent[], model:
   for (const entry of model.logs) logLines.push(`- \`${entry.timestamp}\` ${entry.message}`);
   writeStateFileAtomic(path.join(root, "log.md"), `${logLines.join("\n")}\n`);
 
-  const signalsDir = path.join(root, "signals");
-  removeGeneratedJson(signalsDir);
-  for (const signal of [...model.signals.values()].sort((left, right) =>
-    compareCodeUnits(left.signal_id, right.signal_id),
-  )) {
-    writeStateJsonAtomic(path.join(signalsDir, `${signal.signal_id}.json`), signal);
-  }
-
   const queryPack = renderQueryPack(model);
   writeStateFileAtomic(path.join(root, "query_pack.md"), queryPack);
-  const scopesDir = path.join(root, "scopes");
-  fs.rmSync(scopesDir, { recursive: true, force: true });
-  fs.mkdirSync(scopesDir, { recursive: true });
-  for (const scope of [...model.scopes].sort(compareCodeUnits)) {
-    const scopeDir = path.join(scopesDir, ...scopePathSegments(scope));
-    fs.mkdirSync(scopeDir, { recursive: true });
-    const scopeEvents = events.filter((event) => event.producer.scope === scope);
-    const scopeModel = replayWikiEvents(scopeEvents);
-    writeStateJsonAtomic(path.join(scopeDir, "query_pack.json"), {
-      schema_version: 2,
-      scope,
-      head: eventLogHead(events),
-      query_version: 1,
-      query_pack: renderQueryPack(scopeModel),
-    });
-  }
-
   writeStateJsonAtomic(path.join(root, "projection-state.json"), {
     schema_version: 2,
     projected_head: eventLogHead(events),

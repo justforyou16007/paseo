@@ -11,7 +11,7 @@ Send a notification: **$ARGUMENTS**
 
 ## Overview
 
-This skill provides Feishu/Lark integration for ARIS. It is designed as an **internal utility** — other skills call it at key events (experiment done, review scored, checkpoint waiting). It can also be invoked manually.
+This skill provides Feishu/Lark integration for ARIS. It is designed as an **internal utility** — the worker calls it at key events (experiment done, submission scored, owner decision needed). It can also be invoked manually.
 
 **Zero-impact guarantee**: If no `feishu.json` config exists, this skill does nothing and returns silently. All existing workflows are completely unaffected.
 
@@ -80,10 +80,10 @@ curl -s -X POST "$WEBHOOK_URL" \
 | Event             | Title                         | Color                       | Body                              |
 | ----------------- | ----------------------------- | --------------------------- | --------------------------------- |
 | `experiment_done` | Experiment Complete           | `green`                     | Results table, delta vs baseline  |
-| `review_scored`   | Review Round N: X/10          | `blue` (≥6) / `orange` (<6) | Score, verdict, top 3 weaknesses  |
+| `submission_scored` | Submission N: <score>       | `blue` (scored) / `orange` (cheating, unusable) | Score, verdict, problem types, submissions left |
 | `checkpoint`      | Checkpoint: Waiting for Input | `yellow`                    | Question, options, context        |
 | `error`           | Error: [type]                 | `red`                       | Error message, what failed        |
-| `pipeline_done`   | Pipeline Complete             | `purple`                    | Final summary, deliverables       |
+| `task_closed`     | Task completed / closed       | `purple`                    | Best score, target, submissions used |
 | `custom`          | Custom                        | `blue`                      | Free-form message from $ARGUMENTS |
 
 **Return immediately after curl** — push mode never waits for a response.
@@ -108,8 +108,7 @@ Interactive mode uses [feishu-claude-code](https://github.com/joewongjc/feishu-c
 
    Returns: `{"reply": "approve"}` or `{"reply": "reject"}` or `{"reply": "user typed message"}` or `{"timeout": true}`
 
-3. **On timeout**: continue with the configured `AUTO_PROCEED` behavior
-   (proceed with the default option).
+3. **On timeout**: proceed with the default option.
 
 4. **Return the user's reply** to the calling skill so it can act on it.
 
@@ -138,20 +137,13 @@ Check if `~/.claude/feishu.json` exists and mode is not "off":
 
 ## Event Catalog
 
-Skills send these events at these moments:
-
-| Skill                          | Event             | When                                   |
-| ------------------------------ | ----------------- | -------------------------------------- |
-| `/auto-review-loop`            | `review_scored`   | After each round's review score        |
-| `/auto-review-loop`            | `pipeline_done`   | Loop complete (positive or max rounds) |
-| `/auto-paper-improvement-loop` | `review_scored`   | After each round's review score        |
-| `/auto-paper-improvement-loop` | `pipeline_done`   | All rounds complete                    |
-| `/run-experiment`              | `experiment_done` | Screen session finishes                |
-| `/idea-discovery`              | `checkpoint`      | Between phases (if interactive)        |
-| `/idea-discovery`              | `pipeline_done`   | Final report ready                     |
-| monitoring heartbeat           | `experiment_done` | Results collected                      |
-| `/research-pipeline`           | `checkpoint`      | Between workflow stages                |
-| `/research-pipeline`           | `pipeline_done`   | Full pipeline complete                 |
+| Sender | Event | When |
+| --- | --- | --- |
+| worker | `submission_scored` | `query` returns a verdict for a submission |
+| worker | `task_closed` | `query` reports `completed` or `closed` |
+| worker | `experiment_done` | `collect-outputs.sh` of `run-<project>-experiment` wrote a receipt |
+| worker | `checkpoint` | A step needs the owner (a captcha, an expired login, a missing credential) |
+| worker | `error` | Work stopped on an error it cannot fix |
 
 ## Key Rules
 
@@ -159,6 +151,5 @@ Skills send these events at these moments:
 - **NEVER require Feishu config** — all skills must work without it.
 - **Config file absent = mode off.** No error, no warning, no log.
 - **Push mode is fire-and-forget.** Send curl, check exit code, move on.
-- **Interactive timeout = auto-proceed.** Don't hang forever waiting for a reply.
-- **Respect `AUTO_PROCEED`**: In interactive mode, if the user doesn't reply within timeout, use the same auto-proceed logic as the calling skill.
+- **Interactive timeout = default option.** Don't hang waiting for a reply.
 - **No secrets in notifications.** Never include API keys, tokens, or passwords in Feishu messages.

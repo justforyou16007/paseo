@@ -759,7 +759,7 @@ test("rebuild is pure, and complete corrupt final lines remain untouched", () =>
 test("query-pack configuration records clears and repeated state transitions causally", () => {
   const projectRoot = tmpDir();
   const wikiRoot = path.join(projectRoot, "research-wiki");
-  const briefPath = path.join(projectRoot, "RESEARCH_BRIEF.md");
+  const briefPath = path.join(projectRoot, "task.md");
   try {
     const init = runTsx(RESEARCH_WIKI, "init", wikiRoot);
     assert.equal(init.exitCode, 0, `${init.stdout}\n${init.stderr}`);
@@ -872,7 +872,7 @@ test("identical problem updates are skipped and new evidence is appended once", 
   }
 });
 
-test("scope paths preserve their type hierarchy and reject collisions or traversal", () => {
+test("legacy scopes replay, unsafe scopes and loop-era payloads are rejected", () => {
   const root = tmpDir();
   try {
     initializeWikiSchema(root);
@@ -884,14 +884,13 @@ test("scope paths preserve their type hierarchy and reject collisions or travers
       payload: { operations: [{ op: "append_log", message: scope }] },
     });
     appendWikiEvent(root, scopedDelta("modules/a", "a"));
-    appendWikiEvent(root, scopedDelta("modules/b", "b"));
     for (const invalid of ["modules-a", "../escape", "modules/../escape", "modules/a/b", "test"]) {
       assert.throws(() => appendWikiEvent(root, scopedDelta(invalid, invalid)), /invalid Wiki scope/);
     }
     assert.throws(
       () =>
         appendWikiEvent(root, {
-          ...scopedDelta("modules/a", "unsafe-page"),
+          ...scopedDelta("standalone", "unsafe-page"),
           payload: {
             operations: [
               { op: "upsert_page", kind: "claim", id: "../escape", data: { name: "escape" } },
@@ -900,16 +899,63 @@ test("scope paths preserve their type hierarchy and reject collisions or travers
         }),
       /invalid Wiki page id/,
     );
+    assert.throws(() =>
+      appendWikiEvent(root, {
+        ...scopedDelta("standalone", "context"),
+        payload: { operations: [], context: {} },
+      }),
+    );
+    assert.throws(() =>
+      appendWikiEvent(root, {
+        ...scopedDelta("standalone", "signal"),
+        payload: { operations: [{ op: "retract_signal", id: "s1" }] },
+      }),
+    );
     projectWiki(root);
-    const first = JSON.parse(
-      fs.readFileSync(path.join(root, "scopes", "modules", "a", "query_pack.json"), "utf-8"),
-    ) as { scope: string };
-    const second = JSON.parse(
-      fs.readFileSync(path.join(root, "scopes", "modules", "b", "query_pack.json"), "utf-8"),
-    ) as { scope: string };
-    assert.equal(first.scope, "modules/a");
-    assert.equal(second.scope, "modules/b");
-    assert.equal(fs.existsSync(path.join(root, "scopes", "modules-a")), false);
+    assert.equal(fs.existsSync(path.join(root, "scopes")), false);
+    assert.equal(fs.existsSync(path.join(root, "signals")), false);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("event logs written by the research loop still replay", () => {
+  const root = tmpDir();
+  try {
+    initializeWikiSchema(root);
+    const payload = {
+      operations: [
+        { op: "retract_signal", id: "s1" },
+        { op: "upsert_page", kind: "claim", id: "c1", data: { name: "kept" } },
+      ],
+      context: { iteration: 3 },
+    };
+    const payloadHash = canonicalJsonSha256(payload);
+    const producer = { kind: "loop", scope: "runs/r1/modules/m", subject_id: "c1" };
+    const event = {
+      schema_version: 2,
+      seq: 1,
+      command_id: computeWikiCommandId({
+        producer_kind: producer.kind,
+        scope: producer.scope,
+        subject_id: producer.subject_id,
+        evidence_bundle_id: "legacy",
+        canonical_payload_sha256: payloadHash,
+      }),
+      payload_sha256: payloadHash,
+      previous_event_hash: null,
+      committed_at: "2026-01-01T00:00:00Z",
+      evidence_bundle_id: "legacy",
+      producer,
+      event_type: "knowledge_delta_committed",
+      payload,
+      event_id: "",
+    } as unknown as WikiEvent;
+    event.event_id = `event:sha256:${wikiEventHash(event)}`;
+    fs.writeFileSync(wikiEventsPath(root), `${canonicalJsonString(event)}\n`);
+    assert.equal(readWikiEvents(root).length, 1);
+    projectWiki(root);
+    assert.match(fs.readFileSync(path.join(root, "claims", "c1.md"), "utf-8"), /kept/);
   } finally {
     cleanup(root);
   }

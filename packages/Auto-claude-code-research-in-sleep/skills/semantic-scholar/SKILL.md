@@ -14,7 +14,7 @@ Query or paper ID: `$ARGUMENTS`
 This skill has one implementation: `semantic-scholar-fetch.js`. It does not
 run inline Python, call `/arxiv`, or fill missing fields from another source.
 
-Resolve the project root with the shared resolver, then:
+From the project root:
 
 ```bash
 S2_FETCHER=".aris/dist/tools/semantic-scholar-fetch.js"
@@ -56,7 +56,7 @@ skill does not retry or switch source. Missing fields remain `null`.
 
 ## Research Wiki
 
-If `research-wiki/` exists, resolve the required Wiki helper. For papers with
+If `research-wiki/` exists, use the wiki helper (`WIKI_SCRIPT=.aris/dist/tools/research-wiki.js`). For papers with
 an arXiv ID, pass `--arxiv-id`; otherwise pass the paper's explicit title,
 authors, year, venue, and DOI:
 

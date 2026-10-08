@@ -6,8 +6,9 @@ import { IDENTIFIER_PATTERN } from "./validate.js";
 const SCOPE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SCOPED_ROOTS = new Set(["modules", "workflows", "scorers"]);
 
-export function scopePathSegments(scope: string): string[] {
-  if (scope === "standalone") return ["standalone"];
+export function validateWikiScope(scope: unknown): asserts scope is string {
+  if (typeof scope !== "string") throw new Error("Wiki scope must be a string");
+  if (scope === "standalone") return;
   const parts = scope.split("/");
   const safe = parts.every(
     (part) =>
@@ -15,19 +16,8 @@ export function scopePathSegments(scope: string): string[] {
       part !== "." &&
       part !== "..",
   );
-  if (
-    !safe ||
-    !(
-      (parts[0] === "runs" && parts.length >= 2) ||
-      (parts.length === 2 && SCOPED_ROOTS.has(parts[0]!))
-    )
-  ) {
-    throw new Error(`invalid Wiki scope '${scope}'`);
-  }
-  return parts;
-}
-
-export function validateWikiScope(scope: unknown): asserts scope is string {
-  if (typeof scope !== "string") throw new Error("Wiki scope must be a string");
-  scopePathSegments(scope);
+  const shaped =
+    (parts[0] === "runs" && parts.length >= 2) ||
+    (parts.length === 2 && SCOPED_ROOTS.has(parts[0]!));
+  if (!safe || !shaped) throw new Error(`invalid Wiki scope '${scope}'`);
 }

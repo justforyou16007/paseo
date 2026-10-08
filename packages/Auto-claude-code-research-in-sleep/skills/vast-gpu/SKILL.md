@@ -50,7 +50,7 @@ All active vast.ai instances are tracked in `vast-instances.json` at the project
 ]
 ```
 
-This file is the source of truth for `/run-experiment` (and its generated experiment skill's ops) to connect to vast.ai instances.
+This file is the source of truth the generated experiment skill's ops use to connect to vast.ai instances.
 
 ## Workflow
 
@@ -58,14 +58,14 @@ This file is the source of truth for `/run-experiment` (and its generated experi
 
 ```bash
 # --- resolve the project-level experiment skill ---
-PROJECT=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')
+PROJECT=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\+/-/g; s/^-//; s/-$//')
 SKILL_DIR=".claude/skills/run-${PROJECT}-experiment"
 [ -d "$SKILL_DIR/scripts" ] || { echo "ERROR: experiment skill not found at $SKILL_DIR. Run /experiment-env-configuration first." >&2; exit 1; }
 ```
 
 ### Action: Provision (default)
 
-Analyze the task, find the best GPU, and present cost-optimized options. This is the main entry point — called directly or automatically by `/run-experiment` when `gpu: vast` is set.
+Analyze the task, find the best GPU, and present cost-optimized options. This is the main entry point.
 
 **Step 1: Analyze Task Requirements**
 
@@ -166,7 +166,7 @@ Use these to scale the base estimated hours across offers.
 Create an instance from a user-selected offer. **After the user picks an offer in Provision Step 4**, provision via the generated experiment skill:
 
 ```bash
-sh "$SKILL_DIR/scripts/ops/sync-code.sh + scripts/ops/build-env.sh"
+sh "$SKILL_DIR/scripts/ops/sync-code.sh" && sh "$SKILL_DIR/scripts/ops/build-env.sh"
 ```
 
 The detailed `vastai create instance` / wait / ssh-url / verify steps below are the **reference implementation** the backend reproduces — they are now executed by `prepare.sh`, not inlined here.
@@ -252,16 +252,16 @@ Vast.ai instance ready:
 - SSH: ssh -p <PORT> root@<HOST>
 - Docker: <IMAGE>
 
-To deploy: /run-experiment (will auto-detect this instance)
+To deploy: /run-<project>-experiment sync-code, then build-env and launch-job
 To destroy when done: /vast-gpu destroy <ID>
 ```
 
 ### Action: Setup
 
-Set up the rented instance for a specific experiment. Called automatically by `/run-experiment` when targeting a vast.ai instance. **Delegated to the generated experiment skill:**
+Set up the rented instance for a specific experiment. **Delegated to the generated experiment skill:**
 
 ```bash
-sh "$SKILL_DIR/scripts/ops/sync-code.sh + scripts/ops/build-env.sh"
+sh "$SKILL_DIR/scripts/ops/sync-code.sh" && sh "$SKILL_DIR/scripts/ops/build-env.sh"
 ```
 
 The pip-install / rsync / torch-verify steps below are the reference the backend reproduces.
@@ -399,7 +399,7 @@ Users only need to set `gpu: vast` — no hardware preferences required:
 ```markdown
 ## Vast.ai
 
-- gpu: vast # tells run-experiment to use vast.ai
+- gpu: vast # rent from vast.ai
 - auto_destroy: true # auto-destroy after experiment completes (default: true)
 - max_budget: 5.00 # optional: max total $ to spend (skill warns if estimate exceeds this)
 - image: pytorch/pytorch:2.1.0-cuda12.1-cudnn8-devel # optional: override Docker image
@@ -410,11 +410,6 @@ The skill analyzes experiment scripts and plans to determine what GPU to rent. N
 ## Composing with Other Skills
 
 ```
-/run-experiment "train model"       ← detects gpu: vast, calls /vast-gpu provision
-  ↳ /vast-gpu provision             ← analyzes task, presents options with cost
-  ↳ user picks option               ← rent + setup + deploy
-  ↳ /vast-gpu destroy               ← auto-destroy when done (if auto_destroy: true)
-
 /vast-gpu provision                 ← manual: analyze task + show options
 /vast-gpu rent <offer_id>           ← manual: rent a specific offer
 /vast-gpu list                      ← show active instances

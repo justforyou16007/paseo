@@ -1,68 +1,5 @@
 export type WikiPageKind = "paper" | "idea" | "experiment" | "claim" | "problem";
 
-export const WIKI_SIGNAL_KINDS = [
-  "observation",
-  "failure",
-  "constraint",
-  "proposal",
-  "interaction",
-] as const;
-
-export type WikiSignalKind = (typeof WIKI_SIGNAL_KINDS)[number];
-
-export const WIKI_SIGNAL_SOURCES = [
-  "module_experiment",
-  "workflow_validation",
-  "scorer_experiment",
-  "tester_feedback",
-  "human_input",
-] as const;
-
-export type WikiSignalSource = (typeof WIKI_SIGNAL_SOURCES)[number];
-
-export interface WikiSignalProducer {
-  module_id: string;
-  module_version: string;
-  run_id: string;
-}
-
-export interface WikiSignalAppliesTo {
-  workflow_id?: string;
-  workflow_revision?: string;
-  input_snapshot_id?: string;
-  contract_versions: string[];
-  scorer_revision?: string;
-  scorer_target?: unknown;
-  constraints?: unknown[];
-}
-
-export interface WikiSignal {
-  signal_id: string;
-  kind: WikiSignalKind;
-  source: WikiSignalSource;
-  producer: WikiSignalProducer;
-  applies_to: WikiSignalAppliesTo;
-  evidence_refs: string[];
-  supersedes: string[];
-  status: "active";
-  summary?: string;
-  observation?: string;
-  inference?: string;
-  recommendation?: string;
-}
-
-export interface WikiPayloadContext {
-  module_version?: string;
-  workflow_id?: string;
-  workflow_revision?: string;
-  input_snapshot_id?: string;
-  contract_versions?: string[];
-  scorer_revision?: string;
-  scorer_target?: unknown;
-  constraints?: unknown[];
-  module_id?: string;
-}
-
 export const WIKI_EDGE_TYPES = [
   "extends",
   "contradicts",
@@ -91,17 +28,12 @@ export type WikiOperation =
   | { op: "append_log"; message: string }
   | { op: "quarantine"; target: string; findings: string[]; raw_text: string }
   | { op: "set_project_direction"; text: string }
-  | { op: "set_projection_config"; max_query_chars: number }
-  | { op: "publish_signal"; signal: WikiSignal }
-  | { op: "upsert_signal"; signal: WikiSignal }
-  | { op: "retract_signal"; signal_id: string; reason?: string; evidence_refs?: string[] }
-  | { op: "supersede_signal"; signal_id: string; replacement_signal_id: string };
+  | { op: "set_projection_config"; max_query_chars: number };
 
 const PAGE_KINDS = new Set<WikiPageKind>(["paper", "idea", "experiment", "claim", "problem"]);
 const EDGE_TYPE_SET = new Set<string>(WIKI_EDGE_TYPES);
 const PAGE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const NODE_ID_PATTERN = /^(paper|idea|exp|claim|problem):[A-Za-z0-9][A-Za-z0-9._-]*$/;
-const SIGNAL_ID_PATTERN = /^signal:[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 
 const PAGE_DATA_KEYS: Record<WikiPageKind, readonly string[]> = {
   paper: [
@@ -219,140 +151,6 @@ function nonEmptyString(value: unknown, label: string): string {
   const result = stringField(value, label);
   if (result.trim() === "") throw new Error(`invalid Wiki operation: ${label} must be non-empty`);
   return result;
-}
-
-function assertSignalId(value: string, location: string): void {
-  if (!SIGNAL_ID_PATTERN.test(value)) {
-    throw new Error(`invalid Wiki signal id '${value}' at ${location}`);
-  }
-}
-
-function assertStringList(value: unknown, location: string): string[] {
-  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
-    throw new Error(`${location} must be a string array`);
-  }
-  return [...value] as string[];
-}
-
-function parseSignal(value: unknown, location: string): WikiSignal {
-  if (!isObject(value)) throw new Error(`${location} must be an object`);
-  assertKeys(
-    value,
-    [
-      "signal_id",
-      "kind",
-      "source",
-      "producer",
-      "applies_to",
-      "evidence_refs",
-      "supersedes",
-      "status",
-      "summary",
-      "observation",
-      "inference",
-      "recommendation",
-    ],
-    location,
-  );
-  const signalId = nonEmptyString(value.signal_id, `${location}.signal_id`);
-  assertSignalId(signalId, `${location}.signal_id`);
-  const kind = nonEmptyString(value.kind, `${location}.kind`) as WikiSignalKind;
-  if (!WIKI_SIGNAL_KINDS.includes(kind)) throw new Error(`invalid Wiki signal kind '${kind}'`);
-  const source = nonEmptyString(value.source, `${location}.source`) as WikiSignalSource;
-  if (!WIKI_SIGNAL_SOURCES.includes(source)) {
-    throw new Error(`invalid Wiki signal source '${source}'`);
-  }
-
-  if (!isObject(value.producer)) throw new Error(`${location}.producer must be an object`);
-  assertKeys(value.producer, ["module_id", "module_version", "run_id"], `${location}.producer`);
-  const producer: WikiSignalProducer = {
-    module_id: nonEmptyString(value.producer.module_id, `${location}.producer.module_id`),
-    module_version: nonEmptyString(
-      value.producer.module_version,
-      `${location}.producer.module_version`,
-    ),
-    run_id: nonEmptyString(value.producer.run_id, `${location}.producer.run_id`),
-  };
-
-  if (!isObject(value.applies_to)) throw new Error(`${location}.applies_to must be an object`);
-  assertKeys(
-    value.applies_to,
-    [
-      "workflow_id",
-      "workflow_revision",
-      "input_snapshot_id",
-      "contract_versions",
-      "scorer_revision",
-      "scorer_target",
-      "constraints",
-    ],
-    `${location}.applies_to`,
-  );
-  const appliesTo: WikiSignalAppliesTo = {
-    contract_versions: assertStringList(
-      value.applies_to.contract_versions,
-      `${location}.applies_to.contract_versions`,
-    ),
-  };
-  for (const field of [
-    "workflow_id",
-    "workflow_revision",
-    "input_snapshot_id",
-    "scorer_revision",
-  ] as const) {
-    if (value.applies_to[field] !== undefined) {
-      appliesTo[field] = nonEmptyString(value.applies_to[field], `${location}.applies_to.${field}`);
-    }
-  }
-  if (value.applies_to.scorer_target !== undefined) {
-    appliesTo.scorer_target = value.applies_to.scorer_target;
-  }
-  if (value.applies_to.constraints !== undefined) {
-    if (!Array.isArray(value.applies_to.constraints)) {
-      throw new Error(`${location}.applies_to.constraints must be an array`);
-    }
-    appliesTo.constraints = [...value.applies_to.constraints];
-  }
-
-  const evidenceRefs = assertStringList(value.evidence_refs, `${location}.evidence_refs`);
-  const supersedes = assertStringList(value.supersedes, `${location}.supersedes`);
-  for (const [index, ref] of [...evidenceRefs, ...supersedes].entries()) {
-    if (!ref.trim()) throw new Error(`${location} contains an empty reference at index ${index}`);
-  }
-  for (const [index, supersededId] of supersedes.entries()) {
-    assertSignalId(supersededId, `${location}.supersedes[${index}]`);
-    if (supersededId === signalId) {
-      throw new Error(`${location}.supersedes cannot contain its own signal_id`);
-    }
-  }
-  if (new Set(supersedes).size !== supersedes.length) {
-    throw new Error(`${location}.supersedes must not contain duplicate signal ids`);
-  }
-  if (value.status !== "active") {
-    throw new Error(`${location}.status must be active when publishing a signal`);
-  }
-
-  const signal: WikiSignal = {
-    signal_id: signalId,
-    kind,
-    source,
-    producer,
-    applies_to: appliesTo,
-    evidence_refs: evidenceRefs,
-    supersedes,
-    status: "active",
-  };
-  for (const field of ["summary", "observation", "inference", "recommendation"] as const) {
-    if (value[field] !== undefined)
-      signal[field] = stringField(value[field], `${location}.${field}`);
-  }
-  return signal;
-}
-
-function parseSignalId(value: unknown, location: string): string {
-  const signalId = nonEmptyString(value, location);
-  assertSignalId(signalId, location);
-  return signalId;
 }
 
 function assertPageId(value: string, location: string): void {
@@ -653,90 +451,23 @@ export function parseWikiOperation(value: unknown, location: string): WikiOperat
       }
       return { op, max_query_chars: value.max_query_chars };
     }
-    case "publish_signal":
-    case "upsert_signal":
-      assertKeys(value, ["op", "signal"], location);
-      return { op, signal: parseSignal(value.signal, `${location}.signal`) };
-    case "retract_signal": {
-      assertKeys(value, ["op", "signal_id", "reason", "evidence_refs"], location);
-      const result: WikiOperation = {
-        op,
-        signal_id: parseSignalId(value.signal_id, `${location}.signal_id`),
-      };
-      if (value.reason !== undefined) {
-        (result as { reason?: string }).reason = stringField(value.reason, `${location}.reason`);
-      }
-      if (value.evidence_refs !== undefined) {
-        (result as { evidence_refs?: string[] }).evidence_refs = assertStringList(
-          value.evidence_refs,
-          `${location}.evidence_refs`,
-        );
-      }
-      return result;
-    }
-    case "supersede_signal":
-      assertKeys(value, ["op", "signal_id", "replacement_signal_id"], location);
-      return {
-        op,
-        signal_id: parseSignalId(value.signal_id, `${location}.signal_id`),
-        replacement_signal_id: parseSignalId(
-          value.replacement_signal_id,
-          `${location}.replacement_signal_id`,
-        ),
-      };
     default:
       throw new Error(`invalid Wiki operation '${op}' at ${location}`);
   }
 }
 
-function parsePayloadContext(value: unknown): WikiPayloadContext {
-  if (!isObject(value)) throw new Error("Wiki payload.context must be an object");
-  assertKeys(
-    value,
-    [
-      "module_version",
-      "workflow_id",
-      "workflow_revision",
-      "input_snapshot_id",
-      "contract_versions",
-      "scorer_revision",
-      "scorer_target",
-      "constraints",
-      "module_id",
-    ],
-    "payload.context",
-  );
-  const context: WikiPayloadContext = {};
-  for (const field of [
-    "module_version",
-    "workflow_id",
-    "workflow_revision",
-    "input_snapshot_id",
-    "scorer_revision",
-    "module_id",
-  ] as const) {
-    if (value[field] !== undefined)
-      context[field] = nonEmptyString(value[field], `payload.context.${field}`);
-  }
-  if (value.contract_versions !== undefined) {
-    context.contract_versions = assertStringList(
-      value.contract_versions,
-      "payload.context.contract_versions",
-    );
-  }
-  if (value.scorer_target !== undefined) context.scorer_target = value.scorer_target;
-  if (value.constraints !== undefined) {
-    if (!Array.isArray(value.constraints)) {
-      throw new Error("payload.context.constraints must be an array");
-    }
-    context.constraints = [...value.constraints];
-  }
-  return context;
-}
+// Event logs written by the removed research loop carry signal operations and a
+// payload `context`. Reading drops both so those logs still replay; new writes
+// may not contain them.
+const LEGACY_OPS = new Set([
+  "publish_signal",
+  "upsert_signal",
+  "retract_signal",
+  "supersede_signal",
+]);
 
 export interface WikiPayload {
   operations: WikiOperation[];
-  context?: WikiPayloadContext;
 }
 
 export function parseWikiPayload(payload: unknown): WikiPayload {
@@ -745,15 +476,25 @@ export function parseWikiPayload(payload: unknown): WikiPayload {
   if (!Array.isArray(payload.operations)) {
     throw new Error("Wiki payload.operations must be an array");
   }
-  const parsed: WikiPayload = {
-    operations: payload.operations.map((item, index) =>
-      parseWikiOperation(item, `payload.operations[${index}]`),
-    ),
+  return {
+    operations: payload.operations
+      .filter((item) => !(isObject(item) && LEGACY_OPS.has(item.op as string)))
+      .map((item, index) => parseWikiOperation(item, `payload.operations[${index}]`)),
   };
-  if (payload.context !== undefined) parsed.context = parsePayloadContext(payload.context);
-  return parsed;
 }
 
+/** A payload about to be appended: the legacy shapes are rejected. */
 export function validateWikiPayload(payload: unknown): void {
+  if (isObject(payload)) {
+    if (payload.context !== undefined)
+      throw new Error("Wiki payload.context is no longer accepted");
+    if (Array.isArray(payload.operations)) {
+      for (const item of payload.operations) {
+        if (isObject(item) && LEGACY_OPS.has(item.op as string)) {
+          throw new Error(`invalid Wiki operation '${String(item.op)}'`);
+        }
+      }
+    }
+  }
   parseWikiPayload(payload);
 }

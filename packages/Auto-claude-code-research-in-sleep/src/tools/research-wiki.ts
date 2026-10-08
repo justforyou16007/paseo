@@ -13,37 +13,19 @@ import {
   commitWikiChange,
   eventLogHead,
   initializeWikiSchema,
-  readWikiEvents,
   type WikiDelta,
   type WikiEvent,
   type WikiAppendResult,
 } from "./wiki-event-store.js";
-import {
-  WIKI_EDGE_TYPES,
-  WIKI_SIGNAL_KINDS,
-  WIKI_SIGNAL_SOURCES,
-  isWikiEdgeType,
-  parseWikiPayload,
-  type WikiPayloadContext,
-  type WikiSignal,
-  type WikiSignalKind,
-  type WikiSignalSource,
-} from "./wiki-operations.js";
+import { WIKI_EDGE_TYPES, isWikiEdgeType } from "./wiki-operations.js";
 import {
   projectWiki,
   projectWikiFromEvents,
-  queryWiki as projectQueryWiki,
   readWikiModel,
   replayWikiEvents,
   type WikiModel,
   type WikiPageKind,
-  type WikiQueryRequest,
 } from "./wiki-projector.js";
-
-/** Public query entry. New writes are all standalone, so queries read that scope. */
-export function queryWiki(wikiRoot: string, request: WikiQueryRequest) {
-  return projectQueryWiki(wikiRoot, request);
-}
 
 const ARXIV_API = "https://export.arxiv.org/api/query?id_list={ids}";
 
@@ -69,22 +51,6 @@ function optionalCliNumber(value: string, flag: string): number | undefined {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) throw new Error(`${flag} must be a finite number`);
   return parsed;
-}
-
-function optionalCliInteger(value: string, flag: string, minimum: number): number | undefined {
-  const parsed = optionalCliNumber(value, flag);
-  if (parsed === undefined) return undefined;
-  if (!Number.isInteger(parsed) || parsed < minimum)
-    throw new Error(`${flag} must be an integer >= ${minimum}`);
-  return parsed;
-}
-
-function parseJsonOrString(value: string): unknown {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return value;
-  }
 }
 
 function slugify(title: string, authorLast = "", year = 0): string {
@@ -354,9 +320,10 @@ function sanitizeText(value: string, label: string, operations: Operation[]): st
   return safe;
 }
 
+/** task.md beside the wiki is the whole task; the query pack carries its sections. */
 function captureProjectDirection(wikiRoot: string): string | null {
-  const briefPath = path.join(path.dirname(path.resolve(wikiRoot)), "RESEARCH_BRIEF.md");
-  return fs.existsSync(briefPath) ? fs.readFileSync(briefPath, "utf-8") : null;
+  const taskPath = path.join(path.dirname(path.resolve(wikiRoot)), "task.md");
+  return fs.existsSync(taskPath) ? fs.readFileSync(taskPath, "utf-8") : null;
 }
 
 function assertNotAbsoluteIdentifier(value: string, label: string): void {
@@ -390,18 +357,11 @@ function withProjectionContext(
 type EvidenceBundleId = string | ((events: readonly WikiEvent[], model: WikiModel) => string);
 type OperationBuilder = (model: WikiModel, events: readonly WikiEvent[]) => Operation[] | null;
 
-interface CommitOperationOptions {
-  context?: WikiPayloadContext;
-  producerKind?: string;
-  eventType?: string;
-}
-
 function commitOperations(
   wikiRoot: string,
   subjectId: string,
   evidenceBundleId: EvidenceBundleId,
   build: OperationBuilder,
-  options: CommitOperationOptions = {},
 ): WikiAppendResult | { status: "skipped"; event: null } {
   const result = commitWikiChange(
     wikiRoot,
@@ -412,15 +372,11 @@ function commitOperations(
       const evidence =
         typeof evidenceBundleId === "function" ? evidenceBundleId(events, model) : evidenceBundleId;
       return {
-        producer_kind: options.producerKind ?? "standalone-research-wiki",
+        producer_kind: "standalone-research-wiki",
         scope: "standalone",
         subject_id: subjectId,
         evidence_bundle_id: evidence || subjectId,
-        ...(options.eventType === undefined ? {} : { event_type: options.eventType }),
-        payload: {
-          operations: withProjectionContext(wikiRoot, model, operations),
-          ...(options.context === undefined ? {} : { context: options.context }),
-        },
+        payload: { operations: withProjectionContext(wikiRoot, model, operations) },
       };
     },
     (events) => projectWikiFromEvents(wikiRoot, events),
@@ -1140,572 +1096,6 @@ function appendLog(wikiRoot: string, message: string): void {
   commitOperations(root, `log:${message}`, `log:${message}`, () => [{ op: "append_log", message }]);
 }
 
-export interface SignalWriteOptions {
-  evidenceBundleId?: string;
-  context?: WikiPayloadContext;
-}
-
-function signalHash(signal: WikiSignal): string {
-  return canonicalJsonSha256(signal, anyJsonSchema);
-}
-
-function assertSignalEventScope(
-  events: readonly WikiEvent[],
-  signalId: string,
-  scope: string,
-): void {
-  const scopes = new Set<string>();
-  for (const event of events) {
-    for (const operation of parseWikiPayload(event.payload).operations) {
-      if (
-        (operation.op === "publish_signal" || operation.op === "upsert_signal") &&
-        operation.signal.signal_id === signalId
-      ) {
-        scopes.add(event.producer.scope);
-      }
-    }
-  }
-  if (scopes.size > 0 && (scopes.size !== 1 || !scopes.has(scope))) {
-    throw new Error(
-      `SIGNAL_SCOPE_CONFLICT: ${signalId} belongs to ${[...scopes].sort().join(", ")}, not ${scope}`,
-    );
-  }
-}
-
-function assertSignalSupersedes(model: WikiModel, signal: WikiSignal): void {
-  for (const supersededId of signal.supersedes) {
-    const superseded = model.signals.get(supersededId);
-    if (!superseded) {
-      throw new Error(`SIGNAL_NOT_FOUND: ${supersededId} referenced by ${signal.signal_id}`);
-    }
-    if (superseded.status !== "active") {
-      throw new Error(`SIGNAL_STATE_CONFLICT: ${supersededId} is already ${superseded.status}`);
-    }
-  }
-}
-
-function assertSignalCanBePublished(model: WikiModel, signal: WikiSignal): boolean {
-  const existing = model.signals.get(signal.signal_id);
-  if (!existing) {
-    assertSignalSupersedes(model, signal);
-    return true;
-  }
-  if (existing.status !== "active") {
-    throw new Error(`SIGNAL_ID_IMMUTABLE: ${signal.signal_id} is already ${existing.status}`);
-  }
-  if (signalHash({ ...existing, status: "active" }) !== signalHash(signal)) {
-    throw new Error(`SIGNAL_ID_CONFLICT: ${signal.signal_id} already has different content`);
-  }
-  return false;
-}
-
-function signalEvidence(signal: WikiSignal, options: SignalWriteOptions): string {
-  return options.evidenceBundleId || signal.evidence_refs[0] || signal.signal_id;
-}
-
-export function publishSignal(
-  wikiRoot: string,
-  signal: WikiSignal,
-  options: SignalWriteOptions = {},
-): WikiAppendResult | { status: "skipped"; event: null } {
-  const root = path.resolve(wikiRoot);
-  assertWikiSchemaSupported(root);
-  const scope = "standalone";
-  const result = commitOperations(
-    root,
-    signal.signal_id,
-    signalEvidence(signal, options),
-    (model, events) => {
-      assertSignalEventScope(events, signal.signal_id, scope);
-      if (!assertSignalCanBePublished(model, signal)) return null;
-      return [{ op: "publish_signal", signal }];
-    },
-    {
-      context: options.context ?? signalContext(signal),
-      producerKind: "research-wiki-signal",
-      eventType: signal.supersedes.length > 0 ? "signal_superseded" : "signal_published",
-    },
-  );
-  if (result.status === "conflict") {
-    throw new Error(
-      `WIKI_COMMAND_CONFLICT: command ${result.command_id} conflicts with an existing payload`,
-    );
-  }
-  return result;
-}
-
-export interface SignalRetractionOptions extends SignalWriteOptions {
-  reason?: string;
-  evidenceRefs?: string[];
-}
-
-export function retractSignal(
-  wikiRoot: string,
-  signalId: string,
-  options: SignalRetractionOptions = {},
-): WikiAppendResult | { status: "skipped"; event: null } {
-  const root = path.resolve(wikiRoot);
-  assertWikiSchemaSupported(root);
-  const scope = "standalone";
-  const result = commitOperations(
-    root,
-    signalId,
-    options.evidenceBundleId || signalId,
-    (model, events) => {
-      const existing = model.signals.get(signalId);
-      if (!existing) throw new Error(`SIGNAL_NOT_FOUND: ${signalId}`);
-      assertSignalEventScope(events, signalId, scope);
-      if (existing.status === "retracted") return null;
-      if (existing.status === "superseded") {
-        throw new Error(`SIGNAL_STATE_CONFLICT: ${signalId} is already superseded`);
-      }
-      return [
-        {
-          op: "retract_signal",
-          signal_id: signalId,
-          ...(options.reason === undefined ? {} : { reason: options.reason }),
-          ...(options.evidenceRefs === undefined ? {} : { evidence_refs: options.evidenceRefs }),
-        },
-      ];
-    },
-    {
-      context: options.context,
-      producerKind: "research-wiki-signal",
-      eventType: "signal_retracted",
-    },
-  );
-  if (result.status === "conflict") {
-    throw new Error(
-      `WIKI_COMMAND_CONFLICT: command ${result.command_id} conflicts with an existing payload`,
-    );
-  }
-  return result;
-}
-
-export function supersedeSignal(
-  wikiRoot: string,
-  signalId: string,
-  replacement: WikiSignal,
-  options: SignalWriteOptions = {},
-): WikiAppendResult | { status: "skipped"; event: null } {
-  const root = path.resolve(wikiRoot);
-  assertWikiSchemaSupported(root);
-  const scope = "standalone";
-  const replacementWithLink: WikiSignal = {
-    ...replacement,
-    supersedes: [...new Set([signalId, ...replacement.supersedes])],
-  };
-  if (replacementWithLink.signal_id === signalId) {
-    throw new Error(`SIGNAL_ID_CONFLICT: replacement signal must use a new signal_id`);
-  }
-  const result = commitOperations(
-    root,
-    replacementWithLink.signal_id,
-    signalEvidence(replacementWithLink, options),
-    (model, events) => {
-      const previous = model.signals.get(signalId);
-      if (!previous) throw new Error(`SIGNAL_NOT_FOUND: ${signalId}`);
-      assertSignalEventScope(events, signalId, scope);
-      const existingReplacement = model.signals.get(replacementWithLink.signal_id);
-      if (existingReplacement) assertSignalEventScope(events, replacementWithLink.signal_id, scope);
-      if (previous.status === "superseded" && existingReplacement) {
-        const existingHash = signalHash({ ...existingReplacement, status: "active" });
-        if (existingHash !== signalHash(replacementWithLink)) {
-          throw new Error(
-            `SIGNAL_ID_CONFLICT: ${replacementWithLink.signal_id} already has different content`,
-          );
-        }
-        return [
-          { op: "publish_signal", signal: replacementWithLink },
-          {
-            op: "supersede_signal",
-            signal_id: signalId,
-            replacement_signal_id: replacementWithLink.signal_id,
-          },
-        ];
-      }
-      if (previous.status !== "active") {
-        throw new Error(`SIGNAL_STATE_CONFLICT: ${signalId} is already ${previous.status}`);
-      }
-      assertSignalCanBePublished(model, replacementWithLink);
-      return [
-        { op: "publish_signal", signal: replacementWithLink },
-        {
-          op: "supersede_signal",
-          signal_id: signalId,
-          replacement_signal_id: replacementWithLink.signal_id,
-        },
-      ];
-    },
-    {
-      context: options.context ?? signalContext(replacementWithLink),
-      producerKind: "research-wiki-signal",
-      eventType: "signal_superseded",
-    },
-  );
-  if (result.status === "conflict") {
-    throw new Error(
-      `WIKI_COMMAND_CONFLICT: command ${result.command_id} conflicts with an existing payload`,
-    );
-  }
-  return result;
-}
-
-function printSignalWriteResult(
-  result: WikiAppendResult | { status: "skipped"; event: null },
-  signalId: string,
-  wikiRoot: string,
-): void {
-  const event = "event" in result ? result.event : null;
-  console.log(
-    JSON.stringify({
-      status: result.status,
-      signal_id: signalId,
-      event_id: event?.event_id ?? null,
-      command_id: event?.command_id ?? null,
-      wiki_head: eventLogHead(readWikiEvents(wikiRoot)),
-    }),
-  );
-}
-
-function readJsonObject(filePath: string): JsonObject {
-  let value: unknown;
-  try {
-    value = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-  } catch (error: unknown) {
-    throw new Error(
-      `cannot read JSON file ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  if (!isObject(value)) throw new Error(`JSON file ${filePath} must contain an object`);
-  return value;
-}
-
-function signalFromJson(value: JsonObject): WikiSignal {
-  const signal = value.signal && isObject(value.signal) ? value.signal : value;
-  return signal as unknown as WikiSignal;
-}
-
-function parseSignalOptions(options: {
-  signalFile?: string;
-  signalId?: string;
-  kind?: string;
-  source?: string;
-  producerModuleId?: string;
-  producerModuleVersion?: string;
-  producerRunId?: string;
-  contractVersions?: string;
-  evidenceRefs?: string;
-  supersedes?: string;
-  summary?: string;
-  observation?: string;
-  inference?: string;
-  recommendation?: string;
-}): WikiSignal {
-  const fromFile: JsonObject = options.signalFile
-    ? (signalFromJson(readJsonObject(options.signalFile)) as unknown as JsonObject)
-    : {};
-  const appliesTo = (isObject(fromFile.applies_to) ? fromFile.applies_to : {}) as unknown as {
-    workflow_id?: string;
-    workflow_revision?: string;
-    input_snapshot_id?: string;
-    contract_versions?: unknown;
-    scorer_revision?: string;
-    scorer_target?: unknown;
-    constraints?: unknown[];
-  };
-  const producer = isObject(fromFile.producer) ? fromFile.producer : {};
-  const list = (value: string | undefined, fallback: unknown): string[] =>
-    value === undefined ? (Array.isArray(fallback) ? (fallback as string[]) : []) : splitCsv(value);
-  const kind = options.kind ?? fromFile.kind;
-  const source = options.source ?? fromFile.source;
-  if (!WIKI_SIGNAL_KINDS.includes(kind as WikiSignalKind)) {
-    throw new Error(`signal kind must be one of ${WIKI_SIGNAL_KINDS.join(", ")}`);
-  }
-  if (!WIKI_SIGNAL_SOURCES.includes(source as WikiSignalSource)) {
-    throw new Error(`signal source must be one of ${WIKI_SIGNAL_SOURCES.join(", ")}`);
-  }
-  return {
-    ...(fromFile as unknown as WikiSignal),
-    signal_id: options.signalId ?? (fromFile.signal_id as string),
-    kind: kind as WikiSignalKind,
-    source: source as WikiSignalSource,
-    producer: {
-      module_id: options.producerModuleId ?? (producer.module_id as string),
-      module_version: options.producerModuleVersion ?? (producer.module_version as string),
-      run_id: options.producerRunId ?? (producer.run_id as string),
-    },
-    applies_to: {
-      ...appliesTo,
-      contract_versions: list(options.contractVersions, appliesTo.contract_versions),
-    },
-    evidence_refs: list(options.evidenceRefs, fromFile.evidence_refs),
-    supersedes: list(options.supersedes, fromFile.supersedes),
-    status: "active",
-    ...(options.summary === undefined ? {} : { summary: options.summary }),
-    ...(options.observation === undefined ? {} : { observation: options.observation }),
-    ...(options.inference === undefined ? {} : { inference: options.inference }),
-    ...(options.recommendation === undefined ? {} : { recommendation: options.recommendation }),
-  };
-}
-
-function signalWriteCommandOptions(command: {
-  signalFile?: string;
-  signalId?: string;
-  kind?: string;
-  source?: string;
-  producerModuleId?: string;
-  producerModuleVersion?: string;
-  producerRunId?: string;
-  contractVersions?: string;
-  evidenceRefs?: string;
-  supersedes?: string;
-  summary?: string;
-  observation?: string;
-  inference?: string;
-  recommendation?: string;
-  evidenceBundleId?: string;
-}): WikiSignal {
-  return parseSignalOptions(command);
-}
-
-type SignalCliOptions = {
-  signalFile?: string;
-  signalId?: string;
-  kind?: string;
-  source?: string;
-  producerModuleId?: string;
-  producerModuleVersion?: string;
-  producerRunId?: string;
-  contractVersions?: string;
-  evidenceRefs?: string;
-  supersedes?: string;
-  summary?: string;
-  observation?: string;
-  inference?: string;
-  recommendation?: string;
-  evidenceBundleId?: string;
-};
-
-function addSignalPublishOptions(command: Command): Command {
-  return command
-    .option("--signal-file <path>", "JSON file containing a complete signal")
-    .option("--signal-id <id>", "Stable signal id, for example signal:rl-t3")
-    .option("--kind <kind>", `Signal kind: ${WIKI_SIGNAL_KINDS.join(" | ")}`)
-    .option("--source <source>", `Evidence source: ${WIKI_SIGNAL_SOURCES.join(" | ")}`)
-    .option("--producer-module-id <id>", "Producing module id")
-    .option("--producer-module-version <version>", "Producing module version")
-    .option("--producer-run-id <id>", "Producing run id")
-    .option("--contract-versions <list>", "Comma-separated contract versions")
-    .option("--evidence-refs <list>", "Comma-separated evidence references")
-    .option("--supersedes <list>", "Comma-separated signal ids being replaced")
-    .option("--summary <text>", "Short signal summary")
-    .option("--observation <text>", "Observed fact")
-    .option("--inference <text>", "Bounded inference")
-    .option("--recommendation <text>", "Suggested direction")
-    .option("--evidence-bundle-id <id>", "Stable evidence bundle id");
-}
-
-function signalContext(signal: WikiSignal): WikiPayloadContext {
-  return {
-    ...(signal.applies_to.workflow_id === undefined
-      ? {}
-      : { workflow_id: signal.applies_to.workflow_id }),
-    module_version: signal.producer.module_version,
-    ...(signal.applies_to.workflow_revision === undefined
-      ? {}
-      : { workflow_revision: signal.applies_to.workflow_revision }),
-    ...(signal.applies_to.input_snapshot_id === undefined
-      ? {}
-      : { input_snapshot_id: signal.applies_to.input_snapshot_id }),
-    contract_versions: [...signal.applies_to.contract_versions],
-    ...(signal.applies_to.scorer_revision === undefined
-      ? {}
-      : { scorer_revision: signal.applies_to.scorer_revision }),
-    ...(signal.applies_to.scorer_target === undefined
-      ? {}
-      : { scorer_target: signal.applies_to.scorer_target }),
-    ...(signal.applies_to.constraints === undefined
-      ? {}
-      : { constraints: signal.applies_to.constraints }),
-    module_id: signal.producer.module_id,
-  };
-}
-
-type QueryCliOptions = {
-  requestFile?: string;
-  purpose?: string;
-  requester?: string;
-  moduleId?: string;
-  moduleVersion?: string;
-  contractVersions?: string;
-  head?: string;
-  headSeq?: string;
-  headEventId?: string;
-  headEventHash?: string;
-  text?: boolean;
-};
-
-function queryRequestFromOptions(options: QueryCliOptions): WikiQueryRequest {
-  const fromFile = options.requestFile ? readJsonObject(options.requestFile) : {};
-  const request: WikiQueryRequest = {
-    ...(fromFile as unknown as WikiQueryRequest),
-    scope: "standalone",
-    purpose: options.purpose ?? (fromFile.purpose as string | undefined) ?? "manual-query",
-    requester: options.requester ?? (fromFile.requester as string | undefined) ?? "human",
-    ...(options.moduleId === undefined ? {} : { module_id: options.moduleId }),
-    ...(options.moduleVersion === undefined ? {} : { module_version: options.moduleVersion }),
-  };
-  if (options.head !== undefined) request.head = options.head;
-  else if (
-    options.headSeq !== undefined ||
-    options.headEventId !== undefined ||
-    options.headEventHash !== undefined
-  ) {
-    request.head = {
-      seq: options.headSeq === undefined ? 0 : Number.parseInt(options.headSeq, 10),
-      event_id: options.headEventId ?? null,
-      event_hash: options.headEventHash ?? null,
-    };
-  }
-  return request;
-}
-
-function runQueryCommand(wikiRoot: string, options: QueryCliOptions): void {
-  const result = queryWiki(path.resolve(wikiRoot), queryRequestFromOptions(options));
-  if (options.text === true) console.log(result.query_pack);
-  else console.log(JSON.stringify(result, null, 2));
-}
-
-function addSignalRetractionOptions(command: Command): Command {
-  return command
-    .option("--signal-id <id>", "Signal id to retract")
-    .option("--reason <text>", "Why the signal is no longer valid", "")
-    .option("--evidence-refs <list>", "Comma-separated replacement evidence references")
-    .option("--evidence-bundle-id <id>", "Stable evidence bundle id");
-}
-
-function publishSignalCommand(wikiRoot: string, options: SignalCliOptions): void {
-  const signal = signalWriteCommandOptions(options);
-  const result = publishSignal(path.resolve(wikiRoot), signal, {
-    evidenceBundleId: options.evidenceBundleId,
-    context: signalContext(signal),
-  });
-  printSignalWriteResult(result, signal.signal_id, wikiRoot);
-}
-
-function retractSignalCommand(
-  wikiRoot: string,
-  options: SignalCliOptions & { reason?: string },
-): void {
-  if (!options.signalId) throw new Error("--signal-id is required");
-  const result = retractSignal(path.resolve(wikiRoot), options.signalId, {
-    evidenceBundleId: options.evidenceBundleId,
-    reason: options.reason || undefined,
-    evidenceRefs: options.evidenceRefs ? splitCsv(options.evidenceRefs) : undefined,
-  });
-  printSignalWriteResult(result, options.signalId, wikiRoot);
-}
-
-function registerSignalCommands(parent: Command): void {
-  const signalParent = parent
-    .command("signal")
-    .description("Publish, retract, or supersede a Wiki signal");
-  const publish = addSignalPublishOptions(
-    signalParent
-      .command("publish")
-      .description("Publish one evidence-backed Signal through the event log")
-      .argument("<wiki_root>"),
-  );
-  publish.action((wikiRoot: string, options: SignalCliOptions) =>
-    publishSignalCommand(wikiRoot, options),
-  );
-
-  const retract = addSignalRetractionOptions(
-    signalParent
-      .command("retract")
-      .description("Retract an existing Signal through the event log")
-      .argument("<wiki_root>"),
-  );
-  retract.action((wikiRoot: string, options: SignalCliOptions & { reason?: string }) =>
-    retractSignalCommand(wikiRoot, options),
-  );
-
-  const supersede = addSignalPublishOptions(
-    signalParent
-      .command("supersede")
-      .description("Publish a replacement Signal and mark the old one superseded")
-      .argument("<wiki_root>")
-      .requiredOption("--previous-signal-id <id>", "Existing Signal being replaced"),
-  );
-  supersede.action((wikiRoot: string, options: SignalCliOptions & { previousSignalId: string }) => {
-    const replacement = signalWriteCommandOptions(options);
-    const result = supersedeSignal(path.resolve(wikiRoot), options.previousSignalId, replacement, {
-      evidenceBundleId: options.evidenceBundleId,
-      context: signalContext(replacement),
-    });
-    printSignalWriteResult(result, replacement.signal_id, wikiRoot);
-  });
-
-  const flatPublish = addSignalPublishOptions(
-    parent
-      .command("publish_signal")
-      .description("Stable alias for `signal publish`")
-      .argument("<wiki_root>"),
-  );
-  flatPublish.action((wikiRoot: string, options: SignalCliOptions) =>
-    publishSignalCommand(wikiRoot, options),
-  );
-
-  const flatRetract = addSignalRetractionOptions(
-    parent
-      .command("retract_signal")
-      .description("Stable alias for `signal retract`")
-      .argument("<wiki_root>"),
-  );
-  flatRetract.action((wikiRoot: string, options: SignalCliOptions & { reason?: string }) =>
-    retractSignalCommand(wikiRoot, options),
-  );
-
-  const flatSupersede = addSignalPublishOptions(
-    parent
-      .command("supersede_signal")
-      .description("Stable alias for `signal supersede`")
-      .argument("<wiki_root>")
-      .requiredOption("--previous-signal-id <id>", "Existing Signal being replaced"),
-  );
-  flatSupersede.action(
-    (wikiRoot: string, options: SignalCliOptions & { previousSignalId: string }) => {
-      const replacement = signalWriteCommandOptions(options);
-      const result = supersedeSignal(
-        path.resolve(wikiRoot),
-        options.previousSignalId,
-        replacement,
-        {
-          evidenceBundleId: options.evidenceBundleId,
-          context: signalContext(replacement),
-        },
-      );
-      printSignalWriteResult(result, replacement.signal_id, wikiRoot);
-    },
-  );
-}
-
-function addQueryOptions(command: Command): Command {
-  return command
-    .option("--request-file <path>", "JSON file containing the complete query request")
-    .option("--purpose <text>", "Why the caller needs this query")
-    .option("--requester <id>", "Requesting worker or user")
-    .option("--module-id <id>", "Requesting module identity")
-    .option("--module-version <version>", "Frozen module version")
-    .option("--contract-versions <list>", "Comma-separated contract versions")
-    .option("--head <event-id>", "Freeze the query at this event id")
-    .option("--head-seq <n>", "Freeze the query at this event sequence")
-    .option("--head-event-id <event-id>", "Expected event id at --head-seq")
-    .option("--head-event-hash <sha256>", "Expected event hash at --head-seq")
-    .option("--text", "Print only the deterministic query pack");
-}
-
 async function syncPapers(root: string, ids: string[], updateOnExist: boolean): Promise<void> {
   const metadata = await fetchArxivMetadataBatch(ids);
   for (const original of ids) {
@@ -1719,28 +1109,6 @@ async function syncPapers(root: string, ids: string[], updateOnExist: boolean): 
 }
 
 const program = createCli("research-wiki", "ARIS Research Wiki utilities");
-
-const queryCommand = addQueryOptions(
-  program
-    .command("query")
-    .description("Query one frozen Wiki scope and return a deterministic, read-only result")
-    .argument("<wiki_root>"),
-);
-queryCommand.action((wikiRoot: string, options: QueryCliOptions) =>
-  runQueryCommand(wikiRoot, options),
-);
-
-const queryPackCommand = addQueryOptions(
-  program
-    .command("query_pack")
-    .description("Stable alias for `query`; returns the same frozen scope result")
-    .argument("<wiki_root>"),
-);
-queryPackCommand.action((wikiRoot: string, options: QueryCliOptions) =>
-  runQueryCommand(wikiRoot, options),
-);
-
-registerSignalCommands(program);
 
 program
   .command("init")

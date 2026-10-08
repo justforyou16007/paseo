@@ -1,44 +1,81 @@
 ---
 name: aris-setup
-description: 'Configure research, metrics, execution environment, tester facilities, models and root run through one editable modular review. Use for aris setup, 配置项目 or missing root configuration.'
-allowed-tools: Read, Write, Bash(*), AskUserQuestion, mcp__paseo__list_models, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__archive_agent, mcp__paseo__create_heartbeat, mcp__paseo__delete_heartbeat
+description: 'Set this machine up as the ARIS worker or the validation side through one editable configuration review. Use for "/aris-setup worker", "/aris-setup validation", aris setup or 配置项目.'
+argument-hint: worker | validation
+allowed-tools: Read, Write, Edit, Bash(*), AskUserQuestion
 ---
 
 # ARIS Setup
 
-> **Dispatch watchdog (mandatory).** Follow the global dispatch rules and §"The dispatch watchdog" in [paseo-subagent-dispatch.md](../shared-references/paseo-subagent-dispatch.md).
+ARIS runs one task on two machines. The **worker** builds a deliverable; the **validation** side owns a frozen benchmark, scores each submission and decides when the task is done. The two talk only through the validation service's MCP tools. Each machine runs Paseo, so the owner sees both sides' agents.
 
-Use `project-setup-cli.js` through the [runtime integration contract](../shared-references/integration-contract.md), with the actual research project root. The helper owns the draft, review state and confirmed inputs; do not write those records manually.
+The helper is `node .aris/dist/tools/setup-cli.js` (see [integration-contract.md](../shared-references/integration-contract.md)). It owns the draft, the review sheet and the confirmed digest; never edit `.aris/setup-state.json` by hand.
 
-## Configuration review
+## 1. Task
 
-- Run `review` to discover current values. Present all eight modules together: project, research, metric, baseline, environment, tester, models and run. Show value/source for every field, all options and a recommendation for choices, and a concrete suggestion for text/JSON. Use the project language.
-- Use the available model catalogue for provider/model options. Add all unavailable selections or catalogue failures to the same conflict list; the helper checks structure, not live availability. Distinguish proposed settings from observed hardware, quota, revision pins and measurements.
-- Accept multiple edits in one reply or direct edits to `.aris/setup-draft.json`. Apply `refresh` and redisplay every module plus all gaps/conflicts. Objects merge, arrays replace and `null` clears. Recommendations become values only when accepted.
-- When complete, show the latest full sheet and its `configuration_sha256`, then obtain one final confirmation before execution. No field-by-field or module-by-module interview. Edits invalidate earlier confirmation; a request to edit is not approval.
+Both machines need the same `task.md` at the project root. If it is missing, write it with the owner from `.aris/templates/TASK_TEMPLATE.md`. The validation side writes it first; the owner copies it to the worker.
 
-| Helper command | Contract |
-| --- | --- |
-| `review --project <root>` / `refresh --project <root> [--input <patch.json>]` | Editable draft and `.aris/setup-review.md`; exit 0 does not imply completeness |
-| `confirm --project <root> --digest <reviewed digest>` | Requires the current complete review and the owner's explicit approval |
-| `prepare --project <root>` | Writes confirmed `.aris/setup-inputs/` and `.aris/root-setup-answers.json`; installs and seals nothing |
-| `verify --project <root> --configuration <snapshot> --environment <prd>` | Rejects stale or changed worker inputs |
-| `assemble` / `status` | Root input assembly / actual five-stage readiness |
+## 2. Review
 
-Consult [unified-setup.md](../shared-references/unified-setup.md) only for missing PRD schema or confirmed artifact mapping; choices and recommendations come from the helper, not a second questionnaire.
+```bash
+node .aris/dist/tools/setup-cli.js review --project . --role <worker|validation>
+```
 
-## Confirmed execution and handoff
+Show the owner `.aris/setup-review.md` in full: every module, field, option, recommendation and open issue at once, in the project language. Do not interview field by field.
 
-Apply the confirmed artifact mapping, preserving existing research notes and Wiki history. Setup describes baseline reproduction; iteration 1 runs it. Setup and smoke never publish metrics.
+The owner answers with several changes in one reply, or edits `.aris/setup-draft.json` directly. Put their changes in a JSON patch (objects merge, lists replace, `null` clears) and refresh:
 
-Reuse only an environment matching the confirmed PRD/backend and passing audit. Otherwise dispatch `/experiment-env-manager` with both prepared PRD and configuration snapshots. The worker returns defects to this review without asking setup questions or offering `user_override`.
+```bash
+node .aris/dist/tools/setup-cli.js review --project . --input patch.json
+```
 
-Prepare the declared runner/data/service files, then use `tester-facility-cli.js migrate` and `tester-facility-cli.js setup` with the confirmed facility input. Require matching installation, healthcheck and smoke evidence. Use shared facilities under the existing account.
+Show the whole sheet again after each refresh. A recommendation becomes a value only when the owner accepts it.
 
-Use `assemble` and `workflow-tools-cli.js root-setup` to seal the root. The latter remains the only root writer and requires:
+### Worker modules
 
-`tester`, `tester_facility`, `thresholds`, `limits`, `resource`, `baseline`
+- `connection.url` and `connection.token`: printed by `/aris-setup validation` on the other machine.
+- `environment.prd`: `null` when you manage the environment yourself; a PRD when `/experiment-env-configuration` should generate run scripts.
 
-Keep model usage as CLAUDE.md prose; no loop `budget` or structured `model_usage_policy`. Require all five readiness stages and `blocking: []`, then hand off `/auto-research-loop`.
+### Validation modules
 
-Retry technical failures with unchanged confirmed inputs. Configuration changes return to the full edit/refresh/confirm loop; changed sealed answers require a new run ID and setup revision. Subsequent evaluations run `/tester-test` → `/tester-audit` before Wiki publication and reuse the same facilities; see [tester-facility.md](../shared-references/tester-facility.md).
+- `validation.benchmark`: the frozen benchmark. Build it with the owner from `.aris/templates/TESTER_FACILITY_CONFIG_TEMPLATE.json` and the runner protocol in `.aris/templates/README.md`; `.aris/templates/tester-benchmark/` is a worked lm-evaluation-harness example. Pin the benchmark source, dataset revision, split and full sample count. The runner must not import anything from a deliverable; it calls the deliverable only through the adapter a validation agent writes under `ARIS_ADAPTER_DIR`.
+- `validation.metric`: one benchmark metric and the target that ends the task.
+- `validation.leak_check.hidden_paths`: absolute paths of the hidden samples, labels and references. Feedback that quotes them is held back.
+- `validation.limits`: maximum counted submissions, concurrency, upload size and review timeout.
+- `validation.agent`: provider, model, mode and thinking for the per-submission validation agent. On Windows set `paseo_command` to `["node", "<Paseo install>\\bin\\paseo"]`.
+- `validation.service.public_url`: the address the worker reaches. Use the Paseo service proxy alias for the `aris-validation` script, or `http://<host>:<port>` on a private network.
+
+Once a submission has been counted, the benchmark and metric are frozen and the helper reports any change as an issue. Changing them means a new validation project.
+
+## 3. Confirm
+
+When the sheet has no issues, show the final `configuration_sha256` and ask the owner to approve that version. Then:
+
+```bash
+node .aris/dist/tools/setup-cli.js confirm --project . --digest <configuration_sha256>
+```
+
+Any later edit, including to `task.md`, invalidates the confirmation. A request to change something is not approval.
+
+## 4. Apply
+
+```bash
+node .aris/dist/tools/setup-cli.js apply --project .
+```
+
+Apply writes the role block into `CLAUDE.md` between the `ARIS ROLE` markers and leaves the rest of the file alone.
+
+**Worker.** Apply adds the `aris-validation` server to `.mcp.json`. That file holds the token: make sure `.gitignore` excludes it. Then:
+
+1. Create the wiki if `research-wiki/` is absent: `node .aris/dist/tools/research-wiki.js init research-wiki/`.
+2. If the PRD is set, run `/experiment-env-configuration` with `.aris/environment-prd.json`.
+3. Tell the owner to restart the Claude Code session so the MCP server loads, then check that `query` answers.
+
+**Validation.** Apply installs the benchmark (setup, healthcheck and smoke must pass), freezes `.aris/validation/config.json`, creates the service token and adds the `aris-validation` service script to `paseo.json`. Then:
+
+1. Give the owner the printed `worker_connection` URL and token for the worker's setup. Send the token over a private channel.
+2. Have the owner start the `aris-validation` script from the Paseo workspace.
+3. Check it: `node .aris/dist/tools/validation-cli.js status --project .`.
+4. If the PRD is set, run `/experiment-env-configuration` with `.aris/environment-prd.json`.
+
+A failed apply step with an unchanged configuration can be retried as is. A fix that changes the configuration goes back through review and confirm.

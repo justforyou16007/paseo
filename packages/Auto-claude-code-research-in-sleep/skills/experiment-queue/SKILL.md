@@ -1,28 +1,21 @@
 ---
 name: experiment-queue
-description: SSH job queue for multi-seed/multi-config ML experiments with OOM-aware retry, stale-screen cleanup, and wave-transition race prevention. Use when user says "batch experiments", "队列实验", "run grid", "multi-seed sweep", "auto-chain experiments", or when /run-experiment is insufficient for 10+ jobs that need orchestration.
+description: SSH job queue for multi-seed/multi-config ML experiments with OOM-aware retry, stale-screen cleanup, and wave-transition race prevention. Use when user says "batch experiments", "队列实验", "run grid", "multi-seed sweep", "auto-chain experiments", or when 10+ jobs need orchestration on an SSH GPU host.
 argument-hint: [manifest-or-grid-spec]
-allowed-tools: Bash(*), Read, Grep, Glob, Edit, Write, mcp__paseo__create_agent, mcp__paseo__send_agent_prompt, mcp__paseo__archive_agent, mcp__paseo__list_agents, mcp__paseo__get_agent_status, mcp__paseo__list_pending_permissions, mcp__paseo__respond_to_permission, mcp__paseo__create_heartbeat, mcp__paseo__delete_heartbeat
+allowed-tools: Bash(*), Read, Grep, Glob, Edit, Write
 ---
-
-> **Dispatch watchdog (mandatory).** Follow the global dispatch rules and §"The dispatch watchdog" in [paseo-subagent-dispatch.md](../shared-references/paseo-subagent-dispatch.md).
 
 # Experiment Queue
 
-> ⏱ **External cadence: visibility only.** This skill already runs its own
-> detached server-side scheduler (60s poll + `depends_on` + wave transitions).
-> Use its status output for overnight visibility (N done / N running / N
-> pending); do **not** wrap it in a second `/loop` / `CronCreate` poll — that
-> duplicates the scheduler on an uncoordinated clock and races the
-> wave-transition logic it was built to prevent. See
-> [`shared-references/external-cadence.md`](../shared-references/external-cadence.md)
-> ("don't duplicate an existing scheduler").
+> The queue runs its own scheduler on the remote host (60 s poll, `depends_on`,
+> wave transitions). Do not wrap it in a second polling loop: two clocks race
+> the wave-transition logic it exists to get right.
 
 Orchestrate large batches of ML experiments on SSH remote GPU servers with proper state tracking, OOM retry, stale cleanup, and wave transitions.
 
 ## When to Use This Skill
 
-Use when `/run-experiment` is insufficient:
+Use it instead of single `launch-job` runs when you have:
 
 - **≥10 jobs** that need batching across GPUs
 - **Multi-seed sweeps** (e.g., 21 seeds × 12 cells)
@@ -33,7 +26,7 @@ Use when `/run-experiment` is insufficient:
 
 Do NOT use for:
 
-- Single ad-hoc experiment (use `/run-experiment`)
+- A single experiment (use the generated skill's `launch-job` op)
 - Modal/Vast.ai deployments (those have their own orchestration)
 - Experiments that need manual inspection between runs
 
@@ -63,7 +56,7 @@ All of these are pure engineering friction that can be orchestrated.
 > PROJECT=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\+/-/g; s/^-//; s/-$//')
 > SKILL_DIR=".claude/skills/run-${PROJECT}-experiment"
 > OPS="$SKILL_DIR/scripts/ops"
-> [ -d "$OPS" ] || { echo "ERROR: experiment skill not found — run /aris-setup to review and confirm the complete environment configuration" >&2; exit 1; }
+> [ -d "$OPS" ] || { echo "ERROR: experiment skill not found — run /experiment-env-configuration with the confirmed environment PRD" >&2; exit 1; }
 >
 > # Read connection and resource details from the op interface
 > ENV_INFO=$(sh "$OPS/env-info.sh")
@@ -76,10 +69,8 @@ All of these are pure engineering friction that can be orchestrated.
 > # Prepare the host ONCE (sync + build + verify are two ops)
 > sh "$OPS/sync-code.sh"
 > sh "$OPS/build-env.sh"
-> # On failure of either: follow the generated skill's unified op-failure
-> # routing (error JSON from the op's stderr → error-reports/<TS>.json →
-> # /experiment-env-manager — mode: error-report). On "fixed": retry the op.
-> # If not fixed: abort queue.
+> # On failure of either: follow the generated skill's "When an op fails"
+> # routing. If the op still fails, abort the queue.
 > ```
 >
 > `queue-manager.js` runs on the remote host and
@@ -187,34 +178,15 @@ If any precondition fails, show user which jobs are blocked and why.
 
 ### Step 3: Launch Scheduler
 
-The canonical scheduler implementation is compiled from `src/skills/experiment-queue/` to `dist/skills/experiment-queue/queue-manager.js`. Three preliminaries before launch.
+Three preliminaries before launch.
 
-**3a. Resolve the local helper directory.** The two helpers (`queue-manager.js`, `build-manifest.js`) compile from `src/skills/experiment-queue/` into `dist/skills/experiment-queue/`. Use this hybrid chain so the skill works from any project layout:
+**3a. Find the helpers.** From the project root (see [integration-contract.md](../shared-references/integration-contract.md)):
 
 ```bash
-# Layer 0: compiled TS (CC 1.0+ exposes $CLAUDE_SKILL_DIR).
-QUEUE_TOOLS=""
-if [ -n "${CLAUDE_SKILL_DIR:-}" ]; then
-  _PROJECT_ROOT="${CLAUDE_SKILL_DIR%/.claude/skills/*}"
-  if [ "$_PROJECT_ROOT" = "$CLAUDE_SKILL_DIR" ]; then
-    _PROJECT_ROOT="${CLAUDE_SKILL_DIR%/skills/*}"
-  fi
-  [ -f "$_PROJECT_ROOT/.aris/dist/skills/experiment-queue/queue-manager.js" ] && QUEUE_TOOLS="$_PROJECT_ROOT/.aris/dist/skills/experiment-queue"
-  [ -z "$QUEUE_TOOLS" ] && [ -f "$_PROJECT_ROOT/dist/skills/experiment-queue/queue-manager.js" ] && QUEUE_TOOLS="$_PROJECT_ROOT/dist/skills/experiment-queue"
-fi
-# Layers 1-2: shared-runtime chain.
-if [ -z "$QUEUE_TOOLS" ]; then
-  _pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
-cd "${_pr:-$(pwd)}" || exit 1
-  QUEUE_TOOLS=".aris/dist/skills/experiment-queue"
-  [ -f "$QUEUE_TOOLS/queue-manager.js" ] || QUEUE_TOOLS="dist/skills/experiment-queue"
-  [ -f "$QUEUE_TOOLS/queue-manager.js" ] || QUEUE_TOOLS=""
-fi
-[ -z "$QUEUE_TOOLS" ] && { echo "ERROR: experiment-queue helpers not found (layer 0: \$CLAUDE_SKILL_DIR; layers 1-2: .aris/dist/, dist/). Fix: run /aris-update or npm run build in the ARIS repo." >&2; exit 1; }
+QUEUE_TOOLS=".aris/dist/skills/experiment-queue"
+[ -f "$QUEUE_TOOLS/queue-manager.js" ] || QUEUE_TOOLS="dist/skills/experiment-queue"
+[ -f "$QUEUE_TOOLS/queue-manager.js" ] || { echo "ERROR: queue-manager.js not found; run /aris-update." >&2; exit 1; }
 ```
-
-The compiled helper lives at `dist/skills/experiment-queue/`. `npm run build`
-compiles it from `src/skills/experiment-queue/`.
 
 **3b. Compute remote paths.** Use both a remote-relative form (for `scp` destinations — modern `scp` runs in SFTP mode and does NOT reliably expand `$HOME` in destination paths) and a `$HOME`-prefixed form (for `ssh ... command` strings, where remote bash WILL expand `$HOME`):
 
@@ -280,42 +252,7 @@ The scheduler:
 - Writes state to `queue_state.json` continuously (and per-job handles in the
   generated skill's `handles/` format, so `ops/job-status.sh` covers queue jobs)
 
-### Step 3f: Arm the queue-monitor heartbeat
-
-**This is the liveness guarantee for a long queue** — without it, nothing
-wakes anyone when the batch finishes. It is this agent's LAST action before
-ending its turn, after Step 3d's nohup launch.
-
-```
-mcp__paseo__create_heartbeat:
-  name: "queue-monitor-<project>-<RUN_TS>"     # upsert by name — idempotent
-  cron: "23 * * * *"                           # hourly, off the :00 mark
-  expiresIn: "<manifest-bounded hours>h"       # orphan backstop
-  maxRuns: <bounded>
-  prompt: |
-    Run: sh <SKILL_DIR>/scripts/ops/job-status.sh --queue <REMOTE_RUN_DIR>
-    (read-only). If any job is pending|running: append one line to
-    .aris/runs/<run_id>.monitor.jsonl and stop. If all jobs are
-    completed|stuck AND queue_mgr.log contains "All jobs done": run
-    Step 5 aggregation (summary.md), delete this heartbeat
-    (id from handles/<RUN_TS>.monitor.json), write the receipt, stop.
-    NEVER launch, retry, or kill — the remote 60s scheduler owns those.
-```
-
-Write `handles/<RUN_TS>.monitor.json` with the heartbeat id (not listable
-later; delete is creator-only — the id must live on disk). Write receipt
-`status: "monitoring"` and end the turn.
-
-If the session is not agent-scoped or `create_heartbeat` is unavailable, mark
-monitoring `BLOCKED` and stop. Do not replace the required heartbeat with a
-manual poll command.
-
-**Fence note:** the remote scheduler already polls every 60s — the heartbeat
-must NOT become a second scheduler (external-cadence.md: never duplicate an
-existing scheduler). It only detects the terminal state the scheduler wrote
-and resumes the pipeline.
-
-### Step 4: Monitoring (manual / visibility)
+### Step 4: Monitoring
 
 User can check state anytime, using `$REMOTE_RUN_DIR` from Step 3b (or reload from `$LOCAL_RUN_DIR/run_meta.txt` for a prior run):
 
@@ -332,32 +269,7 @@ When all jobs in `manifest.json` are `completed` or `stuck`:
 
 - The remote scheduler (`queue-manager.js`) exits cleanly with `All jobs done` to its own stdout (captured in `$REMOTE_RUN_DIR/queue_mgr.log`). It does NOT write the local summary.
 - The **local** skill agent then aggregates state into `$LOCAL_RUN_DIR/summary.md` (read `$REMOTE_RUN_DIR/queue_state.json`, group by status, optionally pull per-job logs).
-- **Analysis belongs to whoever dispatched this skill, not to this skill.**
-  When the invocation carries `run_id=` (that is, `/experiment-bridge`
-  launched this queue as its child — see its Phase 4), stop after the
-  summary and end the turn. The parent reads the receipt and runs its own
-  Phase 5.6 analysis over the whole milestone. A launcher that analyzes on
-  its own duplicates that work, and once analysis can run probe jobs the
-  duplicate costs GPU.
-
-  Standalone invocation (no `run_id=`) is the only case where this skill
-  analyzes. Write a minimal manifest, then dispatch it:
-
-  ```json
-  {
-    "inputs": {
-      "results": ["<paths to the result files this queue produced>"],
-      "tracker": "refine-logs/EXPERIMENT_TRACKER.md"
-    }
-  }
-  ```
-
-  ```
-  /analyze-results — manifest: <path to that file>
-  ```
-
-  `/analyze-results` has no project-root discovery mode; `— project:` is
-  not a form it accepts.
+- Analysing the results is the caller's job, not this skill's.
 
 ## Grid Spec Syntax
 
@@ -463,29 +375,6 @@ If scheduler crashes / is killed:
 
 - 42 JSON files in `figures/distill_sw_*.json`
 
-## Next Steps
-
-- Run `/analyze-results — manifest: <manifest path>` on the output JSONs
-  (standalone runs only — under `/experiment-bridge` the parent analyzes)
-- Figures auto-regen via `artifact-sync` (if configured)
-```
-
-## Comparison with `/run-experiment`
-
-| Feature                | `/run-experiment` | `experiment-queue` |
-| ---------------------- | ----------------- | ------------------ |
-| Single-shot experiment | ✅                | ✅ (overkill)      |
-| Multi-GPU parallel     | Basic             | Proper scheduling  |
-| Wave transitions       | Manual            | Automatic          |
-| OOM retry              | Manual            | Automatic          |
-| Stale screen cleanup   | Manual            | Automatic          |
-| Teacher→student chain  | Manual            | Built-in           |
-| State persistence      | No                | Yes (JSON)         |
-| Resume on crash        | No                | Yes                |
-| Grid expansion         | Manual            | Declarative        |
-
-**Rule**: Use `/run-experiment` for ≤5 jobs. Use `experiment-queue` for ≥10 jobs or anything with phases.
-
 ## Key Rules
 
 - **Never overlap jobs on the same resource slot** — always wait for the free_check threshold to clear before launching a new job
@@ -515,23 +404,7 @@ Claude invokes `/experiment-queue`:
 
 Then user can check anytime or wait for summary report.
 
-## See Also
+## Helpers
 
-- `/run-experiment` — single experiment deployment
-- monitoring heartbeat (Step 3f) — terminal-state detection over `queue_state.json`
-- `/analyze-results — manifest: <path>` — post-hoc analysis, standalone
-  invocations only
-- `.aris/dist/skills/experiment-queue/queue-manager.js` — the installed scheduler implementation; development checkouts use `dist/skills/experiment-queue/queue-manager.js`.
-- `.aris/dist/skills/experiment-queue/build-manifest.js` — build manifest from grid spec; development checkouts use the matching `dist/` path.
-
-## Rationale / Source
-
-Identified via 2026-04-16 post-mortem analysis (Codex GPT-5.5 xhigh) of a 1.5-day
-multi-seed paper experiment session:
-
-- Wall-clock sink: stale screens, OOM, wave transitions, manual parser
-- Token sink: re-writing orchestration code each session
-- Cognitive sink: tracking which cells succeeded, which failed, which to retry
-
-This skill targets the wall-clock sink specifically; see `artifact-sync` and
-`paper-fix-auto-apply` for the other two.
+- `.aris/dist/skills/experiment-queue/queue-manager.js`: the scheduler (`dist/skills/experiment-queue/` inside the ARIS checkout).
+- `.aris/dist/skills/experiment-queue/build-manifest.js`: builds a manifest from a grid spec.

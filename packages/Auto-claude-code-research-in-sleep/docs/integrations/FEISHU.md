@@ -3,7 +3,7 @@
 > 🇨🇳 中文版：[FEISHU_CN.md](FEISHU_CN.md)
 > Mobile notifications + interactive approvals from your phone. Built around webhooks (push) and the [feishu-claude-code](https://github.com/joewongjc/feishu-claude-code) bridge (interactive).
 
-Get mobile notifications when experiments finish, reviews score, or checkpoints need your input — without sitting in front of the terminal.
+Get mobile notifications when experiments finish, submissions score, or a step needs you — without sitting in front of the terminal.
 
 |                Push Only (group cards)                 |                  Interactive (private chat)                   |
 | :----------------------------------------------------: | :-----------------------------------------------------------: |
@@ -24,7 +24,7 @@ workflow runs without a notification step.
 
 ## Push-Only Setup (5 min)
 
-Group notifications with rich cards — experiment done, review scored, pipeline complete. Mobile push, no reply needed.
+Group notifications with rich cards — experiment done, submission scored, task closed. Mobile push, no reply needed.
 
 ### Step 1: Create a Feishu group bot
 
@@ -184,17 +184,13 @@ Now skills will:
 
 ---
 
-## Which skills send notifications?
+## Who sends notifications?
 
-| Skill                          | Events                                    | Push                  | Interactive                     |
-| ------------------------------ | ----------------------------------------- | --------------------- | ------------------------------- |
-| `/auto-review-loop`            | Review scored (each round), loop complete | Score + verdict       | + wait for continue/stop        |
-| `/auto-paper-improvement-loop` | Review scored, all rounds done            | Score progression     | Score progression               |
-| `/run-experiment`              | Experiments deployed                      | GPU assignment + ETA  | GPU assignment + ETA            |
-| `/vast-gpu`                    | Instance rented/destroyed                 | Instance ID + cost    | Instance ID + cost              |
-| monitoring heartbeat           | Results collected                         | Results table         | Results table                   |
-| `/idea-discovery`              | Phase transitions, final report           | Summary at each phase | + approve/reject at checkpoints |
-| `/research-pipeline`           | Stage transitions, pipeline done          | Stage summary         | + approve/reject                |
+| Sender | Events | Push | Interactive |
+| --- | --- | --- | --- |
+| worker | Submission scored, task completed or closed | Score, verdict, submissions left | Same |
+| worker | Experiment receipt collected | Primary metric, status | Same |
+| worker | Needs the owner, or stopped on an error | Question or error | + wait for your reply |
 
 ## Alternative IM platforms
 
@@ -207,4 +203,4 @@ The push-only webhook pattern works with any service that accepts incoming webho
 ## Related skills
 
 - [`/feishu-notify`](../../skills/feishu-notify/SKILL.md) — notification SKILL (pushes the cards)
-- All long-running skills (review loops, experiments, pipelines) auto-emit cards when configured
+- The worker sends the events in the skill's Event Catalog when configured

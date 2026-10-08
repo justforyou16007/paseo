@@ -15,8 +15,7 @@ This skill has one implementation: `deepxiv-fetch.js`. The helper is the only
 caller of the DeepXiv SDK and CLI. The skill never runs raw CLI commands as a
 second path and never substitutes arXiv, Semantic Scholar, or AlphaXiv.
 
-Resolve the project root with the shared resolver, then require both the
-compiled helper and the DeepXiv CLI:
+From the project root, require both the compiled helper and the DeepXiv CLI:
 
 ```bash
 DEEPXIV_FETCHER=".aris/dist/tools/deepxiv-fetch.js"
@@ -55,8 +54,8 @@ deepen with another command after a failed fetch.
 
 ## Research Wiki
 
-If `research-wiki/` exists, resolve the required Wiki helper and ingest the
-papers returned by this invocation. A failed ingest fails the skill.
+If `research-wiki/` exists, ingest the papers returned by this invocation with
+the wiki helper (`WIKI_SCRIPT=.aris/dist/tools/research-wiki.js`). A failed ingest fails the skill.
 
 ```bash
 node "$WIKI_SCRIPT" ingest_paper research-wiki/ --arxiv-id "$ARXIV_ID" || exit 1

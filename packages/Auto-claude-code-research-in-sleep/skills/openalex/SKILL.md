@@ -39,7 +39,7 @@ as returned. Missing metadata remains `null`.
 
 ## Research Wiki
 
-If `research-wiki/` exists, resolve the required Wiki helper. Ingest only when
+If `research-wiki/` exists, use the wiki helper (`WIKI_SCRIPT=.aris/dist/tools/research-wiki.js`). Ingest only when
 the result contains the explicit metadata required by `research-wiki`; a
 failed ingest fails the skill.
 

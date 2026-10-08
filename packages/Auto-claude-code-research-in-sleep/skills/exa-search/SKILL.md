@@ -47,7 +47,7 @@ another search source.
 ## Research Wiki
 
 Only research-paper results are eligible for Wiki ingest. If
-`research-wiki/` exists, the Wiki helper is required. Each paper result must
+`research-wiki/` exists, the wiki helper (`WIKI_SCRIPT=.aris/dist/tools/research-wiki.js`) is required. Each paper result must
 contain an arXiv ID, title, and authors; missing metadata fails the ingest
 phase rather than being reconstructed from a snippet.
 

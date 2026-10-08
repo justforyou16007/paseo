@@ -4,7 +4,7 @@ import path from "node:path";
 import { anyJsonSchema, canonicalJsonBytes, canonicalJsonSha256 } from "./canonical-json.js";
 import { computeWikiCommandId } from "./wiki-command-id.js";
 import { readStateFile, withStateFileLock, writeStateFileAtomic } from "./state-file.js";
-import { validateWikiPayload } from "./wiki-operations.js";
+import { parseWikiPayload, validateWikiPayload } from "./wiki-operations.js";
 import { validateWikiScope } from "./wiki-scope.js";
 
 export const WIKI_SCHEMA_VERSION = 2;
@@ -315,7 +315,7 @@ function parseEvent(value: unknown, filePath: string, lineNumber: number): WikiE
 
   const event = value as unknown as WikiEvent;
   assertNoAgentCommandId(event.payload, "payload");
-  validateWikiPayload(event.payload);
+  parseWikiPayload(event.payload);
   const expectedPayloadHash = canonicalJsonSha256(event.payload, anyJsonSchema);
   if (expectedPayloadHash !== event.payload_sha256) {
     throw new Error(`payload hash mismatch at ${filePath}:${lineNumber}`);

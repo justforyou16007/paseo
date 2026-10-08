@@ -11,7 +11,7 @@ Subcommand: **$ARGUMENTS**
 
 ## Overview
 
-The research wiki is a persistent, per-project knowledge base that accumulates structured knowledge across the entire ARIS research lifecycle. Unlike one-off literature surveys that are used and forgotten, the wiki **compounds** — every paper read, idea tested, experiment run, and review received makes the wiki smarter.
+The research wiki is a persistent, per-project knowledge base that accumulates what the worker learns about its task. Unlike one-off literature surveys that are used and forgotten, the wiki **compounds** — every paper read, idea tried, submission scored and problem found is there for the next session.
 
 Inspired by [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f): compile knowledge once, keep it current, don't re-derive on every query.
 
@@ -24,8 +24,8 @@ Inspired by [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6
 | **Paper**      | `papers/`      | `paper:<slug>` | A published or preprint research paper                                                  |
 | **Idea**       | `ideas/`       | `idea:<id>`    | A research idea (proposed, tested, or failed)                                           |
 | **Experiment** | `experiments/` | `exp:<id>`     | A concrete experiment run with results                                                  |
-| **Claim**      | `claims/`      | `claim:<id>`   | A theorem/headline with an honest PROOF status — born via `/proof-checker` (see Hook 4) |
-| **Problem**    | `problems/`    | `problem:<slug>` | An open problem the run is trying to close — born via `add_problem` (see Hook 5)      |
+| **Claim**      | `claims/`      | `claim:<id>`   | A theorem or headline with an explicit proof status                                     |
+| **Problem**    | `problems/`    | `problem:<slug>` | An open problem between the current deliverable and the target                        |
 
 ### Typed Relationships (`graph/edges.jsonl`)
 
@@ -56,16 +56,11 @@ Edges are stored in `graph/edges.jsonl` only. The `## Connections` section on ea
 Before persisting an **idea / claim / experiment** note, screen it for
 operational noise that would harden into a self-cited falsehood (see
 [`shared-references/capture-antipatterns.md`](../shared-references/capture-antipatterns.md)).
-Resolve the helper via the canonical chain (integration-contract §2):
-`.aris/dist/tools/capture-filter.js` → `dist/tools/capture-filter.js`.
-If the helper is unresolved, fail the write. Run
-`node <capture_filter> -` on the note text; if it flags **env-failure /
-transient-error / negative-tool-claim**, do NOT store it as a durable node —
-rewrite it to the _fix / missing config / workaround_, or drop it. Never store
-"codex/gemini/the reviewer can't do X" — that gets loaded into every future
-session and cited against the agent long after the real cause is gone. (The wiki's
-"failed ideas → anti-repeat memory" is the GOOD inverse: a class-level _research_
-finding, not operational noise.)
+Run `node .aris/dist/tools/capture-filter.js -` on the note text; if it flags
+**env-failure / transient-error / negative-tool-claim**, do NOT store it as a
+durable node — rewrite it to the _fix / missing config / workaround_, or drop
+it. (The wiki's "failed ideas → anti-repeat memory" is the GOOD inverse: a
+class-level _research_ finding, not operational noise.)
 
 ## Wiki Directory Structure
 
@@ -73,7 +68,7 @@ finding, not operational noise.)
 research-wiki/
   index.md               # categorical index (auto-generated)
   log.md                 # append-only timeline
-  query_pack.md          # compressed summary for /idea-creator (auto-generated, max 8000 chars)
+  query_pack.md          # compressed summary to read before planning (auto-generated, max 8000 chars)
   papers/
     <slug>.md            # one page per paper
   ideas/
@@ -90,38 +85,15 @@ research-wiki/
 
 ## Subcommands
 
-## Helper resolution (run before any subcommand below)
-
-All wiki operations except plain directory bootstrap go through a single
-canonical helper, `dist/tools/research-wiki.js`. Skills that touch the wiki
-must resolve `$WIKI_SCRIPT` via the chain below — never hard-code
-`node dist/tools/research-wiki.js …`. Hard-coding silently fails when
-the project does not have `tools/` on disk (the normal state — an ARIS
-install puts helpers in `.aris/`), which is exactly the failure mode that left a real user's
-`research-wiki/` empty for a week.
-
-```bash
-_pr=$(git rev-parse --show-toplevel 2>/dev/null) || { _d=$(pwd); while [ "$_d" != "/" ]; do [ -f "$_d/.aris/installed-skills.txt" ] && { _pr=$_d; break; }; _d=$(dirname "$_d"); done; }
-cd "${_pr:-$(pwd)}" || exit 1
-WIKI_SCRIPT=".aris/dist/tools/research-wiki.js"
-[ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="dist/tools/research-wiki.js"
-[ -f "$WIKI_SCRIPT" ] || {
-  echo "ERROR: research-wiki.js not found at .aris/dist/tools/ or dist/tools/." >&2
-  echo "       Fix: run /aris-update to refresh the project runtime." >&2
-  exit 1
-}
-```
-
-`/research-wiki` itself is the wiki tool. Caller skills that update the wiki
-as a side effect (`/idea-creator`, `/result-to-claim`, `/research-lit`,
-`/arxiv`, `/alphaxiv`, `/deepxiv`, `/semantic-scholar`, `/exa-search`) use the
-same chain and fail when Wiki integration is active. A primary output is not
-complete when its required Wiki write failed.
+Every operation goes through `node .aris/dist/tools/research-wiki.js` (see
+[integration-contract.md](../shared-references/integration-contract.md)); below
+it is `$WIKI_SCRIPT`. Never create or edit wiki files by hand. Literature
+skills (`/arxiv`, `/deepxiv`, `/semantic-scholar`, `/openalex`, `/exa-search`)
+call the same helper in their last step when `research-wiki/` exists.
 
 ### `/research-wiki init`
 
-Initialize the wiki for the current project. After resolving
-`$WIKI_SCRIPT` per the chain above:
+Initialize the wiki for the current project:
 
 ```bash
 node "$WIKI_SCRIPT" init research-wiki/
@@ -134,11 +106,8 @@ appends `"Wiki initialized"` to `log.md`.
 
 ### `/research-wiki ingest "<paper title>" — arxiv: <id>`
 
-Add a paper to the wiki. This subcommand is thin wrapping around
-`node "$WIKI_SCRIPT" ingest_paper …`, which is the single
-implementation of paper ingest in ARIS (per
-[`shared-references/integration-contract.md`](../shared-references/integration-contract.md)
-— one helper, no copies). The helper does all of:
+Add a paper to the wiki with `node "$WIKI_SCRIPT" ingest_paper …`. The
+helper does all of:
 
 1. **Fetch metadata** — queries the arXiv Atom API when `--arxiv-id` is given
 2. **Generate slug** — `<first_author_last_name><year>_<keyword>`
@@ -167,11 +136,6 @@ node "$WIKI_SCRIPT" add_edge research-wiki/ \
     --type "extends" --evidence "Section 3.2: adapts the encoder block …"
 ```
 
-Other skills (`/research-lit`, `/arxiv`, `/alphaxiv`, `/deepxiv`,
-`/semantic-scholar`, `/exa-search`) call the same helper directly in
-their own last step — they don't re-route through `/research-wiki
-ingest` as a subcommand, so they don't need an LLM roundtrip.
-
 ### `/research-wiki sync — arxiv-ids <id1>,<id2>,...`
 
 Batch backfill: ingest one or more arXiv IDs that were read earlier
@@ -188,9 +152,8 @@ node "$WIKI_SCRIPT" sync research-wiki/ --from-file ids.txt
 ```
 
 Dedup is handled per-id; already-ingested papers are skipped silently.
-This is the recommended **manual repair** step (see integration
-contract §5 Backfill). `sync` does not scan session traces — callers
-declare the ids explicitly.
+`sync` does not scan session traces — callers declare the ids
+explicitly. It is never run automatically after a failed ingest.
 
 **Paper page schema** (exactly what `ingest_paper` emits — do not
 handwrite alternative fields; `lint` will flag drift):
@@ -252,15 +215,22 @@ section after `Relevance to This Project` containing the raw abstract
 text as a blockquote. Manual ingests (no `--arxiv-id`) do not include
 this section._
 
-### `/research-wiki query "<topic>"`
+### `/research-wiki query`
 
-Generate `query_pack.md` — a compressed, context-window-friendly summary:
+Regenerate `query_pack.md`, a compressed summary to read before planning:
+
+```bash
+node "$WIKI_SCRIPT" rebuild_query_pack research-wiki/ [--max-chars <n>]
+```
+
+`--max-chars` persists a new size limit. Every mutating command already
+rebuilds the pack, so this is only needed after changing the limit.
 
 **Fixed budget (max 8000 chars / ~2000 tokens):**
 
 | Section           | Budget        | Content                                                                                                                                                                                                                                                                                                                                     |
 | ----------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Project direction | full sections | Structured extraction from `RESEARCH_BRIEF.md` by `## ` heading (Problem / Constraints / Direction / Background / Non-Goals / Domain Knowledge / Existing Results), in priority order. No per-field char cap — the 8000-char assembly loop is the only safety net. Falls back to a flat 600-char slice if the brief uses no known headings. |
+| Project direction | full sections | The `task.md` sections Goal / Inputs and outputs / Constraints / Delivery, in that order. No per-field char cap — the 8000-char assembly loop is the only safety net. Falls back to a flat 600-char slice if the task uses no known headings. |
 | Open problems     | 1400 chars    | Up to 15 `problems/` pages whose `status` is still `open`, each as `[problem:<slug>] [severity] title`. An entity scan, so a long problem statement can never truncate the list.                                                                                                                                                             |
 | Paper clusters    | 1600 chars    | 3-5 clusters by tag overlap, 2-3 sentences each                                                                                                                                                                                                                                                                                             |
 | Failed ideas      | 1400 chars    | **Always included** — highest anti-repetition value                                                                                                                                                                                                                                                                                         |
@@ -274,15 +244,17 @@ Generate `query_pack.md` — a compressed, context-window-friendly summary:
 
 ### `/research-wiki update <node_id> — <field>: <value>`
 
-Update a specific entity:
+There is no generic update command. Rerun the entity's own command with
+`--update-on-exist`. `add_problem` keeps every field you leave out and appends
+new `--evidence`. The other commands rewrite the whole page, so pass every
+field again with the changed one; a field left out becomes empty. Read the
+current page first:
 
+```bash
+node "$WIKI_SCRIPT" upsert_idea research-wiki/ --slug 001 --title "<title>" \
+  --stage piloted --outcome negative --thesis "<...>" --risks "<...>" \
+  --based-on <...> --target-problems <...> --update-on-exist
 ```
-/research-wiki update paper:chen2025 — relevance: core
-/research-wiki update idea:001 — outcome: negative
-/research-wiki update claim:C1 — status: refuted
-```
-
-After any update: rebuild `query_pack.md`, update `log.md`.
 
 ### `/research-wiki lint`
 
@@ -299,7 +271,7 @@ Output a `LINT_REPORT.md` with suggested fixes.
 
 ### `/research-wiki stats`
 
-Quick overview:
+`node "$WIKI_SCRIPT" stats research-wiki/ [--json]`:
 
 ```
 📚 Research Wiki Stats
@@ -312,223 +284,68 @@ Problems: 8 (3 open, 4 solved, 1 deferred)
 Last updated: 2026-04-07T10:12:00Z
 ```
 
-### `/research-wiki export_result_package <project_root> --run <run_id>`
+## What the worker records
 
-Pick the run's best iteration out of the wiki and write it as
-`.aris/runs/<run_id>/result-package.json`. This is how a finished run hands its
-outcome to whoever asked for it — a parent run reads the package and never the
-child's wiki or dashboard.
+The worker's `CLAUDE.md` role block says when to write; these are the commands.
 
-```bash
-node "$WIKI_SCRIPT" plan_result_package "$PROJECT_ROOT" \
-    --run "$RUN_ID" \
-    --tester-definition "<frozen tester definition>" --wiki-root "research-wiki/"
-
-node "$WIKI_SCRIPT" submit_result_review "$PROJECT_ROOT" \
-    --run "$RUN_ID" --review-id "<review id>" --reviewer "<worker id>" \
-    --package-sha256 "<package_sha256 from the plan>" --verdict approved
-
-node "$WIKI_SCRIPT" export_result_package "$PROJECT_ROOT" \
-    --run "$RUN_ID" --review-id "<review id>" \
-    --tester-definition "<frozen tester definition>" --wiki-root "research-wiki/"
-```
-
-The wiki is the only place that saw every iteration, which is why the pick
-happens here and not inside a loop: an iteration only knows whether it beat the
-previous one. Ranking is tester metrics first (all declared metrics together —
-an iteration loses only to one at least as good on every metric and strictly
-better on one), then the metric gate's reading for that iteration, then the
-later iteration. An iteration with no tester reading is out of the running as
-soon as any other iteration has one.
-
-The export also cross-checks the duplicated facts and fails instead of choosing
-a side: a page's `gate_metric` must equal the dashboard's history value for the
-same iteration (`GATE_METRIC_MISMATCH`), and every judged page must name the
-supplied tester definition and record exactly the metric names it declares
-(`TESTER_DEFINITION_MISMATCH`, `TESTER_METRIC_SET_MISMATCH`).
-
-The three steps exist because a package cannot be reviewed after it is
-published. `plan_result_package` prints the `package_sha256` the reviewer rules
-on; `export_result_package` refuses to write unless a stored review approves
-that same digest, so an approval cannot be reused for a package that changed
-underneath it. The package is immutable — an identical re-export is a no-op, a
-conflicting one fails with `IMMUTABLE_CONFLICT`. `--wiki-root` defaults to the
-run's own wiki at `.aris/runs/<run_id>/wiki`.
-
-Full stage documentation: [`auto-research-loop`](../auto-research-loop/SKILL.md).
-
-## Integration with Existing Workflows
-
-All paper-reading skills follow the same **integration contract** (see
-[`shared-references/integration-contract.md`](../shared-references/integration-contract.md)):
-
-- single predicate — `[ -d research-wiki/ ]`
-- single canonical helper — `node "$WIKI_SCRIPT" ingest_paper …` after resolving `$WIKI_SCRIPT` via the chain at the top of this SKILL
-- concrete artifact — `papers/<slug>.md` + `log.md` entry
-- backfill — `sync --arxiv-ids …` when the user explicitly requests it
-
-### Hook 1: After `/research-lit` finds papers
-
-```
-# At end of research-lit, after synthesis:
-if research-wiki/ exists:
-    require $WIKI_SCRIPT to resolve (chain at top of this SKILL), otherwise fail
-    for paper in top_relevant_papers (limit 8-12):
-        node "$WIKI_SCRIPT" ingest_paper research-wiki/ \
-            --arxiv-id <id> [--thesis "..."] [--tags "..."]
-        for each explicit relation to existing wiki paper:
-            node "$WIKI_SCRIPT" add_edge research-wiki/ \
-                --from "paper:<slug>" --to "<target>" \
-                --type <extends|contradicts|addresses|...> \
-                --evidence "..."
-    log "research-lit ingested N papers"
-```
-
-Each paper-reading skill ships its own Step "Update Research Wiki (if
-active)" that calls the same helper once per paper it touched. The
-business logic is not duplicated — only the loop over that skill's
-specific result set differs.
-
-### Hook 2: `/idea-creator` reads AND writes wiki
-
-**Before ideation:**
-
-```
-if research-wiki/query_pack.md exists (and < 7 days old):
-    prepend query_pack to landscape context
-    treat failed ideas as banlist
-    treat open problems as search seeds (each is a problem:<slug> node id)
-    still run fresh literature search for last 3-6 months
-```
-
-**After ideation (CRITICAL — without it, `ideas/` stays empty; runs on EVERY
-generation, including a re-run with updated constraints):** the page write is a
-**deterministic helper command**, not a freehand step the model can skip:
-
-```
-for idea in all_generated_ideas (recommended + killed):
-    node "$WIKI_SCRIPT" upsert_idea research-wiki/ \
-      --slug <stable-id> --title <title> --stage <proposed|archived> --outcome pending \
-      --thesis <...> --risks <...> --based-on <paper:slug,...> \
-      --target-problems <problem:root,problem:slug,...>
-    # one call: writes ideas/<slug>.md, wires inspired_by/addresses edges,
-    # rebuilds index + query_pack, logs. Default skip-on-exist (won't clobber an
-    # existing idea enriched by /result-to-claim). `outcome` ∈ {unknown, pending,
-    # negative, mixed, positive} — the experiment verdict is set later by
-    # /result-to-claim, never guessed at ideation.
-    # --based-on takes PAPER ids only (it becomes an inspired_by edge). A bare
-    # slug is read as paper:<slug>. Problems belong in --target-problems; pass
-    # one there and the helper redirects it with a warning. Any other kind is a
-    # hard error. When no paper inspired the idea, leave --based-on out.
-log "idea-creator wrote N ideas to wiki"
-```
-
-### Hook 3: After `/result-to-claim` verdict
-
-```
-# Create/refresh the experiment node FIRST via the deterministic helper (verdict owner
-# → --update-on-exist). This is the experiment BIRTH point. add_edge does NOT verify
-# node existence, so GATE the supports/invalidates edges below on the node having been
-# born (EXP_NODE_OK) — else they'd dangle off a missing exp node.
-EXP_NODE_OK = (node "$WIKI_SCRIPT" add_experiment research-wiki/ --slug <exp_id> \
-  --idea idea:<active_idea> --verdict <yes|partial|no> --confidence <high|medium|low> \
-  --metrics <...> --reasoning <...> --provenance <run dir> \
-  --iteration <outer iteration> --gate-metric <this iteration's gate reading> \
-  --test-result "<test-result.json>" --test-audit "<test-audit.json>" --run-id "<owning run>" \
-  --update-on-exist) succeeded
-  # writes page + idea--tested_by-->exp edge + rebuilds index/query_pack
-  # Formal metrics are copied from audited tester evidence. --iteration / --gate-metric / --tester-* are the
-  # structured fields `export_result_package` ranks on; a page without --iteration is
-  # not a candidate there. Result and audit paths are mandatory for formal metrics.
-
-
-# Record empirical support as EDGES ONLY, and ONLY if EXP_NODE_OK — never overwrite the
-# claim's `status`. A claim's `status` is the PROOF axis (verified / sound-modulo-imports
-# / refuted / unproven / drafted / retracted), owned by /proof-checker (the claim birth
-# point). Experiment support is a SEPARATE axis carried entirely by supports/invalidates
-# edges; writing "supported"/"invalidated" into status is rejected by the validator.
-if EXP_NODE_OK:
-    for claim_id in resolved_claims:
-        if verdict == "yes":
-            add_edge(exp_id, claim_id, "supports")
-        elif verdict == "partial":
-            add_edge(exp_id, claim_id, "supports")   # partial — qualify in --evidence
-        else:
-            add_edge(exp_id, claim_id, "invalidates")
-
-# Update idea outcome
-update_idea(active_idea_id, outcome=verdict)
-
-# If failed, record WHY for future ideation
-if verdict in ("no", "partial"):
-    update_idea failure_notes with specific metrics and reasons
-    # …and file the unresolved cause as a problem entity (Hook 5) — the failure
-    # analysis is only useful to the next round if it is a search seed there.
-    add_problem(slug, parent="problem:root", status="open", origin/evidence=...)
-elif verdict == "yes":
-    for problem_id in idea page's target_problems:
-        add_problem(slug, status="solved", evidence=..., update_on_exist=True)
-
-rebuild query_pack
-log "result-to-claim: exp_id updated, verdict=..."
-```
-
-### Hook 4: Claim birth — from `/proof-checker` (the ONLY birth point)
-
-Wiki **claim nodes are born here.** `/proof-checker` Phase 5.5 calls `add_claim`
-for each top-level theorem/headline after writing `PROOF_AUDIT.json`, stamping an
-honest PROOF-axis `status` and a `provenance` pointer to the audit trace. No other
-skill creates a claim node: `/result-to-claim` (Hook 3) only adds empirical
-`supports`/`invalidates` _edges_ to an already-born claim and never edits its `status`.
+### Ideas, before trying them
 
 ```bash
-# (run by /proof-checker; shown here for the wiki's record)
-node "$WIKI_SCRIPT" add_claim research-wiki/ --slug thm-main-ub \
-  --name "Main upper bound" --status verified \
-  --provenance ".aris/traces/proof-checker/<run>/" --statement "..." --update-on-exist
+node "$WIKI_SCRIPT" upsert_idea research-wiki/ \
+  --slug <stable-id> --title <title> --stage proposed --outcome pending \
+  --thesis <...> --risks <...> --based-on <paper:slug,...> --target-problems <problem:slug,...>
 ```
 
-Claim `status` ∈ {`drafted`, `unproven`, `sound-modulo-imports`, `verified`,
-`refuted`, `retracted`} — the **proof axis only**. Empirical support is a separate
-axis, carried entirely by edges (Hook 3), never written into `status`.
+One call writes the page, wires `inspired_by`/`addresses` edges and rebuilds
+the index and query pack. `--based-on` takes paper ids only; problems go in
+`--target-problems`. Leave `--based-on` out when no paper inspired the idea.
+Default is skip-on-exist, so an idea already updated with its outcome is not
+clobbered. `outcome` ∈ {unknown, pending, negative, mixed, positive}.
 
-### Hook 5: Problem birth — the run's open-problem tree
+### Submissions, after `query` returns a result
 
-A problem is what the run is trying to close. `problem:root` is the distance
-between the reproduced baseline and the Metric Target; every other problem is a
-sub-problem of it, attached by a `child_of` edge that `--parent` writes.
-
-Three writers, one command:
-
-| Writer             | When                                                    |
-| ------------------ | ------------------------------------------------------- |
-| `/aris-setup`      | once, at wiki init — creates `problem:root`             |
-| `/result-to-claim` | on a `partial` / `no` verdict — one per unresolved cause |
-| `/kill-argument`   | per `still_unresolved` attack point                     |
+Each scored submission becomes an experiment page. Copy the score from the
+`query` result; never type a number you did not receive.
 
 ```bash
-node "$WIKI_SCRIPT" add_problem research-wiki/ --slug leaked-eval-split \
-  --title "eval split leaks into training" --parent "problem:root" \
-  --status open --severity high --statement "..." --origin "..." \
-  --evidence "..." --what-would-solve "..." --caveats "..."
+node "$WIKI_SCRIPT" add_experiment research-wiki/ --slug <name> \
+  --submission <submission id> --idea idea:<id> \
+  --verdict <yes|partial|no> --confidence <high|medium|low> \
+  --metrics "<metric>=<score>" --reasoning "<what changed and what the feedback said>"
+```
+
+Then update the idea's outcome with `upsert_idea --update-on-exist`, passing all its fields again. When
+the feedback names a problem type, file it (below) so the next attempt sees it.
+A `cheating` or `unusable` verdict is a result too: record it with
+`--verdict no` and the reason.
+
+### Problems
+
+`problem:root` is the gap between the current deliverable and the target.
+Other problems are its sub-problems, attached by `--parent`:
+
+```bash
+node "$WIKI_SCRIPT" add_problem research-wiki/ --slug long-inputs-truncated \
+  --title "long inputs are truncated" --parent "problem:root" \
+  --status open --severity high --statement "..." --origin "feedback on s003" \
+  --evidence "..." --what-would-solve "..."
 ```
 
 `status` ∈ {`open`, `solved`, `refuted`, `deferred`}. Only `open` problems reach
-query_pack's Open Problems section, which is where `/idea-creator` Phase 0 picks
-up next round's search seeds — so closing a problem is a `--status solved
---update-on-exist` write, never a deletion. The page stays readable, it just
-stops being offered.
+the query pack. Close a problem with `--status solved --update-on-exist`, never
+by deleting it.
 
-## Re-ideation Trigger
+### Claims
 
-After significant wiki updates, suggest re-running `/idea-creator`:
+```bash
+node "$WIKI_SCRIPT" add_claim research-wiki/ --slug thm-main-ub \
+  --name "Main upper bound" --status unproven --statement "..." --update-on-exist
+```
 
-- ≥5 new papers ingested since last ideation
-- ≥3 new failed/partial ideas since last ideation
-- New contradiction discovered in the graph
-- New open problem filed that no existing idea addresses
-
-The system suggests but does not auto-trigger. User decides.
+Claim `status` is the proof axis only: {`drafted`, `unproven`,
+`sound-modulo-imports`, `verified`, `refuted`, `retracted`}. Empirical support
+is carried by `supports`/`invalidates` edges from experiments, never written
+into `status`.
 
 ## Key Rules
 
@@ -537,8 +354,7 @@ The system suggests but does not auto-trigger. User decides.
 - **Failed ideas are the most valuable memory.** Never prune them from query_pack.
 - **query_pack.md is hard-budgeted** at 8000 chars. Deterministic generation, not open-ended summarization.
 - **Append to log.md for every mutation.** The log is the audit trail.
-- **Reviewer independence applies.** When the wiki is read by cross-model review skills, pass file paths only — do not summarize wiki content for the reviewer.
-- **Formal metrics require test and audit.** Run `/tester-test` then `/tester-audit`; submit their paths together. Metrics are copied from the current passing result. Raw evidence stays available for analysis; no tester-specific content filtering is applied.
+- **Scores come from validation.** Experiment metrics are the published `query` result for that submission; local measurements go in `--reasoning`, labelled as local.
 
 ## Acknowledgements
 

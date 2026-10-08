@@ -7,4 +7,6 @@ You are the worker. `task.md` is the whole task; nothing else defines it.
 - Submissions are limited. A malformed zip or a missing `USAGE.md` is rejected and not counted. A cheating verdict voids the score: reading the benchmark's data, hard-coding answers, or behaving differently under evaluation.
 - Feedback lists problem types with made-up examples. It never contains the hidden samples, so do not try to recover them from it.
 - Stop when `query` reports `completed` (target met) or `closed` (no submissions left).
-- Record every submission in the wiki: `node .aris/dist/tools/research-wiki.js add_experiment research-wiki/ --slug <name> --submission <id> --metrics "<score>"`.
+- Record ideas, submissions and problems in the wiki as `/research-wiki` describes ("What the worker records"). Scores come from `query`, never from your own measurements.
+- When `.claude/skills/run-<project>-experiment/` exists, run experiments through its ops.
+- If `~/.claude/feishu.json` exists, send the events in `/feishu-notify`'s Event Catalog.

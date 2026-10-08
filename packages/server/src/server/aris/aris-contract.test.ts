@@ -21,7 +21,7 @@ const ARIS_ROOT = path.join(repoRoot, "packages", "Auto-claude-code-research-in-
 const SKILLS_DIR = path.join(ARIS_ROOT, "skills");
 
 const ALLOWED_ARIS_REPO_FILES = new Set(["aris-update"]);
-const DESCRIPTIVE_DOCS = new Set(["integration-contract.md", "wiki-helper-resolution.md"]);
+const DESCRIPTIVE_DOCS = new Set(["integration-contract.md"]);
 
 const OLD_PYTHON_HELPERS = [
   "research_wiki.py",
