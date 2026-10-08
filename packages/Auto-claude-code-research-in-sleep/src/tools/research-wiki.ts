@@ -14,7 +14,6 @@ import {
   eventLogHead,
   initializeWikiSchema,
   readWikiEvents,
-  readWikiEventsLocked,
   type WikiDelta,
   type WikiEvent,
   type WikiAppendResult,
@@ -40,227 +39,10 @@ import {
   type WikiPageKind,
   type WikiQueryRequest,
 } from "./wiki-projector.js";
-import {
-  assertOuterWikiScope,
-  resolveRunWikiScope,
-  runWikiRoot,
-  validateWikiScope,
-} from "./wiki-scope.js";
-import { requireRunContract, runOwnedPath } from "./run-contract.js";
-import { readAuditedTesterResult, evidenceFile } from "./tester-facility.js";
-import { auditedTesterMetric, testerMetricName } from "./tester-deliverables.js";
-import { exportResultPackage, planResultExport } from "./result-export.js";
-import { saveResultReview } from "./result-review.js";
-import type { ResultStatus } from "./result-package.js";
-import { canonicalStatePath, withStateFileLock, writeStateJsonAtomic } from "./state-file.js";
-import crypto from "node:crypto";
-import type { WikiHead } from "./wiki-projector.js";
 
-export interface RunWikiBinding {
-  wiki_root: string;
-  wiki_head: WikiHead;
-  input_snapshot: { ref: string; sha256: string } | null;
-}
-
-export const WIKI_MODULE_WORKERS = [
-  "idea-discovery",
-  "idea-creator",
-  "experiment-bridge",
-  // The orchestration form of the bridge decides a structure instead of an
-  // experiment, and that decision is made from what the run has learned so far,
-  // so it reads the Wiki on the same terms as the ordinary bridge.
-  "orchestration-bridge",
-  "analyze-results",
-  "result-to-claim",
-  "tester-test",
-  "tester-audit",
-] as const;
-type WikiWorker = (typeof WIKI_MODULE_WORKERS)[number] | "scorer-loop" | "tester";
-
-export interface WikiWorkerManifestInput {
-  project_root: string;
-  run_id: string;
-  worker: WikiWorker;
-  scope?: string;
-  input_snapshot?: { ref: string; sha256: string } | null;
-}
-
-type WikiManifestIdentity = {
-  project_root: string;
-  run_id: string;
-  scope: string;
-  input_snapshot_sha256?: string | null;
-};
-
-export type WikiWorkerManifest = WikiManifestIdentity &
-  ({ role: "tester" | "module" | "scorer" } & RunWikiBinding);
-
-export function wikiWorkerManifestPath(projectRoot: string, runId: string): string {
-  return runOwnedPath(projectRoot, runId, "input-manifest.json");
-}
-
-function assertInputSnapshot(
-  input: Pick<WikiWorkerManifestInput, "project_root" | "run_id" | "input_snapshot">,
-): void {
-  const run = requireRunContract(input.project_root, input.run_id);
-  const snapshot = input.input_snapshot;
-  if (snapshot == null) {
-    if (run.parent_run_id !== null) throw new Error("PARENT_INPUT_SNAPSHOT_REQUIRED");
-    return;
-  }
-  const localRoot = runOwnedPath(input.project_root, input.run_id);
-  const ref = path.resolve(input.project_root, snapshot.ref);
-  const relative = path.relative(canonicalStatePath(localRoot), canonicalStatePath(ref));
-  if (relative.startsWith("..") || path.isAbsolute(relative))
-    throw new Error("INPUT_SNAPSHOT_ESCAPE");
-  const bytes = fs.readFileSync(ref);
-  const hash = crypto.createHash("sha256").update(bytes).digest("hex");
-  if (hash !== snapshot.sha256 || run.output_hashes[relative] !== hash)
-    throw new Error("INPUT_SNAPSHOT_NOT_SEALED");
-  const payload: unknown = JSON.parse(bytes.toString("utf8"));
-  if (
-    !isObject(payload) ||
-    payload.input_snapshot_sha256 !== run.identity_material.input_snapshot_sha256
-  )
-    throw new Error("INPUT_SNAPSHOT_MISMATCH");
-}
-
-/** The dispatch manifest is the only persisted Wiki binding; retries read its old head. */
-export function sealWikiWorkerManifest(input: WikiWorkerManifestInput): WikiWorkerManifest {
-  const allowed = ["project_root", "run_id", "worker", "scope", "input_snapshot"];
-  if (Object.keys(input).some((key) => !allowed.includes(key)))
-    throw new Error("UNKNOWN_WORKER_MANIFEST_FIELD");
-  if (![...WIKI_MODULE_WORKERS, "scorer-loop", "tester"].includes(input.worker))
-    throw new Error("INVALID_WORKER_IDENTITY");
-  const runScope = resolveRunWikiScope(input.project_root, input.run_id);
-  const scope = input.worker === "scorer-loop" ? `${runScope}/scorers/${input.run_id}` : runScope;
-  if (input.scope !== undefined && input.scope !== scope) throw new Error("WIKI_SCOPE_CONFLICT");
-  const file = wikiWorkerManifestPath(input.project_root, input.run_id);
-  return withStateFileLock(file, () => {
-    const existing = fs.existsSync(file) ? readJsonObject(file) : null;
-    const base = {
-      project_root: path.resolve(input.project_root),
-      run_id: input.run_id,
-      scope,
-    };
-    const role =
-      input.worker === "tester" ? "tester" : input.worker === "scorer-loop" ? "scorer" : "module";
-    if (existing && existing.role !== role) throw new Error("IMMUTABLE_WORKER_MANIFEST_CONFLICT");
-    let manifest: WikiWorkerManifest;
-    {
-      assertInputSnapshot(input);
-      const wikiRoot = runWikiRoot(input.project_root, input.run_id);
-      initializeWikiSchema(wikiRoot);
-      const head =
-        (existing?.wiki_head as WikiHead | undefined) ??
-        eventLogHead(readWikiEventsLocked(wikiRoot));
-      manifest = {
-        ...base,
-        input_snapshot_sha256: requireRunContract(input.project_root, input.run_id)
-          .identity_material.input_snapshot_sha256,
-        role,
-        wiki_root: wikiRoot,
-        wiki_head: head,
-        input_snapshot: input.input_snapshot ?? null,
-      };
-      // Validate the complete hash, including the empty-prefix case.
-      const actual = eventLogHead(readWikiEventsLocked(wikiRoot).slice(0, head.seq));
-      if (canonicalJsonSha256(actual, anyJsonSchema) !== canonicalJsonSha256(head, anyJsonSchema))
-        throw new Error("WIKI_HEAD_MISMATCH");
-    }
-    if (
-      existing &&
-      canonicalJsonSha256(existing, anyJsonSchema) !== canonicalJsonSha256(manifest, anyJsonSchema)
-    )
-      throw new Error("IMMUTABLE_WORKER_MANIFEST_CONFLICT");
-    if (!existing) writeStateJsonAtomic(file, manifest);
-    return manifest;
-  });
-}
-
-/** Read and verify a previously sealed binding without advancing its Wiki head. */
-export function readWikiWorkerManifest(projectRoot: string, runId: string): WikiWorkerManifest {
-  const file = wikiWorkerManifestPath(projectRoot, runId);
-  if (!fs.existsSync(file)) throw new Error("WORKER_MANIFEST_REQUIRED");
-  const raw = readJsonObject(file);
-  const run = requireRunContract(projectRoot, runId);
-  const scope = resolveRunWikiScope(projectRoot, runId);
-  if (
-    raw.project_root !== path.resolve(projectRoot) ||
-    raw.run_id !== runId ||
-    raw.scope !== (raw.role === "scorer" ? `${scope}/scorers/${runId}` : scope) ||
-    raw.input_snapshot_sha256 !== run.identity_material.input_snapshot_sha256
-  )
-    throw new Error("IMMUTABLE_WORKER_MANIFEST_CONFLICT");
-  {
-    if (raw.role !== "module" && raw.role !== "scorer" && raw.role !== "tester")
-      throw new Error("INVALID_WORKER_IDENTITY");
-    const binding = raw as unknown as WikiWorkerManifestInput;
-    assertInputSnapshot(binding);
-    if (raw.wiki_root !== runWikiRoot(projectRoot, runId) || !isObject(raw.wiki_head))
-      throw new Error("WIKI_SCOPE_CONFLICT");
-    const head = raw.wiki_head as unknown as WikiHead;
-    if (!Number.isSafeInteger(head.seq) || head.seq < 0) throw new Error("WIKI_HEAD_MISMATCH");
-    const actual = eventLogHead(readWikiEventsLocked(raw.wiki_root).slice(0, head.seq));
-    if (canonicalJsonSha256(actual, anyJsonSchema) !== canonicalJsonSha256(head, anyJsonSchema))
-      throw new Error("WIKI_HEAD_MISMATCH");
-  }
-  return raw as unknown as WikiWorkerManifest;
-}
-
-export interface ResearchWikiQueryRequest extends WikiQueryRequest {
-  manifest_path?: string;
-  consumer?: "research" | "outer-gate" | "stop-gate" | "candidate-selection";
-}
-
-/** Public query entry. The projector is a storage primitive, not a worker API. */
-export function queryWiki(wikiRoot: string, request: ResearchWikiQueryRequest) {
-  if (request.consumer !== undefined && request.consumer !== "research")
-    assertOuterWikiScope(request.scope, request.allow_standalone);
-  let bounded = request;
-  if (request.manifest_path !== undefined) {
-    const raw = readJsonObject(request.manifest_path);
-    const input = raw as unknown as WikiWorkerManifest;
-    if (
-      canonicalStatePath(wikiWorkerManifestPath(input.project_root, input.run_id)) !==
-      canonicalStatePath(request.manifest_path)
-    )
-      throw new Error("WORKER_MANIFEST_PATH_MISMATCH");
-    const expectedScope = resolveRunWikiScope(input.project_root, input.run_id);
-    const scope =
-      input.role === "scorer" ? `${expectedScope}/scorers/${input.run_id}` : expectedScope;
-    if (
-      raw.scope !== scope ||
-      request.scope !== scope ||
-      path.resolve(wikiRoot) !== runWikiRoot(input.project_root, input.run_id) ||
-      raw.wiki_root !== path.resolve(wikiRoot)
-    )
-      throw new Error("WIKI_SCOPE_CONFLICT");
-    if (
-      input.role === "scorer"
-        ? request.requester !== "scorer-loop"
-        : input.role !== "module" ||
-          !(WIKI_MODULE_WORKERS as readonly string[]).includes(request.requester)
-    )
-      throw new Error("WIKI_QUERY_IDENTITY_FORBIDDEN");
-    assertInputSnapshot(input);
-    if (!isObject(raw.wiki_head)) throw new Error("FROZEN_WIKI_HEAD_REQUIRED");
-    const head = raw.wiki_head as unknown as WikiHead;
-    const actual = eventLogHead(readWikiEventsLocked(wikiRoot).slice(0, head.seq));
-    if (
-      canonicalJsonSha256(head, anyJsonSchema) !== canonicalJsonSha256(actual, anyJsonSchema) ||
-      (request.head !== undefined &&
-        canonicalJsonSha256(request.head, anyJsonSchema) !==
-          canonicalJsonSha256(head, anyJsonSchema))
-    )
-      throw new Error("WIKI_HEAD_MISMATCH");
-    if (request.allow_standalone) throw new Error("STANDALONE_OUTER_DECISION_FORBIDDEN");
-    bounded = { ...request, head, allow_standalone: false };
-  } else if (request.scope !== "standalone" || /scorer/i.test(request.requester)) {
-    throw new Error("WORKER_MANIFEST_REQUIRED");
-  }
-  const result = projectQueryWiki(wikiRoot, bounded);
-  return result;
+/** Public query entry. New writes are all standalone, so queries read that scope. */
+export function queryWiki(wikiRoot: string, request: WikiQueryRequest) {
+  return projectQueryWiki(wikiRoot, request);
 }
 
 const ARXIV_API = "https://export.arxiv.org/api/query?id_list={ids}";
@@ -609,7 +391,6 @@ type EvidenceBundleId = string | ((events: readonly WikiEvent[], model: WikiMode
 type OperationBuilder = (model: WikiModel, events: readonly WikiEvent[]) => Operation[] | null;
 
 interface CommitOperationOptions {
-  scope?: string;
   context?: WikiPayloadContext;
   producerKind?: string;
   eventType?: string;
@@ -632,7 +413,7 @@ function commitOperations(
         typeof evidenceBundleId === "function" ? evidenceBundleId(events, model) : evidenceBundleId;
       return {
         producer_kind: options.producerKind ?? "standalone-research-wiki",
-        scope: options.scope ?? "standalone",
+        scope: "standalone",
         subject_id: subjectId,
         evidence_bundle_id: evidence || subjectId,
         ...(options.eventType === undefined ? {} : { event_type: options.eventType }),
@@ -1060,14 +841,8 @@ export function addExperiment(
     reasoning?: string;
     provenance?: string;
     tags?: string[];
-    /** Outer loop iteration this experiment belongs to; the export orders by it. */
-    iteration?: number;
-    /** This iteration's metric-gate reading, cross-checked against the dashboard on export. */
-    gateMetric?: number;
-    gateMetricName?: string;
-    testResult?: { result: string; audit: string };
-    runId?: string;
-    projectRoot?: string;
+    /** Validation service submission whose published result these metrics come from. */
+    submissionId?: string;
     updateOnExist?: boolean;
   },
 ): void {
@@ -1084,42 +859,6 @@ export function addExperiment(
   const confidence = options.confidence ?? "medium";
   if (!EXPERIMENT_VERDICTS.has(verdict)) throw new Error(`unknown experiment verdict '${verdict}'`);
   if (!EXPERIMENT_CONFIDENCE.has(confidence)) throw new Error(`unknown confidence '${confidence}'`);
-  if (
-    (options.metrics?.trim() || options.gateMetric !== undefined) &&
-    options.testResult === undefined
-  )
-    throw new Error("TESTER_AUDIT_REQUIRED: test metrics need a completed test and passing audit");
-  const tested =
-    options.testResult === undefined
-      ? null
-      : readAuditedTesterResult(options.testResult.result, options.testResult.audit, {
-          run_id: options.runId,
-          iteration: options.iteration,
-          experiment_id: slug,
-        });
-  const iteration = options.iteration ?? tested?.result.request.iteration;
-  if (tested?.result.request.deliverables !== undefined) {
-    const projectRoot =
-      options.projectRoot ??
-      (path.basename(root) === "wiki" &&
-      path.basename(path.dirname(root)) === tested.result.request.run_id
-        ? path.resolve(root, "../../../..")
-        : path.dirname(root));
-    readAuditedTesterResult(options.testResult!.result, options.testResult!.audit, {
-      project_root: projectRoot,
-      run_id: tested.result.request.run_id,
-    });
-  }
-  const gateName =
-    tested !== null && options.gateMetric !== undefined
-      ? testerMetricName(tested.result.config, options.gateMetricName ?? null)
-      : undefined;
-  if (
-    tested !== null &&
-    options.gateMetric !== undefined &&
-    options.gateMetric !== auditedTesterMetric(tested.result, gateName!)
-  )
-    throw new Error("TESTER_METRIC_MISMATCH: gate metric differs from audited tester evidence");
   const subject = `exp:${slug}`;
   let existedBefore = false;
   let reused = false;
@@ -1139,37 +878,10 @@ export function addExperiment(
           edge.to.startsWith("claim:"),
       )
     ) {
-      // Reuse keeps the page, so a tester result the page does not already
-      // carry would never reach the Wiki and the export could not rank this
-      // iteration by it. Refuse instead of dropping it.
-      const page = model.pages.experiment.get(slug);
-      if (
-        tested !== null &&
-        (page?.data.tester_definition_sha256 !== tested.result.config_sha256 ||
-          canonicalJsonSha256(page?.data.tester_metrics ?? null) !==
-            canonicalJsonSha256(tested.result.metrics) ||
-          page?.data.test_result_sha256 !== evidenceFile(options.testResult!.result).sha256 ||
-          page?.data.test_audit_sha256 !== evidenceFile(options.testResult!.audit).sha256 ||
-          page?.data.tester_run_id !== tested.result.request.run_id ||
-          page?.data.iteration !== tested.result.request.iteration ||
-          (options.gateMetric !== undefined && page?.data.gate_metric !== options.gateMetric))
-      )
-        throw new Error(
-          `TESTER_RESULT_TOO_LATE: ${subject} already formed claims with different tested evidence; use a new experiment id for a changed artifact or assessment`,
-        );
       reused = true;
       return null;
     }
     if (model.pages.experiment.has(slug) && !options.updateOnExist) {
-      const page = model.pages.experiment.get(slug)!;
-      if (
-        tested !== null &&
-        (page.data.test_result_sha256 !== evidenceFile(options.testResult!.result).sha256 ||
-          page.data.test_audit_sha256 !== evidenceFile(options.testResult!.audit).sha256)
-      )
-        throw new Error(
-          "TESTER_RESULT_BINDING_MISMATCH: existing experiment has different tested evidence",
-        );
       console.log(`Experiment already exists: ${slug}.md (slug dedup) — skipping.`);
       return null;
     }
@@ -1193,35 +905,14 @@ export function addExperiment(
         hardware: options.hardware ?? "",
         duration: options.duration ?? "",
         provenance: options.provenance ?? "",
-        metrics: sanitizeText(
-          tested ? JSON.stringify(tested.result.metrics) : (options.metrics ?? ""),
-          `experiment ${slug}.metrics`,
-          operations,
-        ),
+        metrics: sanitizeText(options.metrics ?? "", `experiment ${slug}.metrics`, operations),
         reasoning: sanitizeText(
           options.reasoning ?? "",
           `experiment ${slug}.reasoning`,
           operations,
         ),
         tags: options.tags ?? [],
-        ...(iteration === undefined ? {} : { iteration }),
-        ...(options.gateMetric === undefined ? {} : { gate_metric: options.gateMetric }),
-        ...(gateName === undefined ? {} : { gate_metric_name: gateName }),
-        ...(tested === null
-          ? {}
-          : {
-              tester_metrics: { ...tested.result.metrics },
-              tester_definition_sha256: tested.result.config_sha256,
-              test_result_path: path.resolve(options.testResult!.result),
-              test_audit_path: path.resolve(options.testResult!.audit),
-              test_result_sha256: evidenceFile(options.testResult!.result).sha256,
-              test_audit_sha256: evidenceFile(options.testResult!.audit).sha256,
-              tester_run_id: tested.result.request.run_id,
-              benchmark: tested.result.config.benchmark.name,
-              dataset_split: tested.result.config.dataset.split,
-              test_sample_count: tested.result.sample_count,
-              tester_audit_status: tested.audit.status,
-            }),
+        ...(options.submissionId ? { submission_id: options.submissionId } : {}),
       },
     });
     if (ideaId)
@@ -1450,44 +1141,12 @@ function appendLog(wikiRoot: string, message: string): void {
 }
 
 export interface SignalWriteOptions {
-  projectRoot?: string;
-  runId?: string;
-  scope?: string;
   evidenceBundleId?: string;
   context?: WikiPayloadContext;
 }
 
-function signalWriteScope(wikiRoot: string, options: SignalWriteOptions): string {
-  if (
-    options.runId === undefined &&
-    options.projectRoot === undefined &&
-    (options.scope === undefined || options.scope === "standalone")
-  )
-    return "standalone";
-  if (options.runId === undefined || options.projectRoot === undefined)
-    throw new Error("WIKI_RUN_BINDING_REQUIRED");
-  const runScope = resolveRunWikiScope(options.projectRoot, options.runId);
-  const manifestPath = wikiWorkerManifestPath(options.projectRoot, options.runId);
-  const manifest = fs.existsSync(manifestPath) ? readJsonObject(manifestPath) : null;
-  const scope = manifest?.role === "scorer" ? `${runScope}/scorers/${options.runId}` : runScope;
-  if (options.scope !== undefined && options.scope !== scope)
-    throw new Error("WIKI_SCOPE_CONFLICT");
-  if (path.resolve(wikiRoot) !== runWikiRoot(options.projectRoot, options.runId))
-    throw new Error("WIKI_SCOPE_CONFLICT");
-  return scope;
-}
-
 function signalHash(signal: WikiSignal): string {
   return canonicalJsonSha256(signal, anyJsonSchema);
-}
-
-function assertSignalProducerScope(signal: WikiSignal, scope: string): void {
-  validateWikiScope(scope);
-  if (scope.startsWith("modules/") && scope !== `modules/${signal.producer.module_id}`) {
-    throw new Error(
-      `SIGNAL_SCOPE_CONFLICT: ${signal.signal_id} producer module '${signal.producer.module_id}' does not match '${scope}'`,
-    );
-  }
 }
 
 function assertSignalEventScope(
@@ -1495,7 +1154,6 @@ function assertSignalEventScope(
   signalId: string,
   scope: string,
 ): void {
-  validateWikiScope(scope);
   const scopes = new Set<string>();
   for (const event of events) {
     for (const operation of parseWikiPayload(event.payload).operations) {
@@ -1552,10 +1210,7 @@ export function publishSignal(
 ): WikiAppendResult | { status: "skipped"; event: null } {
   const root = path.resolve(wikiRoot);
   assertWikiSchemaSupported(root);
-  const scope = signalWriteScope(wikiRoot, options);
-  if (options.runId !== undefined && signal.producer.run_id !== options.runId)
-    throw new Error("SIGNAL_RUN_CONFLICT");
-  assertSignalProducerScope(signal, scope);
+  const scope = "standalone";
   const result = commitOperations(
     root,
     signal.signal_id,
@@ -1566,7 +1221,6 @@ export function publishSignal(
       return [{ op: "publish_signal", signal }];
     },
     {
-      scope,
       context: options.context ?? signalContext(signal),
       producerKind: "research-wiki-signal",
       eventType: signal.supersedes.length > 0 ? "signal_superseded" : "signal_published",
@@ -1592,7 +1246,7 @@ export function retractSignal(
 ): WikiAppendResult | { status: "skipped"; event: null } {
   const root = path.resolve(wikiRoot);
   assertWikiSchemaSupported(root);
-  const scope = signalWriteScope(wikiRoot, options);
+  const scope = "standalone";
   const result = commitOperations(
     root,
     signalId,
@@ -1615,7 +1269,6 @@ export function retractSignal(
       ];
     },
     {
-      scope,
       context: options.context,
       producerKind: "research-wiki-signal",
       eventType: "signal_retracted",
@@ -1637,7 +1290,7 @@ export function supersedeSignal(
 ): WikiAppendResult | { status: "skipped"; event: null } {
   const root = path.resolve(wikiRoot);
   assertWikiSchemaSupported(root);
-  const scope = signalWriteScope(wikiRoot, options);
+  const scope = "standalone";
   const replacementWithLink: WikiSignal = {
     ...replacement,
     supersedes: [...new Set([signalId, ...replacement.supersedes])],
@@ -1645,9 +1298,6 @@ export function supersedeSignal(
   if (replacementWithLink.signal_id === signalId) {
     throw new Error(`SIGNAL_ID_CONFLICT: replacement signal must use a new signal_id`);
   }
-  if (options.runId !== undefined && replacementWithLink.producer.run_id !== options.runId)
-    throw new Error("SIGNAL_RUN_CONFLICT");
-  assertSignalProducerScope(replacementWithLink, scope);
   const result = commitOperations(
     root,
     replacementWithLink.signal_id,
@@ -1688,7 +1338,6 @@ export function supersedeSignal(
       ];
     },
     {
-      scope,
       context: options.context ?? signalContext(replacementWithLink),
       producerKind: "research-wiki-signal",
       eventType: "signal_superseded",
@@ -1745,13 +1394,7 @@ function parseSignalOptions(options: {
   producerModuleId?: string;
   producerModuleVersion?: string;
   producerRunId?: string;
-  workflowId?: string;
-  workflowRevision?: string;
-  inputSnapshotId?: string;
   contractVersions?: string;
-  scorerRevision?: string;
-  scorerTarget?: string;
-  constraints?: string;
   evidenceRefs?: string;
   supersedes?: string;
   summary?: string;
@@ -1782,16 +1425,6 @@ function parseSignalOptions(options: {
   if (!WIKI_SIGNAL_SOURCES.includes(source as WikiSignalSource)) {
     throw new Error(`signal source must be one of ${WIKI_SIGNAL_SOURCES.join(", ")}`);
   }
-  const scorerTarget =
-    options.scorerTarget === undefined
-      ? appliesTo.scorer_target
-      : parseJsonOrString(options.scorerTarget);
-  let constraints = appliesTo.constraints;
-  if (options.constraints !== undefined) {
-    const parsed = JSON.parse(options.constraints) as unknown;
-    if (!Array.isArray(parsed)) throw new Error("--constraints must be a JSON array");
-    constraints = parsed;
-  }
   return {
     ...(fromFile as unknown as WikiSignal),
     signal_id: options.signalId ?? (fromFile.signal_id as string),
@@ -1804,16 +1437,6 @@ function parseSignalOptions(options: {
     },
     applies_to: {
       ...appliesTo,
-      ...(options.workflowId === undefined ? {} : { workflow_id: options.workflowId }),
-      ...(options.workflowRevision === undefined
-        ? {}
-        : { workflow_revision: options.workflowRevision }),
-      ...(options.inputSnapshotId === undefined
-        ? {}
-        : { input_snapshot_id: options.inputSnapshotId }),
-      ...(options.scorerRevision === undefined ? {} : { scorer_revision: options.scorerRevision }),
-      ...(scorerTarget === undefined ? {} : { scorer_target: scorerTarget }),
-      ...(constraints === undefined ? {} : { constraints }),
       contract_versions: list(options.contractVersions, appliesTo.contract_versions),
     },
     evidence_refs: list(options.evidenceRefs, fromFile.evidence_refs),
@@ -1834,28 +1457,19 @@ function signalWriteCommandOptions(command: {
   producerModuleId?: string;
   producerModuleVersion?: string;
   producerRunId?: string;
-  workflowId?: string;
-  workflowRevision?: string;
-  inputSnapshotId?: string;
   contractVersions?: string;
-  scorerRevision?: string;
-  scorerTarget?: string;
-  constraints?: string;
   evidenceRefs?: string;
   supersedes?: string;
   summary?: string;
   observation?: string;
   inference?: string;
   recommendation?: string;
-  scope?: string;
   evidenceBundleId?: string;
 }): WikiSignal {
   return parseSignalOptions(command);
 }
 
 type SignalCliOptions = {
-  projectRoot?: string;
-  runId?: string;
   signalFile?: string;
   signalId?: string;
   kind?: string;
@@ -1863,20 +1477,13 @@ type SignalCliOptions = {
   producerModuleId?: string;
   producerModuleVersion?: string;
   producerRunId?: string;
-  workflowId?: string;
-  workflowRevision?: string;
-  inputSnapshotId?: string;
   contractVersions?: string;
-  scorerRevision?: string;
-  scorerTarget?: string;
-  constraints?: string;
   evidenceRefs?: string;
   supersedes?: string;
   summary?: string;
   observation?: string;
   inference?: string;
   recommendation?: string;
-  scope?: string;
   evidenceBundleId?: string;
 };
 
@@ -1889,22 +1496,13 @@ function addSignalPublishOptions(command: Command): Command {
     .option("--producer-module-id <id>", "Producing module id")
     .option("--producer-module-version <version>", "Producing module version")
     .option("--producer-run-id <id>", "Producing run id")
-    .option("--workflow-id <id>", "Workflow identity")
-    .option("--workflow-revision <id>", "Frozen workflow revision")
-    .option("--input-snapshot-id <id>", "Frozen input snapshot")
     .option("--contract-versions <list>", "Comma-separated contract versions")
-    .option("--scorer-revision <id>", "Frozen scorer revision")
-    .option("--scorer-target <value>", "Frozen scorer target identifier or JSON value")
-    .option("--constraints <json>", "Frozen scorer/workflow constraints as a JSON array")
     .option("--evidence-refs <list>", "Comma-separated evidence references")
     .option("--supersedes <list>", "Comma-separated signal ids being replaced")
     .option("--summary <text>", "Short signal summary")
     .option("--observation <text>", "Observed fact")
     .option("--inference <text>", "Bounded inference")
     .option("--recommendation <text>", "Suggested direction")
-    .option("--project-root <path>", "Contract project root for a scoped write")
-    .option("--run-id <id>", "Owning run for a scoped write")
-    .option("--scope <scope>", "Event scope; defaults to standalone")
     .option("--evidence-bundle-id <id>", "Stable evidence bundle id");
 }
 
@@ -1935,58 +1533,28 @@ function signalContext(signal: WikiSignal): WikiPayloadContext {
 }
 
 type QueryCliOptions = {
-  manifest?: string;
-  consumer?: ResearchWikiQueryRequest["consumer"];
   requestFile?: string;
-  scope?: string;
   purpose?: string;
   requester?: string;
   moduleId?: string;
   moduleVersion?: string;
-  workflowId?: string;
-  workflowRevision?: string;
-  inputSnapshotId?: string;
   contractVersions?: string;
-  scorerRevision?: string;
-  scorerTarget?: string;
-  constraints?: string;
   head?: string;
   headSeq?: string;
   headEventId?: string;
   headEventHash?: string;
-  allowStandalone?: boolean;
   text?: boolean;
 };
 
-function queryRequestFromOptions(options: QueryCliOptions): ResearchWikiQueryRequest {
+function queryRequestFromOptions(options: QueryCliOptions): WikiQueryRequest {
   const fromFile = options.requestFile ? readJsonObject(options.requestFile) : {};
-  const request: ResearchWikiQueryRequest = {
-    ...(fromFile as unknown as ResearchWikiQueryRequest),
-    ...(options.manifest === undefined ? {} : { manifest_path: options.manifest }),
-    ...(options.consumer === undefined ? {} : { consumer: options.consumer }),
-    scope: options.scope ?? (fromFile.scope as string | undefined) ?? "standalone",
+  const request: WikiQueryRequest = {
+    ...(fromFile as unknown as WikiQueryRequest),
+    scope: "standalone",
     purpose: options.purpose ?? (fromFile.purpose as string | undefined) ?? "manual-query",
     requester: options.requester ?? (fromFile.requester as string | undefined) ?? "human",
     ...(options.moduleId === undefined ? {} : { module_id: options.moduleId }),
     ...(options.moduleVersion === undefined ? {} : { module_version: options.moduleVersion }),
-    ...(options.workflowId === undefined ? {} : { workflow_id: options.workflowId }),
-    ...(options.workflowRevision === undefined
-      ? {}
-      : { workflow_revision: options.workflowRevision }),
-    ...(options.inputSnapshotId === undefined
-      ? {}
-      : { input_snapshot_id: options.inputSnapshotId }),
-    ...(options.contractVersions === undefined
-      ? {}
-      : { contract_versions: splitCsv(options.contractVersions) }),
-    ...(options.scorerRevision === undefined ? {} : { scorer_revision: options.scorerRevision }),
-    ...(options.scorerTarget === undefined
-      ? {}
-      : { scorer_target: parseJsonOrString(options.scorerTarget) }),
-    ...(options.constraints === undefined
-      ? {}
-      : { constraints: JSON.parse(options.constraints) as unknown[] }),
-    ...(options.allowStandalone === undefined ? {} : { allow_standalone: options.allowStandalone }),
   };
   if (options.head !== undefined) request.head = options.head;
   else if (
@@ -2014,18 +1582,12 @@ function addSignalRetractionOptions(command: Command): Command {
     .option("--signal-id <id>", "Signal id to retract")
     .option("--reason <text>", "Why the signal is no longer valid", "")
     .option("--evidence-refs <list>", "Comma-separated replacement evidence references")
-    .option("--project-root <path>", "Contract project root for a scoped write")
-    .option("--run-id <id>", "Owning run for a scoped write")
-    .option("--scope <scope>", "Event scope; defaults to standalone")
     .option("--evidence-bundle-id <id>", "Stable evidence bundle id");
 }
 
 function publishSignalCommand(wikiRoot: string, options: SignalCliOptions): void {
   const signal = signalWriteCommandOptions(options);
   const result = publishSignal(path.resolve(wikiRoot), signal, {
-    projectRoot: options.projectRoot,
-    runId: options.runId,
-    scope: options.scope,
     evidenceBundleId: options.evidenceBundleId,
     context: signalContext(signal),
   });
@@ -2038,9 +1600,6 @@ function retractSignalCommand(
 ): void {
   if (!options.signalId) throw new Error("--signal-id is required");
   const result = retractSignal(path.resolve(wikiRoot), options.signalId, {
-    projectRoot: options.projectRoot,
-    runId: options.runId,
-    scope: options.scope,
     evidenceBundleId: options.evidenceBundleId,
     reason: options.reason || undefined,
     evidenceRefs: options.evidenceRefs ? splitCsv(options.evidenceRefs) : undefined,
@@ -2082,9 +1641,6 @@ function registerSignalCommands(parent: Command): void {
   supersede.action((wikiRoot: string, options: SignalCliOptions & { previousSignalId: string }) => {
     const replacement = signalWriteCommandOptions(options);
     const result = supersedeSignal(path.resolve(wikiRoot), options.previousSignalId, replacement, {
-      projectRoot: options.projectRoot,
-      runId: options.runId,
-      scope: options.scope,
       evidenceBundleId: options.evidenceBundleId,
       context: signalContext(replacement),
     });
@@ -2126,9 +1682,6 @@ function registerSignalCommands(parent: Command): void {
         options.previousSignalId,
         replacement,
         {
-          projectRoot: options.projectRoot,
-          runId: options.runId,
-          scope: options.scope,
           evidenceBundleId: options.evidenceBundleId,
           context: signalContext(replacement),
         },
@@ -2140,29 +1693,16 @@ function registerSignalCommands(parent: Command): void {
 
 function addQueryOptions(command: Command): Command {
   return command
-    .option("--manifest <path>", "Sealed worker input manifest")
-    .option("--consumer <kind>", "research, outer-gate, stop-gate, or candidate-selection")
     .option("--request-file <path>", "JSON file containing the complete query request")
-    .option("--scope <scope>", "Visible event scope; defaults to standalone")
     .option("--purpose <text>", "Why the caller needs this query")
     .option("--requester <id>", "Requesting worker or user")
     .option("--module-id <id>", "Requesting module identity")
     .option("--module-version <version>", "Frozen module version")
-    .option("--workflow-id <id>", "Workflow identity")
-    .option("--workflow-revision <id>", "Frozen workflow revision")
-    .option("--input-snapshot-id <id>", "Frozen input snapshot")
     .option("--contract-versions <list>", "Comma-separated contract versions")
-    .option("--scorer-revision <id>", "Frozen scorer revision")
-    .option("--scorer-target <value>", "Frozen scorer target identifier or JSON value")
-    .option("--constraints <json>", "Frozen scorer/workflow constraints as a JSON array")
     .option("--head <event-id>", "Freeze the query at this event id")
     .option("--head-seq <n>", "Freeze the query at this event sequence")
     .option("--head-event-id <event-id>", "Expected event id at --head-seq")
     .option("--head-event-hash <sha256>", "Expected event hash at --head-seq")
-    .option(
-      "--allow-standalone",
-      "Explicitly include standalone events in a scoped query; never enables decisions",
-    )
     .option("--text", "Print only the deterministic query pack");
 }
 
@@ -2179,17 +1719,6 @@ async function syncPapers(root: string, ids: string[], updateOnExist: boolean): 
 }
 
 const program = createCli("research-wiki", "ARIS Research Wiki utilities");
-
-program
-  .command("seal-worker-manifest")
-  .requiredOption("--input <path>", "Dispatch assignment JSON")
-  .action((options: { input: string }) => {
-    console.log(
-      JSON.stringify(
-        sealWikiWorkerManifest(readJsonObject(options.input) as unknown as WikiWorkerManifestInput),
-      ),
-    );
-  });
 
 const queryCommand = addQueryOptions(
   program
@@ -2493,13 +2022,11 @@ program
   .option("--reasoning <text>", "Reasoning", "")
   .option("--provenance <path>", "Run directory", "")
   .option("--tags <list>", "Comma-separated tag list", "")
-  .option("--iteration <n>", "Outer loop iteration this experiment belongs to", "")
-  .option("--gate-metric <value>", "This iteration's metric-gate reading", "")
-  .option("--gate-metric-name <name>", "Declared tester metric used by the stop gate")
-  .option("--project <path>", "Owning project root for a custom Wiki location")
-  .option("--test-result <path>", "Completed full tester result", "")
-  .option("--test-audit <path>", "Passing tester audit bound to this result", "")
-  .option("--run-id <id>", "Run owning the tested experiment", "")
+  .option(
+    "--submission <id>",
+    "Validation submission whose published result the metrics come from",
+    "",
+  )
   .option("--update-on-exist", "Overwrite an existing experiment", false)
   .action(
     (
@@ -2517,20 +2044,10 @@ program
         reasoning: string;
         provenance: string;
         tags: string;
-        iteration: string;
-        gateMetric: string;
-        gateMetricName?: string;
-        testResult: string;
-        testAudit: string;
-        runId: string;
-        project?: string;
+        submission: string;
         updateOnExist: boolean;
       },
     ) => {
-      // A receipt without its key cannot be verified, and a key without a
-      // receipt has nothing to verify, so neither half is accepted alone.
-      if (Boolean(options.testResult) !== Boolean(options.testAudit))
-        throw new Error("--test-result and --test-audit must be given together");
       addExperiment(wikiRoot, options.slug, {
         title: options.title,
         idea: options.idea,
@@ -2543,14 +2060,7 @@ program
         reasoning: options.reasoning,
         provenance: options.provenance,
         tags: splitCsv(options.tags),
-        iteration: optionalCliInteger(options.iteration, "--iteration", 1),
-        gateMetric: optionalCliNumber(options.gateMetric, "--gate-metric"),
-        gateMetricName: options.gateMetricName,
-        projectRoot: options.project,
-        runId: options.runId || undefined,
-        testResult: options.testResult
-          ? { result: options.testResult, audit: options.testAudit }
-          : undefined,
+        submissionId: options.submission || undefined,
         updateOnExist: options.updateOnExist,
       });
     },
@@ -2594,145 +2104,6 @@ program
       }
       console.log(`sync: ${unique.length} unique arxiv id(s)`);
       await syncPapers(wikiRoot, unique, options.updateOnExist);
-    },
-  );
-
-// Two commands, because a package cannot be reviewed after it is published and
-// cannot be published before it is reviewed. `plan_result_package` shows the
-// reviewer exactly what would be written, including the digest it has to sign;
-// `export_result_package` writes it and refuses unless a stored approval names
-// that same digest.
-program
-  .command("plan_result_package")
-  .description("Show the result package this run would publish, without publishing it")
-  .argument("<project_root>")
-  .requiredOption("--run <run_id>", "Run whose Wiki and dashboard are read")
-  .option("--wiki-root <path>", "Wiki directory; defaults to the run's own Wiki", "")
-  .option("--tester-definition <path>", "Frozen tester definition naming the declared metrics", "")
-  .option("--summary <text>", "Package summary; a default one is written when omitted", "")
-  .option(
-    "--status <status>",
-    "succeeded | failed | not_executable | infra_unavailable",
-    "succeeded",
-  )
-  .action(
-    (
-      projectRoot: string,
-      options: {
-        run: string;
-        wikiRoot: string;
-        testerDefinition: string;
-        summary: string;
-        status: string;
-      },
-    ) => {
-      const plan = planResultExport({
-        project_root: projectRoot,
-        run_id: options.run,
-        wiki_root: options.wikiRoot || undefined,
-        tester_definition_path: options.testerDefinition || undefined,
-        summary: options.summary || undefined,
-        status: options.status as ResultStatus,
-      });
-      console.log(
-        JSON.stringify(
-          {
-            winner: plan.winner,
-            ranked_iterations: plan.ranked.map((candidate) => candidate.iteration),
-            package_sha256: plan.candidate.package_sha256,
-            candidate: plan.candidate,
-          },
-          null,
-          2,
-        ),
-      );
-    },
-  );
-
-program
-  .command("submit_result_review")
-  .description("Record a reviewer's verdict on a planned result package")
-  .argument("<project_root>")
-  .requiredOption("--run <run_id>", "Run whose package was reviewed")
-  .requiredOption("--review-id <id>", "Names this acceptance")
-  .requiredOption("--reviewer <worker_id>", "Reviewer; never the run being reviewed")
-  .requiredOption("--package-sha256 <hex>", "Digest from plan_result_package")
-  .requiredOption("--verdict <verdict>", "approved | rejected")
-  .option("--evidence <ref...>", "What the reviewer read", [])
-  .option("--reason <code...>", "Coarse reason codes", [])
-  .action(
-    (
-      projectRoot: string,
-      options: {
-        run: string;
-        reviewId: string;
-        reviewer: string;
-        packageSha256: string;
-        verdict: string;
-        evidence: string[];
-        reason: string[];
-      },
-    ) => {
-      const review = saveResultReview(projectRoot, {
-        schema_version: 1,
-        review_id: options.reviewId,
-        run_id: options.run,
-        reviewer_worker_id: options.reviewer,
-        package_sha256: options.packageSha256,
-        verdict: options.verdict,
-        evidence_refs: options.evidence,
-        reason_codes: options.reason,
-      });
-      console.log(JSON.stringify(review, null, 2));
-    },
-  );
-
-program
-  .command("export_result_package")
-  .description("Pick this run's best iteration from the Wiki and write its result package")
-  .argument("<project_root>")
-  .requiredOption("--run <run_id>", "Run whose Wiki and dashboard are read")
-  .requiredOption("--review-id <id>", "The stored acceptance that approved this package")
-  .option("--wiki-root <path>", "Wiki directory; defaults to the run's own Wiki", "")
-  .option("--tester-definition <path>", "Frozen tester definition naming the declared metrics", "")
-  .option("--summary <text>", "Package summary; a default one is written when omitted", "")
-  .option(
-    "--status <status>",
-    "succeeded | failed | not_executable | infra_unavailable",
-    "succeeded",
-  )
-  .action(
-    (
-      projectRoot: string,
-      options: {
-        run: string;
-        reviewId: string;
-        wikiRoot: string;
-        testerDefinition: string;
-        summary: string;
-        status: string;
-      },
-    ) => {
-      const exported = exportResultPackage({
-        project_root: projectRoot,
-        run_id: options.run,
-        wiki_root: options.wikiRoot || undefined,
-        tester_definition_path: options.testerDefinition || undefined,
-        summary: options.summary || undefined,
-        status: options.status as ResultStatus,
-        review: { review_id: options.reviewId },
-      });
-      console.log(
-        JSON.stringify(
-          {
-            winner: exported.winner,
-            ranked_iterations: exported.ranked.map((candidate) => candidate.iteration),
-            result_package: exported.result_package,
-          },
-          null,
-          2,
-        ),
-      );
     },
   );
 

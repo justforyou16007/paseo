@@ -9,11 +9,8 @@
     "clean": "node ../../scripts/clean-package-dist.mjs && node -e \"require('node:fs').rmSync('tsconfig.tsbuildinfo', { force: true })\"",
     "watch": "tsc -p tsconfig.json --watch --preserveWatchOutput",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && ARIS_TEST_DIST=1 npx tsx tests/test_run_state.ts",
-    "test:source": "npx tsx tests/test_run_state.ts",
-    "test:setup": "npx tsx tests/test_project_setup.ts && npx tsx tests/test_setup_review.ts",
-    "test:tester": "npx tsx tests/test_tester_facility.ts && npx tsx tests/test_tester_delivery_flow.ts && python3 tests/test_lm_eval_adapter.py",
-    "test:arl": "npx tsx tests/test_a2_setup.ts && npx tsx tests/test_result_export.ts && npx tsx tests/test_orchestration_round.ts && npx tsx tests/test_a2_skills.ts"
+    "test": "npx tsx tests/test_a0.ts && npx tsx tests/test_wiki_query.ts && npx tsx tests/test_tester_facility.ts && npx tsx tests/test_setup.ts",
+    "test:python": "python3 -m unittest discover -s tests -p \"test_*.py\""
   },
   "dependencies": {
     "commander": "^15.0.0"

@@ -23,45 +23,26 @@
     }
   ],
   "execution": {
-    "kind": "local",
     "cwd": "/absolute/path/to/evaluation",
     "env": {}
   },
   "setup": [
     {
-      "argv": [
-        "bash",
-        "scripts/setup-benchmark.sh"
-      ],
+      "argv": ["python", "evaluate.py", "setup"],
       "timeout_ms": 3600000
     }
   ],
   "healthcheck": {
-    "argv": [
-      "bash",
-      "scripts/check-benchmark.sh"
-    ],
+    "argv": ["python", "evaluate.py", "check"],
     "timeout_ms": 60000
   },
   "smoke": {
-    "argv": [
-      "bash",
-      "scripts/evaluate.sh",
-      "--smoke"
-    ],
+    "argv": ["python", "evaluate.py", "run"],
     "timeout_ms": 300000
   },
   "test": {
-    "argv": [
-      "bash",
-      "scripts/evaluate.sh"
-    ],
+    "argv": ["python", "evaluate.py", "run"],
     "timeout_ms": 86400000
   },
-  "evidence_files": [
-    "scripts/evaluate.sh",
-    "scripts/check-benchmark.sh",
-    "evaluation-config.json",
-    "data-manifest.json"
-  ]
+  "evidence_files": ["evaluate.py", "evaluation-config.json", "data-manifest.json"]
 }

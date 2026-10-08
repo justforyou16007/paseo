@@ -1,13 +1,9 @@
+/** Frozen benchmark facility: setup once, then run deterministic, re-checkable test jobs. */
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { canonicalJsonSha256 } from "./canonical-json.js";
-import {
-  validateTesterDeliverables,
-  verifyTesterDeliverables,
-  type TesterDeliverables,
-} from "./tester-deliverables.js";
 import {
   acquireStateFileLock,
   releaseStateFileLock,
@@ -23,7 +19,7 @@ import {
   requireInteger,
   requireString,
   failA1,
-} from "./workflow-spec.js";
+} from "./validate.js";
 
 export interface TesterCommand {
   argv: string[];
@@ -42,7 +38,7 @@ export interface TesterFacilityConfig {
     direction: "higher_better" | "lower_better";
     aggregation: "mean" | "sum" | "external";
   }>;
-  execution: { kind: "local" | "ssh"; cwd: string; host?: string; env: Record<string, string> };
+  execution: { cwd: string; env: Record<string, string> };
   setup: TesterCommand[];
   healthcheck: TesterCommand;
   smoke: TesterCommand;
@@ -63,11 +59,10 @@ export interface TesterSetupReceipt {
 export interface TesterTestRequest {
   schema_version: 1;
   test_id: string;
-  run_id: string;
-  iteration: number;
-  experiment_id: string;
+  /** What is under test: a file or directory plus the digest the runner must echo back. */
   artifact: { ref: string; sha256: string };
-  deliverables?: TesterDeliverables;
+  /** Directory the runner loads to drive the artifact; written by whoever prepares the test. */
+  adapter_dir?: string;
   mode: "full" | "smoke";
 }
 export interface TesterTestResult {
@@ -81,20 +76,6 @@ export interface TesterTestResult {
   metrics: Record<string, number>;
   sample_count: number;
   failed_samples: number;
-  evidence: TesterEvidence[];
-  completed_at: string;
-}
-export interface TesterAuditReview {
-  schema_version: 1;
-  result_sha256: string;
-  reviewer_id: string;
-  status: "pass" | "warn" | "fail";
-  checks: { protocol: boolean; scoring: boolean; coverage: boolean; comparability: boolean };
-  findings: string[];
-}
-export interface TesterAuditReceipt extends TesterAuditReview {
-  test_id: string;
-  config_sha256: string;
   evidence: TesterEvidence[];
   completed_at: string;
 }
@@ -127,10 +108,7 @@ function command(value: unknown, label: string): TesterCommand {
 }
 export function validateTesterFacilityConfig(value: unknown): TesterFacilityConfig {
   if (!isRecord(value) || value.schema_version !== 1 || value.mode !== "tester_facility")
-    failA1(
-      "TESTER_SETUP_MIGRATION_REQUIRED",
-      "run /aris-setup to create a tester facility configuration",
-    );
+    failA1("INVALID_TESTER_FACILITY", "run /aris-setup to create a tester facility configuration");
   assertNoUnknownFields(
     value,
     [
@@ -158,9 +136,7 @@ export function validateTesterFacilityConfig(value: unknown): TesterFacilityConf
     e = value.execution as Record<string, unknown>;
   assertNoUnknownFields(b, ["name", "source", "revision"], "benchmark");
   assertNoUnknownFields(d, ["name", "revision", "split", "expected_samples"], "dataset");
-  assertNoUnknownFields(e, ["kind", "cwd", "host", "env"], "execution");
-  if (e.kind !== "local" && e.kind !== "ssh")
-    failA1("INVALID_TESTER_FACILITY", "execution.kind must be local or ssh");
+  assertNoUnknownFields(e, ["cwd", "env"], "execution");
   const cwd = requireString(e.cwd, "execution.cwd");
   if (!path.isAbsolute(cwd)) failA1("INVALID_TESTER_FACILITY", "execution.cwd must be absolute");
   const env: Record<string, string> = {};
@@ -196,9 +172,6 @@ export function validateTesterFacilityConfig(value: unknown): TesterFacilityConf
       "INVALID_TESTER_FACILITY",
       "pin the runner, configuration and data manifest in evidence_files",
     );
-  const host = e.kind === "ssh" ? requireString(e.host, "execution.host") : undefined;
-  if (host !== undefined && (!/^[A-Za-z0-9_.@-]+$/.test(host) || host.startsWith("-")))
-    failA1("INVALID_TESTER_FACILITY", "invalid SSH host");
   return {
     schema_version: 1,
     mode: "tester_facility",
@@ -217,7 +190,7 @@ export function validateTesterFacilityConfig(value: unknown): TesterFacilityConf
       expected_samples: requireInteger(d.expected_samples, "dataset.expected_samples", 1),
     },
     metrics,
-    execution: { kind: e.kind, cwd, ...(host ? { host } : {}), env },
+    execution: { cwd, env },
     setup: value.setup.map((v, i) => command(v, `setup[${i}]`)),
     healthcheck: command(value.healthcheck, "healthcheck"),
     smoke: command(value.smoke, "smoke"),
@@ -249,8 +222,14 @@ function verifyEvidence(evidence: TesterEvidence[]): void {
     if (evidenceFile(item.path).sha256 !== assertSha256(item.sha256, "evidence.sha256"))
       failA1("TESTER_EVIDENCE_CHANGED", item.path);
 }
-function quote(value: string): string {
-  return "'" + value.replace(/'/g, "'\\''") + "'";
+
+/** Kill the command and everything it started; Windows has no process groups to signal. */
+function killTree(pid: number, signal: "SIGTERM" | "SIGKILL"): void {
+  try {
+    if (process.platform === "win32")
+      spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore" });
+    else process.kill(-pid, signal);
+  } catch {}
 }
 async function execute(
   config: TesterFacilityConfig,
@@ -260,41 +239,24 @@ async function execute(
 ): Promise<void> {
   fs.mkdirSync(path.dirname(logPath), { recursive: true });
   const log = fs.openSync(logPath, "a");
-  const remote = config.execution.kind === "ssh";
-  const vars = { ...config.execution.env, ...env };
-  const argv = remote
-    ? [
-        "-o",
-        "BatchMode=yes",
-        "--",
-        config.execution.host!,
-        `cd ${quote(config.execution.cwd)} && exec env ${Object.entries(vars)
-          .map(([k, v]) => quote(`${k}=${v}`))
-          .join(" ")} ${cmd.argv.map(quote).join(" ")}`,
-      ]
-    : cmd.argv.slice(1);
-  const executable = remote ? "ssh" : cmd.argv[0]!;
+  const [executable, ...argv] = cmd.argv as [string, ...string[]];
   try {
     await new Promise<void>((resolve, reject) => {
       const child = spawn(executable, argv, {
-        cwd: remote ? undefined : config.execution.cwd,
-        env: { ...process.env, ...vars },
+        cwd: config.execution.cwd,
+        env: { ...process.env, ...config.execution.env, ...env },
         stdio: ["ignore", log, log],
-        detached: true,
+        // A detached POSIX child leads its own process group, so killTree reaches its children.
+        detached: process.platform !== "win32",
+        windowsHide: true,
       });
       let timedOut = false;
       const timer = setTimeout(() => {
         timedOut = true;
-        try {
-          process.kill(-child.pid!, "SIGTERM");
-        } catch {}
+        killTree(child.pid!, "SIGTERM");
       }, cmd.timeout_ms);
       const killTimer = setTimeout(() => {
-        if (timedOut) {
-          try {
-            process.kill(-child.pid!, "SIGKILL");
-          } catch {}
-        }
+        if (timedOut) killTree(child.pid!, "SIGKILL");
       }, cmd.timeout_ms + 5000);
       child.on("error", (err) => {
         clearTimeout(timer);
@@ -313,36 +275,6 @@ async function execute(
     });
   } finally {
     fs.closeSync(log);
-  }
-}
-async function fetchRemote(
-  config: TesterFacilityConfig,
-  remotePath: string,
-  localPath: string,
-): Promise<void> {
-  if (config.execution.kind === "local") return;
-  fs.mkdirSync(path.dirname(localPath), { recursive: true });
-  const fd = fs.openSync(localPath, "w");
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn(
-        "ssh",
-        ["-o", "BatchMode=yes", "--", config.execution.host!, `cat -- ${quote(remotePath)}`],
-        { stdio: ["ignore", fd, "pipe"] },
-      );
-      const timer = setTimeout(() => child.kill("SIGKILL"), 60000);
-      child.stderr?.resume();
-      child.on("error", (e) => {
-        clearTimeout(timer);
-        reject(e);
-      });
-      child.on("close", (code) => {
-        clearTimeout(timer);
-        code === 0 ? resolve() : reject(new Error(`could not fetch ${remotePath}`));
-      });
-    });
-  } finally {
-    fs.closeSync(fd);
   }
 }
 export function assertTesterSetupReady(configPath: string): TesterSetupReceipt {
@@ -380,7 +312,7 @@ async function setupTesterFacilityUnlocked(
   const config = validateTesterFacilityConfig(value),
     file = testerConfigPath(root),
     log = `${file}.setup.log`;
-  if (config.execution.kind === "local") fs.mkdirSync(config.execution.cwd, { recursive: true });
+  fs.mkdirSync(config.execution.cwd, { recursive: true });
   // A same-version setup is reusable only while all installed evidence still matches.
   if (fs.existsSync(file) && fs.existsSync(`${file}.setup.json`)) {
     try {
@@ -389,7 +321,6 @@ async function setupTesterFacilityUnlocked(
         testerFacilityConfigSha256(config)
       ) {
         assertTesterSetupReady(file);
-        removeLegacyTesterGuard(root);
         return config;
       }
     } catch {}
@@ -398,16 +329,9 @@ async function setupTesterFacilityUnlocked(
   for (const cmd of config.setup) await execute(config, cmd, {}, log);
   await execute(config, config.healthcheck, {}, log);
   await execute(config, config.smoke, { ARIS_TEST_MODE: "smoke" }, log);
-  const evidence: TesterEvidence[] = [];
-  for (const [i, source] of config.evidence_files.entries()) {
-    const remote = path.resolve(config.execution.cwd, source);
-    const local =
-      config.execution.kind === "local"
-        ? remote
-        : path.join(path.dirname(file), "tester-setup-evidence", `${i}-${path.basename(source)}`);
-    await fetchRemote(config, remote, local);
-    evidence.push(evidenceFile(local));
-  }
+  const evidence = config.evidence_files.map((source) =>
+    evidenceFile(path.resolve(config.execution.cwd, source)),
+  );
   writeStateJsonAtomic(file, config);
   writeStateJsonAtomic(`${file}.setup.json`, {
     schema_version: 1,
@@ -416,29 +340,7 @@ async function setupTesterFacilityUnlocked(
     evidence,
     completed_at: new Date().toISOString(),
   } satisfies TesterSetupReceipt);
-  removeLegacyTesterGuard(root);
   return config;
-}
-export function removeLegacyTesterGuard(root: string): void {
-  const settingsPath = path.join(root, ".claude", "settings.json");
-  if (fs.existsSync(settingsPath)) {
-    const settings = readStateFile<Record<string, unknown>>(settingsPath);
-    if (isRecord(settings.hooks) && Array.isArray(settings.hooks.PreToolUse)) {
-      settings.hooks.PreToolUse = settings.hooks.PreToolUse.flatMap((entry: unknown) => {
-        if (!isRecord(entry) || !Array.isArray(entry.hooks)) return [entry];
-        const hooks = entry.hooks.filter(
-          (h: unknown) =>
-            !isRecord(h) ||
-            typeof h.command !== "string" ||
-            !/(?:^|[\s/\"'])search-guard\.(?:js|ts)(?:[\s\"']|$)/.test(h.command),
-        );
-        return hooks.length ? [{ ...entry, hooks }] : [];
-      });
-      writeStateJsonAtomic(settingsPath, settings);
-    }
-  }
-  for (const file of ["search-policy.json", "search-audit.jsonl", "search-guard.js"])
-    fs.rmSync(path.join(root, ".aris", file), { force: true });
 }
 export function validateTesterTestRequest(value: unknown): TesterTestRequest {
   if (
@@ -450,49 +352,40 @@ export function validateTesterTestRequest(value: unknown): TesterTestRequest {
     failA1("INVALID_TESTER_REQUEST", "invalid test request");
   assertNoUnknownFields(
     value,
-    [
-      "schema_version",
-      "test_id",
-      "run_id",
-      "iteration",
-      "experiment_id",
-      "artifact",
-      "deliverables",
-      "mode",
-    ],
+    ["schema_version", "test_id", "artifact", "adapter_dir", "mode"],
     "request",
   );
   assertNoUnknownFields(value.artifact, ["ref", "sha256"], "artifact");
+  const testId = assertIdentifier(value.test_id, "test_id");
+  // Identifiers used as filesystem components must also forbid slashes and traversal.
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(testId))
+    failA1("INVALID_TESTER_REQUEST", "test_id must be a filename-safe identifier");
+  let adapterDir: string | undefined;
+  if (value.adapter_dir !== undefined) {
+    adapterDir = requireString(value.adapter_dir, "adapter_dir");
+    if (!path.isAbsolute(adapterDir))
+      failA1("INVALID_TESTER_REQUEST", "adapter_dir must be absolute");
+  }
   return {
     schema_version: 1,
-    test_id: assertIdentifier(value.test_id, "test_id"),
-    run_id: assertIdentifier(value.run_id, "run_id"),
-    iteration: requireInteger(value.iteration, "iteration", 1),
-    experiment_id: assertIdentifier(value.experiment_id, "experiment_id"),
+    test_id: testId,
     artifact: {
       ref: requireString(value.artifact.ref, "artifact.ref"),
       sha256: assertSha256(value.artifact.sha256, "artifact.sha256"),
     },
-    ...(value.deliverables === undefined
-      ? {}
-      : { deliverables: validateTesterDeliverables(value.deliverables) }),
+    ...(adapterDir === undefined ? {} : { adapter_dir: adapterDir }),
     mode: value.mode as "full" | "smoke",
   };
 }
-export function testerJobDirectory(root: string, id: string): string {
-  // Identifiers used as filesystem components must also forbid slashes and traversal.
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id))
-    failA1("INVALID_TESTER_REQUEST", "test_id must be a filename-safe identifier");
-  return path.join(path.resolve(root), ".aris", "tester", "tests", id);
-}
-export function prepareTesterJob(root: string, configPath: string, value: unknown): TesterJob {
+const jobFile = (dir: string): string => path.join(dir, "job.json");
+export const testerResultPath = (dir: string): string => path.join(dir, "test-result.json");
+
+/** Bind a request to the current frozen setup inside `dir`; replaying the same request reuses it. */
+export function prepareTesterJob(dir: string, configPath: string, value: unknown): TesterJob {
   const config = readTesterFacilityConfig(configPath);
   assertTesterSetupReady(configPath);
   const request = validateTesterTestRequest(value),
-    dir = testerJobDirectory(root, request.test_id),
-    file = path.join(dir, "job.json");
-  if (request.deliverables !== undefined)
-    verifyTesterDeliverables(root, request.run_id, request.artifact, request.deliverables);
+    file = jobFile(dir);
   return withStateFileLock(file, () => {
     if (fs.existsSync(file)) {
       const job = readStateFile<TesterJob>(file);
@@ -500,7 +393,7 @@ export function prepareTesterJob(root: string, configPath: string, value: unknow
         job.request_sha256 !== canonicalJsonSha256(request) ||
         job.config_sha256 !== testerFacilityConfigSha256(config)
       )
-        failA1("TESTER_JOB_CONFLICT", "test_id already binds another request or configuration");
+        failA1("TESTER_JOB_CONFLICT", "this test already binds another request or configuration");
       return job;
     }
     const job: TesterJob = {
@@ -519,8 +412,8 @@ export function prepareTesterJob(root: string, configPath: string, value: unknow
     return job;
   });
 }
-export function readTesterJob(root: string, id: string): TesterJob {
-  const file = path.join(testerJobDirectory(root, id), "job.json");
+export function readTesterJob(dir: string): TesterJob {
+  const file = jobFile(dir);
   return withStateFileLock(file, () => {
     const job = readStateFile<TesterJob>(file);
     if (job.status === "running" && job.pid !== null) {
@@ -529,7 +422,7 @@ export function readTesterJob(root: string, id: string): TesterJob {
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code !== "EPERM") {
           job.status = "failed";
-          job.error = "worker interrupted; resume this test to retry";
+          job.error = "test process interrupted; run it again to retry";
           job.pid = null;
           writeStateJsonAtomic(file, job);
         }
@@ -538,14 +431,13 @@ export function readTesterJob(root: string, id: string): TesterJob {
     return job;
   });
 }
-export async function executeTesterJob(root: string, id: string): Promise<TesterTestResult> {
-  const dir = testerJobDirectory(root, id),
-    file = path.join(dir, "job.json");
+export async function executeTesterJob(dir: string): Promise<TesterTestResult> {
+  const file = jobFile(dir);
   const job = withStateFileLock(file, () => {
-    const j = readTesterJobUnlocked(file);
+    const j = readStateFile<TesterJob>(file);
     if (j.status === "completed") return j;
     if (j.status === "running")
-      failA1("TESTER_JOB_RUNNING", "query the running job instead of starting another worker");
+      failA1("TESTER_JOB_RUNNING", "query the running job instead of starting another");
     assertTesterSetupReady(j.config_path);
     if (testerFacilityConfigSha256(readTesterFacilityConfig(j.config_path)) !== j.config_sha256)
       failA1("TESTER_CONFIG_CHANGED", "setup changed; create a new test");
@@ -556,81 +448,50 @@ export async function executeTesterJob(root: string, id: string): Promise<Tester
     writeStateJsonAtomic(file, j);
     return j;
   });
-  if (job.status === "completed")
-    return readStateFile<TesterTestResult>(path.join(dir, "test-result.json"));
+  if (job.status === "completed") return readStateFile<TesterTestResult>(testerResultPath(dir));
   try {
     const setup = assertTesterSetupReady(job.config_path);
-    const verifyInstalled = async () => {
-      for (const [i, source] of job.config.evidence_files.entries()) {
-        const remote = path.resolve(job.config.execution.cwd, source);
-        const local =
-          job.config.execution.kind === "local"
-            ? remote
-            : path.join(dir, "installed-evidence", `${i}-${path.basename(source)}`);
-        await fetchRemote(job.config, remote, local);
-        if (evidenceFile(local).sha256 !== setup.evidence[i]!.sha256)
+    const verifyInstalled = () => {
+      for (const [i, source] of job.config.evidence_files.entries())
+        if (
+          evidenceFile(path.resolve(job.config.execution.cwd, source)).sha256 !==
+          setup.evidence[i]!.sha256
+        )
           failA1("TESTER_CONFIG_CHANGED", `installed benchmark evidence changed: ${source}`);
-      }
     };
-    await verifyInstalled();
-    if (job.request.deliverables !== undefined)
-      verifyTesterDeliverables(
-        root,
-        job.request.run_id,
-        job.request.artifact,
-        job.request.deliverables,
-      );
+    verifyInstalled();
+    const { artifact } = job.request;
     if (
-      job.config.execution.kind === "local" &&
-      fs.existsSync(job.request.artifact.ref) &&
-      fs.statSync(job.request.artifact.ref).isFile() &&
-      evidenceFile(job.request.artifact.ref).sha256 !== job.request.artifact.sha256
+      fs.existsSync(artifact.ref) &&
+      fs.statSync(artifact.ref).isFile() &&
+      evidenceFile(artifact.ref).sha256 !== artifact.sha256
     )
       failA1("TESTER_ARTIFACT_CHANGED", "tested artifact differs from the request");
-    const remoteDir =
-      job.config.execution.kind === "local"
-        ? dir
-        : path.join(job.config.execution.cwd, ".aris-tester-tests", id);
-    const output = path.join(remoteDir, "benchmark-output.json");
-    const localOutput = path.join(dir, "benchmark-output.json");
-    fs.rmSync(localOutput, { force: true });
-    if (job.config.execution.kind === "ssh")
-      await execute(
-        job.config,
-        { argv: ["mkdir", "-p", remoteDir], timeout_ms: 60000 },
-        {},
-        path.join(dir, "test.log"),
-      );
-    if (job.config.execution.kind === "ssh")
-      await execute(
-        job.config,
-        { argv: ["rm", "-f", output], timeout_ms: 60000 },
-        {},
-        path.join(dir, "test.log"),
-      );
-    const env = {
+    const output = path.join(dir, "benchmark-output.json"),
+      log = path.join(dir, "test.log");
+    fs.rmSync(output, { force: true });
+    const env: Record<string, string> = {
       ARIS_TEST_MODE: job.request.mode,
-      ARIS_TEST_ID: id,
-      ARIS_RUN_ID: job.request.run_id,
-      ARIS_EXPERIMENT_ID: job.request.experiment_id,
-      ARIS_ITERATION: String(job.request.iteration),
+      ARIS_TEST_ID: job.request.test_id,
       ARIS_PROJECT_ID: job.config.project_id,
       ARIS_TEST_OUTPUT: output,
-      ARIS_TEST_DIR: remoteDir,
-      ARIS_ARTIFACT_REF: job.request.artifact.ref,
-      ARIS_ARTIFACT_SHA256: job.request.artifact.sha256,
+      ARIS_TEST_DIR: dir,
+      ARIS_ARTIFACT_REF: artifact.ref,
+      ARIS_ARTIFACT_SHA256: artifact.sha256,
+      ...(job.request.adapter_dir === undefined
+        ? {}
+        : { ARIS_ADAPTER_DIR: job.request.adapter_dir }),
     };
-    await execute(job.config, job.config.healthcheck, env, path.join(dir, "test.log"));
+    await execute(job.config, job.config.healthcheck, env, log);
     await execute(
       job.config,
       job.request.mode === "full" ? job.config.test : job.config.smoke,
       env,
-      path.join(dir, "test.log"),
+      log,
     );
-    await fetchRemote(job.config, output, localOutput);
-    await verifyInstalled();
-    const raw = readStateFile<Record<string, unknown>>(localOutput);
-    if (raw.artifact_sha256 !== job.request.artifact.sha256)
+    verifyInstalled();
+    const raw = readStateFile<Record<string, unknown>>(output);
+    if (raw.artifact_sha256 !== artifact.sha256)
       failA1("TESTER_RESULT_BINDING_MISMATCH", "runner must identify the tested artifact digest");
     if (!isRecord(raw.metrics) || !Array.isArray(raw.samples) || !Array.isArray(raw.evidence_files))
       failA1("INVALID_TESTER_RESULT", "runner must provide metrics, samples and evidence_files");
@@ -654,30 +515,12 @@ export async function executeTesterJob(root: string, id: string): Promise<Tester
       seen.add(sample.id);
       if (sample.status === "failed") failed++;
     }
-    const evidence = [
-      evidenceFile(localOutput),
-      evidenceFile(path.join(dir, "test.log")),
-      ...assertTesterSetupReady(job.config_path).evidence,
-    ];
-    for (const [i, source] of strings(raw.evidence_files, "runner.evidence_files").entries()) {
-      const remote = path.resolve(remoteDir, source),
-        local =
-          job.config.execution.kind === "local"
-            ? remote
-            : path.join(dir, "evidence", `${i}-${path.basename(source)}`);
-      await fetchRemote(job.config, remote, local);
-      evidence.push(evidenceFile(local));
-    }
-    if (job.request.deliverables !== undefined)
-      verifyTesterDeliverables(
-        root,
-        job.request.run_id,
-        job.request.artifact,
-        job.request.deliverables,
-      );
+    const evidence = [evidenceFile(output), evidenceFile(log), ...setup.evidence];
+    for (const source of strings(raw.evidence_files, "runner.evidence_files"))
+      evidence.push(evidenceFile(path.resolve(dir, source)));
     const result: TesterTestResult = {
       schema_version: 1,
-      test_id: id,
+      test_id: job.request.test_id,
       request: job.request,
       request_sha256: job.request_sha256,
       config: job.config,
@@ -689,7 +532,7 @@ export async function executeTesterJob(root: string, id: string): Promise<Tester
       evidence,
       completed_at: new Date().toISOString(),
     };
-    writeStateJsonAtomic(path.join(dir, "test-result.json"), result);
+    writeStateJsonAtomic(testerResultPath(dir), result);
     job.status = "completed";
     job.pid = null;
     writeStateJsonAtomic(file, job);
@@ -702,18 +545,16 @@ export async function executeTesterJob(root: string, id: string): Promise<Tester
     throw e;
   }
 }
-function readTesterJobUnlocked(file: string): TesterJob {
-  return readStateFile<TesterJob>(file);
-}
+/**
+ * Recompute what a full result claims from its raw evidence: complete coverage, no failed
+ * samples, unchanged benchmark files and aggregates that match the per-sample scores.
+ */
 export function checkTesterResult(resultPath: string): TesterTestResult {
   const result = readStateFile<TesterTestResult>(resultPath);
   const request = validateTesterTestRequest(result.request),
     config = validateTesterFacilityConfig(result.config);
   if (result.status !== "completed" || request.mode !== "full")
-    failA1(
-      "TESTER_FULL_RESULT_REQUIRED",
-      "only completed full benchmark results can be audited for publication",
-    );
+    failA1("TESTER_FULL_RESULT_REQUIRED", "only completed full benchmark results are scored");
   if (
     result.test_id !== request.test_id ||
     result.request_sha256 !== canonicalJsonSha256(request) ||
@@ -760,7 +601,7 @@ export function checkTesterResult(resultPath: string): TesterTestResult {
     const value = result.metrics[metric.name];
     if (typeof value !== "number" || !Number.isFinite(value))
       failA1("TESTER_METRIC_MISMATCH", "non-finite metric");
-    if (metric.aggregation === "external") continue; // The independent reviewer checks benchmark-specific aggregators.
+    if (metric.aggregation === "external") continue; // The reviewing agent checks benchmark-specific aggregators.
     const scores = raw.samples.map((s: unknown) => {
       if (
         !isRecord(s) ||
@@ -777,85 +618,4 @@ export function checkTesterResult(resultPath: string): TesterTestResult {
       failA1("TESTER_AGGREGATION_MISMATCH", metric.name);
   }
   return result;
-}
-export function auditTesterResult(resultPath: string, reviewPath: string): TesterAuditReceipt {
-  const result = checkTesterResult(resultPath),
-    review = readStateFile<TesterAuditReview>(reviewPath);
-  if (
-    review.schema_version !== 1 ||
-    review.result_sha256 !== evidenceFile(resultPath).sha256 ||
-    !["pass", "warn", "fail"].includes(review.status) ||
-    !isRecord(review.checks)
-  )
-    failA1("TESTER_AUDIT_BINDING_MISMATCH", "review must identify the current result");
-  requireString(review.reviewer_id, "reviewer_id");
-  strings(review.findings, "findings");
-  for (const key of ["protocol", "scoring", "coverage", "comparability"] as const)
-    if (
-      typeof review.checks[key] !== "boolean" ||
-      (review.status === "pass" && !review.checks[key])
-    )
-      failA1("TESTER_AUDIT_INVALID", `unresolved ${key} check`);
-  const content = {
-    ...review,
-    test_id: result.test_id,
-    config_sha256: result.config_sha256,
-    evidence: [evidenceFile(reviewPath)],
-  };
-  const auditPath = path.join(path.dirname(resultPath), "test-audit.json");
-  return withStateFileLock(auditPath, () => {
-    if (fs.existsSync(auditPath)) {
-      const existing = readStateFile<TesterAuditReceipt>(auditPath);
-      const { completed_at, ...recorded } = existing;
-      if (canonicalJsonSha256(recorded) === canonicalJsonSha256(content)) {
-        requireString(completed_at, "audit.completed_at");
-        return existing;
-      }
-    }
-    const audit: TesterAuditReceipt = { ...content, completed_at: new Date().toISOString() };
-    writeStateJsonAtomic(auditPath, audit);
-    return audit;
-  });
-}
-export function readAuditedTesterResult(
-  resultPath: string,
-  auditPath: string,
-  binding?: { run_id?: string; iteration?: number; experiment_id?: string; project_root?: string },
-): { result: TesterTestResult; audit: TesterAuditReceipt } {
-  const result = checkTesterResult(resultPath),
-    audit = readStateFile<TesterAuditReceipt>(auditPath);
-  if (
-    audit.schema_version !== 1 ||
-    audit.status !== "pass" ||
-    audit.test_id !== result.test_id ||
-    audit.config_sha256 !== result.config_sha256 ||
-    audit.result_sha256 !== evidenceFile(resultPath).sha256
-  )
-    failA1(
-      "TESTER_AUDIT_REQUIRED",
-      "current passing tester audit is required before publishing metrics",
-    );
-  verifyEvidence(audit.evidence);
-  const review = readStateFile<TesterAuditReview>(audit.evidence[0]!.path);
-  if (
-    review.status !== audit.status ||
-    review.result_sha256 !== audit.result_sha256 ||
-    review.reviewer_id !== audit.reviewer_id ||
-    canonicalJsonSha256(review.checks) !== canonicalJsonSha256(audit.checks) ||
-    canonicalJsonSha256(review.findings) !== canonicalJsonSha256(audit.findings)
-  )
-    failA1("TESTER_AUDIT_BINDING_MISMATCH", "audit differs from its review evidence");
-  for (const key of ["protocol", "scoring", "coverage", "comparability"] as const)
-    if (audit.checks[key] !== true) failA1("TESTER_AUDIT_REQUIRED", key);
-  for (const key of ["run_id", "iteration", "experiment_id"] as const)
-    if (binding?.[key] !== undefined && binding[key] !== result.request[key])
-      failA1("TESTER_RESULT_BINDING_MISMATCH", key);
-  if (binding?.project_root !== undefined && result.request.deliverables !== undefined)
-    verifyTesterDeliverables(
-      binding.project_root,
-      result.request.run_id,
-      result.request.artifact,
-      result.request.deliverables,
-    );
-  return { result, audit };
 }

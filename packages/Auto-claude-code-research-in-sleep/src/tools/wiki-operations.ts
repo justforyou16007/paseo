@@ -137,6 +137,9 @@ const PAGE_DATA_KEYS: Record<WikiPageKind, readonly string[]> = {
     "provenance",
     "metrics",
     "reasoning",
+    "submission_id",
+    // The fields below were written by the removed research loop. They stay
+    // accepted so Wikis it wrote still replay; nothing writes them now.
     "iteration",
     "gate_metric",
     "gate_metric_name",
@@ -469,6 +472,7 @@ function validatePageData(
       assertOptionalStrings(
         data,
         [
+          "submission_id",
           "tester_definition_sha256",
           "test_result_path",
           "test_audit_path",
@@ -497,8 +501,6 @@ function validatePageData(
       if (data.tags !== undefined) assertStringArray(data.tags, `${location}.tags`);
       if (data.idea_id !== undefined && data.idea_id !== "")
         assertNodeId(data.idea_id as string, `${location}.idea_id`);
-      // The loop numbers its own iterations from 1; an experiment without one
-      // cannot be lined up against the dashboard metric history.
       if (
         data.iteration !== undefined &&
         (!Number.isInteger(data.iteration) || (data.iteration as number) < 1)

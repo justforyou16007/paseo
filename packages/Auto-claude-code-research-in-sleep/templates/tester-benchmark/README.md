@@ -6,10 +6,10 @@ Configure `TESTER_FACILITY_CONFIG_TEMPLATE.json` with that cwd, benchmark/data r
 
 | Facility command | argv |
 | --- | --- |
-| setup | `["python3", "lm-eval-adapter.py", "setup"]` |
-| healthcheck | `["python3", "lm-eval-adapter.py", "check"]` |
-| smoke | `["python3", "lm-eval-adapter.py", "run"]` |
-| test | `["python3", "lm-eval-adapter.py", "run"]` |
+| setup | `["python", "lm-eval-adapter.py", "setup"]` |
+| healthcheck | `["python", "lm-eval-adapter.py", "check"]` |
+| smoke | `["python", "lm-eval-adapter.py", "run"]` |
+| test | `["python", "lm-eval-adapter.py", "run"]` |
 
 Pin `lm-eval-adapter.py`, `lm-eval-profile.json`, `tasks/task.yaml`, `data-manifest.json`, `requirements-installed.txt` and `harness/lm_eval/evaluator.py` in `evidence_files`. Setup creates the environment, installs the pinned framework, downloads the pinned dataset and checks smoke inference. Execution works locally or through the same SSH command interface; the adapter enforces its timeout on the evaluation host. Model service deployment can be another setup command when the chosen backend needs it.
 

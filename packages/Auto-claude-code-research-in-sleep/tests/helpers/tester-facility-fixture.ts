@@ -1,135 +1,51 @@
 import fs from "node:fs";
 import path from "node:path";
-import crypto from "node:crypto";
-import { canonicalJsonSha256 } from "../../src/tools/canonical-json.js";
-import { writeStateJsonAtomic } from "../../src/tools/state-file.js";
-import {
-  auditTesterResult,
-  evidenceFile,
-  testerFacilityConfigSha256,
-  testerConfigPath,
-  type TesterFacilityConfig,
-  type TesterTestRequest,
-  type TesterTestResult,
-} from "../../src/tools/tester-facility.js";
-import type {
-  TesterPromotionConclusion,
-  TesterPromotionFeedback,
-} from "../../src/tools/tester-promotion-result.js";
+import type { TesterFacilityConfig } from "../../src/tools/tester-facility.js";
 
+/**
+ * A two-sample benchmark whose runner scores each sample by whether the
+ * artifact's answers.json matches the hidden labels. Runs anywhere Node runs.
+ */
 export function facilityConfig(root: string): TesterFacilityConfig {
-  const noop = { argv: [process.execPath, "-e", ""], timeout_ms: 1000 };
+  const bench = path.join(path.resolve(root), "bench");
+  fs.mkdirSync(bench, { recursive: true });
+  fs.writeFileSync(
+    path.join(bench, "labels.json"),
+    JSON.stringify({ "sample-alpha": "the quick brown fox", "sample-bravo": "jumps over" }),
+  );
+  fs.writeFileSync(
+    path.join(bench, "runner.mjs"),
+    `import fs from "node:fs";
+import path from "node:path";
+const labels = JSON.parse(fs.readFileSync(new URL("./labels.json", import.meta.url), "utf8"));
+const out = process.env.ARIS_TEST_OUTPUT;
+if (out) {
+  const ref = process.env.ARIS_ARTIFACT_REF;
+  const file = fs.existsSync(ref) && fs.statSync(ref).isDirectory() ? path.join(ref, "answers.json") : ref;
+  let answers = {};
+  try { answers = JSON.parse(fs.readFileSync(file, "utf8")); } catch {}
+  const ids = process.env.ARIS_TEST_MODE === "smoke" ? Object.keys(labels).slice(0, 1) : Object.keys(labels);
+  const samples = ids.map((id) => ({ id, status: "ok", metrics: { score: answers[id] === labels[id] ? 1 : 0 } }));
+  const score = samples.reduce((a, s) => a + s.metrics.score, 0) / samples.length;
+  fs.writeFileSync(out, JSON.stringify({ artifact_sha256: process.env.ARIS_ARTIFACT_SHA256, metrics: { score }, samples, evidence_files: [] }));
+}
+`,
+  );
+  const runner = { argv: [process.execPath, path.join(bench, "runner.mjs")], timeout_ms: 10_000 };
   return {
     schema_version: 1,
     mode: "tester_facility",
-    tester_id: "tester:a2",
-    project_id: "project:a2",
-    version: "tester:v1",
+    tester_id: "fixture-tester",
+    project_id: "fixture-project",
+    version: "v1",
     benchmark: { name: "fixture", source: "fixture", revision: "fixed" },
     dataset: { name: "fixture", revision: "fixed", split: "test", expected_samples: 2 },
     metrics: [{ name: "score", direction: "higher_better", aggregation: "mean" }],
-    execution: { kind: "local", cwd: path.resolve(root), env: {} },
+    execution: { cwd: bench, env: {} },
     setup: [],
-    healthcheck: noop,
-    smoke: noop,
-    test: noop,
-    evidence_files: ["runner-fixture.txt"],
+    healthcheck: { argv: [process.execPath, "-e", ""], timeout_ms: 10_000 },
+    smoke: runner,
+    test: runner,
+    evidence_files: ["runner.mjs", "labels.json"],
   };
-}
-/** Synthetic provisioned installation for tests of callers, not setup itself. */
-export function installedFacilityFixture(root: string): TesterFacilityConfig {
-  const config = facilityConfig(root);
-  fs.mkdirSync(root, { recursive: true });
-  const pinned = path.join(root, "runner-fixture.txt");
-  fs.writeFileSync(pinned, "fixed runner\n");
-  writeStateJsonAtomic(testerConfigPath(root), config);
-  writeStateJsonAtomic(`${testerConfigPath(root)}.setup.json`, {
-    schema_version: 1,
-    status: "ready",
-    config_sha256: testerFacilityConfigSha256(config),
-    evidence: [evidenceFile(pinned)],
-    completed_at: "fixture",
-  });
-  return config;
-}
-/** Results are synthetic; all audits still pass through the production gate. */
-export function auditedResultFixture(
-  root: string,
-  request: TesterTestRequest,
-  metrics: Record<string, number>,
-  promotion?: unknown,
-  facility?: TesterFacilityConfig,
-) {
-  if (request.deliverables === undefined) {
-    const outputRef = `outputs/${request.test_id}/candidate.json`;
-    const output = path.join(root, ".aris", "runs", request.run_id, outputRef);
-    fs.mkdirSync(path.dirname(output), { recursive: true });
-    fs.writeFileSync(output, JSON.stringify({ model: request.artifact, synthetic_fixture: true }));
-    request = { ...request, deliverables: { output_hashes: { [outputRef]: crypto.createHash("sha256").update(fs.readFileSync(output)).digest("hex") } } };
-  }
-  const dir = path.join(root, "fixture-results", request.test_id);
-  fs.mkdirSync(dir, { recursive: true });
-  const config = facility ?? facilityConfig(root);
-  config.metrics = Object.keys(metrics).map((name) => ({
-    ...config.metrics.find((m) => m.name === name),
-    name,
-    direction: config.metrics.find((m) => m.name === name)?.direction ?? "higher_better",
-    aggregation: "mean",
-  }));
-  const rawPath = path.join(dir, "benchmark-output.json");
-  writeStateJsonAtomic(rawPath, {
-    artifact_sha256: request.artifact.sha256,
-    metrics,
-    samples: [0, 1].map((i) => ({ id: String(i), status: "ok", metrics })),
-    evidence_files: [],
-    ...(promotion ? { promotion } : {}),
-  });
-  const result: TesterTestResult = {
-    schema_version: 1,
-    test_id: request.test_id,
-    request,
-    request_sha256: canonicalJsonSha256(request),
-    config,
-    config_sha256: testerFacilityConfigSha256(config),
-    status: "completed",
-    metrics,
-    sample_count: 2,
-    failed_samples: 0,
-    evidence: [evidenceFile(rawPath)],
-    completed_at: "fixture",
-  };
-  const result_path = path.join(dir, "test-result.json"),
-    review = path.join(dir, "review.json"),
-    audit_path = path.join(dir, "test-audit.json");
-  writeStateJsonAtomic(result_path, result);
-  writeStateJsonAtomic(review, {
-    schema_version: 1,
-    result_sha256: evidenceFile(result_path).sha256,
-    reviewer_id: "independent-fixture-reviewer",
-    status: "pass",
-    checks: { protocol: true, scoring: true, coverage: true, comparability: true },
-    findings: [],
-  });
-  auditTesterResult(result_path, review);
-  return { result_path, audit_path };
-}
-export function auditedPromotionFixture(
-  root: string,
-  conclusion: TesterPromotionConclusion,
-  feedback: TesterPromotionFeedback,
-) {
-  return auditedResultFixture(
-    root,
-    {
-      schema_version: 1,
-      test_id: `promotion-${conclusion.outer_iteration}`,
-      run_id: conclusion.outer_run_id,
-      iteration: conclusion.outer_iteration,
-      experiment_id: "promotion",
-      artifact: { ref: "fixture-artifact", sha256: conclusion.finalist_artifact_sha256 },
-      mode: "full",
-    },
-    { tester_score: 1.5 },
-    { conclusion, feedback },
-  );
 }

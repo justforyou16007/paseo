@@ -1,7 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { A1Error } from "./workflow-spec.js";
 
 /**
  * All state writers use this module so a relative path and its absolute form
@@ -174,125 +173,7 @@ function fsyncDirectory(directory: string): void {
   }
 }
 
-/**
- * A write that changes what later research is allowed to take as given needs
- * an independent verifier's acceptance before it lands. A write that only
- * records what already happened does not — replaying the log has to reach the
- * same state, and that is checked by hashes and idempotence, not by a reader.
- *
- * The two classes are separated here, at the one entry point every state
- * writer goes through, so a caller cannot land a premise by forgetting to ask.
- *
- * Both names below are documents the writing run owns and that a second party
- * accepts before they land: the result package a reviewer signed off, and the
- * promotion intent a tester ruled on. A file this run writes into another
- * run's directory is that run's starting condition handed over, not this
- * run's state, so a dispatched child's charter is not listed here — that
- * charter is planned and reviewed in the experiment plan, and materializing
- * it only has to match what was already accepted.
- *
- * A definition is not listed because its reviewer judges it after it exists;
- * the gate there is activation, not creation.
- */
-const PREMISE_FILE_NAMES: ReadonlySet<string> = new Set([
-  "result-package.json",
-  "promotion-commit-intent.json",
-]);
-
-export function isPremiseStateFile(filePath: string): boolean {
-  return PREMISE_FILE_NAMES.has(path.basename(filePath));
-}
-
-/**
- * A record of an acceptance that already happened, carried to the write.
- *
- * This module does not verify anything, and should not be read as if it did.
- * It has no way to: resolving an acceptance means knowing what kind of document
- * it is, where that kind is stored, and what it has to say about the bytes
- * being written -- all of which belong to the caller's subject matter, not to
- * atomic file writing. Verification therefore happens at each write site, and
- * each one was built so that its receipt fields are copied off the verified
- * document rather than supplied by the caller:
- *
- *   result-package.json         `requireApprovedResultReview` in result-review.ts
- *                               loads the reviewer's stored verdict and rejects
- *                               it unless it approves this exact package digest.
- *   promotion-commit-intent.json  `readTesterConclusion` / `readTesterFeedback`
- *                               in workflow-promotion-commit.ts verify the
- *                               tester's signatures against a root-owned public
- *                               key before an intent is ever built.
- *
- * What is left here is the one invariant that holds regardless of subject: a
- * producer cannot be its own acceptor. It is cheap and it is not nothing, but
- * on its own it is a spelling rule. Do not add a premise file without giving it
- * a real verifier at its write site first.
- */
-export interface PremiseWriteReceipt {
-  /** The worker whose output is being written. */
-  producer_id: string;
-  /** The party that accepted it, as named by the verified acceptance. */
-  verifier_id: string;
-  /**
-   * What identifies the acceptance document -- a path or its content hash.
-   * Either is enough for an audit to find it again, and a hash also works for a
-   * receipt that arrived over the wire and was never written here.
-   */
-  receipt_ref: string;
-}
-
-function requireReceiptField(
-  receipt: PremiseWriteReceipt,
-  field: keyof PremiseWriteReceipt,
-  filePath: string,
-): string {
-  const value = receipt[field];
-  if (typeof value !== "string" || value.trim() === "")
-    throw new A1Error(
-      "PREMISE_RECEIPT_REQUIRED",
-      `premise write receipt is missing ${String(field)}`,
-      filePath,
-    );
-  return value;
-}
-
-function assertPremiseReceipt(filePath: string, receipt: PremiseWriteReceipt): void {
-  const producer = requireReceiptField(receipt, "producer_id", filePath);
-  const verifier = requireReceiptField(receipt, "verifier_id", filePath);
-  // Required so an audit can find the acceptance, not resolved: see the note on
-  // PremiseWriteReceipt for where each premise file is actually verified.
-  requireReceiptField(receipt, "receipt_ref", filePath);
-  if (producer === verifier)
-    throw new A1Error(
-      "REVIEWER_NOT_INDEPENDENT",
-      "a premise write cannot be accepted by the worker that produced it",
-      filePath,
-    );
-}
-
 export function writeStateFileAtomic(filePath: string, contents: string): void {
-  if (isPremiseStateFile(filePath))
-    throw new A1Error(
-      "PREMISE_RECEIPT_REQUIRED",
-      `${path.basename(filePath)} changes a research premise and needs a verifier receipt`,
-      filePath,
-    );
-  writeStateFileUnchecked(filePath, contents);
-}
-
-/**
- * Land a premise document that an independent verifier has already accepted.
- * Every premise file is JSON, so there is no text-level twin of this.
- */
-export function writeVerifiedStateJsonAtomic(
-  filePath: string,
-  value: unknown,
-  receipt: PremiseWriteReceipt,
-): void {
-  assertPremiseReceipt(filePath, receipt);
-  writeStateFileUnchecked(filePath, `${JSON.stringify(value, null, 2)}\n`);
-}
-
-function writeStateFileUnchecked(filePath: string, contents: string): void {
   const normalizedPath = canonicalStatePath(filePath);
   fs.mkdirSync(path.dirname(normalizedPath), { recursive: true });
   const temporary = `${normalizedPath}.${process.pid}.${Date.now()}.${crypto.randomBytes(8).toString("hex")}.tmp`;

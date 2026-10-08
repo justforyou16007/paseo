@@ -23,21 +23,17 @@ import {
   type WikiEvent,
 } from "../src/tools/wiki-event-store.js";
 import { projectWiki, readWikiModel } from "../src/tools/wiki-projector.js";
-import { createRootRun } from "../src/tools/run-contract.js";
 import {
   canonicalStatePath,
   readStateFile,
-  isPremiseStateFile,
   stateLockPath,
   withStateFileLock,
   writeStateJsonAtomic,
-  writeVerifiedStateJsonAtomic,
 } from "../src/tools/state-file.js";
 
 const PACKAGE_ROOT = path.resolve(".");
 const TEST_FILE = path.resolve("tests/test_a0.ts");
 const RESEARCH_WIKI = path.resolve("src/tools/research-wiki.ts");
-const DASHBOARD_MERGE = path.resolve("src/tools/dashboard-merge.ts");
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "aris-a0-test-"));
@@ -270,71 +266,6 @@ test("command IDs are system-derived and reject agent command_id input", () => {
   }
 });
 
-test("a premise file lands only through a receipt naming someone other than the producer", () => {
-  const root = tmpDir();
-  try {
-    const bookkeeping = path.join(root, "run", "state.json");
-    const premise = path.join(root, "run", "result-package.json");
-    const receipt = { producer_id: "run-a", verifier_id: "reviewer-b", review: "review:1" };
-
-    // A file that only records what already happened goes through unchanged.
-    writeStateJsonAtomic(bookkeeping, { count: 1 });
-    assert.equal(readStateFile<{ count: number }>(bookkeeping).count, 1);
-    assert.equal(isPremiseStateFile(bookkeeping), false);
-    assert.equal(isPremiseStateFile(premise), true);
-
-    // The same call on a premise file is refused, and refused before any bytes
-    // land — a caller that forgot the receipt must not leave a partial premise.
-    assert.throws(
-      () => writeStateJsonAtomic(premise, { ok: true }),
-      (error: unknown) => (error as { code?: string }).code === "PREMISE_RECEIPT_REQUIRED",
-    );
-    assert.equal(fs.existsSync(premise), false);
-
-    for (const missing of ["producer_id", "verifier_id", "receipt_ref"] as const) {
-      const partial = {
-        producer_id: receipt.producer_id,
-        verifier_id: receipt.verifier_id,
-        receipt_ref: receipt.review,
-      };
-      partial[missing] = "  ";
-      assert.throws(
-        () => writeVerifiedStateJsonAtomic(premise, { ok: true }, partial),
-        (error: unknown) => (error as { code?: string }).code === "PREMISE_RECEIPT_REQUIRED",
-        `blank ${missing} should not pass as a receipt`,
-      );
-    }
-
-    // Naming yourself as your own reviewer is the failure the gate exists for.
-    assert.throws(
-      () =>
-        writeVerifiedStateJsonAtomic(
-          premise,
-          { ok: true },
-          { producer_id: "run-a", verifier_id: "run-a", receipt_ref: receipt.review },
-        ),
-      (error: unknown) => (error as { code?: string }).code === "REVIEWER_NOT_INDEPENDENT",
-    );
-    assert.equal(fs.existsSync(premise), false);
-
-    // The receipt names a party that is not the producer, so the write lands.
-    // Nothing here resolves the receipt: it may be a tester's signed document
-    // that never touched this run's directory.
-    writeVerifiedStateJsonAtomic(
-      premise,
-      { ok: true },
-      {
-        producer_id: receipt.producer_id,
-        verifier_id: receipt.verifier_id,
-        receipt_ref: receipt.review,
-      },
-    );
-    assert.equal(readStateFile<{ ok: boolean }>(premise).ok, true);
-  } finally {
-    cleanup(root);
-  }
-});
-
 test("state-file lock serializes concurrent updates and canonicalizes the lock path", async () => {
   const root = tmpDir();
   try {
@@ -538,117 +469,6 @@ test("only an incomplete tail is repaired; middle corruption fails closed", () =
   } finally {
     cleanup(tailRoot);
     cleanup(middleRoot);
-  }
-});
-
-test("dashboard merge keeps two concurrent valid receipts and both applied_receipts", async () => {
-  const root = tmpDir();
-  const runId = "merge-run";
-  try {
-    // Dashboard merge reads the run's identity before it touches the file, so
-    // the run needs a real contract — a hand-made directory is not a run.
-    createRootRun({
-      project_root: root,
-      run_id: runId,
-      input_snapshot_sha256: "d".repeat(64),
-      code_baseline_sha256: "e".repeat(64),
-      policy_revision: "policy:a0-merge",
-    });
-    const runRoot = path.join(root, ".aris", "runs", runId);
-    const workersRoot = path.join(runRoot, "workers");
-    fs.mkdirSync(workersRoot, { recursive: true });
-    fs.writeFileSync(
-      path.join(runRoot, "dashboard.json"),
-      `${JSON.stringify({
-        run_id: runId,
-        project: "A0",
-        status: "running",
-        failure: null,
-        iteration: 1,
-        max_iterations: 1,
-        current_phase: "analyze-results",
-        config: {},
-        metric: {
-          name: "score",
-          target: 1,
-          current: 0,
-          baseline: 0,
-          direction: "higher_better",
-          tolerance: 0.01,
-          history: [],
-        },
-        problems: { open: [], closed: [], total: 0 },
-        last_review: {},
-        system_errors: { total: 0, last: null },
-        applied_receipts: [],
-      }, null, 2)}\n`,
-      "utf-8",
-    );
-
-    const receiptPaths: string[] = [];
-    for (const index of [1, 2]) {
-      const workerDir = path.join(workersRoot, `worker-${index}`);
-      const outputDir = path.join(workerDir, "outputs");
-      fs.mkdirSync(outputDir, { recursive: true });
-      fs.writeFileSync(path.join(outputDir, "result.md"), `result-${index}\n`, "utf-8");
-      fs.writeFileSync(
-        path.join(workerDir, "input-manifest.json"),
-        `${JSON.stringify({
-          worker: "analyze-results",
-          iteration: 1,
-          run_id: runId,
-          inputs: {},
-          context: {},
-          output_dir: outputDir,
-        })}\n`,
-        "utf-8",
-      );
-      const receiptPath = path.join(workerDir, "receipt.json");
-      fs.writeFileSync(
-        receiptPath,
-        `${JSON.stringify({
-          worker: "analyze-results",
-          iteration: 1,
-          run_id: runId,
-          status: "done",
-          error: null,
-          primary_output: "result.md",
-          summary: {},
-          dashboard_patch: {
-            "metric.current": index === 1 ? 0.5 : 0.7,
-            ...(index === 1 ? { "metric.delta": 0.5 } : { statistical_significance: true }),
-          },
-          completed_at: "2026-01-01T00:00:00Z",
-          has_errors: false,
-          error_count: 0,
-        })}\n`,
-        "utf-8",
-      );
-      receiptPaths.push(receiptPath);
-    }
-
-    const results = await Promise.all(
-      receiptPaths.map((receipt) =>
-        spawnTestWorker({
-          ARIS_A0_WORKER: "dashboard",
-          ARIS_A0_ROOT: root,
-          ARIS_A0_RUN_ID: runId,
-          ARIS_A0_RECEIPT: receipt,
-        }),
-      ),
-    );
-    for (const result of results) {
-      assert.equal(result.code, 0, `${result.stderr}\n${result.stdout}`);
-    }
-    const dashboard = JSON.parse(fs.readFileSync(path.join(runRoot, "dashboard.json"), "utf-8")) as Record<string, unknown>;
-    const applied = dashboard.applied_receipts as string[];
-    assert.equal(applied.length, 2);
-    assert.deepEqual(new Set(applied), new Set(receiptPaths.map((receipt) => path.resolve(receipt))));
-    const metric = dashboard.metric as Record<string, unknown>;
-    assert.equal(metric.delta, 0.5);
-    assert.equal(dashboard.statistical_significance, true);
-  } finally {
-    cleanup(root);
   }
 });
 
@@ -1318,20 +1138,6 @@ test("standalone first-write output, claim dates, and experiment IDs remain comp
 
 async function main(): Promise<void> {
   if (process.env.ARIS_A0_WORKER) {
-    if (process.env.ARIS_A0_WORKER === "dashboard") {
-      const result = runTsx(
-        DASHBOARD_MERGE,
-        "apply",
-        "--root",
-        requiredEnv("ARIS_A0_ROOT"),
-        "--run-id",
-        requiredEnv("ARIS_A0_RUN_ID"),
-        "--receipt",
-        requiredEnv("ARIS_A0_RECEIPT"),
-      );
-      if (result.exitCode !== 0) throw new Error(`${result.stderr}\n${result.stdout}`);
-      return;
-    }
     await runWorker();
     return;
   }

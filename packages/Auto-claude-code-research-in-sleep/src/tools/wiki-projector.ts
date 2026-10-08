@@ -61,7 +61,6 @@ export interface WikiQueryRequest {
   scorer_target?: unknown;
   constraints?: unknown[];
   head?: WikiHead | string;
-  allow_standalone?: boolean;
 }
 
 export type WikiQueryStatus = "ok" | "no_evidence" | "insufficient_context";
@@ -345,14 +344,6 @@ function asStringArray(data: Record<string, unknown>, key: string): string[] {
     : [];
 }
 
-function asNumberRecord(data: Record<string, unknown>, key: string): Array<[string, number]> {
-  const value = data[key];
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return [];
-  return Object.entries(value)
-    .filter((entry): entry is [string, number] => typeof entry[1] === "number")
-    .sort((left, right) => compareCodeUnits(left[0], right[0]));
-}
-
 function yamlQuote(value: string | null | undefined): string {
   if (value == null) return '""';
   return `"${value
@@ -530,7 +521,7 @@ function renderExperiment(page: WikiPage): string {
     `hardware: ${yamlQuote(asString(data, "hardware"))}`,
     `duration: ${yamlQuote(asString(data, "duration"))}`,
     `provenance: ${yamlQuote(asString(data, "provenance"))}`,
-    `iteration: ${typeof data.iteration === "number" ? data.iteration : ""}`,
+    `submission_id: ${yamlQuote(asString(data, "submission_id"))}`,
     `added: ${asString(data, "added")}`,
     `tags: [${asStringArray(data, "tags")
       .map((item) => yamlQuote(item))
@@ -545,10 +536,6 @@ function renderExperiment(page: WikiPage): string {
     "## Metrics",
     asString(data, "metrics") || "_TODO: key metrics._",
     "",
-    // The two comparable metric families, kept apart because they answer
-    // different questions: the tester is the held-out judgment the export ranks
-    // by, the gate value is this run's own stop-condition reading.
-    ...renderComparableMetrics(data),
     "## Reasoning",
     asString(data, "reasoning") || "_TODO: why this verdict._",
     "",
@@ -557,50 +544,6 @@ function renderExperiment(page: WikiPage): string {
     "",
   ];
   return `${lines.join("\n")}\n`;
-}
-
-/** Render audited measurements and their reproducibility references. */
-function renderComparableMetrics(data: Record<string, unknown>): string[] {
-  const testerMetrics = asNumberRecord(data, "tester_metrics");
-  const gateMetric = typeof data.gate_metric === "number" ? data.gate_metric : null;
-  const conclusion = asString(data, "tester_conclusion");
-  const directions = asStringArray(data, "tester_directions");
-  const advice = asStringArray(data, "tester_advice");
-  const definition = asString(data, "tester_definition_sha256");
-  if (
-    testerMetrics.length === 0 &&
-    gateMetric === null &&
-    !conclusion &&
-    directions.length === 0 &&
-    advice.length === 0
-  )
-    return [];
-  const lines = ["## Comparable metrics"];
-  if (gateMetric !== null) lines.push(`- metric-gate: ${gateMetric}`);
-  if (testerMetrics.length > 0) {
-    const rendered = testerMetrics.map(([name, value]) => `\`${name}\`: ${value}`).join(", ");
-    lines.push(`- tester metrics: ${rendered}`);
-  }
-  if (conclusion) {
-    const confidence = asString(data, "tester_confidence");
-    lines.push(
-      `- tester conclusion: ${conclusion}${confidence ? ` (confidence: ${confidence})` : ""}`,
-    );
-  }
-  if (directions.length > 0)
-    lines.push(`- tester directions: ${directions.map((item) => `\`${item}\``).join(", ")}`);
-  if (advice.length > 0)
-    lines.push(`- tester advice: ${advice.map((item) => `\`${item}\``).join(", ")}`);
-  if (data.tester_audit_status) {
-    lines.push(`- tester audit: ${asString(data, "tester_audit_status")}`);
-    lines.push(`- benchmark: ${asString(data, "benchmark")} / ${asString(data, "dataset_split")}`);
-    lines.push(`- samples: ${data.test_sample_count}`);
-    lines.push(`- test result: ${asString(data, "test_result_path")}`);
-    lines.push(`- test audit: ${asString(data, "test_audit_path")}`);
-  }
-  if (definition) lines.push(`- tester definition: \`${definition}\``);
-  lines.push("");
-  return lines;
 }
 
 function renderProblem(page: WikiPage): string {
@@ -913,7 +856,6 @@ function normalizeQueryRequest(request: WikiQueryRequest): WikiQueryRequest {
       canonicalJsonString(request.constraints, anyJsonSchema),
     ) as unknown[];
   }
-  normalized.allow_standalone = request.allow_standalone === true;
   if (request.head !== undefined) normalized.head = request.head;
   return normalized;
 }
@@ -1062,11 +1004,7 @@ function sortEdges(edges: readonly WikiEdge[]): WikiEdge[] {
 }
 
 function queryEventsForScope(events: readonly WikiEvent[], request: WikiQueryRequest): WikiEvent[] {
-  return events.filter(
-    (event) =>
-      event.producer.scope === request.scope ||
-      (request.allow_standalone === true && event.producer.scope === "standalone"),
-  );
+  return events.filter((event) => event.producer.scope === request.scope);
 }
 
 function withoutSignalOperations(event: WikiEvent): WikiEvent | null {
