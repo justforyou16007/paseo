@@ -1,6 +1,5 @@
 import { agentPanelRegistration } from "@/panels/agent-panel";
 import { arisPanelRegistration } from "@/panels/aris-panel";
-import { arisArtifactPanelRegistration } from "@/panels/aris-artifact-panel";
 import { arisWikiEntityPanelRegistration } from "@/panels/aris-wiki-entity-panel";
 import { browserPanelRegistration } from "@/desktop/browser/panel";
 import {
@@ -30,7 +29,6 @@ export function ensurePanelsRegistered(): void {
   registerPanel(agentPanelRegistration);
   registerPanel(providerSubagentPanelRegistration);
   registerPanel(arisPanelRegistration);
-  registerPanel(arisArtifactPanelRegistration);
   registerPanel(arisWikiEntityPanelRegistration);
   registerPanel(setupPanelRegistration);
   registerPanel(terminalPanelRegistration);

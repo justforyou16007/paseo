@@ -334,10 +334,7 @@ function getFallbackTabOptionLabel(
     return tab.target.path.split("/").findLast(Boolean) ?? tab.target.path;
   }
   if (tab.target.kind === "aris") {
-    return `ARIS ${tab.target.view ?? "cockpit"}`;
-  }
-  if (tab.target.kind === "aris-artifact") {
-    return `ARIS ${tab.target.stageId}`;
+    return "ARIS graph";
   }
   if (tab.target.kind === "aris-wiki-entity") {
     return `${tab.target.entityType} · ${tab.target.entityId}`;
@@ -390,10 +387,7 @@ function getFallbackTabOptionDescription(
     return labels.browser;
   }
   if (tab.target.kind === "aris") {
-    return `ARIS ${tab.target.view ?? "cockpit"}`;
-  }
-  if (tab.target.kind === "aris-artifact") {
-    return `ARIS ${tab.target.stageId}`;
+    return "ARIS graph";
   }
   if (tab.target.kind === "aris-wiki-entity") {
     return `ARIS wiki · ${tab.target.entityType}`;

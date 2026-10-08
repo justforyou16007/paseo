@@ -1,172 +1,48 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import pino from "pino";
-import { ArisSession } from "./aris-session.js";
-import * as arisReaders from "./aris-readers.js";
 import os from "node:os";
 import path from "node:path";
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { createArisDataService } from "../../aris/aris-data-service.js";
+import { ArisSession } from "./aris-session.js";
 import {
   createPersistedWorkspaceRecord,
   type WorkspaceRegistry,
 } from "../../workspace-registry.js";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 
-function createLogger(): pino.Logger {
-  return pino({ level: "silent" });
+async function createTempWorkspace(): Promise<string> {
+  const dir = path.join(
+    os.tmpdir(),
+    `aris-session-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
+  await mkdir(dir, { recursive: true });
+  return dir;
 }
 
-describe("ArisSession", () => {
-  let emitted: SessionOutboundMessage[];
-  let session: ArisSession;
+async function writeFileRel(cwd: string, rel: string, content: string): Promise<void> {
+  const filePath = path.join(cwd, rel);
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, content, "utf-8");
+}
 
-  beforeEach(() => {
-    emitted = [];
-    session = new ArisSession({
-      host: {
-        emit: (msg) => emitted.push(msg),
-      },
-      arisDataService: createArisDataService({
-        workspaceRegistry: { list: async () => [] } as unknown as WorkspaceRegistry,
-        logger: createLogger(),
-      }),
-      workspaceRegistry: { list: async () => [] } as unknown as WorkspaceRegistry,
-      logger: createLogger(),
-    });
+function createSession(
+  emitted: SessionOutboundMessage[],
+  workspaceRegistry: WorkspaceRegistry = { list: async () => [] } as unknown as WorkspaceRegistry,
+): ArisSession {
+  return new ArisSession({
+    host: { emit: (msg) => emitted.push(msg) },
+    workspaceRegistry,
+    logger: pino({ level: "silent" }),
   });
+}
 
-  test("emits successful aris.review.read.response", async () => {
-    vi.spyOn(arisReaders, "readArisReviewState").mockResolvedValue({
-      reviewState: { stage: "in_review", rounds: [] },
-      autoReviewMarkdown: "# Review",
-      paperImprovement: null,
-      audits: [],
-      pendingReview: null,
-      traces: [],
-      knowledgeGraph: null,
-    });
-
-    await session.handleReviewReadRequest({
-      type: "aris.review.read",
-      cwd: "/workspace",
-      requestId: "req-1",
-    });
-
-    expect(emitted).toHaveLength(1);
-    expect(emitted[0]).toMatchObject({
-      type: "aris.review.read.response",
-      payload: {
-        requestId: "req-1",
-        cwd: "/workspace",
-        ok: true,
-        reviewState: { stage: "in_review", rounds: [] },
-        autoReviewMarkdown: "# Review",
-        error: null,
-      },
-    });
-  });
-
-  test("emits error aris.review.read.response on failure", async () => {
-    vi.spyOn(arisReaders, "readArisReviewState").mockRejectedValue(new Error("disk full"));
-
-    await session.handleReviewReadRequest({
-      type: "aris.review.read",
-      cwd: "/workspace",
-      requestId: "req-2",
-    });
-
-    expect(emitted).toHaveLength(1);
-    expect(emitted[0]).toMatchObject({
-      type: "aris.review.read.response",
-      payload: {
-        requestId: "req-2",
-        cwd: "/workspace",
-        ok: false,
-        error: "disk full",
-      },
-    });
-  });
-
-  test("emits successful aris.events.read.response", async () => {
-    vi.spyOn(arisReaders, "readArisEvents").mockResolvedValue([
-      { timestamp: "2026-07-07T10:00:00Z", type: "start" },
-    ]);
-
-    await session.handleEventsReadRequest({
-      type: "aris.events.read",
-      cwd: "/workspace",
-      requestId: "req-3",
-      limit: 50,
-    });
-
-    expect(emitted).toHaveLength(1);
-    expect(emitted[0]).toMatchObject({
-      type: "aris.events.read.response",
-      payload: {
-        requestId: "req-3",
-        cwd: "/workspace",
-        ok: true,
-        events: [{ timestamp: "2026-07-07T10:00:00Z", type: "start" }],
-        error: null,
-      },
-    });
-  });
-
-  test("stops watchers without error when no watchers were started", () => {
-    expect(() => session.stop()).not.toThrow();
-  });
-});
-
-describe("ArisSession - aris.workflow.status.read", () => {
-  const workspaceId = "ws-workflow";
+describe("ArisSession - aris.wiki.read with on-disk edge format and node_id frontmatter", () => {
   let root: string;
 
-  async function createTempWorkspace(): Promise<string> {
-    const dir = path.join(
-      os.tmpdir(),
-      `aris-workflow-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    );
-    await mkdir(dir, { recursive: true });
-    return dir;
-  }
-
-  async function writeFileRel(cwd: string, rel: string, content: string): Promise<void> {
-    const filePath = path.join(cwd, rel);
-    await mkdir(path.dirname(filePath), { recursive: true });
-    await writeFile(filePath, content, "utf-8");
-  }
-
-  function createRegistry(cwd: string): WorkspaceRegistry {
-    const record = createPersistedWorkspaceRecord({
-      workspaceId,
-      projectId: "proj-1",
-      cwd,
-      kind: "directory",
-      displayName: "test",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-    return {
-      get: async (id: string) => (id === workspaceId ? record : null),
-    } as unknown as WorkspaceRegistry;
-  }
-
-  function createSession(cwd: string, emitted: SessionOutboundMessage[]): ArisSession {
-    return new ArisSession({
-      host: { emit: (msg) => emitted.push(msg) },
-      arisDataService: createArisDataService({
-        workspaceRegistry: createRegistry(cwd),
-        logger: pino({ level: "silent" }),
-      }),
-      workspaceRegistry: { list: async () => [] } as unknown as WorkspaceRegistry,
-      logger: pino({ level: "silent" }),
-    });
-  }
-
-  function workflowResponse(emitted: SessionOutboundMessage[]) {
-    const msg = emitted.find((m) => m.type === "aris.workflow.status.read.response");
-    if (!msg || msg.type !== "aris.workflow.status.read.response") {
-      throw new Error("no workflow status response emitted");
+  function wikiResponse(emitted: SessionOutboundMessage[]) {
+    const msg = emitted.find((m) => m.type === "aris.wiki.read.response");
+    if (!msg || msg.type !== "aris.wiki.read.response") {
+      throw new Error("no aris.wiki.read.response emitted");
     }
     return msg.payload;
   }
@@ -179,225 +55,342 @@ describe("ArisSession - aris.workflow.status.read", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  test("empty workspace: all stages pending, directory-derived, activeW null", async () => {
-    const emitted: SessionOutboundMessage[] = [];
-    const session = createSession(root, emitted);
-    await session.handleWorkflowStatusReadRequest({
-      type: "aris.workflow.status.read",
-      requestId: "r1",
-      workspaceId,
-    });
-
-    const payload = workflowResponse(emitted);
-    expect(payload.ok).toBe(true);
-    expect(payload.error).toBeNull();
-    expect(payload.status?.activeW).toBeNull();
-    expect(payload.status?.stages).toHaveLength(7);
-    for (const stage of payload.status?.stages ?? []) {
-      expect(stage.status).toBe("pending");
-      expect(stage.derivedFrom).toBe("directory");
-      expect(stage.crossModelAcquittal).toBe(false);
-    }
-    const w1 = payload.status?.stages.find((s) => s.id === "W1");
-    expect(w1?.artifacts.find((a) => a.path === "idea-stage/IDEA_REPORT.md")?.exists).toBe(false);
-  });
-
-  test("derives stage status from run state phases", async () => {
+  test("parses edges.jsonl written in the on-disk format (from/to/type)", async () => {
     await writeFileRel(
       root,
-      ".aris/runs/run-1.json",
+      "research-wiki/graph/edges.jsonl",
       JSON.stringify({
-        runId: "run-1",
-        status: "running",
-        updatedAt: "2026-07-08T10:00:00Z",
-        phases: [
-          { phase: "W1", status: "done" },
-          { phase: "W2", status: "running" },
-          { phase: "W3", status: "accepted" },
-        ],
-      }),
+        from: "idea:gbdt-cost-sensitive-threshold",
+        to: "exp:exp-sba-2026-07-17-5block",
+        type: "tested_by",
+        evidence: "exp tests idea",
+        added: "2026-07-17T07:05:46Z",
+      }) + "\n",
     );
 
     const emitted: SessionOutboundMessage[] = [];
-    const session = createSession(root, emitted);
-    await session.handleWorkflowStatusReadRequest({
-      type: "aris.workflow.status.read",
-      requestId: "r2",
-      workspaceId,
+    const session = createSession(emitted);
+    await session.handleWikiReadRequest({
+      type: "aris.wiki.read",
+      cwd: root,
+      requestId: "wiki-1",
     });
 
-    const payload = workflowResponse(emitted);
-    const stages = payload.status?.stages ?? [];
-    const w1 = stages.find((s) => s.id === "W1");
-    const w2 = stages.find((s) => s.id === "W2");
-    const w3 = stages.find((s) => s.id === "W3");
-    expect(w1?.status).toBe("done");
-    expect(w1?.derivedFrom).toBe("run_state");
-    expect(w2?.status).toBe("running");
-    expect(w2?.derivedFrom).toBe("run_state");
-    expect(w3?.status).toBe("accepted");
-    expect(w3?.crossModelAcquittal).toBe(true);
-    expect(payload.status?.activeW).toBe("W2");
+    const payload = wikiResponse(emitted);
+    if (payload.ok !== true) {
+      throw new Error(payload.error);
+    }
+    expect(payload.edges).toEqual([
+      {
+        source: "idea:gbdt-cost-sensitive-threshold",
+        target: "exp:exp-sba-2026-07-17-5block",
+        relation: "tested_by",
+        strength: null,
+      },
+    ]);
   });
 
-  test("falls back to directory existence when no run state", async () => {
-    await writeFileRel(root, "idea-stage/IDEA_REPORT.md", "# Ideas");
-    await writeFileRel(root, "paper/main.pdf", "%PDF-1.4");
-
-    const emitted: SessionOutboundMessage[] = [];
-    const session = createSession(root, emitted);
-    await session.handleWorkflowStatusReadRequest({
-      type: "aris.workflow.status.read",
-      requestId: "r3",
-      workspaceId,
-    });
-
-    const stages = workflowResponse(emitted).status?.stages ?? [];
-    expect(stages.find((s) => s.id === "W1")?.status).toBe("done");
-    expect(stages.find((s) => s.id === "W1")?.derivedFrom).toBe("directory");
-    expect(stages.find((s) => s.id === "W3")?.status).toBe("done");
-    expect(stages.find((s) => s.id === "W3")?.derivedFrom).toBe("directory");
-    expect(stages.find((s) => s.id === "W2")?.status).toBe("pending");
-  });
-
-  test("W1.5 directory fallback requires EXPERIMENT_TRACKER with DONE/RUNNING", async () => {
+  test("also accepts wire-format edges (source/target/relation)", async () => {
     await writeFileRel(
       root,
-      "refine-logs/EXPERIMENT_TRACKER.md",
-      "# Tracker\n| run | status |\n| r1 | DONE |\n",
+      "research-wiki/graph/edges.jsonl",
+      JSON.stringify({ source: "A", target: "B", relation: "extends" }) +
+        "\n" +
+        JSON.stringify({ source: "B", target: "C", relation: "supports" }) +
+        "\n",
     );
 
     const emitted: SessionOutboundMessage[] = [];
-    const session = createSession(root, emitted);
-    await session.handleWorkflowStatusReadRequest({
-      type: "aris.workflow.status.read",
-      requestId: "r4",
-      workspaceId,
+    const session = createSession(emitted);
+    await session.handleWikiReadRequest({
+      type: "aris.wiki.read",
+      cwd: root,
+      requestId: "wiki-2",
     });
 
-    const stages = workflowResponse(emitted).status?.stages ?? [];
-    expect(stages.find((s) => s.id === "W1.5")?.status).toBe("done");
-    expect(stages.find((s) => s.id === "W1.5")?.derivedFrom).toBe("directory");
+    const payload = wikiResponse(emitted);
+    if (payload.ok !== true) {
+      throw new Error(payload.error);
+    }
+    expect(payload.edges).toEqual([
+      { source: "A", target: "B", relation: "extends", strength: null },
+      { source: "B", target: "C", relation: "supports", strength: null },
+    ]);
   });
 
-  test("W1.5 stays pending when tracker has no DONE/RUNNING run", async () => {
+  test("prefers node_id from frontmatter over the file basename for the wiki id", async () => {
     await writeFileRel(
       root,
-      "refine-logs/EXPERIMENT_TRACKER.md",
-      "# Tracker\n| run | status |\n| r1 | PLANNED |\n",
+      "research-wiki/ideas/gbdt-cost-sensitive-threshold.md",
+      [
+        "---",
+        "type: idea",
+        "node_id: idea:gbdt-cost-sensitive-threshold",
+        'title: "GBDT + cost-sensitive threshold"',
+        "---",
+        "",
+        "Body content",
+        "",
+      ].join("\n"),
     );
 
     const emitted: SessionOutboundMessage[] = [];
-    const session = createSession(root, emitted);
-    await session.handleWorkflowStatusReadRequest({
-      type: "aris.workflow.status.read",
-      requestId: "r4b",
-      workspaceId,
+    const session = createSession(emitted);
+    await session.handleWikiReadRequest({
+      type: "aris.wiki.read",
+      cwd: root,
+      requestId: "wiki-3",
     });
 
-    const stages = workflowResponse(emitted).status?.stages ?? [];
-    expect(stages.find((s) => s.id === "W1.5")?.status).toBe("pending");
+    const payload = wikiResponse(emitted);
+    if (payload.ok !== true) {
+      throw new Error(payload.error);
+    }
+    expect(payload.ideas).toHaveLength(1);
+    expect(payload.ideas[0]?.id).toBe("idea:gbdt-cost-sensitive-threshold");
+    expect(payload.ideas[0]?.title).toBe("GBDT + cost-sensitive threshold");
   });
 
-  test("CLAUDE.md Pipeline Status provides activeW hint", async () => {
+  test("falls back to file basename when frontmatter has no node_id", async () => {
     await writeFileRel(
       root,
-      "CLAUDE.md",
-      "# Project\n\n## Pipeline Status\n\nstage: W3\n\n## Other\n",
+      "research-wiki/ideas/no-frontmatter-id.md",
+      ["---", 'title: "No node_id here"', "---", "", "Body", ""].join("\n"),
     );
-    await writeFileRel(root, "paper/main.pdf", "%PDF-1.4");
 
     const emitted: SessionOutboundMessage[] = [];
-    const session = createSession(root, emitted);
-    await session.handleWorkflowStatusReadRequest({
-      type: "aris.workflow.status.read",
-      requestId: "r5",
-      workspaceId,
+    const session = createSession(emitted);
+    await session.handleWikiReadRequest({
+      type: "aris.wiki.read",
+      cwd: root,
+      requestId: "wiki-4",
     });
 
-    const payload = workflowResponse(emitted);
-    expect(payload.status?.activeW).toBe("W3");
+    const payload = wikiResponse(emitted);
+    if (payload.ok !== true) {
+      throw new Error(payload.error);
+    }
+    expect(payload.ideas).toHaveLength(1);
+    expect(payload.ideas[0]?.id).toBe("no-frontmatter-id");
+  });
+});
+
+describe("ArisSession - aris.wiki.entity.read", () => {
+  let root: string;
+
+  function entityResponse(emitted: SessionOutboundMessage[]) {
+    const msg = emitted.find((m) => m.type === "aris.wiki.entity.read.response");
+    if (!msg || msg.type !== "aris.wiki.entity.read.response") {
+      throw new Error("no aris.wiki.entity.read.response emitted");
+    }
+    return msg.payload;
+  }
+
+  beforeEach(async () => {
+    root = await createTempWorkspace();
   });
 
-  test("artifacts enumerate size and updatedAt when present", async () => {
-    await writeFileRel(root, "paper/main.pdf", "%PDF-1.4 body content");
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  test("returns the raw content of research-wiki/{entityType}/{slug}.md", async () => {
+    const body = [
+      "---",
+      "type: idea",
+      "node_id: idea:foo",
+      'title: "Foo"',
+      "---",
+      "",
+      "# Foo",
+      "",
+      "Body of the idea",
+    ].join("\n");
+    await writeFileRel(root, "research-wiki/ideas/foo.md", body);
 
     const emitted: SessionOutboundMessage[] = [];
-    const session = createSession(root, emitted);
-    await session.handleWorkflowStatusReadRequest({
-      type: "aris.workflow.status.read",
-      requestId: "r6",
-      workspaceId,
+    const session = createSession(emitted);
+    await session.handleWikiEntityReadRequest({
+      type: "aris.wiki.entity.read",
+      cwd: root,
+      requestId: "ent-1",
+      entityType: "ideas",
+      entityId: "idea:foo",
     });
 
-    const stages = workflowResponse(emitted).status?.stages ?? [];
-    const artifact = stages
-      .find((s) => s.id === "W3")
-      ?.artifacts.find((a) => a.path === "paper/main.pdf");
-    expect(artifact?.exists).toBe(true);
-    expect(artifact?.kind).toBe("pdf");
-    expect(typeof artifact?.sizeBytes).toBe("number");
-    expect(artifact?.sizeBytes).toBeGreaterThan(0);
-    expect(artifact?.updatedAt).toBeTruthy();
+    const payload = entityResponse(emitted);
+    expect(payload.ok).toBe(true);
+    if (payload.ok !== true) {
+      throw new Error(payload.error);
+    }
+    expect(payload.entityType).toBe("ideas");
+    expect(payload.entityId).toBe("idea:foo");
+    expect(payload.content).toBe(body);
   });
 
-  test("W5 detects sibling resubmit venue directory", async () => {
-    const parent = path.join(
-      os.tmpdir(),
-      `aris-w5-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    );
-    const cwd = path.join(parent, "main");
-    const venue = path.join(parent, "main-v2");
-    await mkdir(cwd, { recursive: true });
-    await mkdir(venue, { recursive: true });
-    await writeFile(path.join(venue, "RESUBMIT_REPORT.json"), "{}", "utf-8");
-    await writeFile(path.join(venue, "DIFF_REPORT.md"), "# Diff", "utf-8");
+  test("returns ok=false with error when the entity file is missing", async () => {
+    const emitted: SessionOutboundMessage[] = [];
+    const session = createSession(emitted);
+    await session.handleWikiEntityReadRequest({
+      type: "aris.wiki.entity.read",
+      cwd: root,
+      requestId: "ent-2",
+      entityType: "ideas",
+      entityId: "idea:missing",
+    });
 
-    try {
-      const emitted: SessionOutboundMessage[] = [];
-      const session = createSession(cwd, emitted);
-      await session.handleWorkflowStatusReadRequest({
-        type: "aris.workflow.status.read",
-        requestId: "r7",
-        workspaceId,
-      });
-
-      const stages = workflowResponse(emitted).status?.stages ?? [];
-      const w5 = stages.find((s) => s.id === "W5");
-      expect(w5?.status).toBe("done");
-      expect(w5?.derivedFrom).toBe("directory");
-      expect(w5?.artifacts.find((a) => a.kind === "directory")?.exists).toBe(true);
-      const report = w5?.artifacts.find((a) => a.path.endsWith("RESUBMIT_REPORT.json"));
-      expect(report?.exists).toBe(true);
-      expect(report?.kind).toBe("json");
-      const diff = w5?.artifacts.find((a) => a.path.endsWith("DIFF_REPORT.md"));
-      expect(diff?.exists).toBe(true);
-    } finally {
-      await rm(parent, { recursive: true, force: true });
+    const payload = entityResponse(emitted);
+    expect(payload.ok).toBe(false);
+    if (payload.ok === false) {
+      expect(payload.entityType).toBe("ideas");
+      expect(payload.entityId).toBe("idea:missing");
+      expect(typeof payload.error).toBe("string");
+      expect(payload.error.length).toBeGreaterThan(0);
     }
   });
 
-  test("error response when workspace not found", async () => {
+  test("rejects when cwd is empty", async () => {
     const emitted: SessionOutboundMessage[] = [];
-    const session = new ArisSession({
-      host: { emit: (msg) => emitted.push(msg) },
-      arisDataService: createArisDataService({
-        workspaceRegistry: { get: async () => null } as unknown as WorkspaceRegistry,
-        logger: pino({ level: "silent" }),
-      }),
-      workspaceRegistry: { list: async () => [] } as unknown as WorkspaceRegistry,
-      logger: pino({ level: "silent" }),
+    const session = createSession(emitted);
+    await session.handleWikiEntityReadRequest({
+      type: "aris.wiki.entity.read",
+      cwd: "   ",
+      requestId: "ent-3",
+      entityType: "ideas",
+      entityId: "idea:foo",
     });
 
-    await session.handleWorkflowStatusReadRequest({
-      type: "aris.workflow.status.read",
-      requestId: "r8",
-      workspaceId: "missing",
-    });
-
-    const payload = workflowResponse(emitted);
+    const payload = entityResponse(emitted);
     expect(payload.ok).toBe(false);
-    expect(payload.status).toBeNull();
-    expect(payload.error).toBeTruthy();
+    if (payload.ok === false) {
+      expect(payload.error).toBe("cwd is required");
+    }
+  });
+
+  test("rejects when entityId is empty", async () => {
+    const emitted: SessionOutboundMessage[] = [];
+    const session = createSession(emitted);
+    await session.handleWikiEntityReadRequest({
+      type: "aris.wiki.entity.read",
+      cwd: root,
+      requestId: "ent-4",
+      entityType: "ideas",
+      entityId: "   ",
+    });
+
+    const payload = entityResponse(emitted);
+    expect(payload.ok).toBe(false);
+    if (payload.ok === false) {
+      expect(payload.error).toBe("entityId is required");
+    }
+  });
+});
+
+describe("ArisSession - wiki update push", () => {
+  const workspaceId = "ws-push";
+  let root: string;
+  let session: ArisSession | null = null;
+
+  function registryFor(cwd: string): WorkspaceRegistry {
+    const record = createPersistedWorkspaceRecord({
+      workspaceId,
+      projectId: "proj-1",
+      cwd,
+      kind: "directory",
+      displayName: "test",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    return { list: async () => [record] } as unknown as WorkspaceRegistry;
+  }
+
+  beforeEach(async () => {
+    root = await createTempWorkspace();
+  });
+
+  afterEach(async () => {
+    session?.stop();
+    session = null;
+    await rm(root, { recursive: true, force: true });
+  });
+
+  test("pushes aris.wiki.update when the wiki index changes after a read", async () => {
+    await writeFileRel(root, "research-wiki/index.md", "# Index\n");
+    const emitted: SessionOutboundMessage[] = [];
+    session = createSession(emitted, registryFor(root));
+    await session.handleWikiReadRequest({ type: "aris.wiki.read", cwd: root, requestId: "w" });
+
+    await writeFileRel(root, "research-wiki/index.md", "# Index\n\n- idea:new\n");
+
+    await vi.waitFor(
+      () => {
+        expect(emitted).toContainEqual({ type: "aris.wiki.update", payload: { workspaceId } });
+      },
+      { timeout: 5000, interval: 100 },
+    );
+  });
+
+  test("stops pushing after stop()", async () => {
+    await writeFileRel(root, "research-wiki/index.md", "# Index\n");
+    const emitted: SessionOutboundMessage[] = [];
+    session = createSession(emitted, registryFor(root));
+    await session.handleWikiReadRequest({ type: "aris.wiki.read", cwd: root, requestId: "w" });
+    session.stop();
+
+    await writeFileRel(root, "research-wiki/index.md", "# Index\n\n- idea:new\n");
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+
+    expect(emitted.some((msg) => msg.type === "aris.wiki.update")).toBe(false);
+  });
+});
+
+describe("ArisSession - removed pipeline requests", () => {
+  test("answers every removed request with an empty reply instead of timing out", () => {
+    const emitted: SessionOutboundMessage[] = [];
+    const session = createSession(emitted);
+    const cwd = "/tmp/research";
+
+    session.replyToRemovedRequest({
+      type: "aris.runs.list.request",
+      workspaceId: "w",
+      requestId: "1",
+    });
+    session.replyToRemovedRequest({
+      type: "aris.run.read.request",
+      workspaceId: "w",
+      runId: "r",
+      requestId: "2",
+    });
+    session.replyToRemovedRequest({
+      type: "aris.iterations.read.request",
+      workspaceId: "w",
+      runId: "r",
+      requestId: "3",
+    });
+    session.replyToRemovedRequest({ type: "aris.experiments.read", cwd, requestId: "4" });
+    session.replyToRemovedRequest({ type: "aris.review.read", cwd, requestId: "5" });
+    session.replyToRemovedRequest({ type: "aris.events.read", cwd, requestId: "6" });
+    session.replyToRemovedRequest({
+      type: "aris.workflow.status.read",
+      workspaceId: "w",
+      requestId: "7",
+    });
+
+    expect(
+      emitted.map((msg) => [msg.type, (msg.payload as { requestId: string }).requestId]),
+    ).toEqual([
+      ["aris.runs.list.response", "1"],
+      ["aris.run.read.response", "2"],
+      ["aris.iterations.read.response", "3"],
+      ["aris.experiments.read.response", "4"],
+      ["aris.review.read.response", "5"],
+      ["aris.events.read.response", "6"],
+      ["aris.workflow.status.read.response", "7"],
+    ]);
+    expect(emitted[0]?.payload).toEqual({ requestId: "1", runs: [] });
+    expect(emitted[4]?.payload).toMatchObject({ requestId: "5", cwd, ok: false, audits: [] });
+    for (const msg of emitted.slice(3)) {
+      expect(msg.payload).toMatchObject({ ok: false, error: expect.stringContaining("removed") });
+    }
   });
 });

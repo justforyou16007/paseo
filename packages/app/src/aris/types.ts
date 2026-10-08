@@ -5,24 +5,7 @@ import type {
   ArisClaim,
   ArisProblem,
   ArisEdge,
-  ArisMetricSeries,
-  ArisExperimentRun,
-  ArisWikiReadResponse,
-  ArisExperimentsReadResponse,
 } from "@getpaseo/protocol/messages";
-
-export type {
-  ArisPaper,
-  ArisIdea,
-  ArisExperiment,
-  ArisClaim,
-  ArisProblem,
-  ArisEdge,
-  ArisMetricSeries,
-  ArisExperimentRun,
-  ArisWikiReadResponse,
-  ArisExperimentsReadResponse,
-};
 
 export interface ArisWikiData {
   papers: ArisPaper[];

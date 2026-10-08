@@ -209,8 +209,6 @@ import {
 import { deleteLocalCredential, writeLocalCredential } from "./local-credential.js";
 import { createWebUiMiddleware } from "./web-ui.js";
 import { WorkspaceAutoName } from "./workspace-auto-name.js";
-import { createArisDataService, type ArisDataService } from "./aris/aris-data-service.js";
-import { createArisLiveRouteHandler } from "./aris/aris-live-route.js";
 import { createGitMutationService } from "./session/git-mutation/git-mutation-service.js";
 import { workspaceIdsOnCheckout } from "./workspace-directory.js";
 import { configureGitProcessPolicy } from "../utils/run-git-command.js";
@@ -652,7 +650,6 @@ export async function createPaseoDaemon(
   });
   let boundListenTarget: ListenTarget | null = null;
   let workspaceRegistry: FileBackedWorkspaceRegistry | null = null;
-  let arisDataService: ArisDataService | null = null;
   const terminalManager = createConfiguredTerminalManager({
     getTerminalActivityUrl: () => createTerminalActivityUrl(boundListenTarget),
   });
@@ -768,19 +765,6 @@ export async function createPaseoDaemon(
   // remain protected.
   mountWebUi(app, config, logger);
 
-  // ARIS live SSE endpoint — token-gated inline, deliberately skips daemon auth.
-  // arisDataService is assigned later (alongside workspaceRegistry) so we pass
-  // a factory; by the time a request arrives it's always set.
-  app.get(
-    "/api/aris/workspaces/:workspaceId/live",
-    createArisLiveRouteHandler({
-      arisDataService: () => arisDataService!,
-      workspaceRegistry: () => workspaceRegistry!,
-      logger,
-      password: config.auth?.password,
-    }),
-  );
-
   let localCredential: string | null = null;
   const daemonAuth = { ...config.auth, localCredential: () => localCredential };
   app.use(
@@ -886,11 +870,6 @@ export async function createPaseoDaemon(
     path.join(config.paseoHome, "projects", "workspaces.json"),
     logger,
   );
-  const arisDataServiceValue = createArisDataService({
-    workspaceRegistry,
-    logger,
-  });
-  arisDataService = arisDataServiceValue;
   const workspaceLabelService = createWorkspaceLabelService({
     paseoHome: config.paseoHome,
     workspaceRegistry,

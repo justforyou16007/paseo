@@ -656,7 +656,6 @@ export const ru: TranslationResources = {
         preparingTerminal: "Подготовка вкладки терминала",
         preparingTerminalTooltip: "Подготовка терминала...",
         newBrowser: "Новый браузер",
-        newAris: "Новый AutoResearch",
         maximizePane: "Развернуть панель",
         restorePane: "Восстановить панель",
         closePane: "Закрыть панель",
@@ -733,7 +732,6 @@ export const ru: TranslationResources = {
         copyPath: "Скопировать путь к рабочему пространству",
         copyBranchName: "Скопировать название ветки",
         showSetup: "Показать настройку рабочего пространства",
-        aris: "ARIS runs",
       },
       toasts: {
         workspacePathUnavailable: "Путь к рабочему пространству пока недоступен.",

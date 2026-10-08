@@ -646,7 +646,6 @@ export const en = {
         preparingTerminal: "Preparing terminal tab",
         preparingTerminalTooltip: "Preparing terminal...",
         newBrowser: "New browser",
-        newAris: "New AutoResearch",
         maximizePane: "Maximize pane",
         restorePane: "Restore pane",
         closePane: "Close pane",
@@ -721,7 +720,6 @@ export const en = {
         copyPath: "Copy workspace path",
         copyBranchName: "Copy branch name",
         showSetup: "Show setup",
-        aris: "ARIS runs",
       },
       toasts: {
         workspacePathUnavailable: "Workspace path is not available yet",

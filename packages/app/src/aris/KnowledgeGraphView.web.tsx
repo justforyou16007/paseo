@@ -5,8 +5,7 @@ import type { LayoutChangeEvent } from "react-native";
 import { Pressable, View, Text } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import Svg, { Circle, Line, Polygon, Rect, G, Text as SvgText } from "react-native-svg";
-import type { ArisKnowledgeGraph, ArisReviewState } from "@getpaseo/protocol/messages";
-import type { ArisReviewReadResult } from "./use-aris-review-query";
+import type { ArisKnowledgeGraph } from "@getpaseo/protocol/messages";
 import {
   buildLayeredKnowledgeGraphLayout,
   type KnowledgeGraphEdgeInput,
@@ -23,8 +22,7 @@ import {
 } from "./charts/color-palette";
 
 export interface KnowledgeGraphViewProps {
-  data: ArisReviewReadResult | null | undefined;
-  wikiGraph?: ArisKnowledgeGraph | null;
+  wikiGraph: ArisKnowledgeGraph;
   width?: number;
   height?: number;
   onOpenDetail?: (entityId: string, entityType: GraphNodeType) => void;
@@ -670,13 +668,8 @@ export function KnowledgeGraphCanvas({
 // Main KnowledgeGraphView
 // ---------------------------------------------------------------------------
 
-function buildEdgesFromKnowledgeGraph(
-  graph: ArisKnowledgeGraph | null | undefined,
-): KnowledgeGraphEdgeInput[] {
-  if (!graph?.edges || graph.edges.length === 0) {
-    return [];
-  }
-  return graph.edges.map((edge: ArisKnowledgeGraphEdge) => ({
+function buildEdgesFromKnowledgeGraph(graph: ArisKnowledgeGraph): KnowledgeGraphEdgeInput[] {
+  return (graph.edges ?? []).map((edge: ArisKnowledgeGraphEdge) => ({
     source: edge.source,
     target: edge.target,
     relation: edge.relation,
@@ -684,36 +677,11 @@ function buildEdgesFromKnowledgeGraph(
   }));
 }
 
-function buildEdgesFromReviewRounds(
-  reviewState: ArisReviewState | null | undefined,
-): KnowledgeGraphEdgeInput[] {
-  if (!reviewState?.rounds) {
-    return [];
-  }
-  return reviewState.rounds.flatMap((_, roundIndex) => {
-    if (roundIndex === 0) {
-      return [];
-    }
-    return {
-      source: `Round ${roundIndex}`,
-      target: `Round ${roundIndex + 1}`,
-      relation: "next",
-    };
-  });
-}
-
-function buildExplicitNodes(
-  graph: ArisKnowledgeGraph | null | undefined,
-): KnowledgeGraphNodeInput[] | undefined {
-  const nodes = graph?.nodes;
-  if (!nodes || nodes.length === 0) {
-    return undefined;
-  }
-  return nodes.map((node) => ({ id: node.id, label: node.label, group: node.group }));
+function buildExplicitNodes(graph: ArisKnowledgeGraph): KnowledgeGraphNodeInput[] {
+  return (graph.nodes ?? []).map((node) => ({ id: node.id, label: node.label, group: node.group }));
 }
 
 export function KnowledgeGraphView({
-  data,
   wikiGraph,
   width = GRAPH_WIDTH,
   height = GRAPH_HEIGHT,
@@ -721,22 +689,8 @@ export function KnowledgeGraphView({
 }: KnowledgeGraphViewProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const edges: KnowledgeGraphEdgeInput[] = useMemo(() => {
-    const wikiEdges = buildEdgesFromKnowledgeGraph(wikiGraph ?? null);
-    if (wikiEdges.length > 0) {
-      return wikiEdges;
-    }
-    const graphEdges = buildEdgesFromKnowledgeGraph(data?.knowledgeGraph);
-    if (graphEdges.length > 0) {
-      return graphEdges;
-    }
-    return buildEdgesFromReviewRounds(data?.reviewState);
-  }, [data, wikiGraph]);
-
-  const explicitNodes = useMemo(
-    () => buildExplicitNodes(wikiGraph ?? data?.knowledgeGraph),
-    [data, wikiGraph],
-  );
+  const edges = useMemo(() => buildEdgesFromKnowledgeGraph(wikiGraph), [wikiGraph]);
+  const explicitNodes = useMemo(() => buildExplicitNodes(wikiGraph), [wikiGraph]);
 
   const layout = useMemo(
     () => buildLayeredKnowledgeGraphLayout({ edges, width, height, nodes: explicitNodes }),
@@ -834,13 +788,8 @@ export function KnowledgeGraphView({
     return relations;
   }, [layout.edges]);
 
-  const hasAnyData = data != null || (wikiGraph != null && (wikiGraph.nodes?.length ?? 0) > 0);
-  if (!hasAnyData) {
-    return <ChartKitEmpty message="No research graph data available." />;
-  }
-
   if (layout.nodes.length === 0) {
-    return <ChartKitEmpty message="Knowledge graph is empty for this review state." />;
+    return <ChartKitEmpty message="Knowledge graph is empty." />;
   }
 
   return (

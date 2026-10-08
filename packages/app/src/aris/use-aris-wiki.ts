@@ -45,7 +45,7 @@ export function useArisWiki(serverId: string | null, cwd: string | null): UseAri
       if (message.type !== "aris.wiki.update") {
         return;
       }
-      void queryClient.invalidateQueries({ queryKey, type: "active", stale: true });
+      void queryClient.invalidateQueries({ queryKey, type: "active" });
     });
   }, [client, enabled, isConnected, queryClient, queryKey, serverId]);
 

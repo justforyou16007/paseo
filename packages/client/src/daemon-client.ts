@@ -85,8 +85,6 @@ import type {
   ProjectGithubCloneResponse,
   ArchiveWorkspaceResponseMessage,
   WorkspaceSetupStatusResponseMessage,
-  ArisReviewReadResponse,
-  ArisEventsReadResponse,
   ListCommandsResponse,
   ListProviderFeaturesResponseMessage,
   ListProviderModelsResponseMessage,
@@ -115,13 +113,8 @@ import type {
   PaseoConfigRaw,
   PaseoConfigRevision,
   WorkspaceCreateRequest,
-  ArisRunsListResponse,
-  ArisRunReadResponse,
-  ArisIterationsReadResponse,
   ArisWikiReadResponse,
   ArisWikiEntityReadResponse,
-  ArisExperimentsReadResponse,
-  ArisWorkflowStatusReadResponse,
   WorkspaceRecoveryState,
   PluginListItem,
   PluginLogEntry,
@@ -387,20 +380,8 @@ export type DaemonEvent =
       payload: Extract<SessionOutboundMessage, { type: "providers_snapshot_update" }>["payload"];
     }
   | {
-      type: "aris.review.update";
-      payload: Extract<SessionOutboundMessage, { type: "aris.review.update" }>["payload"];
-    }
-  | {
-      type: "aris.workflow.update";
-      payload: Extract<SessionOutboundMessage, { type: "aris.workflow.update" }>["payload"];
-    }
-  | {
       type: "aris.wiki.update";
       payload: Extract<SessionOutboundMessage, { type: "aris.wiki.update" }>["payload"];
-    }
-  | {
-      type: "aris.iteration_log.update";
-      payload: Extract<SessionOutboundMessage, { type: "aris.iteration_log.update" }>["payload"];
     }
   | { type: "error"; message: string };
 
@@ -582,8 +563,6 @@ type ListProviderModesPayload = ListProviderModesResponseMessage["payload"];
 type ListAvailableProvidersPayload = ListAvailableProvidersResponse["payload"];
 type GetProvidersSnapshotPayload = GetProvidersSnapshotResponseMessage["payload"];
 type RefreshProvidersSnapshotPayload = RefreshProvidersSnapshotResponseMessage["payload"];
-type ArisReviewReadPayload = ArisReviewReadResponse["payload"];
-type ArisEventsReadPayload = ArisEventsReadResponse["payload"];
 type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
 type ProviderUsageListPayload = ProviderUsageListResponseMessage["payload"];
 type DaemonStatusPayload = DaemonGetStatusResponse["payload"];
@@ -599,8 +578,6 @@ type WriteProjectConfigPayload = Extract<
 >["payload"];
 type ArisWikiReadPayload = ArisWikiReadResponse["payload"];
 type ArisWikiEntityReadPayload = ArisWikiEntityReadResponse["payload"];
-type ArisExperimentsReadPayload = ArisExperimentsReadResponse["payload"];
-type ArisWorkflowStatusReadPayload = ArisWorkflowStatusReadResponse["payload"];
 type ListCommandsPayload = ListCommandsResponse["payload"];
 type ListCommandsDraftConfig = Pick<
   AgentSessionConfig,
@@ -2502,77 +2479,6 @@ export class DaemonClient {
         }
         return msg.payload;
       },
-    });
-  }
-
-  async listArisRuns(
-    workspaceId: string,
-    requestId?: string,
-  ): Promise<ArisRunsListResponse["payload"]> {
-    const resolvedRequestId = this.createRequestId(requestId);
-    return this.sendCorrelatedSessionRequest({
-      requestId: resolvedRequestId,
-      message: {
-        type: "aris.runs.list.request",
-        requestId: resolvedRequestId,
-        workspaceId,
-      },
-      responseType: "aris.runs.list.response",
-    });
-  }
-
-  async readArisRun(
-    workspaceId: string,
-    runId: string,
-    requestId?: string,
-  ): Promise<ArisRunReadResponse["payload"]> {
-    const resolvedRequestId = this.createRequestId(requestId);
-    return this.sendCorrelatedSessionRequest({
-      requestId: resolvedRequestId,
-      message: {
-        type: "aris.run.read.request",
-        requestId: resolvedRequestId,
-        workspaceId,
-        runId,
-      },
-      responseType: "aris.run.read.response",
-    });
-  }
-
-  async readArisIterations(
-    workspaceId: string,
-    runId: string,
-    options?: { phaseId?: string; limit?: number; cursor?: string; requestId?: string },
-  ): Promise<ArisIterationsReadResponse["payload"]> {
-    const resolvedRequestId = this.createRequestId(options?.requestId);
-    return this.sendCorrelatedSessionRequest({
-      requestId: resolvedRequestId,
-      message: {
-        type: "aris.iterations.read.request",
-        requestId: resolvedRequestId,
-        workspaceId,
-        runId,
-        ...(options?.phaseId ? { phaseId: options.phaseId } : {}),
-        ...(options?.limit ? { limit: options.limit } : {}),
-        ...(options?.cursor ? { cursor: options.cursor } : {}),
-      },
-      responseType: "aris.iterations.read.response",
-    });
-  }
-
-  async readArisWorkflowStatus(
-    workspaceId: string,
-    requestId?: string,
-  ): Promise<ArisWorkflowStatusReadPayload> {
-    const resolvedRequestId = this.createRequestId(requestId);
-    return this.sendCorrelatedSessionRequest({
-      requestId: resolvedRequestId,
-      message: {
-        type: "aris.workflow.status.read",
-        requestId: resolvedRequestId,
-        workspaceId,
-      },
-      responseType: "aris.workflow.status.read.response",
     });
   }
 
@@ -5163,40 +5069,6 @@ export class DaemonClient {
     });
   }
 
-  async readArisReview(options: {
-    cwd: string;
-    runId?: string;
-    requestId?: string;
-  }): Promise<ArisReviewReadPayload> {
-    return this.sendCorrelatedSessionRequest({
-      requestId: options.requestId,
-      message: {
-        type: "aris.review.read",
-        cwd: options.cwd,
-        runId: options.runId,
-      },
-      responseType: "aris.review.read.response",
-    });
-  }
-
-  async readArisEvents(options: {
-    cwd: string;
-    limit?: number;
-    runId?: string;
-    requestId?: string;
-  }): Promise<ArisEventsReadPayload> {
-    return this.sendCorrelatedSessionRequest({
-      requestId: options.requestId,
-      message: {
-        type: "aris.events.read",
-        cwd: options.cwd,
-        limit: options.limit,
-        runId: options.runId,
-      },
-      responseType: "aris.events.read.response",
-    });
-  }
-
   async getDaemonStatus(options?: DaemonStatusOptions): Promise<DaemonStatusPayload> {
     if (!this.lastServerInfoMessage) throw new DaemonConnectionError("Transport not connected");
     if (this.lastServerInfoMessage?.features?.daemonStatusRpc !== true) {
@@ -5358,22 +5230,6 @@ export class DaemonClient {
         entityId,
       },
       responseType: "aris.wiki.entity.read.response",
-    });
-  }
-
-  async readArisExperiments(
-    cwd: string,
-    experimentId?: string,
-    requestId?: string,
-  ): Promise<ArisExperimentsReadPayload> {
-    return this.sendCorrelatedSessionRequest({
-      requestId,
-      message: {
-        type: "aris.experiments.read",
-        cwd,
-        ...(experimentId ? { experimentId } : {}),
-      },
-      responseType: "aris.experiments.read.response",
     });
   }
 
@@ -6891,24 +6747,9 @@ export class DaemonClient {
           type: "providers_snapshot_update",
           payload: msg.payload,
         };
-      case "aris.review.update":
-        return {
-          type: "aris.review.update",
-          payload: msg.payload,
-        };
-      case "aris.workflow.update":
-        return {
-          type: "aris.workflow.update",
-          payload: msg.payload,
-        };
       case "aris.wiki.update":
         return {
           type: "aris.wiki.update",
-          payload: msg.payload,
-        };
-      case "aris.iteration_log.update":
-        return {
-          type: "aris.iteration_log.update",
           payload: msg.payload,
         };
       default:

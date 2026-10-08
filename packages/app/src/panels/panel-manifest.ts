@@ -90,15 +90,7 @@ const manifests = {
   aris: {
     kind: "aris",
     supportedHosts: ["main", "explorer"],
-    resourceKey: (target) =>
-      target.runId
-        ? `aris_${target.view ?? "cockpit"}_${target.runId}`
-        : `aris_${target.view ?? "cockpit"}`,
-  },
-  "aris-artifact": {
-    kind: "aris-artifact",
-    supportedHosts: ["main", "explorer"],
-    resourceKey: (target) => target.stageId,
+    resourceKey: () => "aris",
   },
   "aris-wiki-entity": {
     kind: "aris-wiki-entity",

@@ -649,7 +649,6 @@ export const zhCN: TranslationResources = {
         preparingTerminal: "正在准备 Terminal 标签",
         preparingTerminalTooltip: "正在准备 Terminal...",
         newBrowser: "新建浏览器",
-        newAris: "新建 AutoResearch",
         maximizePane: "最大化窗格",
         restorePane: "还原窗格",
         closePane: "关闭窗格",
@@ -722,7 +721,6 @@ export const zhCN: TranslationResources = {
         copyPath: "复制 workspace 路径",
         copyBranchName: "复制分支名称",
         showSetup: "显示 setup",
-        aris: "ARIS runs",
       },
       toasts: {
         workspacePathUnavailable: "Workspace 路径尚不可用",

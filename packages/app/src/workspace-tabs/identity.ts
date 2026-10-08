@@ -36,10 +36,8 @@ export function normalizeWorkspaceTabTarget(
     return normalizeWorkingDiffTabTarget(value);
   }
   if (value.kind === "aris") {
-    return normalizeArisTabTarget(value);
-  }
-  if (value.kind === "aris-artifact") {
-    return normalizeArisArtifactTabTarget(value);
+    // Older apps persisted `runId` and `view` on ARIS tabs; drop them.
+    return { kind: "aris" };
   }
   if (value.kind === "aris-wiki-entity") {
     return normalizeArisWikiEntityTabTarget(value);
@@ -81,14 +79,6 @@ function normalizeSimpleWorkspaceTabTarget(value: WorkspaceTabTarget): Workspace
   }
 }
 
-const ARIS_ARTIFACT_STAGE_IDS = ["W1", "W1.5", "W2", "W3", "W4", "W5", "W6"] as const;
-
-function isArisArtifactStageId(value: unknown): value is (typeof ARIS_ARTIFACT_STAGE_IDS)[number] {
-  return (
-    typeof value === "string" && (ARIS_ARTIFACT_STAGE_IDS as readonly string[]).includes(value)
-  );
-}
-
 const ARIS_WIKI_ENTITY_TYPES = [
   "papers",
   "ideas",
@@ -100,26 +90,6 @@ const ARIS_WIKI_ENTITY_TYPES = [
 
 function isArisWikiEntityType(value: unknown): value is (typeof ARIS_WIKI_ENTITY_TYPES)[number] {
   return typeof value === "string" && (ARIS_WIKI_ENTITY_TYPES as readonly string[]).includes(value);
-}
-
-function normalizeArisTabTarget(
-  value: Extract<WorkspaceTabTarget, { kind: "aris" }>,
-): Extract<WorkspaceTabTarget, { kind: "aris" }> {
-  const runId =
-    typeof value.runId === "string" && value.runId.trim().length > 0
-      ? value.runId.trim()
-      : undefined;
-  const view = value.view === "graph" || value.view === "review" ? value.view : "cockpit";
-  return { kind: "aris", runId, view };
-}
-
-function normalizeArisArtifactTabTarget(
-  value: Extract<WorkspaceTabTarget, { kind: "aris-artifact" }>,
-): WorkspaceTabTarget | null {
-  if (!isArisArtifactStageId(value.stageId)) {
-    return null;
-  }
-  return { kind: "aris-artifact", stageId: value.stageId };
 }
 
 function normalizeArisWikiEntityTabTarget(
@@ -229,10 +199,7 @@ function secondaryWorkspaceTabTargetsEqual(
 // complexity budget as the aris tab kinds grow.
 function arisTabTargetsEqual(left: WorkspaceTabTarget, right: WorkspaceTabTarget): boolean | null {
   if (left.kind === "aris" && right.kind === "aris") {
-    return left.runId === right.runId && left.view === right.view;
-  }
-  if (left.kind === "aris-artifact" && right.kind === "aris-artifact") {
-    return left.stageId === right.stageId;
+    return true;
   }
   if (left.kind === "aris-wiki-entity" && right.kind === "aris-wiki-entity") {
     return left.entityType === right.entityType && left.entityId === right.entityId;
@@ -302,11 +269,7 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
     return "working_diff";
   }
   if (target.kind === "aris") {
-    const view = target.view ?? "cockpit";
-    return target.runId ? `aris_${view}_${target.runId}` : `aris_${view}`;
-  }
-  if (target.kind === "aris-artifact") {
-    return `aris-artifact_${target.stageId}`;
+    return "aris";
   }
   if (target.kind === "aris-wiki-entity") {
     return `aris-wiki-entity_${target.entityType}_${target.entityId}`;

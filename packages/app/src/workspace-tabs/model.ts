@@ -47,8 +47,7 @@ export type WorkspaceTabTarget =
   | PluginWorkspaceTabTarget
   | { kind: "setup"; workspaceId: string }
   | { kind: "commit_diff"; sha: string }
-  | { kind: "aris"; runId?: string; view?: "cockpit" | "graph" | "review" }
-  | { kind: "aris-artifact"; stageId: "W1" | "W1.5" | "W2" | "W3" | "W4" | "W5" | "W6" }
+  | { kind: "aris" }
   | {
       kind: "aris-wiki-entity";
       entityType: "papers" | "ideas" | "experiments" | "claims" | "problems" | "gap";

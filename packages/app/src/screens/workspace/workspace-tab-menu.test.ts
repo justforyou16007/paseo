@@ -308,17 +308,17 @@ describe("buildWorkspaceTabMenuEntries", () => {
 
   it("builds menu for aris tabs with only close actions", () => {
     const arisTab: WorkspaceTabDescriptor = {
-      key: "aris_cockpit",
-      tabId: "aris_cockpit",
+      key: "aris",
+      tabId: "aris",
       kind: "aris",
-      target: { kind: "aris", view: "cockpit" },
+      target: { kind: "aris" },
     };
     const entries = buildWorkspaceTabMenuEntries({
       surface: "desktop",
       tab: arisTab,
       index: 0,
       tabCount: 1,
-      menuTestIDBase: "workspace-tab-context-aris_cockpit",
+      menuTestIDBase: "workspace-tab-context-aris",
       onCopyResumeCommand: vi.fn(),
       onCopyAgentId: vi.fn(),
       onCopyTerminalId: vi.fn(),

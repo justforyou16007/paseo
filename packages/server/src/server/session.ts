@@ -179,7 +179,6 @@ import { WorkspaceFilesSession } from "./session/files/workspace-files-session.j
 import { AgentConfigSession } from "./session/agent-config/agent-config-session.js";
 import { ProjectConfigSession } from "./session/project-config/project-config-session.js";
 import { ArisSession } from "./session/aris/aris-session.js";
-import { createArisDataService } from "./aris/aris-data-service.js";
 import { DaemonSession, type DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
 import type { DaemonWebSocketRuntimeDiagnosticSnapshot } from "./session/daemon/diagnostics.js";
 import type { HubRelationshipManagement } from "./hub/relationship-controller.js";
@@ -1024,10 +1023,6 @@ export class Session {
       host: {
         emit: (msg) => this.emit(msg),
       },
-      arisDataService: createArisDataService({
-        workspaceRegistry: this.workspaceRegistry,
-        logger: this.sessionLogger,
-      }),
       workspaceRegistry: this.workspaceRegistry,
       logger: this.sessionLogger,
     });
@@ -2992,24 +2987,19 @@ export class Session {
 
   private dispatchArisMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
-      case "aris.runs.list.request":
-        return this.arisSession.handleRunsListRequest(msg);
-      case "aris.run.read.request":
-        return this.arisSession.handleRunReadRequest(msg);
-      case "aris.iterations.read.request":
-        return this.arisSession.handleIterationsReadRequest(msg);
       case "aris.wiki.read":
         return this.arisSession.handleWikiReadRequest(msg);
       case "aris.wiki.entity.read":
         return this.arisSession.handleWikiEntityReadRequest(msg);
+      case "aris.runs.list.request":
+      case "aris.run.read.request":
+      case "aris.iterations.read.request":
       case "aris.experiments.read":
-        return this.arisSession.handleExperimentsReadRequest(msg);
       case "aris.review.read":
-        return this.arisSession.handleReviewReadRequest(msg);
       case "aris.events.read":
-        return this.arisSession.handleEventsReadRequest(msg);
       case "aris.workflow.status.read":
-        return this.arisSession.handleWorkflowStatusReadRequest(msg);
+        this.arisSession.replyToRemovedRequest(msg);
+        return undefined;
       default:
         return undefined;
     }

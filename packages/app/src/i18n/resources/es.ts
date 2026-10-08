@@ -656,7 +656,6 @@ export const es: TranslationResources = {
         preparingTerminal: "Preparando la pestaña del terminal",
         preparingTerminalTooltip: "Preparando terminal...",
         newBrowser: "Nuevo navegador",
-        newAris: "Nuevo AutoResearch",
         maximizePane: "Maximizar panel",
         restorePane: "Restaurar panel",
         closePane: "Cerrar panel",
@@ -733,7 +732,6 @@ export const es: TranslationResources = {
         copyPath: "Copiar ruta del espacio de trabajo",
         copyBranchName: "Copiar nombre de sucursal",
         showSetup: "Mostrar configuración",
-        aris: "ARIS runs",
       },
       toasts: {
         workspacePathUnavailable: "La rutaWorkspaceaún no está disponible",

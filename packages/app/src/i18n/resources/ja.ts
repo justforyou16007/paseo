@@ -656,7 +656,6 @@ export const ja: TranslationResources = {
         preparingTerminal: "ターミナルタブを準備中",
         preparingTerminalTooltip: "ターミナルを準備中...",
         newBrowser: "新しいブラウザ",
-        newAris: "新規 AutoResearch",
         maximizePane: "ペインを最大化",
         restorePane: "ペインを元に戻す",
         closePane: "ペインを閉じる",
@@ -730,7 +729,6 @@ export const ja: TranslationResources = {
         copyPath: "ワークスペースパスをコピー",
         copyBranchName: "ブランチ名をコピー",
         showSetup: "セットアップを表示",
-        aris: "ARIS runs",
       },
       toasts: {
         workspacePathUnavailable: "ワークスペースパスはまだ利用できません",

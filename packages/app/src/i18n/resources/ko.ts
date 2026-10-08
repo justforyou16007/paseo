@@ -651,7 +651,6 @@ export const ko: TranslationResources = {
         preparingTerminal: "터미널 탭 준비 중",
         preparingTerminalTooltip: "터미널 준비 중...",
         newBrowser: "새 브라우저",
-        newAris: "새 AutoResearch",
         maximizePane: "창 최대화",
         restorePane: "창 복원",
         closePane: "창 닫기",
@@ -726,7 +725,6 @@ export const ko: TranslationResources = {
         copyPath: "워크스페이스 경로 복사",
         copyBranchName: "브랜치 이름 복사",
         showSetup: "설정 표시",
-        aris: "ARIS runs",
       },
       toasts: {
         workspacePathUnavailable: "워크스페이스 경로를 아직 사용할 수 없습니다",

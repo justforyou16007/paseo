@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { constants, promises as fs } from "fs";
 import path from "path";
 import type pino from "pino";
@@ -8,22 +7,16 @@ import type {
   ArisEventsReadRequest,
   ArisExperimentsReadRequest,
   ArisIterationsReadRequest,
-  ArisIterationsReadResponse,
   ArisReviewReadRequest,
   ArisRunReadRequest,
-  ArisRunReadResponse,
   ArisRunsListRequest,
-  ArisRunsListResponse,
   ArisWikiEntityReadRequest,
   ArisWikiReadRequest,
   ArisWorkflowStatusReadRequest,
-  ArisWorkflowStatusReadResponse,
   SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
-import type { ArisDataService } from "../../aris/aris-data-service.js";
 import type { WorkspaceRegistry } from "../../workspace-registry.js";
-import { readArisEvents, readArisReviewState } from "./aris-readers.js";
-import { ArisStateWatcher, type ArisStateUpdate } from "./aris-watcher.js";
+import { ArisWikiWatcher } from "./aris-wiki-watcher.js";
 import { resolveScopedPath } from "../../file-explorer/service.js";
 
 export interface ArisSessionHost {
@@ -32,7 +25,6 @@ export interface ArisSessionHost {
 
 export interface ArisSessionOptions {
   host: ArisSessionHost;
-  arisDataService: ArisDataService;
   workspaceRegistry: WorkspaceRegistry;
   logger: pino.Logger;
 }
@@ -99,107 +91,26 @@ interface WikiData {
   findings: string | null;
 }
 
-interface ExperimentRunData {
-  id: string;
-  metadata: WikiData["experiments"][number];
-  env: Record<string, unknown> | null;
-  logs: string | null;
-  metrics: {
-    timestamps: number[];
-    series: Record<string, number[]>;
-  } | null;
-}
-
 const READ_FILE_OPEN_FLAGS =
   process.platform === "win32" ? constants.O_RDONLY : constants.O_RDONLY | constants.O_NOFOLLOW;
 
+const REMOVED_REQUEST_ERROR = "ARIS pipeline views were removed from this host. Update the app.";
+
 /**
- * ARIS session handler — serves run state, iterations, wiki, experiments,
- * review state, and live events from a workspace's ARIS directories.
- *
- * Combines Wave 1/2 (run/iteration/wiki/experiment RPCs) with Wave 3
- * (review/events RPCs and file-based readers/watchers).
+ * ARIS session handler. Serves the research wiki behind the knowledge graph
+ * and pushes `aris.wiki.update` when a workspace's wiki changes.
  */
 export class ArisSession {
   private readonly host: ArisSessionHost;
-  private readonly arisDataService: ArisDataService;
   private readonly workspaceRegistry: WorkspaceRegistry;
   private readonly logger: pino.Logger;
-  private readonly watchers = new Map<string, ArisStateWatcher>();
+  private readonly watchers = new Map<string, ArisWikiWatcher>();
 
   constructor(options: ArisSessionOptions) {
     this.host = options.host;
-    this.arisDataService = options.arisDataService;
     this.workspaceRegistry = options.workspaceRegistry;
     this.logger = options.logger.child({ module: "aris-session" });
   }
-
-  // ── Wave 1: run/iteration RPCs (via ArisDataService) ──
-
-  async handleRunsListRequest(msg: ArisRunsListRequest): Promise<void> {
-    try {
-      const runs = await this.arisDataService.listRuns(msg.workspaceId);
-      this.host.emit({
-        type: "aris.runs.list.response",
-        payload: {
-          requestId: msg.requestId,
-          runs,
-        },
-      } satisfies ArisRunsListResponse);
-    } catch (error) {
-      this.logger.warn({ err: error, requestId: msg.requestId }, "Failed to list ARIS runs");
-      this.emitError(msg.requestId, "aris.runs.list.response", error);
-    }
-  }
-
-  async handleRunReadRequest(msg: ArisRunReadRequest): Promise<void> {
-    try {
-      const run = await this.arisDataService.readRun(msg.workspaceId, msg.runId);
-      this.host.emit({
-        type: "aris.run.read.response",
-        payload: {
-          requestId: msg.requestId,
-          run,
-        },
-      } satisfies ArisRunReadResponse);
-    } catch (error) {
-      this.logger.warn(
-        { err: error, requestId: msg.requestId, runId: msg.runId },
-        "Failed to read ARIS run",
-      );
-      this.emitError(msg.requestId, "aris.run.read.response", error);
-    }
-  }
-
-  async handleIterationsReadRequest(msg: ArisIterationsReadRequest): Promise<void> {
-    try {
-      const { iterations, nextCursor } = await this.arisDataService.readIterations(
-        msg.workspaceId,
-        msg.runId,
-        msg.phaseId ?? null,
-        {
-          limit: msg.limit,
-          cursor: msg.cursor,
-        },
-      );
-      this.host.emit({
-        type: "aris.iterations.read.response",
-        payload: {
-          requestId: msg.requestId,
-          iterations,
-          nextCursor,
-        },
-      } satisfies ArisIterationsReadResponse);
-    } catch (error) {
-      this.logger.warn(
-        { err: error, requestId: msg.requestId, runId: msg.runId },
-        "Failed to read ARIS iterations",
-      );
-      this.emitError(msg.requestId, "aris.iterations.read.response", error);
-    }
-  }
-
-  // ── Wave 2: wiki/experiment RPCs (direct file reads) ──
 
   async handleWikiReadRequest(msg: ArisWikiReadRequest): Promise<void> {
     const { cwd: workspaceCwd, requestId } = msg;
@@ -211,6 +122,7 @@ export class ArisSession {
 
     try {
       const wiki = await this.readWiki(cwd);
+      await this.ensureWatcher(cwd);
       this.host.emit({
         type: "aris.wiki.read.response",
         payload: {
@@ -231,31 +143,7 @@ export class ArisSession {
     }
   }
 
-  async handleExperimentsReadRequest(msg: ArisExperimentsReadRequest): Promise<void> {
-    const { cwd: workspaceCwd, requestId, experimentId } = msg;
-    const cwd = workspaceCwd.trim();
-    if (!cwd) {
-      this.emitExperimentsError(requestId, "cwd is required");
-      return;
-    }
-
-    try {
-      const runs = await this.readExperiments(cwd, experimentId);
-      this.host.emit({
-        type: "aris.experiments.read.response",
-        payload: {
-          requestId,
-          ok: true,
-          experiments: runs,
-        },
-      });
-    } catch (error) {
-      this.logger.error({ err: error, cwd, requestId }, "Failed to read ARIS experiments");
-      this.emitExperimentsError(requestId, getErrorMessage(error));
-    }
-  }
-
-  // Wave 4: read a single research-wiki entity (paper / idea / experiment /
+  // Read a single research-wiki entity (paper / idea / experiment /
   // claim) for the click-to-detail panel. Resolves the workspace, then
   // reads `research-wiki/{entityType}/{entityId}.md` and returns the raw
   // content. The entityId is the on-disk `node_id` from frontmatter (e.g.
@@ -310,117 +198,70 @@ export class ArisSession {
     }
   }
 
-  // ── Wave 3: review/events RPCs (aris-readers / watcher) ──
-
-  async handleReviewReadRequest(msg: ArisReviewReadRequest): Promise<void> {
-    const { cwd, requestId, runId } = msg;
-    this.logger.debug({ cwd, requestId, runId }, "Handling aris.review.read request");
-
-    try {
-      const result = await readArisReviewState({ cwd, runId });
-      await this.ensureWatcher(cwd, runId);
-      this.host.emit({
-        type: "aris.review.read.response",
-        payload: {
-          requestId,
-          cwd,
-          ok: true,
-          reviewState: result.reviewState,
-          autoReviewMarkdown: result.autoReviewMarkdown,
-          paperImprovement: result.paperImprovement,
-          audits: result.audits,
-          pendingReview: result.pendingReview,
-          traces: result.traces,
-          knowledgeGraph: result.knowledgeGraph,
-          error: null,
-        },
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn({ err: error, cwd, requestId }, "Failed to read ARIS review state");
-      this.host.emit({
-        type: "aris.review.read.response",
-        payload: {
-          requestId,
-          cwd,
-          ok: false,
-          reviewState: null,
-          autoReviewMarkdown: null,
-          paperImprovement: null,
-          audits: [],
-          pendingReview: null,
-          traces: [],
-          knowledgeGraph: null,
-          error: message,
-        },
-      });
-    }
-  }
-
-  async handleEventsReadRequest(msg: ArisEventsReadRequest): Promise<void> {
-    const { cwd, requestId, limit, runId } = msg;
-    this.logger.debug({ cwd, requestId, limit, runId }, "Handling aris.events.read request");
-
-    try {
-      const events = await readArisEvents({ cwd, limit, runId });
-      this.host.emit({
-        type: "aris.events.read.response",
-        payload: {
-          requestId,
-          cwd,
-          ok: true,
-          events,
-          error: null,
-        },
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn({ err: error, cwd, requestId }, "Failed to read ARIS events");
-      this.host.emit({
-        type: "aris.events.read.response",
-        payload: {
-          requestId,
-          cwd,
-          ok: false,
-          events: [],
-          error: message,
-        },
-      });
-    }
-  }
-
-  // ── Workflow status (W1–W6) RPC ──
-
-  async handleWorkflowStatusReadRequest(msg: ArisWorkflowStatusReadRequest): Promise<void> {
-    const { requestId, workspaceId } = msg;
-    this.logger.debug({ requestId, workspaceId }, "Handling aris.workflow.status.read request");
-
-    try {
-      const status = await this.arisDataService.readWorkflowStatus(workspaceId);
-      this.host.emit({
-        type: "aris.workflow.status.read.response",
-        payload: {
-          requestId,
-          ok: true,
-          status,
-          error: null,
-        },
-      } satisfies ArisWorkflowStatusReadResponse);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(
-        { err: error, requestId, workspaceId },
-        "Failed to read ARIS workflow status",
-      );
-      this.host.emit({
-        type: "aris.workflow.status.read.response",
-        payload: {
-          requestId,
-          ok: false,
-          status: null,
-          error: message,
-        },
-      } satisfies ArisWorkflowStatusReadResponse);
+  // COMPAT(aris-pipeline-removal): added in v0.10.0, remove after 2027-04-01.
+  // Apps from before the removal still open the cockpit, review and workflow
+  // views. Answer them with empty results so their requests do not time out.
+  replyToRemovedRequest(
+    msg:
+      | ArisRunsListRequest
+      | ArisRunReadRequest
+      | ArisIterationsReadRequest
+      | ArisExperimentsReadRequest
+      | ArisReviewReadRequest
+      | ArisEventsReadRequest
+      | ArisWorkflowStatusReadRequest,
+  ): void {
+    const { requestId } = msg;
+    const error = REMOVED_REQUEST_ERROR;
+    switch (msg.type) {
+      case "aris.runs.list.request":
+        this.host.emit({ type: "aris.runs.list.response", payload: { requestId, runs: [] } });
+        return;
+      case "aris.run.read.request":
+        this.host.emit({ type: "aris.run.read.response", payload: { requestId, run: null } });
+        return;
+      case "aris.iterations.read.request":
+        this.host.emit({
+          type: "aris.iterations.read.response",
+          payload: { requestId, iterations: [], nextCursor: null },
+        });
+        return;
+      case "aris.experiments.read":
+        this.host.emit({
+          type: "aris.experiments.read.response",
+          payload: { requestId, ok: false, error },
+        });
+        return;
+      case "aris.review.read":
+        this.host.emit({
+          type: "aris.review.read.response",
+          payload: {
+            requestId,
+            cwd: msg.cwd,
+            ok: false,
+            reviewState: null,
+            autoReviewMarkdown: null,
+            paperImprovement: null,
+            audits: [],
+            pendingReview: null,
+            traces: [],
+            knowledgeGraph: null,
+            error,
+          },
+        });
+        return;
+      case "aris.events.read":
+        this.host.emit({
+          type: "aris.events.read.response",
+          payload: { requestId, cwd: msg.cwd, ok: false, events: [], error },
+        });
+        return;
+      case "aris.workflow.status.read":
+        this.host.emit({
+          type: "aris.workflow.status.read.response",
+          payload: { requestId, ok: false, status: null, error },
+        });
+        return;
     }
   }
 
@@ -433,57 +274,9 @@ export class ArisSession {
 
   // ── Error helpers ──
 
-  private emitError(
-    requestId: string,
-    type: "aris.runs.list.response" | "aris.run.read.response" | "aris.iterations.read.response",
-    error: unknown,
-  ): void {
-    const message = error instanceof Error ? error.message : "Failed to read ARIS data";
-    switch (type) {
-      case "aris.runs.list.response":
-        this.host.emit({
-          type,
-          payload: { requestId, runs: [] },
-        });
-        break;
-      case "aris.run.read.response":
-        this.host.emit({
-          type,
-          payload: { requestId, run: null },
-        });
-        break;
-      case "aris.iterations.read.response":
-        this.host.emit({
-          type,
-          payload: { requestId, iterations: [], nextCursor: null },
-        });
-        break;
-    }
-    this.host.emit({
-      type: "activity_log",
-      payload: {
-        id: randomUUID(),
-        timestamp: new Date(),
-        type: "error",
-        content: `ARIS request failed: ${message}`,
-      },
-    });
-  }
-
   private emitWikiError(requestId: string, error: string): void {
     this.host.emit({
       type: "aris.wiki.read.response",
-      payload: {
-        requestId,
-        ok: false,
-        error,
-      },
-    });
-  }
-
-  private emitExperimentsError(requestId: string, error: string): void {
-    this.host.emit({
-      type: "aris.experiments.read.response",
       payload: {
         requestId,
         ok: false,
@@ -535,33 +328,6 @@ export class ArisSession {
       edges,
       findings,
     };
-  }
-
-  private async readExperiments(cwd: string, experimentId?: string): Promise<ExperimentRunData[]> {
-    const root = await this.resolveWorkspaceRoot(cwd);
-    const wiki = await this.readWiki(cwd);
-
-    let experiments = wiki.experiments;
-    if (experimentId) {
-      experiments = experiments.filter((experiment) => experiment.id === experimentId);
-    }
-
-    const env = await this.readExperimentEnv(root);
-
-    const runs = await Promise.all(
-      experiments.map(async (metadata) => {
-        const { logs, metrics } = await this.readRefineLog(root, metadata.id);
-        return {
-          id: metadata.id,
-          metadata,
-          env,
-          logs,
-          metrics,
-        };
-      }),
-    );
-
-    return runs;
   }
 
   private async resolveWorkspaceRoot(cwd: string): Promise<string> {
@@ -665,46 +431,6 @@ export class ArisSession {
     return this.readTextFile(filePath.resolvedPath).catch(() => null);
   }
 
-  private async readExperimentEnv(root: string): Promise<Record<string, unknown> | null> {
-    const filePath = await resolveScopedPath({
-      root,
-      relativePath: ".aris/experiment-env.json",
-    }).catch(() => null);
-    if (!filePath) {
-      return null;
-    }
-    const content = await this.readTextFile(filePath.resolvedPath).catch(() => null);
-    if (!content) {
-      return null;
-    }
-    try {
-      return JSON.parse(content) as Record<string, unknown>;
-    } catch {
-      return null;
-    }
-  }
-
-  private async readRefineLog(
-    root: string,
-    experimentId: string,
-  ): Promise<{ logs: string | null; metrics: ExperimentRunData["metrics"] }> {
-    const filePath = await resolveScopedPath({
-      root,
-      relativePath: `refine-logs/EXPERIMENT_${experimentId}.md`,
-    }).catch(() => null);
-    if (!filePath) {
-      return { logs: null, metrics: null };
-    }
-
-    const content = await this.readTextFile(filePath.resolvedPath).catch(() => null);
-    if (!content) {
-      return { logs: null, metrics: null };
-    }
-
-    const metrics = extractMetricsFromMarkdown(content);
-    return { logs: content, metrics };
-  }
-
   private async readTextFile(filePath: string): Promise<string> {
     const handle = await fs.open(filePath, READ_FILE_OPEN_FLAGS);
     try {
@@ -781,68 +507,19 @@ export class ArisSession {
     };
   }
 
-  private async ensureWatcher(cwd: string, runId: string | undefined): Promise<void> {
-    const key = runId ? `${cwd}:${runId}` : cwd;
-    if (this.watchers.has(key)) {
+  private async ensureWatcher(cwd: string): Promise<void> {
+    if (this.watchers.has(cwd)) {
       return;
     }
-
-    const watcher = new ArisStateWatcher({
+    const watcher = new ArisWikiWatcher({
       cwd,
-      runId,
-      onUpdate: (update) => {
-        void this.handleWatcherUpdate(update);
+      onChange: () => {
+        void this.emitWikiUpdate(cwd);
       },
       logger: this.logger,
     });
+    this.watchers.set(cwd, watcher);
     await watcher.start();
-    this.watchers.set(key, watcher);
-  }
-
-  private async handleWatcherUpdate(update: ArisStateUpdate): Promise<void> {
-    switch (update.kind) {
-      case "review":
-        this.host.emit({
-          type: "aris.review.update",
-          payload: {
-            cwd: update.cwd,
-            runId: update.runId,
-            reviewState: update.reviewState ?? {
-              version: "unknown",
-              stage: "pending",
-              rounds: [],
-            },
-          },
-        });
-        return;
-      case "run_state":
-      case "paper":
-        await this.emitWorkflowUpdate(update.cwd);
-        return;
-      case "wiki":
-        await this.emitWikiUpdate(update.cwd);
-        return;
-      case "iteration_added":
-        await this.emitIterationLogUpdate(update.cwd, update.runId, update.lines);
-        return;
-    }
-  }
-
-  private async emitWorkflowUpdate(cwd: string): Promise<void> {
-    const workspaceId = await this.resolveWorkspaceId(cwd);
-    if (workspaceId === null) {
-      this.logger.debug({ cwd }, "No workspace found for aris.workflow.update push");
-      return;
-    }
-    try {
-      const status = await this.arisDataService.readWorkflowStatus(workspaceId);
-      this.host.emit({
-        type: "aris.workflow.update",
-        payload: { workspaceId, status },
-      });
-    } catch (error) {
-      this.logger.warn({ err: error, cwd, workspaceId }, "Failed to emit aris.workflow.update");
-    }
   }
 
   private async emitWikiUpdate(cwd: string): Promise<void> {
@@ -854,22 +531,6 @@ export class ArisSession {
     this.host.emit({
       type: "aris.wiki.update",
       payload: { workspaceId },
-    });
-  }
-
-  private async emitIterationLogUpdate(
-    cwd: string,
-    runId: string | undefined,
-    lines: string[],
-  ): Promise<void> {
-    const workspaceId = await this.resolveWorkspaceId(cwd);
-    if (workspaceId === null) {
-      this.logger.debug({ cwd }, "No workspace found for aris.iteration_log.update push");
-      return;
-    }
-    this.host.emit({
-      type: "aris.iteration_log.update",
-      payload: { workspaceId, runId, lines },
     });
   }
 
@@ -990,29 +651,4 @@ function toProblemSeverity(value: unknown): WikiData["problems"][number]["severi
     return value;
   }
   return "medium";
-}
-
-function extractMetricsFromMarkdown(content: string): ExperimentRunData["metrics"] {
-  const metricsMatch = /##\s*Metrics\s*\n+```json\s*\n([\s\S]*?)\n```/.exec(content);
-  if (!metricsMatch) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(metricsMatch[1]) as Record<string, unknown>;
-    const timestamps = Array.isArray(parsed.timestamps)
-      ? parsed.timestamps.filter((item): item is number => typeof item === "number")
-      : [];
-    const series: Record<string, number[]> = {};
-    if (parsed.series && typeof parsed.series === "object" && !Array.isArray(parsed.series)) {
-      for (const [key, value] of Object.entries(parsed.series)) {
-        if (Array.isArray(value)) {
-          series[key] = value.filter((item): item is number => typeof item === "number");
-        }
-      }
-    }
-    return { timestamps, series };
-  } catch {
-    return null;
-  }
 }

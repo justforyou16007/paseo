@@ -1,144 +1,58 @@
 /* eslint-disable jsx-no-new-object-as-prop -- ARIS panel uses inline styles for rapid prototyping */
 import { ActivityIndicator, Text, View } from "react-native";
-import { Network, FlaskConical, Microscope } from "lucide-react-native";
+import { Network } from "lucide-react-native";
 import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
 import { usePaneContext } from "@/panels/pane-context";
 import { isWeb } from "@/constants/platform";
-import { useArisReviewQuery } from "@/aris/use-aris-review-query";
-import { useArisEventsQuery } from "@/aris/use-aris-events-query";
 import { useArisWiki } from "@/aris/use-aris-wiki";
-import { useArisRunsQuery, useArisRunQuery, useArisIterationsQuery } from "@/hooks/use-aris-query";
 import { useWorkspace } from "@/stores/session-store-hooks";
-import { ArisCockpitView } from "@/aris/ArisCockpitView.web";
+import { ArisGraphView } from "@/aris/ArisGraphView.web";
 
-function useArisPanelDescriptor(target: {
-  kind: "aris";
-  runId?: string;
-  view?: "cockpit" | "graph" | "review";
-}): PanelDescriptor {
-  let viewLabel: string;
-  if (target.view === "graph") {
-    viewLabel = "Graph";
-  } else if (target.view === "review") {
-    viewLabel = "Review";
-  } else {
-    viewLabel = "Cockpit";
-  }
-
-  let icon: typeof Network;
-  if (target.view === "graph") {
-    icon = Network;
-  } else if (target.view === "review") {
-    icon = Microscope;
-  } else {
-    icon = FlaskConical;
-  }
-
+function useArisPanelDescriptor(): PanelDescriptor {
   return {
-    label: `ARIS ${viewLabel}`,
-    tooltip: `ARIS ${viewLabel}`,
-    subtitle: target.runId ? `Run ${target.runId}` : "AutoResearch",
+    label: "ARIS graph",
+    tooltip: "ARIS knowledge graph",
+    subtitle: "Research wiki",
     titleState: "ready",
-    icon,
+    icon: Network,
     statusBucket: null,
   };
 }
 
 function ArisPanel() {
-  const { serverId, workspaceId, target } = usePaneContext();
-  if (target.kind !== "aris") {
-    return null;
-  }
+  const { serverId, workspaceId } = usePaneContext();
 
   if (!isWeb) {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }}>
         <Text style={{ textAlign: "center", color: "#64748b" }}>
-          ARIS visualization is only available on web.
+          The ARIS knowledge graph is only available on web.
         </Text>
       </View>
     );
   }
 
-  return <ArisPanelContent serverId={serverId} workspaceId={workspaceId} target={target} />;
+  return <ArisPanelContent serverId={serverId} workspaceId={workspaceId} />;
 }
 
-function ArisPanelContent({
-  serverId,
-  workspaceId,
-  target,
-}: {
-  serverId: string;
-  workspaceId: string;
-  target: { kind: "aris"; runId?: string; view?: "cockpit" | "graph" | "review" };
-}) {
-  const reviewQuery = useArisReviewQuery({
-    serverId,
-    workspaceId,
-    runId: target.runId,
-  });
-  const eventsQuery = useArisEventsQuery({
-    serverId,
-    workspaceId,
-    runId: target.runId,
-  });
-  const runsQuery = useArisRunsQuery({ serverId, workspaceId });
-  const runQuery = useArisRunQuery({
-    serverId,
-    workspaceId,
-    runId: target.runId ?? null,
-  });
-  const iterationsQuery = useArisIterationsQuery({
-    serverId,
-    workspaceId,
-    runId: target.runId ?? null,
-  });
+function ArisPanelContent({ serverId, workspaceId }: { serverId: string; workspaceId: string }) {
   const workspace = useWorkspace(serverId, workspaceId);
-  const cwd = workspace?.workspaceDirectory ?? null;
-  const wikiQuery = useArisWiki(serverId, cwd);
+  const wikiQuery = useArisWiki(serverId, workspace?.workspaceDirectory ?? null);
 
-  // Render with whatever data is available. Each child view is responsible
-  // for handling its own loading/error state — the panel-level spinner was
-  // the source of the perpetual "always loading" bug because any single
-  // disabled query would keep the whole panel stuck on the spinner.
-  // We only show a panel-level spinner when NO query has started yet
-  // (workspaceId is empty or client isn't connected at all).
-  const hasAnyWorkspace = !!workspaceId;
-  const noDataYet =
-    !reviewQuery.data && !eventsQuery.data && !wikiQuery.data && runsQuery.runs.length === 0;
-
-  if (!hasAnyWorkspace) {
+  if (wikiQuery.data) {
+    return <ArisGraphView wiki={wikiQuery.data} />;
+  }
+  if (wikiQuery.error) {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }}>
-        <Text style={{ textAlign: "center", color: "#64748b" }}>
-          Open the ARIS Cockpit from a specific workspace to see W1–W6 status and the knowledge
-          graph.
-        </Text>
+        <Text style={{ textAlign: "center", color: "#64748b" }}>{wikiQuery.error.message}</Text>
       </View>
     );
   }
-
-  if (
-    noDataYet &&
-    (reviewQuery.isLoading || eventsQuery.isLoading || runsQuery.isLoading || wikiQuery.isLoading)
-  ) {
-    return (
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-        <ActivityIndicator />
-      </View>
-    );
-  }
-
   return (
-    <ArisCockpitView
-      review={reviewQuery.data ?? null}
-      events={eventsQuery.data ?? null}
-      runs={runsQuery.runs}
-      run={runQuery.run}
-      iterations={iterationsQuery.iterations}
-      wiki={wikiQuery.data}
-      activeView={target.view ?? "cockpit"}
-    />
+    <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+      <ActivityIndicator />
+    </View>
   );
 }
 

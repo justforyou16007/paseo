@@ -649,7 +649,6 @@ export const ar: TranslationResources = {
         preparingTerminal: "إعداد علامة التبويب المحطة الطرفية",
         preparingTerminalTooltip: "جارٍ تحضير المحطة...",
         newBrowser: "متصفح جديد",
-        newAris: "AutoResearch جديد",
         maximizePane: "تكبير الجزء",
         restorePane: "استعادة الجزء",
         closePane: "إغلاق الجزء",
@@ -726,7 +725,6 @@ export const ar: TranslationResources = {
         copyPath: "نسخ مسار مساحة العمل",
         copyBranchName: "انسخ اسم الفرع",
         showSetup: "إظهار الإعداد",
-        aris: "ARIS runs",
       },
       toasts: {
         workspacePathUnavailable: "مسار Workspace غير متاح بعد",

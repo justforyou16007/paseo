@@ -143,12 +143,7 @@ function getCloseButtonTestId(tab: WorkspaceTabDescriptor): string {
     return `workspace-setup-close-${encodeWorkspaceIdForPathSegment(tab.target.workspaceId)}`;
   }
   if (tab.target.kind === "aris") {
-    const view = tab.target.view ?? "cockpit";
-    const runId = tab.target.runId ?? "all";
-    return `workspace-aris-close-${view}-${runId}`;
-  }
-  if (tab.target.kind === "aris-artifact") {
-    return `workspace-aris-artifact-close-${tab.target.stageId}`;
+    return "workspace-aris-close";
   }
   if (tab.target.kind === "aris-wiki-entity") {
     return `workspace-aris-wiki-entity-close-${tab.target.entityType}-${encodeFilePathForPathSegment(tab.target.entityId)}`;

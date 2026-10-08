@@ -654,7 +654,6 @@ export const ptBR: TranslationResources = {
         preparingTerminal: "Preparando aba de terminal",
         preparingTerminalTooltip: "Preparando terminal...",
         newBrowser: "Novo navegador",
-        newAris: "Novo AutoResearch",
         maximizePane: "Maximizar painel",
         restorePane: "Restaurar painel",
         closePane: "Fechar painel",
@@ -730,7 +729,6 @@ export const ptBR: TranslationResources = {
         copyPath: "Copiar caminho do workspace",
         copyBranchName: "Copiar nome da branch",
         showSetup: "Mostrar configuração",
-        aris: "ARIS runs",
       },
       toasts: {
         workspacePathUnavailable: "O caminho do workspace ainda não está disponível",
