@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync, spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import crypto from "node:crypto";
 import {
   applySetup,
   confirmSetupReview,
@@ -11,6 +14,7 @@ import {
 import { readValidationConfig, validationTokenPath } from "../src/tools/validation/config.js";
 import { createSubmission, updateSubmission, withSubmissionsLock } from "../src/tools/validation/store.js";
 import { facilityConfig } from "./helpers/tester-facility-fixture.js";
+import { experimentSkillDir } from "../src/tools/setup.js";
 
 const read = (file: string) => JSON.parse(fs.readFileSync(file, "utf8"));
 const issueFields = (root: string) => refreshSetupReview(root).issues.map((issue) => issue.field);
@@ -151,12 +155,146 @@ await project("validation", async (root) => {
     validation: { metric: { target: 1 }, limits: { max_submissions: 30 } },
   });
   assert.deepEqual(review.issues, []);
+  confirmSetupReview(root, review.configuration_sha256);
+  const receiptFile = path.join(root, ".aris/tester-config.json.setup.json");
+  const receipt = fs.readFileSync(receiptFile, "utf8");
+  await applySetup(root);
+  assert.equal(fs.readFileSync(receiptFile, "utf8"), receipt);
+  fs.appendFileSync(path.join(root, "bench/runner.mjs"), "\n// changed benchmark\n");
+  await assert.rejects(applySetup(root), /changed|mismatch/i);
+  assert.equal(fs.readFileSync(receiptFile, "utf8"), receipt);
   try {
     confirmSetupReview(root, refreshSetupReview(root, { project: { name: "" } }).configuration_sha256);
     assert.fail("an incomplete sheet must not confirm");
   } catch (error) {
     assert.ok(error instanceof SetupReviewIncompleteError);
   }
+});
+
+await project("codex", async (root) => {
+  fs.mkdirSync(path.join(root, ".aris"));
+  fs.writeFileSync(path.join(root, ".aris/install.json"), JSON.stringify({ provider: "codex" }));
+  fs.writeFileSync(path.join(root, "task.md"), "Answer the questions.\n");
+  fs.mkdirSync(path.join(root, ".codex"));
+  const unrelated = '# Owner config\nmodel = "owner-model"\n[mcp_servers.other]\nurl = "https://other.example/mcp"\n';
+  fs.writeFileSync(path.join(root, ".codex/config.toml"), unrelated);
+  fs.writeFileSync(path.join(root, "AGENTS.md"), "Owner instructions.\n");
+  const review = refreshSetupReview(root, {
+    project: { role: "worker" },
+    connection: { url: "https://validation.example/mcp", token: "t".repeat(43) },
+  });
+  assert.deepEqual(review.issues, []);
+  confirmSetupReview(root, review.configuration_sha256);
+  const applied = await applySetup(root);
+  assert.equal(applied.role, "worker");
+  await applySetup(root);
+  const config = fs.readFileSync(path.join(root, ".codex/config.toml"), "utf8");
+  assert.equal(config.startsWith(unrelated), true);
+  assert.equal(config.split('[mcp_servers."aris-validation"]').length, 2);
+  assert.match(config, /http_headers = \{ Authorization = "Bearer t{43}" \}/);
+  const instructions = fs.readFileSync(path.join(root, "AGENTS.md"), "utf8");
+  assert.equal(instructions.startsWith("Owner instructions.\n"), true);
+  assert.equal(instructions.split("<!-- ARIS ROLE BEGIN -->").length, 2);
+  assert.match(instructions, /\.agents\/skills\/run-/);
+  assert.equal(fs.existsSync(path.join(root, "CLAUDE.md")), false);
+  assert.equal(fs.existsSync(path.join(root, ".mcp.json")), false);
+  assert.match(experimentSkillDir(root), /\.agents[/\\]skills[/\\]run-/);
+  fs.appendFileSync(path.join(root, ".codex/config.toml"), '\n[mcp_servers.aris-validation]\nurl = "https://owner.example/mcp"\n');
+  const conflicted = fs.readFileSync(path.join(root, ".codex/config.toml"), "utf8");
+  await assert.rejects(applySetup(root), /existing aris-validation/);
+  assert.equal(fs.readFileSync(path.join(root, ".codex/config.toml"), "utf8"), conflicted);
+  const validation = refreshSetupReview(root, { project: { role: "validation" } });
+  const agent = validation.modules.flatMap((module) => module.fields).find((field) => field.path === "validation.agent.provider");
+  assert.equal(agent?.value, "codex");
+});
+
+// Build a real archive, then exercise only extracted and installed files in unrelated directories.
+await project("distribution", async (sandbox) => {
+  const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const archive = execFileSync(process.execPath, [path.join(source, "tools/pack-arl.mjs"), sandbox], { encoding: "utf8" }).trim();
+  execFileSync("tar", ["-xzf", archive, "-C", sandbox]);
+  const extracted = path.join(sandbox, "arl");
+  const portable = path.join(sandbox, "moved archive");
+  fs.renameSync(extracted, portable);
+  const archiveManifest = read(path.join(portable, "manifest.json"));
+  assert.equal(fs.existsSync(path.join(portable, "LICENSE")), true);
+  assert.equal(archiveManifest.files.some((file: { path: string }) => file.path.startsWith("src/") || file.path.startsWith("agents/") || file.path.includes("server/src/")), false);
+  assert.equal(fs.existsSync(path.join(portable, "skills/arxiv")), false);
+  assert.equal(fs.existsSync(path.join(portable, "dist/tools/arxiv-fetch.js")), false);
+  for (const provider of ["claude", "codex"]) {
+    const root = path.join(sandbox, `${provider} project`);
+    const skillDir = provider === "claude" ? ".claude/skills" : ".agents/skills";
+    const install = (...extra: string[]) => execFileSync("bash", [path.join(portable, "install.sh"), "--provider", provider, "--project", root, ...extra], { cwd: sandbox, encoding: "utf8" });
+    install("--dry-run");
+    assert.equal(fs.existsSync(root), false);
+    install();
+    const manifest = read(path.join(root, ".aris/install.json"));
+    assert.equal(manifest.provider, provider);
+    assert.deepEqual(fs.readdirSync(path.join(root, skillDir)).sort(), ["aris-setup", "aris-update", "experiment-env-configuration", "research-wiki", "shared-references", "validation-review"]);
+    assert.equal(fs.existsSync(path.join(root, ".claude/agents")), false);
+    const setup = (...args: string[]) => JSON.parse(execFileSync(process.execPath, [path.join(root, ".aris/dist/tools/setup-cli.js"), ...args, "--project", root], { cwd: sandbox, encoding: "utf8" }));
+    fs.writeFileSync(path.join(root, "task.md"), "An isolated installed task.\n");
+    const patch = path.join(root, "patch.json");
+    fs.writeFileSync(patch, JSON.stringify({ project: { role: "worker" }, connection: { url: "https://validation.example/mcp", token: "k".repeat(43) } }));
+    const review = setup("review", "--input", patch);
+    assert.deepEqual(review.issues, []);
+    setup("confirm", "--digest", review.configuration_sha256);
+    assert.equal(setup("apply").role, "worker");
+    const state = fs.readFileSync(path.join(root, ".aris/setup-state.json"), "utf8");
+    execFileSync(process.execPath, [path.join(root, ".aris/dist/tools/research-wiki.js"), "init", path.join(root, "research-wiki")], { cwd: sandbox });
+    const wiki = fs.readFileSync(path.join(root, "research-wiki/index.md"), "utf8");
+    const generated = path.join(root, skillDir, "run-owner-experiment/SKILL.md");
+    fs.mkdirSync(path.dirname(generated), { recursive: true });
+    fs.writeFileSync(generated, "owner generated\n");
+    const helper = path.join(root, ".aris/dist/tools/setup-cli.js");
+    fs.unlinkSync(helper);
+    install();
+    assert.equal(fs.existsSync(helper), true);
+    assert.equal(fs.readFileSync(path.join(root, ".aris/setup-state.json"), "utf8"), state);
+    assert.equal(fs.readFileSync(path.join(root, "research-wiki/index.md"), "utf8"), wiki);
+    assert.equal(fs.readFileSync(generated, "utf8"), "owner generated\n");
+    const skill = path.join(root, skillDir, "aris-setup/SKILL.md");
+    fs.appendFileSync(skill, "\nowner edit\n");
+    const before = fs.readFileSync(path.join(root, ".aris/install.json"), "utf8");
+    assert.throws(() => install(), /Local file differs/);
+    assert.equal(fs.readFileSync(path.join(root, ".aris/install.json"), "utf8"), before);
+    install("--force");
+    assert.equal(fs.readFileSync(skill, "utf8").includes("owner edit"), false);
+    const switched = spawnSync("bash", [path.join(portable, "install.sh"), "--provider", provider === "claude" ? "codex" : "claude", "--project", root], { encoding: "utf8" });
+    assert.equal(switched.status, 1);
+    assert.match(switched.stderr, /keep the same provider/);
+    const envFile = path.join(root, "env.json");
+    fs.writeFileSync(envFile, JSON.stringify({ env_type: "local", local: { project_dir: root } }));
+    execFileSync(process.execPath, [path.join(root, ".aris/dist/tools/experiment-env/env-helper.js"), "provision", "--env-config", envFile, "--dry-run"], { cwd: root });
+    const benchmark = facilityConfig(root);
+    fs.writeFileSync(patch, JSON.stringify({ project: { role: "validation" }, validation: { benchmark, metric: { name: "score", target: 1 }, leak_check: { hidden_paths: [path.join(root, "bench/labels.json")] }, service: { public_url: "http://validation.example:8790", port: 8790 } } }));
+    const validationReview = setup("review", "--input", patch);
+    assert.deepEqual(validationReview.issues, []);
+    setup("confirm", "--digest", validationReview.configuration_sha256);
+    assert.equal(setup("apply").role, "validation");
+    assert.equal(read(path.join(root, ".aris/validation/config.json")).agent.provider, provider);
+    const status = JSON.parse(execFileSync(process.execPath, [path.join(root, ".aris/dist/tools/validation-cli.js"), "status", "--project", root], { cwd: sandbox, encoding: "utf8" }));
+    assert.equal(status.service.state, "open");
+  }
+  const bootstrapped = path.join(sandbox, "bootstrap project");
+  execFileSync("bash", [path.join(source, "distribution/install-arl.sh"), "--provider", "codex", "--project", bootstrapped], { cwd: sandbox, env: { ...process.env, ARL_ARCHIVE: archive } });
+  assert.equal(read(path.join(bootstrapped, ".aris/install.json")).provider, "codex");
+  const changedSkill = path.join(portable, "skills/aris-setup/SKILL.md");
+  fs.appendFileSync(changedSkill, "\nNew upstream instructions.\n");
+  archiveManifest.version = "0.1.1";
+  const changedEntry = archiveManifest.files.find((file: { path: string }) => file.path === "skills/aris-setup/SKILL.md");
+  changedEntry.sha256 = crypto.createHash("sha256").update(fs.readFileSync(changedSkill)).digest("hex");
+  fs.writeFileSync(path.join(portable, "manifest.json"), JSON.stringify(archiveManifest));
+  execFileSync("bash", [path.join(portable, "install.sh"), "--provider", "codex", "--project", bootstrapped], { cwd: sandbox });
+  assert.equal(read(path.join(bootstrapped, ".aris/install.json")).version, "0.1.1");
+  assert.match(fs.readFileSync(path.join(bootstrapped, ".agents/skills/aris-setup/SKILL.md"), "utf8"), /New upstream instructions/);
+  const damaged = path.join(portable, "dist/tools/setup-cli.js");
+  fs.appendFileSync(damaged, "\n// changed\n");
+  const rejectedRoot = path.join(sandbox, "rejected");
+  const rejected = spawnSync("bash", [path.join(portable, "install.sh"), "--provider", "claude", "--project", rejectedRoot], { encoding: "utf8" });
+  assert.equal(rejected.status, 1);
+  assert.match(rejected.stderr, /Archive integrity check failed/);
+  assert.equal(fs.existsSync(rejectedRoot), false);
 });
 
 console.log("test_setup: ok");

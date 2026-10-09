@@ -6,6 +6,8 @@ import { createCli, runCli } from "../../lib/cli.js";
 import { EnvBackend, EnvError } from "./env-backend.js";
 import { validate, writeConfig, ValidationError } from "./parse-env.js";
 
+import { createBackend } from "./index.js";
+
 const DEFAULT_CONFIG = ".aris/experiment-env.json";
 
 function loadConfig(envConfig: string): Record<string, unknown> {
@@ -49,7 +51,7 @@ function backendFromConfig(envConfig: string, dryRun: boolean): EnvBackend {
     process.exit(1);
   }
   const stateDir = path.dirname(path.resolve(envConfig));
-  return EnvBackend.create(envType, block, stateDir, dryRun);
+  return createBackend(envType, block, stateDir, dryRun);
 }
 
 function emit(result: unknown): void {

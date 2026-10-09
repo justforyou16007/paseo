@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
@@ -276,4 +277,6 @@ program
     },
   );
 
-runCli(program);
+if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+  runCli(program);
+}

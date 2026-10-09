@@ -270,7 +270,6 @@ import {
 } from "./project-directory-service.js";
 import { runGitCommand } from "../utils/run-git-command.js";
 import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dispatch.js";
-import { ensureArisSkillsInstalled } from "./aris/aris-auto-install.js";
 import { resolveWorktreeSourceCwd } from "./workspace-source.js";
 
 type ProviderSubagentManagerEvent = Extract<
@@ -4326,9 +4325,6 @@ export class Session {
       );
       createdAgentId = snapshot.id;
       await this.agentUpdates.forwardLiveAgent(snapshot);
-      if (resolvedIntent.createdDirectoryWorkspace) {
-        this.backgroundInstallArisSkills(resolvedIntent.config.cwd);
-      }
       if (resolvedIntent.createdDirectoryWorkspace && trimmedPrompt) {
         this.workspaceAutoName.scheduleForDirectory(
           {
@@ -6655,29 +6651,6 @@ export class Session {
       : this.handleWorkspaceCreateWorktree(creationRequest, workspaceId);
   }
 
-  private backgroundInstallArisSkills(cwd: string): void {
-    void (async () => {
-      const result = await ensureArisSkillsInstalled({ cwd, logger: this.sessionLogger });
-      if (!result.installed) {
-        return;
-      }
-      // Adding a project and opening an agent in it happen back to back, so an
-      // agent's session can scan `.claude/skills` while the copy is still
-      // running and end up with a partial or empty skill list. Refresh live
-      // agents now that the copy is complete — otherwise the user has to type
-      // `/reload-skills` by hand before the new skills exist for the session.
-      const reloadedCount = await this.agentManager.reloadSkillsForDirectory(cwd);
-      if (reloadedCount > 0) {
-        this.sessionLogger.info(
-          { cwd, reloadedCount, skillCount: result.skillCount },
-          "Reloaded agent skills after ARIS install",
-        );
-      }
-    })().catch((error) => {
-      this.sessionLogger.warn({ err: error, cwd }, "Background ARIS skill install failed");
-    });
-  }
-
   private async handleWorkspaceCreateLocal(
     request: Extract<SessionInboundMessage, { type: "workspace.create.request" }>,
     workspaceId?: string,
@@ -6706,7 +6679,6 @@ export class Session {
       descriptor,
       request.firstAgentContext ? "running" : undefined,
     );
-    this.backgroundInstallArisSkills(workspace.cwd);
     void this.workspaceGitService
       .getSnapshot(workspace.cwd, { force: true, includeForge: true, reason: "open_project" })
       .catch((error) => {
@@ -6812,7 +6784,6 @@ export class Session {
       await this.syncWorkspaceGitObserverForWorkspace(workspace);
       const descriptor = await this.describeWorkspaceRecord(workspace);
       await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
-      this.backgroundInstallArisSkills(workspace.cwd);
       this.sessionLogger.info(
         {
           requestedCwd,
@@ -6894,7 +6865,6 @@ export class Session {
         projectsBefore.set(project.projectId, project);
       }
       const project = await this.workspaceProvisioning.findOrCreateProjectForDirectory(cwd);
-      this.backgroundInstallArisSkills(cwd);
       this.sessionLogger.info(
         {
           requestedCwd,
@@ -7312,7 +7282,6 @@ export class Session {
         onScriptsChanged: (workspaceId, workspaceDirectory) => {
           this.workspaceScripts.emitStatusUpdate(workspaceId, workspaceDirectory);
         },
-        reloadAgentSkillsForDirectory: (cwd) => this.agentManager.reloadSkillsForDirectory(cwd),
       },
       input,
       options,

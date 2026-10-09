@@ -1,5 +1,7 @@
 # Architecture
 
+Standalone research tooling is packaged separately: [Auto Research Loop](arl-install.md).
+
 Paseo is a client-server system for monitoring and controlling local AI coding agents. The daemon runs on your machine, manages agent processes, and streams their output in real time over WebSocket. Clients (mobile app, CLI, desktop app) connect to the daemon to observe and interact with agents.
 
 Your code never leaves your machine. Paseo is local-first.

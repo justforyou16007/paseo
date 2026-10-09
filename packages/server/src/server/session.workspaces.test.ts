@@ -9559,7 +9559,7 @@ test("workspace.create.request reports an archived explicit project", async () =
   });
 });
 
-test("project.add.request installs ARIS skills into the project directory", async () => {
+test("project.add.request leaves research installation to the standalone package", async () => {
   const projectDir = mkdtempSync(path.join(tmpdir(), "paseo-aris-project-"));
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests({
@@ -9575,12 +9575,9 @@ test("project.add.request installs ARIS skills into the project directory", asyn
 
     expect(findByType(emitted, "project.add.response")?.payload.error).toBeNull();
 
-    // The install is fire-and-forget so the response does not wait for it.
-    await vi.waitFor(() => {
-      expect(existsSync(path.join(projectDir, ".aris", "installed-skills.txt"))).toBe(true);
-    });
-    expect(existsSync(path.join(projectDir, ".claude", "skills", "auto-research-loop"))).toBe(true);
-    expect(existsSync(path.join(projectDir, ".claude", "skills", "shared-references"))).toBe(true);
+    expect(existsSync(path.join(projectDir, ".aris"))).toBe(false);
+    expect(existsSync(path.join(projectDir, ".claude"))).toBe(false);
+    expect(existsSync(path.join(projectDir, ".agents"))).toBe(false);
   } finally {
     rmSync(projectDir, { recursive: true, force: true });
   }

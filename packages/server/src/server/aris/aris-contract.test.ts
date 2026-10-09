@@ -2,7 +2,6 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { buildSourceInventory } from "./aris-auto-install.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -18,7 +17,6 @@ while (
 const ARIS_ROOT = path.join(repoRoot, "packages", "Auto-claude-code-research-in-sleep");
 const SKILLS_DIR = path.join(ARIS_ROOT, "skills");
 
-const ALLOWED_ARIS_REPO_FILES = new Set(["aris-update"]);
 const DESCRIPTIVE_DOCS = new Set(["integration-contract.md"]);
 
 const OLD_PYTHON_HELPERS = [
@@ -110,8 +108,6 @@ describe("ARIS runtime contract", () => {
     const violations: string[] = [];
 
     for (const { rel, content } of allFiles) {
-      const skillName = rel.split(path.sep)[0]!;
-      if (ALLOWED_ARIS_REPO_FILES.has(skillName)) continue;
       const fileName = path.basename(rel);
       if (DESCRIPTIVE_DOCS.has(fileName)) continue;
 
@@ -134,9 +130,6 @@ describe("ARIS runtime contract", () => {
     const pattern = /awk.*repo_root.*installed-skills/;
 
     for (const { rel, content } of allFiles) {
-      const skillName = rel.split(path.sep)[0]!;
-      if (ALLOWED_ARIS_REPO_FILES.has(skillName)) continue;
-
       const lines = content.split("\n");
       for (let i = 0; i < lines.length; i++) {
         if (pattern.test(lines[i]!)) {
@@ -201,67 +194,12 @@ describe("ARIS runtime contract", () => {
     expect(refs.length).toBeGreaterThan(10);
   });
 
-  it("buildSourceInventory produces complete inventory matching src→dist", () => {
-    const inventory = buildSourceInventory(ARIS_ROOT);
-
-    // Every compiled source file, and no shell helpers since the Node port.
-    const srcTs: string[] = [];
-    const walk = (dir: string) => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) walk(full);
-        else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".d.ts"))
-          srcTs.push(path.relative(ARIS_ROOT, full).split(path.sep).join("/"));
-      }
-    };
-    walk(path.join(ARIS_ROOT, "src"));
-    const distJs = srcTs.map((f) => f.replace(/^src\//, "dist/").replace(/\.ts$/, ".js"));
-    expect(distJs.filter((f) => !inventory.includes(f))).toEqual([]);
-    expect(inventory.filter((f) => f.startsWith("tools/"))).toEqual([]);
-    expect(inventory.filter((f) => f.startsWith("templates/")).length).toBeGreaterThan(0);
-
-    // Must include node_modules dep files (all files, not just package.json)
-    const depFiles = inventory.filter((f) => f.startsWith("node_modules/"));
-    expect(depFiles.length).toBeGreaterThanOrEqual(2);
-
-    // Every inventory item must exist in source
-    for (const f of inventory) {
-      expect(
-        existsSync(path.join(ARIS_ROOT, f)),
-        `Inventory item ${f} missing from ARIS source`,
-      ).toBe(true);
-    }
-  });
-
-  it("inventory paths are posix-separated and never leak src/ entries", () => {
-    const inventory = buildSourceInventory(ARIS_ROOT);
-
-    // The src/->dist/ mapping rewrites a relative path with a literal "src/"
-    // prefix. If the collector ever emits native separators, the rewrite
-    // silently no-ops on Windows and the inventory fills up with src\*.js
-    // files that exist nowhere, failing every install with runtime_incomplete.
-    const backslashed = inventory.filter((f) => f.includes("\\"));
-    expect(backslashed, "inventory must use forward slashes on every platform").toEqual([]);
-
-    const srcEntries = inventory.filter((f) => f.split("/")[0] === "src");
-    expect(srcEntries, "src/ files must be mapped to their dist/ output").toEqual([]);
-
-    // Mirrors isSafeRuntimeFile(): anything outside these roots is rejected
-    // when the manifest is read back, so it must never be written.
-    const allowedRoots = new Set(["dist", "node_modules", "templates", "tools"]);
-    const badRoots = inventory.filter((f) => !allowedRoots.has(f.split("/")[0] ?? ""));
-    expect(badRoots, "inventory roots must be manifest-safe").toEqual([]);
-  });
-
   it("no helper resolver uses bare git||pwd without upward .aris walk", () => {
     const violations: string[] = [];
     // Pattern: cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" in a helper context
     const bareGitPwd = /cd "\$\(git rev-parse --show-toplevel 2>\/dev\/null \|\| pwd\)"/;
 
     for (const { rel, content } of allFiles) {
-      const skillName = rel.split(path.sep)[0]!;
-      if (ALLOWED_ARIS_REPO_FILES.has(skillName)) continue;
-
       // Only check files that have helper resolution (.aris/dist or .aris/tools)
       if (!content.includes(".aris/dist") && !content.includes(".aris/tools")) continue;
 

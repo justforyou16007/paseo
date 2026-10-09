@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import type { EnvBackend } from "../../tools/experiment-env/env-backend.js";
+import { createBackend } from "../../tools/experiment-env/index.js";
 
 import fs from "fs";
 import os from "os";
@@ -7,7 +9,6 @@ import { execSync, spawnSync } from "child_process";
 import { createCli, runCli } from "../../lib/cli.js";
 import { GpuSampleHistory } from "../../tools/gpu-sample-history.js";
 import type { GpuSample } from "../../tools/gpu-sample-history.js";
-import { EnvBackend } from "../../tools/experiment-env/env-backend.js";
 
 const POLL_INTERVAL_SEC = 60;
 
@@ -748,7 +749,7 @@ function main(): void {
           if (!envType)
             throw new Error(`adaptive queue environment config has no env_type: ${envCfgPath}`);
           const envConfig = (envCfg[envType] ?? {}) as Record<string, unknown>;
-          const backend = EnvBackend.create(envType, envConfig);
+          const backend = createBackend(envType, envConfig);
           adaptive = { gpuHistory: new GpuSampleHistory(), backend, manifestJobMap };
         }
 

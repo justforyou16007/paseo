@@ -10,11 +10,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { findExecutable, run } from "../lib/run.js";
+import { providerSkillsDir } from "./provider.js";
 
 const PACKAGE = "browser-act-cli";
 const PYTHON_VERSION = "3.12";
 const SKILL_URL = "https://raw.githubusercontent.com/browser-act/skills/main/browser-act/SKILL.md";
-const SKILL_DIR = path.join(".claude", "skills", "browser-act");
+const SKILL_DIR = path.join(providerSkillsDir(process.cwd()), "browser-act");
 
 /** `uv tool install` puts its shim in uv's bin directory, which may not be on PATH yet. */
 function locate(): string | null {

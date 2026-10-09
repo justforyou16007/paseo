@@ -1160,7 +1160,6 @@ export async function createPaseoDaemon(
         getDaemonTcpHost: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.host : null),
         serviceProxyPublicBaseUrl,
         onScriptsChanged: null,
-        reloadAgentSkillsForDirectory: (cwd) => agentManager.reloadSkillsForDirectory(cwd),
       },
       input,
       serviceOptions,

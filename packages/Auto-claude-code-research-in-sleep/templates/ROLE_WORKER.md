@@ -9,4 +9,3 @@ You are the worker. `task.md` is the whole task; nothing else defines it.
 - Stop when `query` reports `completed` (target met) or `closed` (no submissions left).
 - Record ideas, submissions and problems in the wiki as `/research-wiki` describes ("What the worker records"). Scores come from `query`, never from your own measurements.
 - When `.claude/skills/run-<project>-experiment/` exists, run experiments through its ops.
-- If `~/.claude/feishu.json` exists, send the events in `/feishu-notify`'s Event Catalog.

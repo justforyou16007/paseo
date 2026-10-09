@@ -7,7 +7,7 @@ allowed-tools: Read, Write, Edit, Bash(*), AskUserQuestion
 
 # ARIS Setup
 
-ARIS runs one task on two machines. The **worker** builds a deliverable; the **validation** side owns a frozen benchmark, scores each submission and decides when the task is done. The two talk only through the validation service's MCP tools. Each machine runs Paseo, so the owner sees both sides' agents.
+ARIS runs one task on two machines. The **worker** builds a deliverable; the **validation** side owns a frozen benchmark, scores each submission and decides when the task is done. The two talk only through the validation service's MCP tools. Install the standalone ARL archive first (`bash install.sh --provider claude|codex --project PATH`). Each machine runs official Paseo, so the owner sees both sides' agents.
 
 The helper is `node .aris/dist/tools/setup-cli.js` (see [integration-contract.md](../shared-references/integration-contract.md)). It owns the draft, the review sheet and the confirmed digest; never edit `.aris/setup-state.json` by hand.
 
@@ -42,7 +42,7 @@ Show the whole sheet again after each refresh. A recommendation becomes a value 
 - `validation.metric`: one benchmark metric and the target that ends the task.
 - `validation.leak_check.hidden_paths`: absolute paths of the hidden samples, labels and references. Feedback that quotes them is held back.
 - `validation.limits`: maximum counted submissions, concurrency, upload size and review timeout.
-- `validation.agent`: provider, model, mode and thinking for the per-submission validation agent. On Windows set `paseo_command` to `["node", "<Paseo install>\\bin\\paseo"]`.
+- `validation.agent`: provider, model, mode and thinking for the per-submission validation agent. The provider must match this project installation. On Windows set `paseo_command` to `["node", "<Paseo install>\\bin\\paseo"]`.
 - `validation.service`: how the worker reaches the service.
   - Through the Paseo service proxy: keep `host` at `127.0.0.1`, leave `port` null, and set `public_url` to the proxy URL of the `aris-validation` script.
   - Directly on a private network: set `host` to `0.0.0.0`, a fixed `port`, and `public_url` to `http://<this machine's address>:<port>`. On Windows, allow that port through the firewall: `netsh advfirewall firewall add rule name="ARIS validation" dir=in action=allow protocol=TCP localport=<port>`.
@@ -65,13 +65,13 @@ Any later edit, including to `task.md`, invalidates the confirmation. A request 
 node .aris/dist/tools/setup-cli.js apply --project .
 ```
 
-Apply writes the role block into `CLAUDE.md` between the `ARIS ROLE` markers and leaves the rest of the file alone.
+Apply writes the role block into `CLAUDE.md` for Claude or `AGENTS.md` for Codex between the `ARIS ROLE` markers and leaves the rest of the file alone.
 
-**Worker.** Apply adds the `aris-validation` server to `.mcp.json`. That file holds the token: make sure `.gitignore` excludes it. Then:
+**Worker.** Apply adds the `aris-validation` server to `.mcp.json` for Claude or `.codex/config.toml` for Codex. The installer records the provider in `.aris/install.json`. Keep the provider MCP config and `.aris/` out of git because they hold credentials. Then:
 
 1. Create the wiki if `research-wiki/` is absent: `node .aris/dist/tools/research-wiki.js init research-wiki/`.
 2. If the PRD is set, run `/experiment-env-configuration` with `.aris/environment-prd.json`.
-3. Tell the owner to restart the Claude Code session so the MCP server loads, then check that `query` answers.
+3. Tell the owner to reopen the selected provider session so the MCP server loads (Codex also requires trusting the project), then check that `query` answers.
 
 **Validation.** Apply installs the benchmark (setup, healthcheck and smoke must pass), freezes `.aris/validation/config.json`, creates the service token and adds the `aris-validation` service script to `paseo.json`. Then:
 

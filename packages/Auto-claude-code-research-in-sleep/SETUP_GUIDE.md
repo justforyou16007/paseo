@@ -1,87 +1,95 @@
-# ARIS Setup Guide
+# Auto Research Loop (ARL)
 
-ARIS runs one task on two machines: a **worker** that builds a deliverable and a **validation** machine that scores it against a benchmark the worker never sees. This guide sets up both, with Windows as the default. Why it is split this way: [ARIS_ARCHITECTURE_GUIDE.md](ARIS_ARCHITECTURE_GUIDE.md) (Chinese).
+ARL runs one task on two machines. The worker builds a deliverable; the validation machine owns a frozen benchmark, scores submissions and publishes feedback. Their only application interface is the validation service's `submit` and `query` MCP tools. Planning and implementation belong to the agent; ARL adds no fixed research pipeline.
 
-English | [中文版](SETUP_GUIDE_CN.md)
+Use the official Paseo app and CLI on both machines. This archive supplies project skills and the Node runtime helpers; it does not contain or require a custom Paseo build. Official Paseo shows agents and service scripts. It has no custom ARIS knowledge graph tab: read the wiki files or use the `research-wiki` skill.
 
-## 1. Install on both machines
+## Install
 
-1. **Node.js 20+** and **Git**. On Windows: `winget install OpenJS.NodeJS.LTS Git.Git`.
-2. **Claude Code**: see the [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code). Check with `claude --version`.
-3. **Paseo** with its daemon running: `paseo daemon status`. Paseo copies the ARIS skills and the compiled helpers into every project you add; see [ARIS auto-install](../../docs/aris-auto-install.md). A packaged Paseo (desktop app, global npm install) needs a built ARIS checkout:
+You need Bash, Node.js 22.12+, and tar. Install and authenticate Claude Code or Codex, and install the official Paseo CLI with its daemon running (`paseo daemon status`). The validation machine also needs the dependencies required by your benchmark. Windows users can run the Bash installer in Git Bash, with Node on PATH; WSL is a separate Linux environment.
 
-   ```powershell
-   git clone <aris-repo> $HOME\.paseo\aris
-   cd $HOME\.paseo\aris; npm install; npm run build
-   ```
+Install from the `arl` branch (the bootstrap downloads and verifies only the standalone archive):
 
-4. **Validation machine only:** whatever the benchmark needs, usually Python. Benchmark commands call `python`, not `python3`, so one config runs on Windows and Linux.
-
-`curl.exe` and `tar` ship with Windows 10 and later; the worker needs nothing else to upload.
-
-## 2. Create the project on each machine
-
-Make an empty directory with `git init`, add it to Paseo, and check that `.claude\skills\aris-setup\` and `.aris\dist\` appeared. The two projects are separate: never share a disk, a repository or a synced folder between them.
-
-## 3. Validation machine
-
-Set this side up first; the worker needs its address and token.
-
-1. Write `task.md` with the owner. Open Claude Code in the project and run `/aris-setup validation`. If `task.md` is missing, setup drafts it from the template with you.
-2. Setup shows one review sheet with every field. Answer with all your changes at once. The fields that need decisions:
-   - **Benchmark**: source, pinned dataset revision, split, full sample count, and the runner commands. `.aris\templates\tester-benchmark\` is a worked lm-evaluation-harness example.
-   - **Metric and target**: the score that ends the task.
-   - **Hidden paths**: the hidden samples, labels and references. Feedback that quotes them is held back.
-   - **Limits**: maximum counted submissions, concurrent reviews, upload size, review timeout.
-   - **Validation agent**: provider and model for the agent that reviews each submission. On Windows set `paseo_command` to `["node", "<Paseo install>\\bin\\paseo"]`, because Node cannot start `paseo.cmd` without a shell.
-   - **Service address**: see [Network](#network).
-3. Approve the final configuration digest. Setup installs the benchmark, runs its healthcheck and smoke test, freezes it, creates the service token and adds the `aris-validation` script to `paseo.json`.
-4. Start the `aris-validation` script from the workspace in the Paseo app.
-5. Check it: `node .aris\dist\tools\validation-cli.js status --project .`
-6. Note the printed `worker_connection`: a URL ending in `/mcp` and a token. Send the token to the worker machine over a private channel.
-
-Once a submission has been counted, the benchmark and target cannot change. A new benchmark means a new validation project.
-
-### Network
-
-The worker must reach the validation service over HTTP. Pick one:
-
-**Direct, on a private network or VPN** (simplest):
-
-- `service.host`: `0.0.0.0`
-- `service.port`: a fixed port, for example `8790`
-- `service.public_url`: `http://<validation machine address>:8790`
-
-Allow the port through Windows Firewall in an administrator PowerShell:
-
-```powershell
-netsh advfirewall firewall add rule name="ARIS validation" dir=in action=allow protocol=TCP localport=8790
+```bash
+curl -fsSL "https://raw.githubusercontent.com/justforyou16007/paseo/arl/packages/Auto-claude-code-research-in-sleep/distribution/install-arl.sh" -o /tmp/install-arl.sh
+bash /tmp/install-arl.sh --provider claude --project /path/to/project
+# Or:
+bash /tmp/install-arl.sh --provider codex --project /path/to/project
 ```
 
-**Through the Paseo service proxy** (when you already expose Paseo services under a domain): keep `host` at `127.0.0.1`, leave `port` empty, and set `public_url` to the proxy URL of the `aris-validation` script. Proxy setup: [service-proxy.md](../../docs/service-proxy.md).
+For offline installation, extract the standalone archive outside the target project, then choose one provider per project:
 
-From the worker machine, `curl.exe http://<address>:8790/health` should print `{"status":"ok"}`. Every other request needs the token.
+```bash
+tar -xzf arl-0.1.0.tar.gz
+bash arl/install.sh --provider claude --project /path/to/project
+# Or, for a Codex project:
+bash arl/install.sh --provider codex --project /path/to/project
+```
 
-## 4. Worker machine
+No npm install, build tools, source checkout, global skill links, or Paseo restart are needed on the target machine. The archive includes compiled helpers, their runtime dependencies and templates. Keep the archive for updates or repairs.
 
-1. Copy `task.md` from the validation machine to the project root, unchanged.
-2. Run `/aris-setup worker`. Fill `connection.url` and `connection.token` with the values from step 3.6. Leave `environment.prd` empty to let the agent manage its environment, or describe it to have `/experiment-env-configuration` generate run scripts.
-3. Approve the digest. Setup writes the `aris-validation` server into `.mcp.json` and the worker role into `CLAUDE.md`, and creates `research-wiki\`.
-4. `.mcp.json` holds the token. Add it to `.gitignore`.
-5. Restart Claude Code in the project so it loads the MCP server, then ask it to call `query`. It should report the service as `open` with all submissions left.
+| Provider | Skills | Role instructions | Worker MCP configuration |
+| --- | --- | --- | --- |
+| Claude | `.claude/skills/` | `CLAUDE.md` | `.mcp.json` |
+| Codex | `.agents/skills/` | `AGENTS.md` | `.codex/config.toml` |
 
-## 5. Run
+Setup writes role instructions and MCP configuration after you confirm the configuration sheet. Existing unrelated instructions and MCP entries are preserved. Codex loads project configuration only for trusted projects: trust this project in Codex, then open a fresh session. Its [MCP configuration](https://developers.openai.com/codex/mcp/) and [skill discovery](https://developers.openai.com/codex/skills/) follow the official OpenAI documentation.
 
-Start an agent in the worker project in Paseo and tell it to work on `task.md`. Its role block already says how to submit and when to stop. For every submission, a validation agent appears in the validation machine's Paseo app. The run ends when a valid submission meets the target (`completed`) or the submissions run out (`closed`).
+The archive contains five skills: `aris-setup`, `aris-update`, `validation-review`, `research-wiki`, and `experiment-env-configuration`. These existing names and the `.aris/` data directory remain stable. It installs no subagent definitions. Optional literature, GPU platform and notification skills in the source repository are not part of ARL.
 
-Both machines show their research wiki as a knowledge graph in the ARIS tab of the workspace.
+Create a separate project on each machine and add each to official Paseo. Never share their disk, repository or synchronized directory. Use the same `task.md` on both machines. In the project `.gitignore`, exclude `.aris/` and the provider MCP configuration because setup stores credentials there.
+
+## Validation machine first
+
+1. Open an agent using the installed provider and ask it to run `aris-setup validation` (Claude slash command `/aris-setup validation`; Codex skill `$aris-setup` with `validation`). If `task.md` is absent, write it with the owner from `.aris/templates/TASK_TEMPLATE.md`.
+2. Review the complete configuration sheet. Configure the pinned benchmark source and data revision, split, full sample count, runner argv, metric and target, hidden paths, submission limits and service address. The validation agent provider must match the installed provider. The example in `.aris/templates/tester-benchmark/` uses lm-evaluation-harness.
+3. Approve the final configuration digest. Setup runs the benchmark setup, healthcheck and smoke test, freezes the configuration and creates the service token. It writes the `aris-validation` service script into `paseo.json`.
+4. Start that script from official Paseo. Check with `node .aris/dist/tools/validation-cli.js status --project .`.
+5. Transfer the printed `worker_connection` URL and token privately to the worker machine.
+
+On Windows, use `agent.paseo_command: ["node", "<Paseo install>\\bin\\paseo"]` because Node cannot execute a `.cmd` shim directly. On Linux/macOS the default `["paseo"]` uses the official CLI on PATH.
+
+Once a submission is counted, the benchmark and target are frozen. A changed benchmark needs a new validation project.
+
+## Network
+
+For a private network or VPN, set `service.host` to `0.0.0.0`, `service.port` to a fixed port such as `8790`, and `service.public_url` to `http://<validation-address>:8790`. Allow that port in the validation machine's firewall. The worker must reach `/health`; it should return `{"status":"ok"}`.
+
+If you already operate Paseo's service proxy, use host `127.0.0.1`, leave the port null, and use the script's proxy URL as `public_url`. Paseo supplies the runtime port. This package does not configure DNS or a proxy for you.
+
+## Worker machine
+
+1. Copy the validation machine's `task.md` unchanged to the worker project.
+2. Invoke `aris-setup worker`. Fill in `connection.url` and `connection.token`. Leave `environment.prd` null for agent-managed execution, or describe an environment for generated experiment scripts.
+3. Approve the reviewed digest. Setup writes the provider's role block and MCP entry. The setup skill initializes `research-wiki/` and invokes environment configuration when requested.
+4. Reopen the provider session; for Codex, trust the project. Ask the agent to call `query` and verify the validation service is open.
+5. Tell the worker to work on `task.md`. It submits a zip containing `USAGE.md`, uploads to the one-time URL and polls `query`. It stops at `completed` (target met) or `closed` (submission limit reached).
+
+Generated environment operations require POSIX sh and jq, plus the transport/runtime tools specified by your PRD (for example SSH, rsync, Python or a container runtime). These project-specific tools are not bundled.
+
+## Update or repair
+
+Extract the new archive separately and use the same provider and project:
+
+```bash
+bash arl/install.sh --provider codex --project /path/to/project --dry-run
+bash arl/install.sh --provider codex --project /path/to/project
+```
+
+The installer verifies archive hashes and records managed file hashes in `.aris/install.json`. It restores missing files and updates unchanged managed files. A local edit stops the update before writes; save it before choosing `--force`. Updates preserve task.md, setup state, benchmark, submissions, wiki, user skills and generated experiment bundles. Provider changes in an existing installation are refused; use separate projects for different providers.
+
+If setup was applied, rerun `node .aris/dist/tools/setup-cli.js apply --project .` to refresh the role block. An unchanged configuration keeps its confirmation. Reopen the agent session after updates. No daemon restart is required.
+
+Older custom-Paseo installations have no standalone ownership manifest. Back them up and install into fresh projects, or inspect conflicting files and explicitly select `--force`. The installer never deletes user agent definitions or old global skill links.
 
 ## Troubleshooting
 
 | Symptom | Check |
 | --- | --- |
-| `query` fails on the worker | The `aris-validation` script is running; `/health` answers from the worker; URL ends in `/mcp`; token matches |
-| Upload hangs or is refused | Firewall rule and port; upload size limit; the upload URL is single-use and expires, so call `submit` again |
-| Submission `invalid` | The zip is malformed or has no `USAGE.md` at its root or in its single top-level folder. Not counted. |
-| Submission `failed` | The validation side could not start an agent or the review timed out. Not counted. Check `paseo_command` and the agent provider. |
-| Service stopped after an edit | A file the benchmark pins changed. Restore it, or start a new validation project. |
+| Skills missing | Installation provider matches the opened agent; reopen the session |
+| Codex MCP missing | Project is trusted and `.codex/config.toml` has the ARL block |
+| Existing unmanaged aris-validation TOML entry | Move that entry out before applying setup; ARL does not overwrite an unrelated owner-managed table |
+| query fails | Service is running; worker reaches /health; URL ends in /mcp; token matches |
+| Upload rejected | Zip has USAGE.md at root or in one top-level folder; upload fits limits; URL is single-use |
+| Submission failed | Official Paseo CLI/provider is available; inspect validation service logs and review timeout |
+| Service refuses after an edit | Restore the pinned benchmark files, or create a new validation project |

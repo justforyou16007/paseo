@@ -56,43 +56,6 @@ export abstract class EnvBackend {
     this.dryRun = dryRun;
   }
 
-  static create(
-    envType: string,
-    config: Record<string, unknown>,
-    stateDir = ".",
-    dryRun = false,
-  ): EnvBackend {
-    // Lazy imports to avoid circular references at module load
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { LocalEnv } = require("./local-env.js") as typeof import("./local-env.js");
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { DockerEnv } = require("./docker-env.js") as typeof import("./docker-env.js");
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { RemoteEnv } = require("./remote-env.js") as typeof import("./remote-env.js");
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { VastEnv } = require("./vast-env.js") as typeof import("./vast-env.js");
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { ModalEnv } = require("./modal-env.js") as typeof import("./modal-env.js");
-
-    const registry: Record<
-      string,
-      new (cfg: Record<string, unknown>, sd: string, dr: boolean) => EnvBackend
-    > = {
-      local: LocalEnv,
-      docker: DockerEnv,
-      remote: RemoteEnv,
-      vast: VastEnv,
-      modal: ModalEnv,
-    };
-    const Cls = registry[envType];
-    if (!Cls) {
-      throw new Error(
-        `unknown env_type '${envType}'; expected one of ${Object.keys(registry).sort().join(", ")}`,
-      );
-    }
-    return new Cls(config, stateDir, dryRun);
-  }
-
   protected _announce(action: string, cmd: string): Record<string, unknown> {
     return { status: "dry_run", action, command: cmd };
   }

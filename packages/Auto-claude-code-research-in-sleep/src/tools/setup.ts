@@ -18,12 +18,15 @@ import {
 import { failA1, isRecord, type JsonObject } from "./validate.js";
 import {
   DEFAULT_LIMITS,
+  assertFrozenBenchmark,
+  readValidationConfig,
   ensureValidationToken,
   validateValidationConfig,
   validationConfigPath,
   type ValidationConfig,
 } from "./validation/config.js";
 import { countedSubmissions } from "./validation/store.js";
+import { installedProvider, providerSkillsDir, writeCodexValidationMcp } from "./provider.js";
 
 export type SetupRole = "worker" | "validation";
 export interface SetupDraft {
@@ -185,7 +188,7 @@ export function projectSlug(projectRoot: string): string {
 }
 /** Where /experiment-env-configuration writes the project's run scripts. */
 export function experimentSkillDir(projectRoot: string): string {
-  return path.join(projectRoot, ".claude", "skills", `run-${projectSlug(projectRoot)}-experiment`);
+  return path.join(providerSkillsDir(projectRoot), `run-${projectSlug(projectRoot)}-experiment`);
 }
 export const setupDraftPath = (root: string): string =>
   path.join(path.resolve(root), ".aris", "setup-draft.json");
@@ -221,7 +224,13 @@ function moduleDefaults(root: string, module: string): JsonObject {
     adapter_contract: ADAPTER_CONTRACT,
     limits: DEFAULT_LIMITS,
     leak_check: { hidden_paths: [], min_match_chars: 40 },
-    agent: { provider: null, model: null, mode: null, thinking: null, paseo_command: ["paseo"] },
+    agent: {
+      provider: installedProvider(root),
+      model: null,
+      mode: null,
+      thinking: null,
+      paseo_command: ["paseo"],
+    },
     service: { host: "127.0.0.1", port: null, public_url: null },
   };
 }
@@ -257,7 +266,7 @@ function recommendation(key: string, value: unknown): string {
       "null when the agent manages its own environment; a PRD when /experiment-env-configuration should generate run scripts.",
     "connection.url": "The `url` printed by `/aris-setup validation` on the validation machine.",
     "connection.token":
-      "The `token` printed by `/aris-setup validation`; .mcp.json will hold it, so keep that file out of git.",
+      "The `token` printed by `/aris-setup validation`; the provider MCP config will hold it, so keep that file out of git.",
     "validation.metric.name": "One of the benchmark's metric names.",
     "validation.metric.target":
       "The value that ends the task, in the metric's unit; the benchmark metric decides the direction.",
@@ -265,7 +274,8 @@ function recommendation(key: string, value: unknown): string {
       "Exactly how your runner calls ARIS_ADAPTER_DIR; a validation agent writes each submission's adapter to this contract.",
     "validation.leak_check.hidden_paths":
       "Absolute paths of the hidden samples, labels and references; feedback quoting them is held back.",
-    "validation.agent.provider": "Provider for the per-submission validation agent, e.g. claude.",
+    "validation.agent.provider":
+      "Use the provider selected by this project installation: claude or codex.",
     "validation.agent.paseo_command":
       'On Windows use ["node", "<install dir>\\\\bin\\\\paseo"]; the paseo.cmd shim cannot be spawned directly.',
     "validation.service.host":
@@ -441,6 +451,11 @@ export function validateSetupConfiguration(configuration: JsonObject, root: stri
   }
   if (role === "validation" && isRecord(configuration.validation)) {
     const validation = configuration.validation;
+    if (get(validation, "agent.provider") !== installedProvider(root))
+      add(
+        "validation.agent.provider",
+        "must match the provider selected when installing this project",
+      );
     const port = get(validation, "service.port");
     if (
       port !== null &&
@@ -606,8 +621,13 @@ function confirmedDraft(root: string): SetupDraft {
 
 /** Replace only the marked block so the owner's own CLAUDE.md text survives re-runs. */
 function writeRoleBlock(root: string, role: SetupRole): void {
-  const file = path.join(root, "CLAUDE.md");
-  const block = `${ROLE_BEGIN}\n${fs.readFileSync(path.join(TEMPLATES, `ROLE_${role.toUpperCase()}.md`), "utf8").trim()}\n${ROLE_END}`;
+  const provider = installedProvider(root);
+  const file = path.join(root, provider === "codex" ? "AGENTS.md" : "CLAUDE.md");
+  let template = fs
+    .readFileSync(path.join(TEMPLATES, `ROLE_${role.toUpperCase()}.md`), "utf8")
+    .trim();
+  if (provider === "codex") template = template.replaceAll(".claude/skills", ".agents/skills");
+  const block = `${ROLE_BEGIN}\n${template}\n${ROLE_END}`;
   const current = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
   const start = current.indexOf(ROLE_BEGIN),
     end = current.indexOf(ROLE_END);
@@ -646,16 +666,27 @@ export async function applySetup(projectRoot: string): Promise<SetupApplyResult>
       get(configuration, "environment.prd"),
     );
   if (role === "worker") {
-    const file = path.join(root, ".mcp.json");
-    mergeJsonEntry(file, "mcpServers", "aris-validation", {
-      type: "http",
-      url: get(configuration, "connection.url"),
-      headers: { Authorization: `Bearer ${String(get(configuration, "connection.token"))}` },
-    });
+    let file: string;
+    if (installedProvider(root) === "codex") {
+      file = writeCodexValidationMcp(
+        root,
+        String(get(configuration, "connection.url")),
+        String(get(configuration, "connection.token")),
+      );
+    } else {
+      file = path.join(root, ".mcp.json");
+      mergeJsonEntry(file, "mcpServers", "aris-validation", {
+        type: "http",
+        url: get(configuration, "connection.url"),
+        headers: { Authorization: `Bearer ${String(get(configuration, "connection.token"))}` },
+      });
+      fs.chmodSync(file, 0o600);
+    }
     writeRoleBlock(root, role);
     return { role, mcp_config: file, environment_prd: environmentPrd };
   }
   const validation = configuration.validation as JsonObject;
+  if (countedSubmissions(root) > 0) assertFrozenBenchmark(root, readValidationConfig(root));
   const benchmark = await setupTesterFacility(root, validation.benchmark);
   const config = draftValidationConfig(validation, benchmark);
   writeStateJsonAtomic(validationConfigPath(root), config);

@@ -53,6 +53,8 @@
 - **跨设备：** 支持 iOS、Android、桌面端、Web 和 CLI。在桌前开始工作，用手机查看进度，也可以从终端脚本化操作。
 - **隐私优先：** Paseo 没有遥测、追踪，也不会强制登录。
 
+Auto Research Loop (ARL) is a standalone worker/validation package for official Paseo. [Install ARL](packages/Auto-claude-code-research-in-sleep/SETUP_GUIDE.md) · [中文安装](packages/Auto-claude-code-research-in-sleep/SETUP_GUIDE_CN.md).
+
 ## 快速开始
 
 Paseo 会运行一个名为 daemon 的本地服务，用来管理你的 coding agents。桌面 app、移动 app、Web app 和 CLI 等客户端都会连接到它。

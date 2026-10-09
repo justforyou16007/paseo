@@ -692,14 +692,6 @@ export interface AgentSession {
   /** Release live runtime resources without archiving or deleting the durable native session. */
   close(): Promise<void>;
   listCommands?(): Promise<AgentSlashCommand[]>;
-  /**
-   * Re-scan the provider's skill directories without restarting the session.
-   * Paseo installs ARIS skills into `.claude/skills/` while agents may already
-   * be running in that directory; without a reload the user has to type
-   * `/reload-skills` by hand before the new skills exist for the session.
-   * Implement only for providers that can do this in-place.
-   */
-  reloadSkills?(): Promise<void>;
   setModel?(modelId: string | null): Promise<void>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;
   setFeature?(featureId: string, value: unknown): Promise<void>;

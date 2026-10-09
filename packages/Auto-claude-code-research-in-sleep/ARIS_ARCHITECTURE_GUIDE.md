@@ -1,6 +1,6 @@
-# ARIS 架构
+# Auto Research Loop（ARL）架构
 
-这份文档讲 ARIS 为什么长成现在的样子。具体怎么用看各技能的 `SKILL.md`，路由索引见 [AGENT_GUIDE.md](AGENT_GUIDE.md)，两台机器的部署见 [SETUP_GUIDE_CN.md](SETUP_GUIDE_CN.md)。
+ARL 是可独立安装、配合官方 Paseo 使用的两机研究任务包。保留 ARIS 技能名称和数据路径。安装包不包含 Paseo，也不向全局目录或 agents 目录复制定义。具体怎么用看各技能的 `SKILL.md`，路由索引见 [AGENT_GUIDE.md](AGENT_GUIDE.md)，两台机器的部署见 [SETUP_GUIDE_CN.md](SETUP_GUIDE_CN.md)。
 
 ## 一、出发点
 
@@ -20,7 +20,7 @@ worker 机器                                   validation 机器
 │  └ worker agent       │  MCP: submit/query  │  ├ aris-validation 服务脚本       │
 │     task.md           │ ──────────────────▶ │  │   .aris/validation/            │
 │     research-wiki/    │  curl.exe -T x.zip  │  └ 每次提交一个 validation agent  │
-│     .mcp.json         │ ──────────────────▶ │      .aris/tester-config.json     │
+│     provider MCP     │ ──────────────────▶ │      .aris/tester-config.json     │
 └───────────────────────┘                     └──────────────────────────────────┘
 ```
 
@@ -58,24 +58,24 @@ agent 的结论只决定"算不算分"，分数本身由 helper 从 benchmark �
 
 | 文件 | 唯一写入方 |
 | --- | --- |
-| `.aris/setup-*.json`、`.aris/tester-config.json`、`.mcp.json` 和 `paseo.json` 里的 ARIS 条目 | `setup-cli.js` |
+| `.aris/setup-*.json`、`.aris/tester-config.json`、provider MCP 配置和 `paseo.json` 里的 ARIS 条目 | `setup-cli.js` |
 | `.aris/validation/` 下的提交记录、发布结果 | `validation-cli.js`（服务和 `finalize`） |
 | 提交目录里的 `inspection.md`、`review.json`、`feedback.md`、适配器 | validation agent |
 | `research-wiki/` | `research-wiki.js` |
 
-`CLAUDE.md` 里 `ARIS ROLE` 标记之间的角色段由 setup 写入，标记外的内容 setup 不碰。
+`CLAUDE.md`（Claude）或 `AGENTS.md`（Codex）里 `ARIS ROLE` 标记之间的角色段由 setup 写入，标记外的内容 setup 不碰。
 
 ## 六、Paseo 里能看到什么
 
 - 两台机器各自的 agent：worker agent，以及每次提交对应的一个 validation agent。
 - 验证机器工作区的 `aris-validation` 服务脚本，包括端口、运行状态和代理地址。
-- ARIS 标签页里的知识图谱，数据来自本机 `research-wiki/`。daemon 轮询 `research-wiki/index.md`（wiki 每次写入都会重写这个文件），有变化就推送给前端刷新。
+官方 App 没有定制版 ARIS 知识图谱标签页。通过 `research-wiki` 技能、CLI 或本机 Markdown 查看记录。定制 checkout 的图谱代码不在独立安装包内。
 
 ## 七、保留了什么、删掉了什么
 
 判断标准只有一条：Claude Code agent 自己能做的，ARIS 就不再提供流程。
 
-- **保留**：setup、wiki、测试设施（现在只服务验证方的冻结 benchmark）、环境配置、GPU 平台（vast-gpu、serverless-modal、qzcli、experiment-queue）、文献检索、飞书通知、Overleaf 同步。这些要么是 agent 拿不到的外部能力，要么是需要固定格式、跨会话保存的状态。
+- **独立包包含**：setup、update、validation-review、wiki、环境配置及其 helper 依赖闭包。GPU 平台、文献检索、飞书和 Overleaf 等技能留在源码中，不进入安装包。
 - **删除**：研究循环、各类审计和评审技能、子 agent 派发协议、worker manifest、Pipeline/Review 等前端视图。规划、派发、自查都是 agent 自己的工作。
 
 ## 八、加新功能前先问

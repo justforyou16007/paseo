@@ -1,16 +1,6 @@
-import {
-  copyFileSync,
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readdirSync,
-  readlinkSync,
-  rmSync,
-  symlinkSync,
-} from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { join, relative, resolve } from "node:path";
-import { homedir } from "node:os";
+import { join, relative } from "node:path";
 
 // ── 1. Apply patches ──────────────────────────────────────────────────
 // In CI we often install a single workspace (e.g. server/relay/website). Only apply patches
@@ -103,66 +93,10 @@ if (existsSync("patches") && installedPackages.length > 0) {
         console.error("postinstall-patches: patch-package failed to spawn:", result.error.message);
       }
       if (result.status !== 0) {
-        // Stop applying further patches but keep going so the ARIS skill link step below
-        // still runs; surface the failure code at the final exit.
+        // Surface patch failures at the final exit.
         patchExitCode = result.status ?? 1;
         break;
       }
-    }
-  }
-}
-
-// ── 2. Install aris-setup as a global Claude Code skill ───────────────
-// Makes /aris-setup available in any workspace so users can bootstrap
-// ARIS in new projects without first installing ARIS skills locally.
-
-const arisSkillSource = resolve("packages/Auto-claude-code-research-in-sleep/skills/aris-setup");
-const globalSkillsDir = join(homedir(), ".claude", "skills");
-const globalSkillLink = join(globalSkillsDir, "aris-setup");
-
-if (existsSync(arisSkillSource)) {
-  mkdirSync(globalSkillsDir, { recursive: true });
-
-  // Remove retired entry links owned by this checkout; preserve user directories.
-  for (const name of ["research-setup", "tester-setup"]) {
-    const link = join(globalSkillsDir, name);
-    try {
-      const target = resolve(globalSkillsDir, readlinkSync(link));
-      const retiredSource = resolve("packages/Auto-claude-code-research-in-sleep/skills", name);
-      if (target === retiredSource || target === arisSkillSource) rmSync(link);
-    } catch {
-      // Absent paths and user-owned non-symlinks need no migration.
-    }
-  }
-
-  let needsLink = true;
-  try {
-    const stat = lstatSync(globalSkillLink);
-    if (stat.isSymbolicLink()) {
-      const currentTarget = readlinkSync(globalSkillLink);
-      if (resolve(globalSkillsDir, currentTarget) === arisSkillSource) {
-        needsLink = false;
-      } else {
-        rmSync(globalSkillLink);
-      }
-    } else {
-      // Not a symlink - don't touch it
-      needsLink = false;
-    }
-  } catch {
-    // Doesn't exist - proceed to create
-  }
-
-  if (needsLink) {
-    try {
-      // A junction needs neither admin rights nor Developer Mode on Windows.
-      symlinkSync(
-        arisSkillSource,
-        globalSkillLink,
-        process.platform === "win32" ? "junction" : "dir",
-      );
-    } catch {
-      // Non-fatal: skill won't be globally available but install continues
     }
   }
 }
