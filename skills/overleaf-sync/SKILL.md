@@ -33,7 +33,7 @@ Run this in your own terminal (PowerShell, Windows Terminal or a shell), not thr
 
     node .aris/dist/tools/overleaf-cli.js setup <project-id-or-url>
 
-If .aris/dist/ is missing, run /aris-update first. Tell me "setup done" when it finishes.
+If its helper is missing, build the ARL source and install this optional integration first. Tell me "setup done" when it finishes.
 ```
 
 Setup refuses to run without an interactive terminal, reads the token from a hidden prompt, stores it with the credential helper, clones with a token-free URL and installs a `pre-commit` hook in `paper-overleaf/.git/hooks/` that rejects any staged `olp_...` token.

@@ -22,7 +22,8 @@ Use the official **Paseo** app and CLI to run and monitor agents on both machine
 | **Reviewed feedback** | Checks for hidden sample identifiers and content hold feedback for revision before publication. |
 | **Defined stopping conditions** | The task completes when a valid score reaches the target, or closes when the submission budget is exhausted. Further submissions are refused. |
 | **Research records** | A project-local wiki for papers, ideas, claims, problems and submission history, accessible through the skill or Markdown files. |
-| **Experiment environments** | Optional environment configuration generates project-specific experiment scripts from your requirements. |
+| **Worker tools** | Project skills for research records, browser access and SSH experiment queues. |
+| **Environment usage skills** | Setup turns your environment requirements into a verified project-specific skill for running and managing experiments. |
 | **Standalone installation** | A checksum-verified archive with compiled helpers and runtime dependencies. Project-local updates preserve research data and unrelated provider configuration. |
 
 Upload and infrastructure failures do not consume the submission budget. Reviewed submissions do, including those judged cheating or unusable.
@@ -80,23 +81,26 @@ Add both projects to official Paseo and open an agent using the installed provid
 | Set up the validation project first | `/aris-setup validation` | Invoke `$aris-setup` with the `validation` role |
 | Set up the worker project | `/aris-setup worker` | Invoke `$aris-setup` with the `worker` role |
 
-On the validation machine, review the setup sheet, approve its configuration and start the generated `aris-validation` service. Transfer its worker connection URL and token privately to the worker machine. Configure the worker connection, reopen its agent session and ask it to work on `task.md`.
+On the validation machine, review the setup sheet, approve its configuration and start the generated `aris-validation` service. Transfer its worker connection URL and token privately to the worker machine. Configure the worker connection and, when an environment PRD is provided, setup generates and verifies its environment usage skill. Run `reload-skills` in your client to load the skills, reopen the worker session for its MCP configuration and ask it to work on `task.md`.
 
 Follow the **[full setup guide](SETUP_GUIDE.md)** or **[中文部署指南](SETUP_GUIDE_CN.md)** for benchmark setup, networking, offline installation, updates and troubleshooting.
 
 ## Included skills
 
-The standalone package ships five core skills:
+The standalone package ships six core skills:
 
 | Skill | Purpose |
 | --- | --- |
-| [`aris-setup`](skills/aris-setup/SKILL.md) | Configure and confirm the worker or validation role. |
-| [`aris-update`](skills/aris-update/SKILL.md) | Update or repair an installed project from an ARL archive. |
+| [`aris-setup`](skills/aris-setup/SKILL.md) | Configure and confirm the role, then generate the requested environment usage skill. |
 | [`validation-review`](skills/validation-review/SKILL.md) | Review a submission and produce benchmark-backed results. |
 | [`research-wiki`](skills/research-wiki/SKILL.md) | Maintain and retrieve research records. |
-| [`experiment-env-configuration`](skills/experiment-env-configuration/SKILL.md) | Generate experiment environment scripts from an environment specification. |
+| [`browser-act`](skills/browser-act/SKILL.md) | Access rendered pages and browser sessions through the external browser-act CLI. |
+| [`experiment-queue`](skills/experiment-queue/SKILL.md) | Schedule batches on an SSH execution host using the environment usage skill. |
+| [`experiment-env-configuration`](skills/experiment-env-configuration/SKILL.md) | Generate, verify or repair the environment usage skill within setup or during operation. |
 
-The `aris-*` skill names and `.aris/` project directory remain stable. Optional literature, GPU and notification integrations are available in the source repository; they are not included in the standalone archive.
+Setup also produces `run-<project>-experiment` when you configure an environment. Browser runtimes and experiment host dependencies are installed separately when needed. Update or repair ARL by rerunning the installer for the same provider and project; see the [setup guide](SETUP_GUIDE.md#update-or-repair).
+
+The `.aris/` project directory remains stable. Optional literature, GPU platform and notification integrations are available in the source repository; they are not included in the standalone archive.
 
 ## Documentation
 

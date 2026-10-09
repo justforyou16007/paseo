@@ -17,11 +17,14 @@ Your role is in `CLAUDE.md` (Claude) or `AGENTS.md` (Codex) between the `ARIS RO
 
 | Skill | Role | Use it to |
 | --- | --- | --- |
-| `/aris-setup` | both | Configure this machine as worker or validation through one editable review sheet |
-| `/aris-update` | both | Refresh the installed skills and `.aris/` runtime from a standalone ARL archive |
+| `/aris-setup` | both | Configure this machine and generate the requested environment usage skill through one editable review sheet |
 | `/validation-review` | validation | Review one submission (the service starts an agent with it) |
 | `/research-wiki` | both | Record papers, ideas, submissions, claims and problems; read it through the skill or Markdown; official Paseo has no custom graph tab |
-| `/experiment-env-configuration` | both | Turn an environment PRD into generated run scripts with a repair loop |
+| `/browser-act` | worker | Read rendered pages and use browser sessions through the external CLI |
+| `/experiment-queue` | worker | Schedule SSH experiment batches through the generated environment skill |
+| `/experiment-env-configuration` | both | Generate and verify an environment usage skill within setup, or repair it from a patch |
+
+Setup publishes `run-<project>-experiment` for a configured environment and asks the owner to run `reload-skills` in their client. Read its usage instructions and use its operation interface for experiments. Updates and repairs use the standalone installer; see the [setup guide](SETUP_GUIDE.md#update-or-repair).
 
 Other research skills remain in source but are not shipped in the standalone archive.
 

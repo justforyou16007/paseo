@@ -9,11 +9,7 @@ reports an empty result as a real one.
 
 ## Activation condition
 
-A browser is in scope when the experiment environment needs a page to do its
-work: data that only exists on a rendered page, an evaluation that drives a web
-app, a metric dashboard with no API, a download behind a login. Nothing else
-turns it on — an experiment that only reads local files or an HTTP API has
-`browser.required: false` and never touches this contract.
+A browser is in scope when the worker needs rendered pages for research or the experiment environment needs a page to do its work: data that only exists on a rendered page, an evaluation that drives a web app, a metric dashboard with no API, a download behind a login. Use the installed `browser-act` skill for interactive research. An experiment that only reads local files or an HTTP API has `browser.required: false` and its generated operations do not touch a browser.
 
 The browser choices are part of the environment PRD confirmed in
 `/aris-setup`. `/experiment-env-configuration` writes them into the generated
@@ -34,16 +30,10 @@ node .aris/dist/tools/ensure-browser-act.js --check   # verify only
 It prints one JSON object (`status`, `binary`, `version`, `in_path`,
 `skill_stub`, `hint`) and exits non-zero when the CLI is not usable. When
 `browser.required` is true, a non-zero exit stops the step with the helper's
-`hint`. It is not called when no browser is needed. Run it after `/aris-setup`
-confirms an environment that needs a browser, and from `/aris-update` when a
-bundle declares one; both runs are idempotent.
+`hint`. It is not called when no browser is needed. Run it within `/aris-setup` before generating an environment that needs a browser, or from the `browser-act` skill before interactive browser work. Both runs are idempotent.
 
 The helper installs the CLI with `uv tool install browser-act-cli --python
-3.12` and fetches the agent-facing skill stub into
-`.claude/skills/browser-act/`. The stub is how a host discovers browser-act for
-interactive work; a failed fetch is a warning, because the CLI serves its own
-workflow content (`browser-act get-skills core`) and generated ops call the CLI
-directly.
+3.12`. The ARL archive includes an agent-facing `browser-act` skill in the provider's project skill directory. If it is missing, the helper can fetch the upstream skill stub into that directory. The CLI serves its current workflow content through `browser-act get-skills core`; generated ops call the CLI directly. Browser runtimes and `uv` are external dependencies, installed only when needed.
 
 ## Calling it from a generated op
 

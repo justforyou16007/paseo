@@ -20,7 +20,7 @@ From the project root:
 S2_FETCHER=".aris/dist/tools/semantic-scholar-fetch.js"
 [ -f "$S2_FETCHER" ] || S2_FETCHER="dist/tools/semantic-scholar-fetch.js"
 [ -f "$S2_FETCHER" ] || {
-  echo "ERROR: semantic-scholar-fetch.js is required. Run /aris-update or build ARIS." >&2
+  echo "ERROR: semantic-scholar-fetch.js is required. Build the ARL source and install this optional helper." >&2
   exit 1
 }
 ```

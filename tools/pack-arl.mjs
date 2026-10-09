@@ -12,8 +12,8 @@ const output = path.resolve(process.argv[2] ?? path.join(root, "artifacts"));
 const version = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "arl-package-"));
 const stage = path.join(temp, "arl");
-const skills = ["aris-setup", "aris-update", "validation-review", "research-wiki", "experiment-env-configuration", "shared-references"];
-const entries = ["setup-cli", "validation-cli", "research-wiki", "capture-filter", "ensure-browser-act", "experiment-env/env-helper", "experiment-env/parse-env"];
+const skills = ["aris-setup", "validation-review", "research-wiki", "browser-act", "experiment-queue", "experiment-env-configuration", "shared-references"];
+const entries = ["tools/setup-cli", "tools/validation-cli", "tools/research-wiki", "tools/capture-filter", "tools/ensure-browser-act", "tools/experiment-env/env-helper", "tools/experiment-env/parse-env", "skills/experiment-queue/queue-manager", "skills/experiment-queue/build-manifest"];
 const visited = new Set();
 
 function copy(relative) {
@@ -32,7 +32,7 @@ function runtime(relative) {
   }
 }
 try {
-  for (const entry of entries) runtime(`dist/tools/${entry}.js`);
+  for (const entry of entries) runtime(`dist/${entry}.js`);
   for (const skill of skills) copy(`skills/${skill}`);
   copy("templates");
   copy("LICENSE");

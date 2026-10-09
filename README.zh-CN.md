@@ -21,6 +21,8 @@ bash /tmp/install-arl.sh --provider codex --project /你的项目目录
 
 先配置 validation，再把地址和 token 私下交给 worker。完整步骤见[中文部署指南](SETUP_GUIDE_CN.md)。
 
+worker 的角色文档包含工具入口：`research-wiki` 管理研究记录，`browser-act` 访问浏览器，`experiment-queue` 调度 SSH 批量实验。setup 将确认的环境需求交给 `experiment-env-configuration`，输出验证过的 `run-<项目>-experiment` 环境使用 skill，再提示用户在客户端执行 `reload-skills`。升级或修复继续使用安装脚本。
+
 ## 开发
 
 ```bash

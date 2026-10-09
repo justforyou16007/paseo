@@ -62,6 +62,7 @@ agent 的结论只决定"算不算分"，分数本身由 helper 从 benchmark �
 | `.aris/validation/` 下的提交记录、发布结果 | `validation-cli.js`（服务和 `finalize`） |
 | 提交目录里的 `inspection.md`、`review.json`、`feedback.md`、适配器 | validation agent |
 | `research-wiki/` | `research-wiki.js` |
+| provider 技能目录中的 `run-<project>-experiment/` | setup 调用的 `experiment-env-configuration`，后续环境修复也通过该技能 |
 
 `CLAUDE.md`（Claude）或 `AGENTS.md`（Codex）里 `ARIS ROLE` 标记之间的角色段由 setup 写入，标记外的内容 setup 不碰。
 
@@ -75,7 +76,7 @@ agent 的结论只决定"算不算分"，分数本身由 helper 从 benchmark �
 
 判断标准只有一条：Claude Code agent 自己能做的，ARIS 就不再提供流程。
 
-- **独立包包含**：setup、update、validation-review、wiki、环境配置及其 helper 依赖闭包。GPU 平台、文献检索、飞书和 Overleaf 等技能留在源码中，不进入安装包。
+- **独立包包含**：setup、validation-review、wiki、browser-act、experiment-queue、环境配置及其 helper 依赖闭包。setup 的环境输出是验证过的环境使用 skill；安装和升级使用同一安装器。部署和技能重载见 [SETUP_GUIDE_CN.md](SETUP_GUIDE_CN.md)。GPU 平台、文献检索、飞书和 Overleaf 等技能留在源码中，不进入安装包。
 - **删除**：研究循环、各类审计和评审技能、子 agent 派发协议、worker manifest、Pipeline/Review 等前端视图。规划、派发、自查都是 agent 自己的工作。
 
 ## 八、加新功能前先问

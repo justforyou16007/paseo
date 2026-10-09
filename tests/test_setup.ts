@@ -14,7 +14,7 @@ import {
 import { readValidationConfig, validationTokenPath } from "../src/tools/validation/config.js";
 import { createSubmission, updateSubmission, withSubmissionsLock } from "../src/tools/validation/store.js";
 import { facilityConfig } from "./helpers/tester-facility-fixture.js";
-import { experimentSkillDir } from "../src/tools/setup.js";
+import { experimentSkillDir, projectSlug } from "../src/tools/setup.js";
 
 const read = (file: string) => JSON.parse(fs.readFileSync(file, "utf8"));
 const issueFields = (root: string) => refreshSetupReview(root).issues.map((issue) => issue.field);
@@ -67,6 +67,7 @@ await project("worker", async (root) => {
   fs.writeFileSync(path.join(root, "CLAUDE.md"), "# Owner notes\n");
   const applied = await applySetup(root);
   assert.equal(applied.role, "worker");
+  assert.equal(applied.environment_skill_dir, null);
   const mcp = read(path.join(root, ".mcp.json"));
   assert.deepEqual(mcp.mcpServers.other, { command: "x" });
   assert.deepEqual(mcp.mcpServers["aris-validation"], {
@@ -230,26 +231,75 @@ await project("distribution", async (sandbox) => {
     install();
     const manifest = read(path.join(root, ".aris/install.json"));
     assert.equal(manifest.provider, provider);
-    assert.deepEqual(fs.readdirSync(path.join(root, skillDir)).sort(), ["aris-setup", "aris-update", "experiment-env-configuration", "research-wiki", "shared-references", "validation-review"]);
+    assert.deepEqual(fs.readdirSync(path.join(root, skillDir)).sort(), ["aris-setup", "browser-act", "experiment-env-configuration", "experiment-queue", "research-wiki", "shared-references", "validation-review"]);
     assert.equal(fs.existsSync(path.join(root, ".claude/agents")), false);
     const setup = (...args: string[]) => JSON.parse(execFileSync(process.execPath, [path.join(root, ".aris/dist/tools/setup-cli.js"), ...args, "--project", root], { cwd: sandbox, encoding: "utf8" }));
     fs.writeFileSync(path.join(root, "task.md"), "An isolated installed task.\n");
     const patch = path.join(root, "patch.json");
-    fs.writeFileSync(patch, JSON.stringify({ project: { role: "worker" }, connection: { url: "https://validation.example/mcp", token: "k".repeat(43) } }));
+    const environmentPrd = {
+      version: 1,
+      mode: "fresh",
+      project: projectSlug(root),
+      preparation: {
+        files: { location: "local", excludes: [".git"] },
+        environment: { type: "system", activation: "", verify_cmd: "node --version" },
+      },
+      browser: { required: false },
+      resources: { type: "cpu", ids: [0], bind_mode: "env" },
+      run: { entry_point: "node experiment.js", arg_style: "cli", launch_mode: "foreground", gpu_selection: "CUDA_VISIBLE_DEVICES", template: "{{entry_point}} {{args}}" },
+      feedback: {
+        error: { signal: "exit_code", log_path: "logs/{{exp_name}}.log" },
+        result: { path_template: "results/{{exp_name}}.json", format: "json", primary_metric_key: "score" },
+      },
+      monitor: { interval_cron: "*/5 * * * *", escalate_cron: "0 * * * *", max_hours: 1, early_stop: { enabled: false }, stall: { no_log_growth_minutes: 10, consecutive_alert_ticks: 3 } },
+      baseline: { kind: "real" },
+    };
+    fs.writeFileSync(patch, JSON.stringify({ project: { role: "worker" }, environment: { prd: environmentPrd }, connection: { url: "https://validation.example/mcp", token: "k".repeat(43) } }));
     const review = setup("review", "--input", patch);
     assert.deepEqual(review.issues, []);
     setup("confirm", "--digest", review.configuration_sha256);
-    assert.equal(setup("apply").role, "worker");
+    const applied = setup("apply");
+    assert.equal(applied.role, "worker");
+    assert.equal(applied.environment_skill_dir, path.join(root, skillDir, `run-${projectSlug(root)}-experiment`));
+    assert.deepEqual(read(path.join(root, ".aris/environment-prd.json")), environmentPrd);
+    // Apply declares the expected skill output; it does not pretend agent generation has run.
+    assert.equal(fs.existsSync(applied.environment_skill_dir), false);
+    const role = fs.readFileSync(path.join(root, provider === "claude" ? "CLAUDE.md" : "AGENTS.md"), "utf8");
+    const toolLinks = [...role.matchAll(/\]\(([^)]+\/SKILL\.md)\)/g)].map((match) => match[1]);
+    for (const skill of ["research-wiki", "browser-act", "experiment-queue"]) {
+      assert.ok(toolLinks.includes(`${skillDir}/${skill}/SKILL.md`), `Worker role does not route to ${skill}`);
+    }
+    for (const link of toolLinks) assert.equal(fs.existsSync(path.join(root, link)), true, `Installed worker tool is missing: ${link}`);
+    assert.ok(role.includes(`${skillDir}/run-${projectSlug(root)}-experiment/SKILL.md`));
+    assert.equal(role.includes("{{PROJECT_SLUG}}"), false);
+    const queueTools = path.join(root, ".aris/dist/skills/experiment-queue");
+    // Running outside the source tree proves both helpers' runtime imports are shipped.
+    execFileSync(process.execPath, [path.join(queueTools, "queue-manager.js"), "--help"], { cwd: sandbox });
+    const grid = path.join(root, "grid.json"), queueManifest = path.join(root, "queue.json");
+    fs.writeFileSync(grid, JSON.stringify({
+      launch_op: `${applied.environment_skill_dir}/scripts/ops/launch-job.sh`,
+      resources: { type: "cpu", ids: [0] },
+      phases: [{ name: "seeds", grid: { seed: [11, 22] }, template: { id: "seed-${seed}", cmd: "node experiment.js --seed ${seed}" } }],
+    }));
+    execFileSync(process.execPath, [path.join(queueTools, "build-manifest.js"), "--config", grid, "--output", queueManifest], { cwd: sandbox });
+    assert.deepEqual(read(queueManifest).phases[0].jobs.map((job: { cmd: string }) => job.cmd), ["node experiment.js --seed 11", "node experiment.js --seed 22"]);
     const state = fs.readFileSync(path.join(root, ".aris/setup-state.json"), "utf8");
     execFileSync(process.execPath, [path.join(root, ".aris/dist/tools/research-wiki.js"), "init", path.join(root, "research-wiki")], { cwd: sandbox });
     const wiki = fs.readFileSync(path.join(root, "research-wiki/index.md"), "utf8");
     const generated = path.join(root, skillDir, "run-owner-experiment/SKILL.md");
     fs.mkdirSync(path.dirname(generated), { recursive: true });
     fs.writeFileSync(generated, "owner generated\n");
+    // Upgrading a previous archive removes the retired skill only when ARL owns it.
+    const retired = path.join(root, skillDir, "aris-update/SKILL.md");
+    fs.mkdirSync(path.dirname(retired), { recursive: true });
+    fs.writeFileSync(retired, "old managed update skill\n");
+    manifest.files[`${skillDir}/aris-update/SKILL.md`] = crypto.createHash("sha256").update(fs.readFileSync(retired)).digest("hex");
+    fs.writeFileSync(path.join(root, ".aris/install.json"), JSON.stringify(manifest));
     const helper = path.join(root, ".aris/dist/tools/setup-cli.js");
     fs.unlinkSync(helper);
     install();
     assert.equal(fs.existsSync(helper), true);
+    assert.equal(fs.existsSync(retired), false);
     assert.equal(fs.readFileSync(path.join(root, ".aris/setup-state.json"), "utf8"), state);
     assert.equal(fs.readFileSync(path.join(root, "research-wiki/index.md"), "utf8"), wiki);
     assert.equal(fs.readFileSync(generated, "utf8"), "owner generated\n");

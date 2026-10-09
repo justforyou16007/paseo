@@ -20,7 +20,7 @@ cd "$PROJECT_ROOT" || exit 1
 ARXIV_FETCHER=".aris/dist/tools/arxiv-fetch.js"
 [ -f "$ARXIV_FETCHER" ] || ARXIV_FETCHER="dist/tools/arxiv-fetch.js"
 [ -f "$ARXIV_FETCHER" ] || {
-  echo "ERROR: arxiv-fetch.js is required. Run /aris-update or build ARIS." >&2
+  echo "ERROR: arxiv-fetch.js is required. Build the ARL source and install this optional helper." >&2
   exit 1
 }
 ```

@@ -1,6 +1,6 @@
 ---
 name: aris-setup
-description: 'Set this machine up as the ARIS worker or the validation side through one editable configuration review. Use for "/aris-setup worker", "/aris-setup validation", aris setup or 配置项目.'
+description: 'Configure the ARL worker or validation role and generate a verified environment usage skill through experiment-env-configuration from the reviewed environment PRD. Use for "/aris-setup worker", "/aris-setup validation", aris setup or 配置项目.'
 argument-hint: worker | validation
 allowed-tools: Read, Write, Edit, Bash(*), AskUserQuestion
 ---
@@ -34,7 +34,7 @@ Show the whole sheet again after each refresh. A recommendation becomes a value 
 ### Worker modules
 
 - `connection.url` and `connection.token`: printed by `/aris-setup validation` on the other machine.
-- `environment.prd`: `null` when you manage the environment yourself; a PRD when `/experiment-env-configuration` should generate run scripts.
+- `environment.prd`: `null` when the owner chooses agent-managed execution; otherwise the environment specification used by setup's `experiment-env-configuration` step to generate a project-local environment usage skill. Review environment requirements in this same sheet, not in a separate interview.
 
 ### Validation modules
 
@@ -69,15 +69,28 @@ Apply writes the role block into `CLAUDE.md` for Claude or `AGENTS.md` for Codex
 
 **Worker.** Apply adds the `aris-validation` server to `.mcp.json` for Claude or `.codex/config.toml` for Codex. The installer records the provider in `.aris/install.json`. Keep the provider MCP config and `.aris/` out of git because they hold credentials. Then:
 
-1. Create the wiki if `research-wiki/` is absent: `node .aris/dist/tools/research-wiki.js init research-wiki/`.
-2. If the PRD is set, run `/experiment-env-configuration` with `.aris/environment-prd.json`.
-3. Tell the owner to reopen the selected provider session so the MCP server loads (Codex also requires trusting the project), then check that `query` answers.
+Create the wiki if `research-wiki/` is absent: `node .aris/dist/tools/research-wiki.js init research-wiki/`. The generated role block lists the worker's validation tools, `research-wiki`, `browser-act`, `experiment-queue` and environment skills. Continue with the environment step below before reporting setup complete.
 
 **Validation.** Apply installs the benchmark (setup, healthcheck and smoke must pass), freezes `.aris/validation/config.json`, creates the service token and adds the `aris-validation` service script to `paseo.json`. Then:
 
 1. Give the owner the printed `worker_connection` URL and token for the worker's setup. Send the token over a private channel.
 2. Have the owner start the `aris-validation` script from the Paseo workspace.
 3. Check it: `node .aris/dist/tools/validation-cli.js status --project .`.
-4. If the PRD is set, run `/experiment-env-configuration` with `.aris/environment-prd.json`.
+
+## 5. Generate the environment usage skill
+
+For either role, if apply reports `environment_prd: true`, invoke the installed `experiment-env-configuration` skill with `.aris/environment-prd.json` as part of this setup invocation. It uses the already confirmed requirements; do not send the owner away to run a second setup command.
+
+When the PRD requires a browser, first run `node .aris/dist/tools/ensure-browser-act.js` and stop on failure. Browser IDs and authenticated profiles needed by the PRD must already be established with the owner during review.
+
+The output is the **environment usage skill** in apply's `environment_skill_dir`: `run-<project>-experiment/SKILL.md`, verified configuration and its operation scripts. Scripts alone or the PRD file are not a completed environment setup. Check that the published skill exists and `env.json` has `status: "complete"`, and report its path and real verification results. The worker uses this skill for individual experiments; `experiment-queue` uses its operation interface for batches.
+
+If environment generation or verification fails, report that setup's environment step is incomplete and the error. Do not claim the environment is ready. With `environment.prd: null`, explicitly report agent-managed execution and skip generation.
+
+## 6. Reload skills
+
+After all requested setup steps pass, list the available skills and any newly generated environment usage skill. Tell the owner to run **`reload-skills`** in their client to load new or changed skills before starting work. If the client has no skill reload action, open a fresh provider session. The worker's changed MCP configuration also needs a fresh provider session; Codex must trust the project. Then check that `query` answers.
+
+Finish setup at this handoff. Start research only when the owner requests it.
 
 A failed apply step with an unchanged configuration can be retried as is. A fix that changes the configuration goes back through review and confirm.

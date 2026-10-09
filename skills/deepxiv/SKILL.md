@@ -21,7 +21,7 @@ From the project root, require both the compiled helper and the DeepXiv CLI:
 DEEPXIV_FETCHER=".aris/dist/tools/deepxiv-fetch.js"
 [ -f "$DEEPXIV_FETCHER" ] || DEEPXIV_FETCHER="dist/tools/deepxiv-fetch.js"
 [ -f "$DEEPXIV_FETCHER" ] || {
-  echo "ERROR: deepxiv-fetch.js is required. Run /aris-update or build ARIS." >&2
+  echo "ERROR: deepxiv-fetch.js is required. Build the ARL source and install this optional helper." >&2
   exit 1
 }
 command -v deepxiv >/dev/null 2>&1 || {

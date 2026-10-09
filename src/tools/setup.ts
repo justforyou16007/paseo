@@ -186,7 +186,7 @@ export function projectSlug(projectRoot: string): string {
     .replace(/^-/, "")
     .replace(/-$/, "");
 }
-/** Where /experiment-env-configuration writes the project's run scripts. */
+/** Where setup's environment configuration step publishes the environment usage skill. */
 export function experimentSkillDir(projectRoot: string): string {
   return path.join(providerSkillsDir(projectRoot), `run-${projectSlug(projectRoot)}-experiment`);
 }
@@ -263,7 +263,7 @@ function recommendation(key: string, value: unknown): string {
       "worker builds the deliverable; validation hosts the frozen benchmark and judges submissions.",
     "project.language": "zh for Chinese collaboration; en for English.",
     "environment.prd":
-      "null when the agent manages its own environment; a PRD when /experiment-env-configuration should generate run scripts.",
+      "null when the agent manages its own environment; a PRD when setup should generate and verify a project-local environment usage skill through experiment-env-configuration.",
     "connection.url": "The `url` printed by `/aris-setup validation` on the validation machine.",
     "connection.token":
       "The `token` printed by `/aris-setup validation`; the provider MCP config will hold it, so keep that file out of git.",
@@ -625,7 +625,8 @@ function writeRoleBlock(root: string, role: SetupRole): void {
   const file = path.join(root, provider === "codex" ? "AGENTS.md" : "CLAUDE.md");
   let template = fs
     .readFileSync(path.join(TEMPLATES, `ROLE_${role.toUpperCase()}.md`), "utf8")
-    .trim();
+    .trim()
+    .replaceAll("{{PROJECT_SLUG}}", projectSlug(root));
   if (provider === "codex") template = template.replaceAll(".claude/skills", ".agents/skills");
   const block = `${ROLE_BEGIN}\n${template}\n${ROLE_END}`;
   const current = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
@@ -644,15 +645,22 @@ function mergeJsonEntry(file: string, key: string, name: string, entry: JsonObje
   writeStateJsonAtomic(file, { ...current, [key]: { ...section, [name]: entry } });
 }
 
-export type SetupApplyResult =
-  | { role: "worker"; mcp_config: string; environment_prd: boolean }
-  | {
-      role: "validation";
-      validation_config: string;
-      environment_prd: boolean;
-      service_script: string;
-      worker_connection: { url: string; token: string };
-    };
+type SetupEnvironmentResult = {
+  environment_prd: boolean;
+  /** Expected output of the skill generation step, not an already generated bundle. */
+  environment_skill_dir: string | null;
+};
+
+export type SetupApplyResult = SetupEnvironmentResult &
+  (
+    | { role: "worker"; mcp_config: string }
+    | {
+        role: "validation";
+        validation_config: string;
+        service_script: string;
+        worker_connection: { url: string; token: string };
+      }
+  );
 
 /** Apply the confirmed sheet: role block, then the role's own wiring. */
 export async function applySetup(projectRoot: string): Promise<SetupApplyResult> {
@@ -660,6 +668,10 @@ export async function applySetup(projectRoot: string): Promise<SetupApplyResult>
     configuration = confirmedDraft(root).configuration,
     role = roleOf(configuration)!,
     environmentPrd = isRecord(get(configuration, "environment.prd"));
+  const environment = {
+    environment_prd: environmentPrd,
+    environment_skill_dir: environmentPrd ? experimentSkillDir(root) : null,
+  };
   if (environmentPrd)
     writeStateJsonAtomic(
       path.join(root, ".aris", "environment-prd.json"),
@@ -683,7 +695,7 @@ export async function applySetup(projectRoot: string): Promise<SetupApplyResult>
       fs.chmodSync(file, 0o600);
     }
     writeRoleBlock(root, role);
-    return { role, mcp_config: file, environment_prd: environmentPrd };
+    return { role, mcp_config: file, ...environment };
   }
   const validation = configuration.validation as JsonObject;
   if (countedSubmissions(root) > 0) assertFrozenBenchmark(root, readValidationConfig(root));
@@ -701,7 +713,7 @@ export async function applySetup(projectRoot: string): Promise<SetupApplyResult>
   return {
     role,
     validation_config: validationConfigPath(root),
-    environment_prd: environmentPrd,
+    ...environment,
     service_script: "aris-validation",
     worker_connection: { url: `${config.service.public_url}/mcp`, token },
   };

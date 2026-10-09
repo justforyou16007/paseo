@@ -1,6 +1,6 @@
 ---
 name: experiment-env-configuration
-description: 'Generate the project-local experiment skill `.claude/skills/run-<project>-experiment/` from the environment PRD confirmed in /aris-setup, or patch it. Every step of running an experiment (place the code, build the environment, launch, watch, collect, stop, release) becomes one script with a fixed JSON contract. No user interaction. Use after /aris-setup writes .aris/environment-prd.json, or when an op failure needs an environment fix.'
+description: 'Generate and verify a project-local environment usage skill from the environment PRD confirmed in aris-setup, or repair it from a patch. Used within setup and when experiment operations need an environment fix.'
 argument-hint: "— prd: <path> | — patch: <path>"
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob
 ---
@@ -11,11 +11,11 @@ Configure the experiment environment for: **$ARGUMENTS**
 
 An agent runs the same experiment dozens of times. This skill writes the answers to "where does the code go, which environment, which command, where do errors and results land" into scripts once, so no later session re-derives them.
 
-Input is the PRD the owner confirmed in `/aris-setup` (`.aris/environment-prd.json`) or a patch. A missing required value is an error; never ask for it and never guess it.
+Input is the PRD the owner confirmed in `/aris-setup` (`.aris/environment-prd.json`) or a patch. Setup invokes this skill as its environment step. A missing required value is an error; return it to setup's review rather than asking again or guessing.
 
 ## Output
 
-Everything goes into the project, never into the ARIS checkout:
+The deliverable is a discoverable **environment usage skill**, including its configuration and verified scripts, rather than a loose collection of scripts. Everything goes into the project, never into the ARIS checkout. The installer rewrites the paths below for the selected provider. Use the provider recorded in `.aris/install.json` throughout.
 
 | Path (under `.claude/skills/run-<project>-experiment/`) | Contents |
 | --- | --- |
@@ -189,7 +189,7 @@ In staging:
 
 Then copy the draft to `.claude/skills/run-<project>-experiment/`, `chmod +x` the scripts, and run every op with `--dry-run`. Side-effecting ops must print a full command with no `{{placeholder}}` left, browser commands with the session name filled in. Read-only ops (`env-info`, `query-resources`, `job-status`, `job-logs`) run for real.
 
-Pass: set `status` to `complete`. Fail: delete the promoted directory, keep the draft, and report the failing check. Print the frozen configuration and the verification results either way.
+Pass: set `status` to `complete`. Fail: delete the promoted directory, keep the draft, and report the failing check. Print the environment usage skill path, frozen configuration and verification results either way. When invoked by `aris-setup`, return these results to setup for its final handoff. After a successful standalone generation or patch, tell the owner to run `reload-skills` in their client before using the updated skill; a fresh provider session also loads it.
 
 ## Patch mode
 

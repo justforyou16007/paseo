@@ -35,7 +35,7 @@ No npm install, build tools, source checkout, global skill links, or Paseo resta
 
 Setup writes role instructions and MCP configuration after you confirm the configuration sheet. Existing unrelated instructions and MCP entries are preserved. Codex loads project configuration only for trusted projects: trust this project in Codex, then open a fresh session. Its [MCP configuration](https://developers.openai.com/codex/mcp/) and [skill discovery](https://developers.openai.com/codex/skills/) follow the official OpenAI documentation.
 
-The archive contains five skills: `aris-setup`, `aris-update`, `validation-review`, `research-wiki`, and `experiment-env-configuration`. These existing names and the `.aris/` data directory remain stable. It installs no subagent definitions. Optional literature, GPU platform and notification skills in the source repository are not part of ARL.
+The archive contains six skills: `aris-setup`, `validation-review`, `research-wiki`, `browser-act`, `experiment-queue` and `experiment-env-configuration`, including the queue helpers and their runtime dependencies. The `.aris/` data directory remains stable. It installs no subagent definitions. Optional literature, GPU platform and notification skills in the source repository are not included in the archive.
 
 Create a separate project on each machine and add each to official Paseo. Never share their disk, repository or synchronized directory. Use the same `task.md` on both machines. In the project `.gitignore`, exclude `.aris/` and the provider MCP configuration because setup stores credentials there.
 
@@ -46,6 +46,8 @@ Create a separate project on each machine and add each to official Paseo. Never 
 3. Approve the final configuration digest. Setup runs the benchmark setup, healthcheck and smoke test, freezes the configuration and creates the service token. It writes the `aris-validation` service script into `paseo.json`.
 4. Start that script from official Paseo. Check with `node .aris/dist/tools/validation-cli.js status --project .`.
 5. Transfer the printed `worker_connection` URL and token privately to the worker machine.
+
+If you configure an environment PRD, setup also invokes `experiment-env-configuration` to generate and verify the environment usage skill, then asks you to run `reload-skills` in your client.
 
 On Windows, use `agent.paseo_command: ["node", "<Paseo install>\\bin\\paseo"]` because Node cannot execute a `.cmd` shim directly. On Linux/macOS the default `["paseo"]` uses the official CLI on PATH.
 
@@ -60,12 +62,14 @@ If you already operate Paseo's service proxy, use host `127.0.0.1`, leave the po
 ## Worker machine
 
 1. Copy the validation machine's `task.md` unchanged to the worker project.
-2. Invoke `aris-setup worker`. Fill in `connection.url` and `connection.token`. Leave `environment.prd` null for agent-managed execution, or describe an environment for generated experiment scripts.
-3. Approve the reviewed digest. Setup writes the provider's role block and MCP entry. The setup skill initializes `research-wiki/` and invokes environment configuration when requested.
-4. Reopen the provider session; for Codex, trust the project. Ask the agent to call `query` and verify the validation service is open.
+2. Invoke `aris-setup worker`. Fill in `connection.url` and `connection.token`. Leave `environment.prd` null for agent-managed execution, or describe the environment for a generated environment usage skill. Review these requirements with the connection in the same setup sheet.
+3. Approve the reviewed digest. Setup writes the provider's role block with available worker tools and the MCP entry, and initializes `research-wiki/`. When a PRD is set, setup invokes `experiment-env-configuration` and reports the verified `run-<project>-experiment` skill path. The skill bundles its usage instructions, frozen configuration and experiment operations.
+4. Run `reload-skills` in your client to discover new skills. If it has no skill reload action, open a fresh provider session. Reopen the worker session to load its MCP configuration; for Codex, trust the project. Ask the agent to call `query` and verify the validation service is open.
 5. Tell the worker to work on `task.md`. It submits a zip containing `USAGE.md`, uploads to the one-time URL and polls `query`. It stops at `completed` (target met) or `closed` (submission limit reached).
 
 Generated environment operations require POSIX sh and jq, plus the transport/runtime tools specified by your PRD (for example SSH, rsync, Python or a container runtime). These project-specific tools are not bundled.
+
+The worker role document routes to `research-wiki`, `browser-act`, `experiment-queue` and the environment skills. Browser work checks or installs the external browser-act CLI on demand. Experiment queues require an SSH execution host with Node.js 22.12+, `sh`, `jq`, `screen` and the experiment dependencies. Read the installed skills before using their tools.
 
 ## Update or repair
 
@@ -78,7 +82,7 @@ bash arl/install.sh --provider codex --project /path/to/project
 
 The installer verifies archive hashes and records managed file hashes in `.aris/install.json`. It restores missing files and updates unchanged managed files. A local edit stops the update before writes; save it before choosing `--force`. Updates preserve task.md, setup state, benchmark, submissions, wiki, user skills and generated experiment bundles. Provider changes in an existing installation are refused; use separate projects for different providers.
 
-If setup was applied, rerun `node .aris/dist/tools/setup-cli.js apply --project .` to refresh the role block. An unchanged configuration keeps its confirmation. Reopen the agent session after updates. No daemon restart is required.
+If setup was applied, rerun `node .aris/dist/tools/setup-cli.js apply --project .` to refresh the role block. An unchanged configuration keeps its confirmation. Run `reload-skills` in your client after updates; reopen the provider session when MCP configuration changes or the client has no reload action. No daemon restart is required.
 
 Older custom-Paseo installations have no standalone ownership manifest. Back them up and install into fresh projects, or inspect conflicting files and explicitly select `--force`. The installer never deletes user agent definitions or old global skill links.
 

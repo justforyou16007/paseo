@@ -156,5 +156,5 @@ console.log(
   ),
 );
 console.log(
-  "Next: open this project in official Paseo with the selected provider and invoke aris-setup worker or aris-setup validation. Codex must trust the project to load .codex/config.toml. Reopen an existing session after updating.",
+  "Next: open this project in official Paseo with the selected provider and invoke aris-setup worker or aris-setup validation. Setup generates a verified environment usage skill when an environment PRD is provided. Run reload-skills in your client after skills change, or open a fresh session if it has no reload action. A changed MCP configuration needs a fresh provider session; Codex must trust the project to load .codex/config.toml.",
 );

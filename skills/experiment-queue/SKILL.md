@@ -73,6 +73,8 @@ All of these are pure engineering friction that can be orchestrated.
 > # routing. If the op still fails, abort the queue.
 > ```
 >
+> The generated environment usage skill must be verified and loaded with `reload-skills` before queue work. The SSH execution host needs Node.js 22.12+, the experiment dependencies, `sh`, `jq` and `screen`.
+>
 > `queue-manager.js` runs on the remote host and
 > batch-schedules jobs. The experiment skill's ops run locally and prepare
 > the host; they are complementary (single-env control vs batch scheduling).
@@ -184,8 +186,7 @@ Three preliminaries before launch.
 
 ```bash
 QUEUE_TOOLS=".aris/dist/skills/experiment-queue"
-[ -f "$QUEUE_TOOLS/queue-manager.js" ] || QUEUE_TOOLS="dist/skills/experiment-queue"
-[ -f "$QUEUE_TOOLS/queue-manager.js" ] || { echo "ERROR: queue-manager.js not found; run /aris-update." >&2; exit 1; }
+[ -f "$QUEUE_TOOLS/queue-manager.js" ] || { echo "ERROR: queue-manager.js not found; rerun the standalone ARL installer to repair it." >&2; exit 1; }
 ```
 
 **3b. Compute remote paths.** Use both a remote-relative form (for `scp` destinations — modern `scp` runs in SFTP mode and does NOT reliably expand `$HOME` in destination paths) and a `$HOME`-prefixed form (for `ssh ... command` strings, where remote bash WILL expand `$HOME`):
@@ -193,20 +194,26 @@ QUEUE_TOOLS=".aris/dist/skills/experiment-queue"
 ```bash
 REMOTE_RUN_REL=".aris_queue/runs/$RUN_TS"          # for scp destinations (relative to remote home)
 REMOTE_RUN_DIR="\$HOME/$REMOTE_RUN_REL"            # for ssh command strings (literal $HOME, expanded on remote)
+REMOTE_RUN_ABS="$(ssh "$SSH_ALIAS" 'printf "%s" "$HOME"')/$REMOTE_RUN_REL"
 ```
 
-**3c. Bootstrap the remote run directory and copy helpers + manifest.** Per-invocation and idempotent. Use a unique run directory rather than `/tmp` so concurrent queues do not collide and so resume-after-crash is reproducible.
+**3c. Bootstrap the remote run directory and copy the runtime + manifest.** Per-invocation and idempotent. Use a unique run directory rather than `/tmp` so concurrent queues do not collide and so resume-after-crash is reproducible. The helpers import other runtime files and Commander: copying two JavaScript files alone does not work. Transfer `.aris/dist/`, its `package.json` and `node_modules/` together, without project configuration or credentials.
 
 ```bash
-ssh <server> "mkdir -p \"$REMOTE_RUN_DIR/logs\" \"\$HOME/.aris_queue\""
-scp "$QUEUE_TOOLS/queue-manager.js" "$QUEUE_TOOLS/build-manifest.js" <server>:.aris_queue/
-scp "$LOCAL_RUN_DIR/manifest.json" <server>:"$REMOTE_RUN_REL/manifest.json"
+tar -czf "$LOCAL_RUN_DIR/queue-runtime.tar.gz" -C "$PROJECT_DIR/.aris" dist node_modules package.json
+ssh "$SSH_ALIAS" "mkdir -p \"$REMOTE_RUN_DIR/logs\" \"$REMOTE_RUN_DIR/runtime\""
+scp "$LOCAL_RUN_DIR/queue-runtime.tar.gz" "$SSH_ALIAS:$REMOTE_RUN_REL/queue-runtime.tar.gz"
+ssh "$SSH_ALIAS" "tar -xzf \"$REMOTE_RUN_DIR/queue-runtime.tar.gz\" -C \"$REMOTE_RUN_DIR/runtime\""
+scp -r "$SKILL_DIR" "$SSH_ALIAS:$REMOTE_RUN_REL/runtime/environment-skill"
+jq --arg op "$REMOTE_RUN_ABS/runtime/environment-skill/scripts/ops/launch-job.sh" \
+  '.launch_op = $op' "$LOCAL_RUN_DIR/manifest.json" > "$LOCAL_RUN_DIR/manifest.remote.json"
+scp "$LOCAL_RUN_DIR/manifest.remote.json" "$SSH_ALIAS:$REMOTE_RUN_REL/manifest.json"
 ```
 
 **3d. Launch the scheduler as a detached `nohup` process on the SSH host:**
 
 ```bash
-ssh <server> "nohup node \"\$HOME/.aris_queue/queue-manager.js\" \\
+ssh "$SSH_ALIAS" "nohup node \"$REMOTE_RUN_DIR/runtime/dist/skills/experiment-queue/queue-manager.js\" \\
   --manifest \"$REMOTE_RUN_DIR/manifest.json\" \\
   --state    \"$REMOTE_RUN_DIR/queue_state.json\" \\
   --log-dir  \"$REMOTE_RUN_DIR/logs\" \\
