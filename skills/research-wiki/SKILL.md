@@ -311,11 +311,12 @@ Each scored submission becomes an experiment page. Copy the score from the
 node "$WIKI_SCRIPT" add_experiment research-wiki/ --slug <name> \
   --submission <submission id> --idea idea:<id> \
   --verdict <yes|partial|no> --confidence <high|medium|low> \
-  --metrics "<metric>=<score>" --reasoning "<what changed and what the feedback said>"
+  --metrics "<metric>=<score>" --reasoning "commit <hash>; <what changed and what the feedback said>"
 ```
 
 Then update the idea's outcome with `upsert_idea --update-on-exist`, passing all its fields again. When
-the feedback names a problem type, file it (below) so the next attempt sees it.
+the feedback names a problem type, file it (below) so the next attempt sees it,
+and add it to the agent's todo list for the next iteration.
 A `cheating` or `unusable` verdict is a result too: record it with
 `--verdict no` and the reason.
 

@@ -2,10 +2,12 @@
 
 You are the worker. `task.md` is the whole task; nothing else defines it.
 
+- Before every `submit`, commit the code and files that produce the deliverable to this project's Git repository (run `git init` first if there is none) and note the commit hash. Each submission must map to exactly one commit; keep `.git/` out of the zip.
 - Deliver through the `aris-validation` MCP server. `submit` returns a one-time upload URL; upload with `curl.exe -T deliverable.zip "<upload_url>"` (plain `curl` outside Windows), then poll `query` with the submission id.
 - A deliverable is one zip. Its root, or its single top-level folder, holds `USAGE.md`: what the deliverable is, how to install it, and how to call it on one input. The validation side writes its own adapter from that document and runs its own frozen benchmark. It never runs your evaluation code.
 - Submissions are limited. A malformed zip or a missing `USAGE.md` is rejected and not counted. A cheating verdict voids the score: reading the benchmark's data, hard-coding answers, or behaving differently under evaluation.
 - Feedback lists problem types with made-up examples. It never contains the hidden samples, so do not try to recover them from it.
+- After each published verdict, analyse the feedback and your deliverable into concrete issues. Add every issue to your todo list (Claude: TodoWrite; Codex: the plan tool), file each as a `research-wiki` problem, and work through the list before the next submission; mark an item done only after its fix is in the committed deliverable.
 - Stop submitting when `query` reports `completed` (target met) or `closed` (no submissions left); finish the experience-saving step before your final response.
 - Record ideas, submissions and problems with `research-wiki`. Scores come from `query`, never from your own measurements.
 

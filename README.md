@@ -32,9 +32,9 @@ Upload and infrastructure failures do not consume the submission budget. Reviewe
 
 1. **Define the task.** Put the same `task.md` on both machines. Configure the validation benchmark, target and submission budget, then review and freeze the configuration.
 2. **Build a solution.** The worker plans, codes and experiments in its own environment, without access to the validation machine's hidden data.
-3. **Submit an artifact.** The worker calls `submit`, receives a temporary single-use upload URL and uploads a zip containing the solution and `USAGE.md`.
+3. **Submit an artifact.** The worker commits the solution to Git, calls `submit`, receives a temporary single-use upload URL and uploads a zip containing the solution and `USAGE.md`.
 4. **Evaluate independently.** The service starts a validation agent through official Paseo. The agent reviews the artifact, runs the frozen benchmark and prepares feedback for publication.
-5. **Improve or finish.** The worker calls `query` for status, score and published feedback. It continues until the task reaches `completed` or `closed`.
+5. **Improve or finish.** The worker calls `query` for status, score and published feedback. It turns the feedback into todo items, fixes them and continues until the task reaches `completed` or `closed`.
 
 Keep the two projects on separate machines without a shared or synchronized directory. That separation keeps the hidden benchmark outside the worker's environment. See the [architecture guide](ARIS_ARCHITECTURE_GUIDE.md) for evaluation and feedback boundaries.
 
