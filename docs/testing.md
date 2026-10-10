@@ -4,6 +4,6 @@ Use real temporary directories, installed artifacts and the actual helper comman
 
 Run only the relevant file locally: `npm run test -- tests/test_setup.ts`. Never run the full suite locally or repeat a test another agent has already reported green without a new change or unresolved concern. CI runs the existing four TypeScript suites.
 
-The setup suite builds an archive and exercises Claude and Codex installation, configuration, repair, updates and integrity checks from isolated directories. Run `npm run build` first because the archive consumes compiled helpers.
+The setup suite exercises both prepared local Git checkouts and archives: Claude and Codex installation, configuration, repair, updates and integrity checks from isolated directories. Local installation tests forbid download, npm and tar commands, and verify that missing dependencies or build output cause errors without writing the target. Run `npm run build` first because installation consumes compiled helpers.
 
 Do not add provider authentication checks to tests. Report the difference between archive/helper verification and a real two-daemon deployment. Never restart the main Paseo daemon to recover from a test timeout.

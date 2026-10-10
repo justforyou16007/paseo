@@ -7,7 +7,7 @@ allowed-tools: Read, Write, Edit, Bash(*), AskUserQuestion
 
 # ARIS Setup
 
-ARIS runs one task on two machines. The **worker** builds a deliverable; the **validation** side owns a frozen benchmark, scores each submission and decides when the task is done. The two talk only through the validation service's MCP tools. Install the standalone ARL archive first (`bash install.sh --provider claude|codex --project PATH`). Each machine runs official Paseo, so the owner sees both sides' agents.
+ARIS runs one task on two machines. The **worker** builds a deliverable; the **validation** side owns a frozen benchmark, scores each submission and decides when the task is done. The two talk only through the validation service's MCP tools. Install ARL first from the owner's prepared local Git checkout (`bash distribution/install-aris.sh --provider claude|codex --project PATH`). The owner prepares dependencies and compiled helpers separately; installation does not download them. Each machine runs official Paseo, so the owner sees both sides' agents.
 
 The helper is `node .aris/dist/tools/setup-cli.js` (see [integration-contract.md](../shared-references/integration-contract.md)). It owns the draft, the review sheet and the confirmed digest; never edit `.aris/setup-state.json` by hand.
 

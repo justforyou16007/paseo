@@ -24,7 +24,7 @@ Use the official **Paseo** app and CLI to run and monitor agents on both machine
 | **Research records** | A project-local wiki for papers, ideas, claims, problems and submission history, accessible through the skill or Markdown files. |
 | **Worker tools** | Project skills for research records, browser access and SSH experiment queues. |
 | **Environment usage skills** | Setup turns your environment requirements into a verified project-specific skill for running and managing experiments. |
-| **Standalone installation** | A checksum-verified archive with compiled helpers and runtime dependencies. Project-local updates preserve research data and unrelated provider configuration. |
+| **Local installation** | Copies compiled helpers, skills and runtime dependencies from your prepared local Git checkout. Project-local updates preserve research data and unrelated provider configuration. |
 
 Upload and infrastructure failures do not consume the submission budget. Reviewed submissions do, including those judged cheating or unusable.
 
@@ -44,7 +44,7 @@ Keep the two projects on separate machines without a shared or synchronized dire
 
 On each machine, install:
 
-- **Node.js 22.12+**, **Bash**, **curl** and **tar**.
+- **Node.js 22.12+**, **Bash** and **Git**.
 - **Claude Code or Codex**, authenticated for the provider you choose.
 - The official **Paseo app and CLI**, with its daemon running.
 
@@ -52,25 +52,27 @@ The validation machine also needs your benchmark's dependencies. On Windows, run
 
 ### Install into each project
 
-Download the installer once on each machine:
+Use a local checkout of the `arl` branch on each machine. Prepare its dependencies and compiled helpers explicitly:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/justforyou16007/paseo/arl/distribution/install-arl.sh" -o /tmp/install-arl.sh
+cd /path/to/local/arl-checkout
+npm ci
+npm run build
 ```
 
 For **Claude Code**:
 
 ```bash
-bash /tmp/install-arl.sh --provider claude --project /path/to/project
+bash distribution/install-aris.sh --provider claude --project /path/to/project
 ```
 
 For **Codex**:
 
 ```bash
-bash /tmp/install-arl.sh --provider codex --project /path/to/project
+bash distribution/install-aris.sh --provider codex --project /path/to/project
 ```
 
-Choose one provider per project. The installer downloads and verifies the standalone archive; the target machine needs no source checkout, build step or `npm install`. Codex projects must be trusted to load their project MCP configuration.
+Choose one provider per project. Installation reads only the prepared local checkout and makes no downloads; missing dependencies or compiled helpers cause an error. `install-arl.sh` is an alias for the same local installation. Codex projects must be trusted to load their project MCP configuration.
 
 ### Configure the two roles
 

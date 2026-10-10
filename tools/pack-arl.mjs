@@ -8,7 +8,8 @@ import { execFileSync } from "node:child_process";
 import ts from "typescript";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const output = path.resolve(process.argv[2] ?? path.join(root, "artifacts"));
+const directoryOnly = process.argv[2] === "--directory";
+const output = path.resolve(process.argv[directoryOnly ? 3 : 2] ?? path.join(root, "artifacts"));
 const version = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "arl-package-"));
 const stage = path.join(temp, "arl");
@@ -55,11 +56,18 @@ try {
   inventory(stage);
   fs.writeFileSync(path.join(stage, "manifest.json"), JSON.stringify({ format: 1, version, files }, null, 2) + "\n");
   fs.mkdirSync(output, { recursive: true });
-  const archive = path.join(output, `arl-${version}.tar.gz`);
-  execFileSync("tar", ["-czf", archive, "-C", temp, "arl"]);
-  const sum = crypto.createHash("sha256").update(fs.readFileSync(archive)).digest("hex");
-  fs.writeFileSync(`${archive}.sha256`, `${sum}  ${path.basename(archive)}\n`);
-  console.log(archive);
+  if (directoryOnly) {
+    const bundle = path.join(output, "arl");
+    if (fs.existsSync(bundle)) throw new Error(`Bundle directory already exists: ${bundle}`);
+    fs.cpSync(stage, bundle, { recursive: true });
+    console.log(bundle);
+  } else {
+    const archive = path.join(output, `arl-${version}.tar.gz`);
+    execFileSync("tar", ["-czf", archive, "-C", temp, "arl"]);
+    const sum = crypto.createHash("sha256").update(fs.readFileSync(archive)).digest("hex");
+    fs.writeFileSync(`${archive}.sha256`, `${sum}  ${path.basename(archive)}\n`);
+    console.log(archive);
+  }
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
 }

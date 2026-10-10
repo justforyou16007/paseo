@@ -326,8 +326,59 @@ await project("distribution", async (sandbox) => {
     const status = JSON.parse(execFileSync(process.execPath, [path.join(root, ".aris/dist/tools/validation-cli.js"), "status", "--project", root], { cwd: sandbox, encoding: "utf8" }));
     assert.equal(status.service.state, "open");
   }
+  // Installation from a prepared local Git checkout needs no download or archive tools.
+  const localRepo = path.join(sandbox, "local ARL checkout");
+  fs.mkdirSync(localRepo);
+  execFileSync("git", ["init", "--quiet", localRepo]);
+  for (const directory of ["dist", "skills", "templates"])
+    fs.cpSync(path.join(portable, directory), path.join(localRepo, directory), { recursive: true });
+  for (const directory of ["distribution", "tools"])
+    fs.cpSync(path.join(source, directory), path.join(localRepo, directory), { recursive: true, filter: (file) => path.basename(file) !== "releases" });
+  fs.copyFileSync(path.join(source, "package.json"), path.join(localRepo, "package.json"));
+  for (const file of ["LICENSE", "SETUP_GUIDE.md", "SETUP_GUIDE_CN.md"])
+    fs.copyFileSync(path.join(source, file), path.join(localRepo, file));
+  const forbiddenBin = path.join(sandbox, "forbidden commands");
+  fs.mkdirSync(forbiddenBin);
+  const invoked = path.join(forbiddenBin, "invoked");
+  for (const command of ["curl", "wget", "npm", "npx", "tar"])
+    fs.writeFileSync(path.join(forbiddenBin, command), '#!/usr/bin/env bash\nprintf "%s\\n" "$0" > "${BASH_SOURCE[0]%/*}/invoked"\nexit 99\n', { mode: 0o755 });
+  const localEnv = {
+    ...process.env,
+    PATH: `${forbiddenBin}${path.delimiter}${process.env.PATH}`,
+    ARL_DOWNLOAD_BASE: "http://127.0.0.1:1/must-not-download",
+    ARL_ARCHIVE: path.join(sandbox, "does-not-exist.tar.gz"),
+  };
+  const localInstall = (entry: string, ...args: string[]) => spawnSync("bash", [path.join(localRepo, "distribution", entry), ...args], { cwd: sandbox, env: localEnv, encoding: "utf8" });
+  assert.equal(localInstall("install-aris.sh", "--help").status, 0);
   const bootstrapped = path.join(sandbox, "bootstrap project");
-  execFileSync("bash", [path.join(source, "distribution/install-arl.sh"), "--provider", "codex", "--project", bootstrapped], { cwd: sandbox, env: { ...process.env, ARL_ARCHIVE: archive } });
+  const missing = localInstall("install-aris.sh", "--provider", "codex", "--project", bootstrapped);
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /npm ci and npm run build/);
+  assert.equal(fs.existsSync(bootstrapped), false);
+  for (const dependency of ["commander", "typescript"])
+    fs.cpSync(path.join(source, "node_modules", dependency), path.join(localRepo, "node_modules", dependency), { recursive: true });
+  fs.renameSync(path.join(localRepo, "dist"), path.join(localRepo, "unbuilt-dist"));
+  const unbuilt = localInstall("install-aris.sh", "--provider", "codex", "--project", bootstrapped);
+  assert.equal(unbuilt.status, 1);
+  assert.match(unbuilt.stderr, /npm ci and npm run build/);
+  assert.equal(fs.existsSync(bootstrapped), false);
+  fs.renameSync(path.join(localRepo, "unbuilt-dist"), path.join(localRepo, "dist"));
+  for (const provider of ["claude", "codex"]) {
+    const root = provider === "codex" ? bootstrapped : path.join(sandbox, "local Claude project");
+    const preview = localInstall("install-aris.sh", "--provider", provider, "--project", root, "--dry-run");
+    assert.equal(preview.status, 0, preview.stderr);
+    assert.equal(fs.existsSync(root), false);
+    const installed = localInstall("install-aris.sh", "--provider", provider, "--project", root);
+    assert.equal(installed.status, 0, installed.stderr);
+    assert.equal(read(path.join(root, ".aris/install.json")).provider, provider);
+    execFileSync(process.execPath, [path.join(root, ".aris/dist/tools/setup-cli.js"), "--help"], { cwd: sandbox });
+  }
+  const localSkill = path.join(localRepo, "skills/aris-setup/SKILL.md");
+  fs.appendFileSync(localSkill, "\nLocal checkout update.\n");
+  const updated = localInstall("install-arl.sh", "--provider", "codex", "--project", bootstrapped);
+  assert.equal(updated.status, 0, updated.stderr);
+  assert.match(fs.readFileSync(path.join(bootstrapped, ".agents/skills/aris-setup/SKILL.md"), "utf8"), /Local checkout update/);
+  assert.equal(fs.existsSync(invoked), false, "Installer invoked a download, dependency installation or archive command");
   assert.equal(read(path.join(bootstrapped, ".aris/install.json")).provider, "codex");
   const changedSkill = path.join(portable, "skills/aris-setup/SKILL.md");
   fs.appendFileSync(changedSkill, "\nNew upstream instructions.\n");

@@ -2,22 +2,26 @@
 
 ARL runs one task on two machines. The worker builds a deliverable; the validation machine owns a frozen benchmark, scores submissions and publishes feedback. Their only application interface is the validation service's `submit` and `query` MCP tools. Planning and implementation belong to the agent; ARL adds no fixed research pipeline.
 
-Use the official Paseo app and CLI on both machines. This archive supplies project skills and the Node runtime helpers; it does not contain or require a custom Paseo build. Official Paseo shows agents and service scripts. It has no custom ARIS knowledge graph tab: read the wiki files or use the `research-wiki` skill.
+Use the official Paseo app and CLI on both machines. ARL supplies project skills and the Node runtime helpers; it does not contain or require a custom Paseo build. Official Paseo shows agents and service scripts. It has no custom ARIS knowledge graph tab: read the wiki files or use the `research-wiki` skill.
 
 ## Install
 
-You need Bash, Node.js 22.12+, and tar. Install and authenticate Claude Code or Codex, and install the official Paseo CLI with its daemon running (`paseo daemon status`). The validation machine also needs the dependencies required by your benchmark. Windows users can run the Bash installer in Git Bash, with Node on PATH; WSL is a separate Linux environment.
+You need Bash, Git and Node.js 22.12+. Install and authenticate Claude Code or Codex, and install the official Paseo CLI with its daemon running (`paseo daemon status`). The validation machine also needs the dependencies required by your benchmark. Windows users can run the Bash installer in Git Bash, with Node on PATH; WSL is a separate Linux environment.
 
-Install from the `arl` branch (the bootstrap downloads and verifies only the standalone archive):
+Use a local Git checkout of the `arl` branch on each machine. Prepare dependencies and compile the helpers separately, then install from that checkout:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/justforyou16007/paseo/arl/distribution/install-arl.sh" -o /tmp/install-arl.sh
-bash /tmp/install-arl.sh --provider claude --project /path/to/project
+cd /path/to/local/arl-checkout
+npm ci
+npm run build
+bash distribution/install-aris.sh --provider claude --project /path/to/project
 # Or:
-bash /tmp/install-arl.sh --provider codex --project /path/to/project
+bash distribution/install-aris.sh --provider codex --project /path/to/project
 ```
 
-For offline installation, extract the standalone archive outside the target project, then choose one provider per project:
+The installer does not clone or update Git, install npm dependencies, download archives, or require tar. Missing local dependencies or compiled helpers stop installation with preparation instructions. `distribution/install-arl.sh` is an alias for this local workflow; the old `ARL_ARCHIVE` and `ARL_DOWNLOAD_BASE` variables are unused. You can invoke the script by absolute path from another directory, and `--dry-run` leaves the target unchanged.
+
+For manual offline distribution without a Git checkout on the target machine, an owner can still build an archive with `npm run pack:arl`, transfer it and extract it outside the target project:
 
 ```bash
 tar -xzf arl-0.1.0.tar.gz
@@ -26,7 +30,7 @@ bash arl/install.sh --provider claude --project /path/to/project
 bash arl/install.sh --provider codex --project /path/to/project
 ```
 
-No npm install, build tools, source checkout, global skill links, or Paseo restart are needed on the target machine. The archive includes compiled helpers, their runtime dependencies and templates. Keep the archive for updates or repairs.
+The optional archive includes compiled helpers, their runtime dependencies and templates. Neither installation route creates global skill links or restarts Paseo.
 
 | Provider | Skills | Role instructions | Worker MCP configuration |
 | --- | --- | --- | --- |
@@ -65,7 +69,7 @@ If you already operate Paseo's service proxy, use host `127.0.0.1`, leave the po
 2. Invoke `aris-setup worker`. Fill in `connection.url` and `connection.token`. Leave `environment.prd` null for agent-managed execution, or describe the environment for a generated environment usage skill. Review these requirements with the connection in the same setup sheet.
 3. Approve the reviewed digest. Setup writes the provider's role block with available worker tools and the MCP entry, and initializes `research-wiki/`. When a PRD is set, setup invokes `experiment-env-configuration` and reports the verified `run-<project>-experiment` skill path. The skill bundles its usage instructions, frozen configuration and experiment operations.
 4. Run `reload-skills` in your client to discover new skills. If it has no skill reload action, open a fresh provider session. Reopen the worker session to load its MCP configuration; for Codex, trust the project. Ask the agent to call `query` and verify the validation service is open.
-5. Tell the worker to work on `task.md`. It submits a zip containing `USAGE.md`, uploads to the one-time URL and polls `query`. After each published verdict, it saves concise, evidenced, cross-project lessons to `Experience.md` in your local ARL source checkout on branch `arl`; setup records that location in the worker's project instructions. Duplicate lessons are merged and project details stay in the wiki. Provide a writable local `arl` checkout when installing from an archive; `.aris/` is not that checkout. See the [experience contract](skills/shared-references/experience.md). It stops submitting at `completed` (target met) or `closed` (submission limit reached) and finishes saving experience before its final response.
+5. Tell the worker to work on `task.md`. It submits a zip containing `USAGE.md`, uploads to the one-time URL and polls `query`. After each published verdict, it saves concise, evidenced, cross-project lessons to `Experience.md` in your local ARL source checkout on branch `arl`; setup records that location in the worker's project instructions. Duplicate lessons are merged and project details stay in the wiki. Keep that checkout writable; `.aris/` is not the source checkout. See the [experience contract](skills/shared-references/experience.md). It stops submitting at `completed` (target met) or `closed` (submission limit reached) and finishes saving experience before its final response.
 
 Generated environment operations require POSIX sh and jq, plus the transport/runtime tools specified by your PRD (for example SSH, rsync, Python or a container runtime). These project-specific tools are not bundled.
 
@@ -73,14 +77,16 @@ The worker role document routes to `research-wiki`, `browser-act`, `experiment-q
 
 ## Update or repair
 
-Extract the new archive separately and use the same provider and project:
+Update and rebuild your local checkout explicitly, then use the same provider and project:
 
 ```bash
-bash arl/install.sh --provider codex --project /path/to/project --dry-run
-bash arl/install.sh --provider codex --project /path/to/project
+cd /path/to/local/arl-checkout
+npm run build
+bash distribution/install-aris.sh --provider codex --project /path/to/project --dry-run
+bash distribution/install-aris.sh --provider codex --project /path/to/project
 ```
 
-The installer verifies archive hashes and records managed file hashes in `.aris/install.json`. It restores missing files and updates unchanged managed files. A local edit stops the update before writes; save it before choosing `--force`. Updates preserve task.md, setup state, benchmark, submissions, wiki, user skills and generated experiment bundles. Provider changes in an existing installation are refused; use separate projects for different providers.
+Prepare dependencies again if the lockfile changed. The installer assembles and verifies a temporary bundle from the current local files and records managed file hashes in `.aris/install.json`. It restores missing files and updates unchanged managed files. A local edit stops the update before writes; save it before choosing `--force`. Updates preserve task.md, setup state, benchmark, submissions, wiki, user skills and generated experiment bundles. Provider changes in an existing installation are refused; use separate projects for different providers.
 
 If setup was applied, rerun `node .aris/dist/tools/setup-cli.js apply --project .` to refresh the role block. An unchanged configuration keeps its confirmation. Run `reload-skills` in your client after updates; reopen the provider session when MCP configuration changes or the client has no reload action. No daemon restart is required.
 
@@ -90,6 +96,7 @@ Older custom-Paseo installations have no standalone ownership manifest. Back the
 
 | Symptom | Check |
 | --- | --- |
+| Local runtime incomplete | Run `npm ci` and `npm run build` explicitly in the source checkout, then rerun the local installer |
 | Skills missing | Installation provider matches the opened agent; reopen the session |
 | Codex MCP missing | Project is trusted and `.codex/config.toml` has the ARL block |
 | Existing unmanaged aris-validation TOML entry | Move that entry out before applying setup; ARL does not overwrite an unrelated owner-managed table |

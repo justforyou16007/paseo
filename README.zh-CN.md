@@ -8,16 +8,18 @@ ARL 把研究任务分到两台机器：worker 交付 zip；validation 持有冻
 
 ## 安装
 
-需要 Node.js 22.12+、Bash 和 tar。下载安装脚本，再为项目选择 provider：
+需要 Node.js 22.12+、Bash 和 Git。使用本地 `arl` 分支源码仓库，先显式准备依赖和编译产物，再为项目选择 provider：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/justforyou16007/paseo/arl/distribution/install-arl.sh -o /tmp/install-arl.sh
-bash /tmp/install-arl.sh --provider claude --project /你的项目目录
+cd /你的本地arl仓库
+npm ci
+npm run build
+bash distribution/install-aris.sh --provider claude --project /你的项目目录
 # Codex 项目使用：
-bash /tmp/install-arl.sh --provider codex --project /你的项目目录
+bash distribution/install-aris.sh --provider codex --project /你的项目目录
 ```
 
-安装器校验包的哈希，安装项目技能、编译好的 helper 和运行依赖。目标机器不需要源码仓库或 npm install。Codex 必须信任项目，才会加载项目 MCP 配置。
+安装器仅从准备好的本地仓库复制项目技能、编译好的 helper 和运行依赖，不触发下载；缺少依赖或编译产物时直接报错。`install-arl.sh` 保留为同一安装流程的别名。Codex 必须信任项目，才会加载项目 MCP 配置。
 
 先配置 validation，再把地址和 token 私下交给 worker。完整步骤见[中文部署指南](SETUP_GUIDE_CN.md)。
 
@@ -34,7 +36,7 @@ npm run test -- tests/test_setup.ts
 npm run pack:arl
 ```
 
-打包产物及校验文件在 `artifacts/`。更新 Bash 下载安装包时，把两份文件复制到 `distribution/releases/` 后提交。参见[打包约定](docs/arl-install.md)、[贡献指南](CONTRIBUTING_CN.md)和[架构说明](ARIS_ARCHITECTURE_GUIDE.md)。
+打包产物及校验文件在 `artifacts/`，用于发布和手动离线分发，本地安装不读取它们。修改交付文件后，把两份文件复制到 `distribution/releases/` 后提交。参见[打包约定](docs/arl-install.md)、[贡献指南](CONTRIBUTING_CN.md)和[架构说明](ARIS_ARCHITECTURE_GUIDE.md)。
 
 ## 许可证
 
