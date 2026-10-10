@@ -71,6 +71,8 @@ Apply writes the role block into `CLAUDE.md` for Claude or `AGENTS.md` for Codex
 
 Create the wiki if `research-wiki/` is absent: `node .aris/dist/tools/research-wiki.js init research-wiki/`. The generated role block lists the worker's validation tools, `research-wiki`, `browser-act`, `experiment-queue` and environment skills. Continue with the environment step below before reporting setup complete.
 
+For a worker, resolve and record the owner's local ARL source checkout and its `arl` branch `Experience.md` location in the provider's project instructions outside the managed role block, following [the experience contract](../shared-references/experience.md). Preserve existing owner text. Report an unavailable location as pending; do not use the installed `.aris/` directory as an experience repository.
+
 **Validation.** Apply installs the benchmark (setup, healthcheck and smoke must pass), freezes `.aris/validation/config.json`, creates the service token and adds the `aris-validation` service script to `paseo.json`. Then:
 
 1. Give the owner the printed `worker_connection` URL and token for the worker's setup. Send the token over a private channel.

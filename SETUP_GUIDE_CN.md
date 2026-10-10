@@ -42,6 +42,8 @@ Claude 技能位于 `.claude/skills/`，setup 写 `CLAUDE.md` 和 `.mcp.json`。
 
 worker 的 `CLAUDE.md` 或 `AGENTS.md` 会列出 `submit` / `query`、`research-wiki`、`browser-act`、`experiment-queue` 和环境技能的入口与用途。浏览器 CLI 按需检查或安装；队列执行端需要 SSH、Node.js 22.12+、sh、jq、screen 和实验依赖。使用前读取对应 skill。
 
+每次提交取得 validation 已发布的最终结论后，worker 将有实际依据、可跨项目复用的经验精简到本地 ARL 源码仓库 `arl` 分支根目录的 `Experience.md`，合并重复经验，无新经验则不添加；项目细节留在 wiki。setup 在 worker 的 `CLAUDE.md` 或 `AGENTS.md` 中记录该位置，源码仓库的 `CLAUDE.md` 指向 `Experience.md`。通过安装包部署时需提供可写的本地 `arl` checkout，安装目录 `.aris/` 不是经验仓库。保存规则见[经验保存约定](skills/shared-references/experience.md)；即使达标或次数耗尽，也应完成经验整理后再结束。
+
 私网/VPN 直连：`host=0.0.0.0`、固定 port（如 8790）、`public_url=http://<验证端地址>:8790`，开放防火墙端口。已有 Paseo service proxy 时可用 `host=127.0.0.1`、port=null 和脚本代理 URL。安装包不配置 DNS/proxy。
 
 Windows 验证端的 `agent.paseo_command` 使用 `["node", "<Paseo install>\\bin\\paseo"]`，不要直接调用 `.cmd` shim。验证端状态：`node .aris/dist/tools/validation-cli.js status --project .`。

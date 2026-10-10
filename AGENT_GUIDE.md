@@ -43,5 +43,6 @@ Skills call compiled helpers with `node .aris/dist/tools/<helper>.js` from the p
 | `.mcp.json` (Claude) / `.codex/config.toml` (Codex) | `setup-cli.js` | `aris-validation` server URL and token (worker; keep it out of git) |
 | `paseo.json` | `setup-cli.js` | `aris-validation` service script (validation) |
 | `research-wiki/` | `research-wiki.js` | Wiki pages, edges and the generated index |
+| Local ARL source checkout, branch `arl`: `Experience.md` | worker agent | Concise, evidenced lessons reusable across projects; location recorded in worker project instructions, rules in [the experience contract](skills/shared-references/experience.md) |
 
 Architecture and design rationale: [ARIS_ARCHITECTURE_GUIDE.md](ARIS_ARCHITECTURE_GUIDE.md). Installing both machines: [SETUP_GUIDE.md](SETUP_GUIDE.md).

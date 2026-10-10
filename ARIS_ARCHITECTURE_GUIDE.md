@@ -62,9 +62,12 @@ agent 的结论只决定"算不算分"，分数本身由 helper 从 benchmark �
 | `.aris/validation/` 下的提交记录、发布结果 | `validation-cli.js`（服务和 `finalize`） |
 | 提交目录里的 `inspection.md`、`review.json`、`feedback.md`、适配器 | validation agent |
 | `research-wiki/` | `research-wiki.js` |
+| 本地 ARL 源码仓库 `arl` 分支的 `Experience.md` | worker agent（仅依据自身过程和已发布结果，精简、去重并保留跨项目经验） |
 | provider 技能目录中的 `run-<project>-experiment/` | setup 调用的 `experiment-env-configuration`，后续环境修复也通过该技能 |
 
 `CLAUDE.md`（Claude）或 `AGENTS.md`（Codex）里 `ARIS ROLE` 标记之间的角色段由 setup 写入，标记外的内容 setup 不碰。
+
+worker 每次获得 validation 已发布的最终结论后，按[经验保存约定](skills/shared-references/experience.md)整理 `Experience.md`；validation agent 不参与经验写入，也不增加两机之间的通道。本地源码 checkout 的位置记录在 worker 项目指令的角色段外，源码仓库的 `CLAUDE.md` 指向经验文件。
 
 ## 六、Paseo 里能看到什么
 
